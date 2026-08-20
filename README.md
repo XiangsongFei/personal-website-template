@@ -250,6 +250,12 @@ To contribute:
 5. Push the branch to your fork
 6. Submit a pull request
 
+## 📜 License
+
+This project is licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for details.
+
 ## ⭐ Support
 
 If you find this template useful, consider giving the repository a star.
