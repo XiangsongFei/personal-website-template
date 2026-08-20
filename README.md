@@ -1,30 +1,32 @@
-# Personal Website Template
+Personal Website Template
 
-A modern bilingual personal portfolio website template built with **Next.js, React, TypeScript, and Cloudflare Workers**.
+A clean, responsive, and bilingual personal website template for building portfolios, online resumes, and professional profile websites.
 
-This project provides a clean and customizable foundation for developers, students, and professionals to build their own personal websites, portfolios, and online resumes.
+Designed to be easy to customize and deploy, the template provides reusable sections for education, experience, projects, skills, awards, and resume links without requiring users to build a portfolio website from scratch.
 
-## ✨ Features
+Live Demo: example-cv.com
 
-- 🌐 Bilingual support (English / Chinese)
-- 📱 Responsive design for desktop and mobile
-- 🧑‍💻 Personal profile showcase
-- 💼 Experience timeline
-- 🚀 Project portfolio display
-- 🛠️ Skills and awards section
-- 📄 Resume / portfolio link support
-- ☁️ Cloudflare Workers deployment support
-- ⚡ Fast performance with modern frontend architecture
+✨ Features
 
+* 🌐 Bilingual interface (English / Chinese)
+* 📱 Responsive design for desktop, tablet, and mobile
+* 👤 Personal profile and introduction section
+* 🎓 Education and experience timeline
+* 🚀 Project showcase
+* 🛠️ Skills and awards sections
+* 📄 Chinese and English resume PDF support
+* 🔗 Social and professional profile links
+* ☁️ Cloudflare Workers deployment support
+* ⚡ Lightweight and fast frontend experience
+* 🎨 Easy-to-customize content and styling
 
-## 🛠️ Tech Stack
+🛠️ Tech Stack
 
-- **Framework:** Next.js
-- **Frontend:** React + TypeScript
-- **Styling:** CSS / Tailwind CSS
-- **Deployment:** Cloudflare Workers
-- **Database:** Drizzle ORM + Cloudflare D1 (optional)
-- **Package Manager:** npm
+* Framework: Next.js / vinext
+* Frontend: React + TypeScript
+* Styling: CSS
+* Deployment: Cloudflare Workers
+* Cache: Cloudflare KV
+* Package Manager: npm
 
-
-## 📂 Project Structure
+📂 Project Structure
