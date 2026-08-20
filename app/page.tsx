@@ -591,9 +591,9 @@ const cv = {
     nav: ["经历", "项目", "技能", "奖项", "联系"],
     education: "教育背景", experience: "实习经历", projectHeading: "项目经历", skills: "技能", honors: "荣誉奖项",
     edu: [
-      ["示例大学", "信息管理与信息系统 · 学士", "2021.09 — 2025.07", "GPA: 示例数据"],
-      ["Example University", "Information Systems · B.S.", "2021.09 — 2025.07", "GPA: Sample data"],
-      ["示例暑期课程", "数据分析与应用", "Data Analytics Fundamentals", "2024.07", "示例成绩", "使用公开示例数据完成统计分析、可视化和模型评估。"],
+      ["本科教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
+      ["研究生教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
+      ["学术项目", "课程名称", "课程说明", "20XX", "示例成绩", "这是用于展示教育经历的通用课程内容。"],
     ],
     jobs: [
       ["示例科技公司", "数据分析实习生", "2024.06 — 2024.08", "整理示例运营数据并制作可复用的分析报告。\n使用公开指标比较渠道表现，为团队讨论提供参考。"],
@@ -612,9 +612,9 @@ const cv = {
     nav: ["Experience", "Projects", "Skills", "Awards", "Contact"],
     education: "Education", experience: "Internship Experience", projectHeading: "Academic Projects", skills: "Skills", honors: "Honours & Awards",
     edu: [
-      ["Example University", "B.S. in Information Systems", "Sep 2021 — Jul 2025", "GPA: Sample data"],
-      ["Sample Institute", "B.S. in Data Analytics", "Sep 2021 — Jul 2025", "GPA: Sample data"],
-      ["Example Summer Course", "Data Analytics in Practice", "Data Analytics Fundamentals", "Jul 2024", "Sample grade", "Used public sample data for statistical analysis, visualisation, and model evaluation."],
+      ["Undergraduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
+      ["Graduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
+      ["Academic Program", "Course Title", "Course Description", "20XX", "Sample grade", "This is a general course description for an education entry."],
     ],
     jobs: [
       ["Example Technology Company", "Data Analytics Intern", "Jun 2024 — Aug 2024", "Organised sample operational data and prepared reusable analysis reports.\nCompared public metrics to support team discussions."],
