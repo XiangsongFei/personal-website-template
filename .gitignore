@@ -50,4 +50,6 @@ yarn-error.log*
 
 # Local portfolio assets (do not commit personal versions)
 /public/*resume*.pdf
+!/public/resume_en.pdf
+!/public/resume_zh.pdf
 /public/*portrait*

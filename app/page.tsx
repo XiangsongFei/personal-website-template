@@ -6,11 +6,11 @@ type Locale = "zh" | "en";
 type ScrollSnapshot = { sectionId: string; progress: number; hash: string; previousScrollBehavior: string };
 type Project = [title: string, subtitle: string, period: string, methods: string[], description: string, href: string];
 
-const protectedChineseIntroTerms = new Set(["管理信息系统", "本科生", "双学位"]);
+const protectedChineseIntroTerms = new Set(["通用占位词一", "通用占位词二", "通用占位词三"]);
 
 function renderIntroParagraph(paragraph: string, locale: Locale) {
   if (locale !== "zh") return paragraph;
-  return paragraph.split(/(管理信息系统|本科生|双学位)/g).map((part, index) =>
+  return paragraph.split(/(通用占位词一|通用占位词二|通用占位词三)/g).map((part, index) =>
     protectedChineseIntroTerms.has(part)
       ? <span className="intro-keep-term" key={`${part}-${index}`}>{part}</span>
       : part
@@ -587,46 +587,46 @@ function DataNetworkGraphic() {
 
 const cv = {
   zh: {
-    intro: ["这是一个可公开发布的双语个人网站模板。请将示例内容替换为你自己的、已确认可公开的信息。", "模板展示数据分析、信息系统和产品项目的常见呈现方式；所有姓名、机构和链接均为示例。"],
+    intro: ["这是一个现代双语个人作品集模板，适用于学生、研究者和专业人士。", "所有姓名、机构、链接和内容均为通用占位示例，请替换为你自己的公开信息。"],
     nav: ["经历", "项目", "技能", "奖项", "联系"],
-    education: "教育背景", experience: "实习经历", projectHeading: "项目经历", skills: "技能", honors: "荣誉奖项",
+    education: "教育", experience: "经历", projectHeading: "项目", skills: "技能", honors: "奖项",
     edu: [
-      ["示例大学", "信息管理与信息系统 · 学士", "2021.09 — 2025.07", "GPA: 示例数据"],
-      ["Example University", "Information Systems · B.S.", "2021.09 — 2025.07", "GPA: Sample data"],
-      ["示例暑期课程", "数据分析与应用", "Data Analytics Fundamentals", "2024.07", "示例成绩", "使用公开示例数据完成统计分析、可视化和模型评估。"],
+      ["本科教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
+      ["研究生教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
+      ["学术项目", "课程名称", "课程说明", "20XX", "示例成绩", "这是用于展示教育经历的通用课程内容。"],
     ],
     jobs: [
-      ["示例科技公司", "数据分析实习生", "2024.06 — 2024.08", "整理示例运营数据并制作可复用的分析报告。\n使用公开指标比较渠道表现，为团队讨论提供参考。"],
-      ["Example Lab", "课程助教", "2024.03 — 2024.06", "协助组织编程练习并提供基础答疑。\n将常见问题整理为匿名化的学习资料。"],
+      ["公司名称", "项目支持", "20XX — 20XX", "支持团队项目，并参与文档、分析和工作流程改进。"],
+      ["组织名称", "项目协作", "20XX — 20XX", "支持团队项目，并参与文档、分析和工作流程改进。"],
     ],
     projects: [
-      ["示例用户留存分析", "商业智能 · 机器学习", "2024.05 — 2024.06", ["Python", "scikit-learn", "Cross-Validation"], "基于公开数据集构建分类模型，并完成数据清洗与特征工程。\n用交叉验证比较模型表现，记录可复现的实验流程。\n将结果整理为面向非技术读者的建议。", ""],
-      ["示例运营流程设计", "运营管理 · 流程优化", "2024.03 — 2024.04", ["Process Mapping", "Capacity Planning", "ABC Analysis"], "设计从需求到交付的示例流程。\n识别瓶颈并提出可验证的效率改进假设。", ""],
+      ["项目标题", "项目类别", "20XX — 20XX", ["项目规划", "文档记录", "团队协作"], "开发项目解决方案并记录设计过程。", ""],
+      ["项目示例", "项目类别", "20XX — 20XX", ["研究", "设计", "实施"], "开发项目解决方案并记录设计过程。", ""],
     ] satisfies Project[],
-    skillGroups: [["编程", "Python · SQL · TypeScript"], ["数据与系统", "关系数据库 · API · 数据建模"], ["分析", "数据清洗 · 可视化 · 业务分析"], ["工具", "Git · Excel · 文档协作"], ["语言", "中文 · English"]],
-    honorsList: [["示例项目成果", "2024"], ["示例学术荣誉", "2023"]],
-    contact: "联系", availability: "欢迎就数据分析、信息系统与产品设计进行交流。", portfolioLabel: "模板说明", portfolioHref: "https://example.com", kaggleLabel: "查看示例", updatedAt: "示例更新日期", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
+    skillGroups: [["技能", "编程语言"], ["工具", "数据工具"], ["设计", "设计工具"], ["沟通", "沟通技能"], ["语言", "语言技能"]],
+    honorsList: [["奖项名称", "20XX"], ["荣誉称号", "20XX"]],
+    contact: "联系", availability: "欢迎交流项目、合作与职业发展机会。", portfolioLabel: "中文简历", portfolioHref: "/resume_zh.pdf", kaggleLabel: "查看示例", updatedAt: "示例更新日期", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/",
   },
   en: {
-    intro: ["This is a public bilingual portfolio template. Replace the sample text with information you have confirmed is safe to publish.", "It demonstrates common sections for data analytics, information systems, and product work. All names, organisations, and links are examples."],
+    intro: ["This is a modern bilingual personal portfolio template designed for students, researchers, and professionals.", "All names, organisations, links, and content are generic placeholders. Replace them with your own public information."],
     nav: ["Experience", "Projects", "Skills", "Awards", "Contact"],
-    education: "Education", experience: "Internship Experience", projectHeading: "Academic Projects", skills: "Skills", honors: "Honours & Awards",
+    education: "Education", experience: "Experience", projectHeading: "Projects", skills: "Skills", honors: "Awards",
     edu: [
-      ["Example University", "B.S. in Information Systems", "Sep 2021 — Jul 2025", "GPA: Sample data"],
-      ["Sample Institute", "B.S. in Data Analytics", "Sep 2021 — Jul 2025", "GPA: Sample data"],
-      ["Example Summer Course", "Data Analytics in Practice", "Data Analytics Fundamentals", "Jul 2024", "Sample grade", "Used public sample data for statistical analysis, visualisation, and model evaluation."],
+      ["Undergraduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
+      ["Graduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
+      ["Academic Program", "Course Title", "Course Description", "20XX", "Sample grade", "This is a general course description for an education entry."],
     ],
     jobs: [
-      ["Example Technology Company", "Data Analytics Intern", "Jun 2024 — Aug 2024", "Organised sample operational data and prepared reusable analysis reports.\nCompared public metrics to support team discussions."],
-      ["Example Lab", "Teaching Assistant", "Mar 2024 — Jun 2024", "Helped organise programming exercises and answer introductory questions.\nTurned recurring questions into anonymised learning materials."],
+      ["Company Name", "Project Support", "20XX — 20XX", "Supported team projects and contributed to documentation, analysis, and workflow improvement."],
+      ["Organization Name", "Project Collaboration", "20XX — 20XX", "Supported team projects and contributed to documentation, analysis, and workflow improvement."],
     ],
     projects: [
-      ["Example User Retention Analysis", "Business Intelligence · Machine Learning", "May 2024 — Jun 2024", ["Python", "scikit-learn", "Cross-Validation"], "Built a classification model using a public dataset and completed data cleaning and feature engineering.\nCompared model performance with cross-validation and documented a reproducible workflow.\nSummarised findings for a non-technical audience.", ""],
-      ["Example Operations Design", "Operations Management · Process Improvement", "Mar 2024 — Apr 2024", ["Process Mapping", "Capacity Planning", "ABC Analysis"], "Designed a sample workflow from intake to delivery.\nIdentified bottlenecks and proposed testable efficiency improvements.", ""],
+      ["Project Title", "Project Category", "20XX — 20XX", ["Project Planning", "Documentation", "Collaboration"], "Developed a project solution and documented the design process.", ""],
+      ["Project Example", "Project Category", "20XX — 20XX", ["Research", "Design", "Implementation"], "Developed a project solution and documented the design process.", ""],
     ] satisfies Project[],
-    skillGroups: [["Programming", "Python · SQL · TypeScript"], ["Data & Systems", "Relational Databases · APIs · Data Modelling"], ["Analytics", "Data Cleaning · Visualisation · Business Analysis"], ["Tools", "Git · Excel · Documentation"], ["Languages", "Chinese · English"]],
-    honorsList: [["Example Project Outcome", "2024"], ["Example Academic Honour", "2023"]],
-    contact: "Contact", availability: "Open to discussions on data analytics, information systems, and product design.", portfolioLabel: "Template Guide", portfolioHref: "https://example.com", kaggleLabel: "View example", updatedAt: "Sample update date", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
+    skillGroups: [["Skills", "Programming Languages"], ["Tools", "Data Tools"], ["Design", "Design Tools"], ["Communication", "Communication Skills"], ["Languages", "Language Skills"]],
+    honorsList: [["Award Name", "20XX"], ["Recognition Title", "20XX"]],
+    contact: "Contact", availability: "Welcome to discuss projects, collaboration, and professional opportunities.", portfolioLabel: "English Resume", portfolioHref: "/resume_en.pdf", kaggleLabel: "View example", updatedAt: "Sample update date", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/",
   },
 };
 
@@ -650,8 +650,8 @@ export default function Home() {
     setLocale(nextLocale);
   };
   const t = cv[locale];
-  const contactFocusItems = locale === "zh" ? [["数据分析", ""], ["商业分析", ""], ["信息系统", ""], ["机器学习", ""]] : [["Data Analytics", ""], ["Business Analytics", ""], ["Information Systems", ""], ["Machine Learning", ""]];
-  const contactStatusItems = locale === "zh" ? [{ type: "study", title: "示例模板", detail: "请替换为公开信息" }, { type: "graduation", title: "示例日期", detail: "使用年份或月份即可" }, { type: "open", title: "开放交流", detail: "数据项目 · 产品讨论 · 合作机会" }] : [{ type: "study", title: "Sample Template", detail: "Replace with public information" }, { type: "graduation", title: "Sample Date", detail: "Use a year or month" }, { type: "open", title: "Open to Discussions", detail: "Data Projects · Product Conversations · Collaboration" }];
+  const contactFocusItems = locale === "zh" ? [["项目", ""], ["合作", ""], ["创意", ""], ["成长", ""]] : [["Projects", ""], ["Collaboration", ""], ["Creative Work", ""], ["Professional Growth", ""]];
+  const contactStatusItems = locale === "zh" ? [{ type: "study", title: "通用模板", detail: "请替换为公开信息" }, { type: "graduation", title: "示例日期", detail: "使用年份或月份即可" }, { type: "open", title: "开放交流", detail: "项目 · 合作 · 职业机会" }] : [{ type: "study", title: "General Template", detail: "Replace with public information" }, { type: "graduation", title: "Sample Date", detail: "Use a year or month" }, { type: "open", title: "Open to Discussions", detail: "Projects · Collaboration · Professional Opportunities" }];
   useLayoutEffect(() => {
     let isCurrent = true;
     const controller = new AbortController();
@@ -955,14 +955,14 @@ export default function Home() {
   return <main className={`locale-${locale}`}>
     <div className="sticky-nav"><nav><a className="nav-name" href="#about" onClick={(event) => { event.preventDefault(); scrollToSection("about"); }}>{locale === "zh" ? "关于我" : "About"}</a><div className="nav-links"><div className="nav-section-links">{t.nav.map((item, i) => { const id = ["experience", "projects", "skills", "awards", "contact"][i]; return <a key={item} href={`#${id}`} onClick={(event) => { event.preventDefault(); scrollToSection(id); }}>{item}</a>; })}</div><button aria-label="Switch language" onClick={switchLocale}>{locale === "zh" ? "EN" : "中文"}</button></div></nav></div>
     <header className="hero" id="about">
-      <div className="hero-grid"><div className="hero-copy"><div className="hero-intro-main" ref={heroIntroMainRef}><h1 className={locale === "en" ? "english-name" : ""}>{locale === "zh" ? "示例用户" : "Demo User"}</h1><div className="intro">{t.intro.map((paragraph) => <p key={paragraph}>{renderIntroParagraph(paragraph, locale)}</p>)}</div></div><div className="hero-actions"><a className="cta" href="mailto:demo.user@example.com"><MailIcon/><span className="link-label">{locale === "zh" ? "发送邮件" : "Email"}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.portfolioHref} target="_blank" rel="noreferrer"><FileTextIcon/><span className="link-label">{t.portfolioLabel}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.linkedInHref} target="_blank" rel="noreferrer"><LinkedInIcon/><span className="link-label">LinkedIn</span><ExternalLinkIcon/></a><a className="resume-cta" href="https://github.com/demo-user" target="_blank" rel="noreferrer"><GitHubIcon/><span className="link-label">GitHub</span><ExternalLinkIcon/></a></div><div className="graduation-meta"><span className="label">{locale === "zh" ? "示例时间" : "Sample timeline"}</span><b className="value">2024</b></div></div><aside className="portrait-wrap" ref={heroPortraitRef} aria-label={locale === "zh" ? "示例头像占位符" : "Sample avatar placeholder"}><div className="portrait-placeholder" aria-hidden="true">DU</div></aside></div>
+      <div className="hero-grid"><div className="hero-copy"><div className="hero-intro-main" ref={heroIntroMainRef}><h1 className={locale === "en" ? "english-name" : ""}>{locale === "zh" ? "你的姓名" : "Your Name"}</h1><div className="intro">{t.intro.map((paragraph) => <p key={paragraph}>{renderIntroParagraph(paragraph, locale)}</p>)}</div></div><div className="hero-actions"><a className="cta" href="mailto:your.email@example.com"><MailIcon/><span className="link-label">{locale === "zh" ? "发送邮件" : "Email"}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.portfolioHref} target="_blank" rel="noreferrer"><FileTextIcon/><span className="link-label">{t.portfolioLabel}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.linkedInHref} target="_blank" rel="noreferrer"><LinkedInIcon/><span className="link-label">LinkedIn</span><ExternalLinkIcon/></a><a className="resume-cta" href="https://github.com/" target="_blank" rel="noreferrer"><GitHubIcon/><span className="link-label">GitHub</span><ExternalLinkIcon/></a></div><div className="graduation-meta"><span className="label">{locale === "zh" ? "示例日期" : "Sample date"}</span><b className="value">20XX</b></div></div><aside className="portrait-wrap" ref={heroPortraitRef} aria-label={locale === "zh" ? "头像占位符" : "Profile image placeholder"}><div className="portrait-placeholder" aria-hidden="true">YN</div></aside></div>
     </header>
-    <section className="section education resume-section-grid" id="education"><div className="section-label">{t.education}</div><div className="timeline">{t.edu.map((x, i) => <article className={i === 2 ? "summer-school" : ""} key={x[0]}><div><h3>{x[0]}</h3><p className="education-program">{x[1]}</p>{i === 2 && <><p className="course-title">{x[2]}</p><p className="course-description">{locale === "zh" ? <>{x[5].slice(0, -"完成分析与模型评估。".length)}<span className="keep-phrase">完成分析与模型评估。</span></> : x[5]}</p></>}</div><div className="meta">{i === 2 ? <><b className="edu-period">{x[3]}</b><span className="edu-grade-list"><span className="edu-grade">{x[4]}</span></span></> : <><b className="edu-period">{x[2]}</b><span className="edu-grade-list">{String(x[3]).split(" · ").map((line) => <span className="edu-grade" key={line}>{line}</span>)}</span></>}</div></article>)}</div></section>
+    <section className="section education resume-section-grid" id="education"><div className="section-label">{t.education}</div><div className="timeline">{t.edu.map((x, i) => <article className={i === 2 ? "summer-school" : ""} key={x[0]}><div><h3>{x[0]}</h3><p className="education-program">{x[1]}</p>{i === 2 && <><p className="course-title">{x[2]}</p><p className="course-description">{locale === "zh" ? <>{x[5].slice(0, -"通用课程内容。".length)}<span className="keep-phrase">通用课程内容。</span></> : x[5]}</p></>}</div><div className="meta">{i === 2 ? <><b className="edu-period">{x[3]}</b><span className="edu-grade-list"><span className="edu-grade">{x[4]}</span></span></> : <><b className="edu-period">{x[2]}</b><span className="edu-grade-list">{String(x[3]).split(" · ").map((line) => <span className="edu-grade" key={line}>{line}</span>)}</span></>}</div></article>)}</div></section>
     <section className="section experience resume-section-grid" id="experience"><div className="section-label">{t.experience}</div><div className="timeline">{t.jobs.map((x) => <article key={x[0]}><div><h3>{x[0]}</h3><p className="job-title">{x[1]}</p>{x[4] && <p className="job-location">{x[4]}</p>}<span className="experience-mobile-period">{x[2]}</span><ul className="bullet-list">{toBullets(x[3]).map(item => <li key={item}>{item}</li>)}</ul></div><div className="meta"><b>{x[2]}</b></div></article>)}</div></section>
     <section className="section project-section resume-section-grid" id="projects"><div className="section-label">{t.projectHeading}</div><div className="timeline project-timeline">{t.projects.map((x) => <article key={x[0]}><div><h3>{x[0]}</h3><p className="project-subtitle">{x[1]}</p><span className="project-mobile-period">{x[2]}</span><p className="project-methods">{x[3].join(" · ")}</p><ul className="bullet-list">{toBullets(x[4]).map(item => <li key={item}>{renderProjectBullet(item)}</li>)}</ul>{x[5] && <a className="project-link" href={x[5]} target="_blank" rel="noreferrer">{t.kaggleLabel} <span>↗</span></a>}</div><div className="meta"><b>{x[2]}</b></div></article>)}</div></section>
     <section className="section skills-section" id="skills"><div className="section-label">{t.skills}</div><div className="skill-list">{t.skillGroups.map(x => <div key={x[0]}><b>{x[0]}</b><span>{x[1]}</span></div>)}</div></section>
     <section className="section awards-section resume-section-grid" id="awards"><div className="section-label">{t.honors}</div><div className="timeline awards-list">{t.honorsList.map(([name, year]) => <article key={name}><h3>{name}</h3><div className="meta"><b>{year}</b></div></article>)}</div></section>
-    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎就<span className="keep-term">数据分析</span>、<span className="keep-term">信息系统</span>与<span className="keep-term">产品设计</span>进行交流。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">Email</span><a href="mailto:demo.user@example.com">demo.user@example.com <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">LinkedIn</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">Demo profile <span>↗</span></a></div></div><div className="footer-meta"><span>Demo User</span><span>{t.updatedAt}</span><span>© 2026 Demo User</span></div></footer>
+    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎交流<span className="keep-term">项目</span>、<span className="keep-term">合作</span>与<span className="keep-term">职业发展机会</span>。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">Email</span><a href="mailto:your.email@example.com">your.email@example.com <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">LinkedIn</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">Your profile <span>↗</span></a></div></div><div className="footer-meta"><span>Your Name</span><span>{t.updatedAt}</span><span>© 20XX Your Name</span></div></footer>
     <div ref={anchorScrollBufferRef} className={`anchor-scroll-buffer${isContactBufferActive ? " is-active" : ""}`} aria-hidden={!isContactBufferActive}>
       <section className="contact-extension">
         <div className="contact-extension-focus">
