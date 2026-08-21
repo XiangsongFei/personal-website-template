@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type Locale = "zh" | "en";
 type ScrollSnapshot = { sectionId: string; progress: number; hash: string; previousScrollBehavior: string };
+type SavedScrollSnapshot = { scrollY: number; hash: string; bufferHeight: number; bufferMarginBottom: string; isContactBufferActive: boolean; wasDividerAligned: boolean };
 type Project = [title: string, subtitle: string, period: string, methods: string[], description: string, href: string];
 
 const protectedChineseIntroTerms = new Set(["管理信息系统", "本科生", "双学位"]);
@@ -19,6 +20,9 @@ function renderIntroParagraph(paragraph: string, locale: Locale) {
 
 const preferredLanguageStorageKey = "preferredLanguage";
 const scrollPositionStorageKey = "resumeScrollPosition";
+const reloadScrollYStorageKey = "resume-scroll-y";
+const reloadScrollPathStorageKey = "resume-scroll-path";
+const reloadContactBufferStorageKey = "resume-contact-buffer";
 const scrollSectionIds = ["about", "education", "experience", "projects", "skills", "awards", "contact"];
 const dividerAlignedSectionIds = new Set(["experience", "projects", "skills", "awards"]);
 
@@ -600,12 +604,12 @@ const cv = {
       ["Example Lab", "课程助教", "2024.03 — 2024.06", "协助组织编程练习并提供基础答疑。\n将常见问题整理为匿名化的学习资料。"],
     ],
     projects: [
-      ["示例用户留存分析", "商业智能 · 机器学习", "2024.05 — 2024.06", ["Python", "scikit-learn", "Cross-Validation"], "基于公开数据集构建分类模型，并完成数据清洗与特征工程。\n用交叉验证比较模型表现，记录可复现的实验流程。\n将结果整理为面向非技术读者的建议。", ""],
-      ["示例运营流程设计", "运营管理 · 流程优化", "2024.03 — 2024.04", ["Process Mapping", "Capacity Planning", "ABC Analysis"], "设计从需求到交付的示例流程。\n识别瓶颈并提出可验证的效率改进假设。", ""],
+      ["示例分析项目", "数据分析 · 项目实践", "2024.05 — 2024.06", ["数据整理", "指标分析", "结果汇总"], "使用示例数据完成基础整理、分析与结果汇总。\n对不同方案进行比较，并记录主要发现。\n将分析结果整理为简洁的项目说明。", ""],
+      ["示例流程设计项目", "流程设计 · 项目管理", "2024.03 — 2024.04", ["流程梳理", "资源规划", "方案优化"], "设计从需求到交付的示例流程。\n识别关键环节并提出可执行的优化建议。\n将流程与改进思路整理为结构化文档。", ""],
     ] satisfies Project[],
     skillGroups: [["编程", "Python · SQL · TypeScript"], ["数据与系统", "关系数据库 · API · 数据建模"], ["分析", "数据清洗 · 可视化 · 业务分析"], ["工具", "Git · Excel · 文档协作"], ["语言", "中文 · English"]],
     honorsList: [["示例项目成果", "2024"], ["示例学术荣誉", "2023"]],
-    contact: "联系", availability: "欢迎就数据分析、信息系统与产品设计进行交流。", portfolioLabel: "中文简历", portfolioHref: "/resume_zh.pdf", kaggleLabel: "查看示例", updatedAt: "示例更新日期", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
+    contact: "联系", availability: "欢迎就项目实践、专业学习与职业发展进行交流。", portfolioLabel: "中文简历", portfolioHref: "/resume_zh.pdf", kaggleLabel: "查看示例", updatedAt: "示例更新日期", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
   },
   en: {
     intro: ["This is a public bilingual portfolio template. Replace the sample text with information you have confirmed is safe to publish.", "It demonstrates common sections for data analytics, information systems, and product work. All names, organisations, and links are examples."],
@@ -621,12 +625,12 @@ const cv = {
       ["Example Lab", "Teaching Assistant", "Mar 2024 — Jun 2024", "Helped organise programming exercises and answer introductory questions.\nTurned recurring questions into anonymised learning materials."],
     ],
     projects: [
-      ["Example User Retention Analysis", "Business Intelligence · Machine Learning", "May 2024 — Jun 2024", ["Python", "scikit-learn", "Cross-Validation"], "Built a classification model using a public dataset and completed data cleaning and feature engineering.\nCompared model performance with cross-validation and documented a reproducible workflow.\nSummarised findings for a non-technical audience.", ""],
-      ["Example Operations Design", "Operations Management · Process Improvement", "Mar 2024 — Apr 2024", ["Process Mapping", "Capacity Planning", "ABC Analysis"], "Designed a sample workflow from intake to delivery.\nIdentified bottlenecks and proposed testable efficiency improvements.", ""],
+      ["Example Analysis Project", "Data Analysis · Project Practice", "May 2024 — Jun 2024", ["Data Preparation", "Metric Analysis", "Result Summary"], "Used sample data to complete basic preparation, analysis, and result summarization.\nCompared alternative approaches and documented key observations.\nPresented the findings in a concise project summary.", ""],
+      ["Example Process Design Project", "Process Design · Project Management", "Mar 2024 — Apr 2024", ["Process Mapping", "Resource Planning", "Solution Improvement"], "Designed a sample workflow from requirements to delivery.\nIdentified key stages and proposed practical improvements.\nDocumented the workflow and improvement ideas in a structured format.", ""],
     ] satisfies Project[],
     skillGroups: [["Programming", "Python · SQL · TypeScript"], ["Data & Systems", "Relational Databases · APIs · Data Modelling"], ["Analytics", "Data Cleaning · Visualisation · Business Analysis"], ["Tools", "Git · Excel · Documentation"], ["Languages", "Chinese · English"]],
     honorsList: [["Example Project Outcome", "2024"], ["Example Academic Honour", "2023"]],
-    contact: "Contact", availability: "Open to discussions on data analytics, information systems, and product design.", portfolioLabel: "English Resume", portfolioHref: "/resume_en.pdf", kaggleLabel: "View example", updatedAt: "Sample update date", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
+    contact: "Contact", availability: "Open to discussions on projects, learning, and professional development.", portfolioLabel: "English Resume", portfolioHref: "/resume_en.pdf", kaggleLabel: "View example", updatedAt: "Sample update date", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/in/demo-user/",
   },
 };
 
@@ -637,6 +641,9 @@ export default function Home() {
   const pendingScrollRef = useRef<ScrollSnapshot | null>(null);
   const anchorScrollBufferRef = useRef<HTMLDivElement | null>(null);
   const scrollSequenceRef = useRef(0);
+  const contactHashRestoreRef = useRef(false);
+  const hasRestoredReloadScrollRef = useRef(false);
+  const reloadAnchorSnapshotRef = useRef<SavedScrollSnapshot | null>(null);
   const heroIntroMainRef = useRef<HTMLDivElement | null>(null);
   const heroPortraitRef = useRef<HTMLElement | null>(null);
   const [isContactBufferActive, setIsContactBufferActive] = useState(false);
@@ -649,15 +656,50 @@ export default function Home() {
     }
     setLocale(nextLocale);
   };
+  useLayoutEffect(() => {
+    let snapshot: SavedScrollSnapshot | null = null;
+    let savedScrollY = Number.NaN;
+    let savedPath: string | null = null;
+    try {
+      savedScrollY = Number(window.sessionStorage.getItem(reloadScrollYStorageKey));
+      savedPath = window.sessionStorage.getItem(reloadScrollPathStorageKey);
+      const savedBuffer = window.sessionStorage.getItem(reloadContactBufferStorageKey);
+      if (savedBuffer) snapshot = JSON.parse(savedBuffer) as SavedScrollSnapshot;
+      if (!Number.isFinite(savedScrollY) || !snapshot) {
+        const saved = window.sessionStorage.getItem(scrollPositionStorageKey);
+        if (saved) {
+          const legacySnapshot = JSON.parse(saved) as Partial<SavedScrollSnapshot>;
+          if (!Number.isFinite(savedScrollY) && typeof legacySnapshot.scrollY === "number") savedScrollY = legacySnapshot.scrollY;
+          if (!snapshot && typeof legacySnapshot.scrollY === "number") snapshot = legacySnapshot as SavedScrollSnapshot;
+        }
+      }
+      if (!savedPath && snapshot?.hash) savedPath = window.location.pathname + snapshot.hash;
+    } catch {
+      // Direct hash navigation falls back to the canonical anchor position.
+    }
+    if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    const isReload = navigation?.type === "reload";
+    const currentPath = window.location.pathname + window.location.hash;
+    const sectionId = window.location.hash.slice(1);
+    const hasExactAnchorSnapshot = Boolean(isReload && scrollSectionIds.includes(sectionId) && savedPath === currentPath && Number.isFinite(savedScrollY) && savedScrollY >= 0);
+    reloadAnchorSnapshotRef.current = hasExactAnchorSnapshot ? {
+      scrollY: savedScrollY,
+      hash: window.location.hash,
+      bufferHeight: snapshot?.bufferHeight ?? 0,
+      bufferMarginBottom: snapshot?.bufferMarginBottom ?? "",
+      isContactBufferActive: snapshot?.isContactBufferActive ?? sectionId === "contact",
+      wasDividerAligned: snapshot?.wasDividerAligned ?? false,
+    } : null;
+    contactHashRestoreRef.current = window.location.hash === "#contact" && !hasExactAnchorSnapshot;
+  }, []);
   const t = cv[locale];
-  const contactFocusItems = locale === "zh" ? [["数据分析", ""], ["商业分析", ""], ["信息系统", ""], ["机器学习", ""]] : [["Data Analytics", ""], ["Business Analytics", ""], ["Information Systems", ""], ["Machine Learning", ""]];
-  const contactStatusItems = locale === "zh" ? [{ type: "study", title: "示例模板", detail: "请替换为公开信息" }, { type: "graduation", title: "示例日期", detail: "使用年份或月份即可" }, { type: "open", title: "开放交流", detail: "数据项目 · 产品讨论 · 合作机会" }] : [{ type: "study", title: "Sample Template", detail: "Replace with public information" }, { type: "graduation", title: "Sample Date", detail: "Use a year or month" }, { type: "open", title: "Open to Discussions", detail: "Data Projects · Product Conversations · Collaboration" }];
+  const contactFocusItems = locale === "zh" ? [["数据与分析", ""], ["商业与管理", ""], ["技术与系统", ""], ["项目与实践", ""]] : [["Data & Analysis", ""], ["Business & Management", ""], ["Technology & Systems", ""], ["Projects & Practice", ""]];
+  const contactStatusItems = locale === "zh" ? [{ type: "study", title: "示例模板", detail: "请替换为公开信息" }, { type: "graduation", title: "示例日期", detail: "使用年份或月份即可" }, { type: "open", title: "开放交流", detail: "项目交流 · 学习讨论 · 合作机会" }] : [{ type: "study", title: "Example Template", detail: "Replace with public information" }, { type: "graduation", title: "Example Date", detail: "Use a year or month" }, { type: "open", title: "Open to Discussions", detail: "Projects · Learning · Collaboration" }];
   useLayoutEffect(() => {
     let isCurrent = true;
     const controller = new AbortController();
     let savedLocale: string | null = null;
-
-    if ("scrollRestoration" in window.history) window.history.scrollRestoration = "auto";
 
     try {
       savedLocale = window.localStorage.getItem(preferredLanguageStorageKey);
@@ -696,21 +738,111 @@ export default function Home() {
   useEffect(() => {
     const saveScrollPosition = () => {
       try {
-        window.sessionStorage.setItem(scrollPositionStorageKey, String(window.scrollY));
+        const buffer = anchorScrollBufferRef.current;
+        const section = document.getElementById(window.location.hash.slice(1));
+        const nav = document.querySelector(".sticky-nav nav");
+        const snapshot = {
+          scrollY: window.scrollY,
+          hash: window.location.hash,
+          bufferHeight: buffer?.offsetHeight ?? 0,
+          bufferMarginBottom: buffer?.style.marginBottom ?? "",
+          isContactBufferActive: buffer?.classList.contains("is-active") ?? false,
+          wasDividerAligned: Boolean(section && nav && Math.abs(section.getBoundingClientRect().top - nav.getBoundingClientRect().bottom) <= 1),
+        } satisfies SavedScrollSnapshot;
+        window.sessionStorage.setItem(scrollPositionStorageKey, JSON.stringify(snapshot));
+        window.sessionStorage.setItem(reloadScrollYStorageKey, String(snapshot.scrollY));
+        window.sessionStorage.setItem(reloadScrollPathStorageKey, window.location.pathname + window.location.hash);
+        window.sessionStorage.setItem(reloadContactBufferStorageKey, JSON.stringify(snapshot));
       } catch {
         // Native history restoration remains available when session storage is unavailable.
       }
     };
 
-    window.addEventListener("pagehide", saveScrollPosition);
-    window.addEventListener("beforeunload", saveScrollPosition);
+    let saveFrame: number | null = null;
+    const scheduleScrollSave = () => {
+      if (saveFrame !== null) return;
+      saveFrame = requestAnimationFrame(() => {
+        saveFrame = null;
+        saveScrollPosition();
+      });
+    };
+    const saveBeforeUnload = () => {
+      if (saveFrame !== null) cancelAnimationFrame(saveFrame);
+      saveFrame = null;
+      saveScrollPosition();
+    };
+    window.addEventListener("scroll", scheduleScrollSave, { passive: true });
+    window.addEventListener("pagehide", saveBeforeUnload);
+    window.addEventListener("beforeunload", saveBeforeUnload);
     return () => {
-      window.removeEventListener("pagehide", saveScrollPosition);
-      window.removeEventListener("beforeunload", saveScrollPosition);
+      if (saveFrame !== null) cancelAnimationFrame(saveFrame);
+      window.removeEventListener("scroll", scheduleScrollSave);
+      window.removeEventListener("pagehide", saveBeforeUnload);
+      window.removeEventListener("beforeunload", saveBeforeUnload);
     };
   }, []);
   useLayoutEffect(() => {
     if (!isLocaleReady) return;
+    const reloadAnchorSnapshot = reloadAnchorSnapshotRef.current;
+    if (reloadAnchorSnapshot) {
+      hasRestoredReloadScrollRef.current = true;
+      contactHashRestoreRef.current = false;
+      const buffer = anchorScrollBufferRef.current;
+      const sectionId = reloadAnchorSnapshot.hash.slice(1);
+      const shouldRestoreContactBuffer = sectionId === "awards" || sectionId === "contact";
+      if (buffer && shouldRestoreContactBuffer && reloadAnchorSnapshot.bufferHeight > 0) {
+        buffer.style.height = `${reloadAnchorSnapshot.bufferHeight}px`;
+        if (reloadAnchorSnapshot.bufferMarginBottom) buffer.style.marginBottom = reloadAnchorSnapshot.bufferMarginBottom;
+      }
+      if (shouldRestoreContactBuffer) setIsContactBufferActive(reloadAnchorSnapshot.isContactBufferActive);
+      const root = document.documentElement;
+      const previousScrollBehavior = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
+      const restoreExactScroll = () => {
+        const missingScrollRange = Math.max(0, reloadAnchorSnapshot.scrollY - (document.documentElement.scrollHeight - window.innerHeight));
+        if (buffer && missingScrollRange > 0) buffer.style.height = `${buffer.offsetHeight + missingScrollRange}px`;
+        window.scrollTo({ top: reloadAnchorSnapshot.scrollY, behavior: "auto" });
+      };
+      const correctDividerAlignment = () => {
+        if (!reloadAnchorSnapshot.wasDividerAligned) return;
+        const target = document.getElementById(sectionId);
+        const nav = document.querySelector(".sticky-nav nav");
+        if (!target || !nav) return;
+        const correction = target.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
+        if (Math.abs(correction) <= 0.25) return;
+        const targetScroll = window.scrollY + correction;
+        const missingScrollRange = Math.max(0, targetScroll - (document.documentElement.scrollHeight - window.innerHeight));
+        if (buffer && missingScrollRange > 0) buffer.style.height = `${buffer.offsetHeight + missingScrollRange}px`;
+        window.scrollBy({ top: correction, behavior: "auto" });
+      };
+      let restoreBehaviorFrame: number | null = null;
+      let layoutFrame: number | null = null;
+      let verifyAlignmentFrame: number | null = null;
+      const finishReloadRestore = () => {
+        restoreExactScroll();
+        layoutFrame = requestAnimationFrame(() => requestAnimationFrame(() => {
+          correctDividerAlignment();
+          verifyAlignmentFrame = requestAnimationFrame(() => {
+            correctDividerAlignment();
+            restoreBehaviorFrame = requestAnimationFrame(() => {
+              root.style.scrollBehavior = previousScrollBehavior;
+            });
+          });
+        }));
+      };
+      restoreExactScroll();
+      reloadAnchorSnapshotRef.current = null;
+      if (document.readyState === "complete") finishReloadRestore();
+      else window.addEventListener("load", finishReloadRestore, { once: true });
+      return () => {
+        window.removeEventListener("load", finishReloadRestore);
+        if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+        if (verifyAlignmentFrame !== null) cancelAnimationFrame(verifyAlignmentFrame);
+        if (restoreBehaviorFrame !== null) cancelAnimationFrame(restoreBehaviorFrame);
+        root.style.scrollBehavior = previousScrollBehavior;
+      };
+    }
+    if (window.location.hash === "#contact") return;
     let savedScrollPosition: string | null = null;
 
     try {
@@ -719,12 +851,20 @@ export default function Home() {
       return;
     }
 
-    const scrollY = Number(savedScrollPosition);
-    if (!Number.isFinite(scrollY) || scrollY < 0) return;
+    let savedSnapshot = Number(savedScrollPosition);
+    if (!Number.isFinite(savedSnapshot)) {
+      try {
+        const saved = JSON.parse(savedScrollPosition ?? "") as Partial<SavedScrollSnapshot>;
+        savedSnapshot = typeof saved.scrollY === "number" ? saved.scrollY : Number.NaN;
+      } catch {
+        return;
+      }
+    }
+    if (savedSnapshot < 0) return;
     const root = document.documentElement;
     const previousScrollBehavior = root.style.scrollBehavior;
     root.style.scrollBehavior = "auto";
-    window.scrollTo({ top: scrollY, behavior: "auto" });
+    window.scrollTo({ top: savedSnapshot, behavior: "auto" });
     const restoreBehaviorFrame = requestAnimationFrame(() => {
       root.style.scrollBehavior = previousScrollBehavior;
     });
@@ -763,28 +903,64 @@ export default function Home() {
   }, [isLocaleReady, locale]);
   const toBullets = (text: string) => text.includes("\n") ? text.split("\n").map(item => item.trim()).filter(Boolean) : text.split(locale === "zh" ? /[；。]/ : /\.\s+(?=[A-Z])/).map(item => item.trim()).filter(Boolean);
   const renderProjectBullet = (item: string) => <>{item.split(/(80\.75%|0\.80000)/g).map((part, index) => part === "80.75%" || part === "0.80000" ? <strong className="project-result" key={index}>{part}</strong> : part)}</>;
-  const scrollToSection = (id: string) => {
+  const scrollToSection = (id: string, instant = false) => {
     const sequence = ++scrollSequenceRef.current;
     window.history.pushState(null, "", `#${id}`);
     const buffer = anchorScrollBufferRef.current;
-    if (buffer) buffer.style.height = "0px";
+    if (buffer) {
+      buffer.style.height = "0px";
+      buffer.style.removeProperty("margin-bottom");
+      buffer.querySelector<HTMLElement>(".contact-extension-network")?.style.removeProperty("display");
+    }
+    const getBufferMarginCompensation = () => {
+      if (!buffer || window.matchMedia("(max-width: 720px)").matches) return 0;
+      return parseFloat(getComputedStyle(buffer.parentElement ?? document.documentElement).paddingBottom) || 0;
+    };
+    const setAnchorBufferHeight = (height: number) => {
+      if (!buffer) return;
+      buffer.style.height = `${height}px`;
+      const marginCompensation = getBufferMarginCompensation();
+      if (marginCompensation > 0) buffer.style.marginBottom = `-${marginCompensation}px`;
+    };
+    const getMinimumBufferHeight = (requiredExtra: number, includesExtension: boolean) => {
+      const extensionHeight = includesExtension && buffer ? buffer.scrollHeight : 0;
+      return Math.max(extensionHeight, requiredExtra + getBufferMarginCompensation());
+    };
+    const rebalanceBuffer = (target: HTMLElement, nav: Element, includesExtension: boolean) => {
+      if (!buffer || buffer.offsetHeight === 0) return;
+      const marginCompensation = getBufferMarginCompensation();
+      const currentContribution = Math.max(0, buffer.offsetHeight - marginCompensation);
+      const baseMaxScroll = document.documentElement.scrollHeight - window.innerHeight - currentContribution;
+      const desiredScroll = window.scrollY + target.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
+      const requiredExtra = Math.max(0, desiredScroll - baseMaxScroll);
+      setAnchorBufferHeight(getMinimumBufferHeight(requiredExtra, includesExtension));
+    };
     setIsContactBufferActive(false);
-    requestAnimationFrame(() => {
+    const performScroll = () => {
       const element = document.getElementById(id);
       if (!element) return;
 
       if (dividerAlignedSectionIds.has(id)) {
         const nav = document.querySelector(".sticky-nav nav");
         if (!nav) return;
+        const includesExtension = id === "awards";
         const scrollToDivider = () => {
           if (scrollSequenceRef.current !== sequence) return;
           const navBottom = nav.getBoundingClientRect().bottom;
           const sectionTop = element.getBoundingClientRect().top;
-          const correctAlignment = () => {
+          const correctAlignment = (scheduleRebalance = true) => {
             if (scrollSequenceRef.current !== sequence) return;
             const correction = element.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
-            if (Math.abs(correction) > 0.5) window.scrollBy({ top: correction, behavior: "auto" });
+            const threshold = window.matchMedia("(max-width: 720px)").matches ? 0.01 : 0.5;
+            if (Math.abs(correction) > threshold) window.scrollBy({ top: correction, behavior: "auto" });
+            if (scheduleRebalance) requestAnimationFrame(() => requestAnimationFrame(() => rebalanceBuffer(element, nav, includesExtension)));
           };
+          if (instant) {
+            window.scrollBy({ top: sectionTop - navBottom, behavior: "auto" });
+            correctAlignment(false);
+            rebalanceBuffer(element, nav, includesExtension);
+            return;
+          }
           const supportsScrollEnd = "onscrollend" in (window as object);
           if (supportsScrollEnd) {
             window.addEventListener("scrollend", correctAlignment, { once: true });
@@ -806,10 +982,11 @@ export default function Home() {
         const delta = element.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
         const availableScroll = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
         const requiredExtra = Math.max(0, delta - availableScroll);
-        if (buffer && id === "awards" && requiredExtra > 0) {
-          const extensionHeight = buffer.scrollHeight;
-          buffer.style.height = `${requiredExtra + extensionHeight}px`;
-          setIsContactBufferActive(true);
+        const isMobile = window.matchMedia("(max-width: 720px)").matches;
+        const needsBuffer = requiredExtra > 0 || (id === "awards" && isMobile);
+        if (buffer && needsBuffer) {
+          setAnchorBufferHeight(getMinimumBufferHeight(requiredExtra, includesExtension));
+          if (includesExtension) setIsContactBufferActive(true);
           requestAnimationFrame(scrollToDivider);
         } else {
           scrollToDivider();
@@ -822,20 +999,28 @@ export default function Home() {
         if (!nav) return;
         const targetScroll = window.scrollY + element.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
         const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-        const requiredExtra = Math.max(0, targetScroll - maxScroll + 2);
+        const requiredExtra = Math.max(0, targetScroll - maxScroll);
         if (buffer && requiredExtra > 0) {
-          buffer.style.height = `${requiredExtra}px`;
+          setAnchorBufferHeight(getMinimumBufferHeight(requiredExtra, true));
           setIsContactBufferActive(true);
         }
         const scrollToContact = () => {
           if (scrollSequenceRef.current !== sequence) return;
           const navBottom = nav.getBoundingClientRect().bottom;
           const contactTop = element.getBoundingClientRect().top;
-          const correctAlignment = () => {
+          const correctAlignment = (scheduleRebalance = true) => {
             if (scrollSequenceRef.current !== sequence) return;
             const correction = element.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
-            if (Math.abs(correction) > 0.5) window.scrollBy({ top: correction, behavior: "auto" });
+            const threshold = window.matchMedia("(max-width: 720px)").matches ? 0.01 : 0.5;
+            if (Math.abs(correction) > threshold) window.scrollBy({ top: correction, behavior: "auto" });
+            if (scheduleRebalance) requestAnimationFrame(() => requestAnimationFrame(() => rebalanceBuffer(element, nav, true)));
           };
+          if (instant) {
+            window.scrollBy({ top: contactTop - navBottom, behavior: "auto" });
+            correctAlignment(false);
+            rebalanceBuffer(element, nav, true);
+            return;
+          }
           const supportsScrollEnd = "onscrollend" in (window as object);
           if (supportsScrollEnd) {
             window.addEventListener("scrollend", correctAlignment, { once: true });
@@ -854,21 +1039,72 @@ export default function Home() {
           };
           requestAnimationFrame(() => requestAnimationFrame(waitForSettledScroll));
         };
-        requestAnimationFrame(() => requestAnimationFrame(scrollToContact));
+        if (instant) scrollToContact();
+        else requestAnimationFrame(() => requestAnimationFrame(scrollToContact));
         return;
       }
 
       const nav = document.querySelector(".sticky-nav");
       if (!nav) return;
       const targetTop = Math.max(0, window.scrollY + element.getBoundingClientRect().top - nav.getBoundingClientRect().height - 18);
-      requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: targetTop, behavior: "smooth" })));
-    });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        window.scrollTo({ top: targetTop, behavior: "smooth" });
+        if (id !== "projects" || !window.matchMedia("(max-width: 720px)").matches) return;
+        const dividerNav = document.querySelector(".sticky-nav nav");
+        if (!dividerNav) return;
+        const correctProjectsAlignment = () => {
+          if (scrollSequenceRef.current !== sequence) return;
+          const correction = element.getBoundingClientRect().top - dividerNav.getBoundingClientRect().bottom;
+          if (Math.abs(correction) > 0.01) window.scrollBy({ top: correction, behavior: "auto" });
+        };
+        if ("onscrollend" in (window as object)) {
+          window.addEventListener("scrollend", correctProjectsAlignment, { once: true });
+          return;
+        }
+        let previousScrollY = window.scrollY;
+        let settledFrames = 0;
+        const waitForProjectsScroll = () => {
+          const currentScrollY = window.scrollY;
+          settledFrames = Math.abs(currentScrollY - previousScrollY) <= 0.01 ? settledFrames + 1 : 0;
+          previousScrollY = currentScrollY;
+          if (settledFrames >= 2) correctProjectsAlignment();
+          else requestAnimationFrame(waitForProjectsScroll);
+        };
+        requestAnimationFrame(() => requestAnimationFrame(waitForProjectsScroll));
+      }));
+    };
+    if (instant) performScroll();
+    else requestAnimationFrame(performScroll);
   };
+  useLayoutEffect(() => {
+    if (!isLocaleReady || hasRestoredReloadScrollRef.current || window.location.hash !== "#contact" || !contactHashRestoreRef.current) return;
+    const root = document.documentElement;
+    const previousScrollBehavior = root.style.scrollBehavior;
+    root.style.scrollBehavior = "auto";
+    const restoreContact = () => scrollToSection("contact", true);
+    let restoreBehaviorFrame: number | null = null;
+    const finishInitialRestore = () => {
+      restoreContact();
+      restoreBehaviorFrame = requestAnimationFrame(() => {
+        root.style.scrollBehavior = previousScrollBehavior;
+        contactHashRestoreRef.current = false;
+      });
+    };
+    restoreContact();
+    if (document.readyState === "complete") finishInitialRestore();
+    else window.addEventListener("load", finishInitialRestore, { once: true });
+    return () => {
+      window.removeEventListener("load", finishInitialRestore);
+      if (restoreBehaviorFrame !== null) cancelAnimationFrame(restoreBehaviorFrame);
+      root.style.scrollBehavior = previousScrollBehavior;
+    };
+  }, [isLocaleReady, locale]);
   useEffect(() => {
     const releaseBuffer = () => {
       if (!anchorScrollBufferRef.current || anchorScrollBufferRef.current.offsetHeight === 0) return;
       const previousScrollY = window.scrollY;
       anchorScrollBufferRef.current.style.height = "0px";
+      anchorScrollBufferRef.current.style.removeProperty("margin-bottom");
       setIsContactBufferActive(false);
       requestAnimationFrame(() => window.scrollTo({ top: Math.min(previousScrollY, document.documentElement.scrollHeight - window.innerHeight), behavior: "auto" }));
     };
@@ -962,7 +1198,7 @@ export default function Home() {
     <section className="section project-section resume-section-grid" id="projects"><div className="section-label">{t.projectHeading}</div><div className="timeline project-timeline">{t.projects.map((x) => <article key={x[0]}><div><h3>{x[0]}</h3><p className="project-subtitle">{x[1]}</p><span className="project-mobile-period">{x[2]}</span><p className="project-methods">{x[3].join(" · ")}</p><ul className="bullet-list">{toBullets(x[4]).map(item => <li key={item}>{renderProjectBullet(item)}</li>)}</ul>{x[5] && <a className="project-link" href={x[5]} target="_blank" rel="noreferrer">{t.kaggleLabel} <span>↗</span></a>}</div><div className="meta"><b>{x[2]}</b></div></article>)}</div></section>
     <section className="section skills-section" id="skills"><div className="section-label">{t.skills}</div><div className="skill-list">{t.skillGroups.map(x => <div key={x[0]}><b>{x[0]}</b><span>{x[1]}</span></div>)}</div></section>
     <section className="section awards-section resume-section-grid" id="awards"><div className="section-label">{t.honors}</div><div className="timeline awards-list">{t.honorsList.map(([name, year]) => <article key={name}><h3>{name}</h3><div className="meta"><b>{year}</b></div></article>)}</div></section>
-    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎就<span className="keep-term">数据分析</span>、<span className="keep-term">信息系统</span>与<span className="keep-term">产品设计</span>进行交流。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">Email</span><a href="mailto:demo.user@example.com">demo.user@example.com <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">LinkedIn</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">Demo profile <span>↗</span></a></div></div><div className="footer-meta"><span>Demo User</span><span>{t.updatedAt}</span><span>© 2026 Demo User</span></div></footer>
+    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎就<span className="keep-term">项目实践</span>、<span className="keep-term">专业学习</span>与<span className="keep-term">职业发展</span>进行交流。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">Email</span><a href="mailto:demo.user@example.com">demo.user@example.com <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">LinkedIn</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">Demo profile <span>↗</span></a></div></div><div className="footer-meta"><span>Demo User</span><span>{t.updatedAt}</span><span>© 2026 Demo User</span></div></footer>
     <div ref={anchorScrollBufferRef} className={`anchor-scroll-buffer${isContactBufferActive ? " is-active" : ""}`} aria-hidden={!isContactBufferActive}>
       <section className="contact-extension">
         <div className="contact-extension-focus">
