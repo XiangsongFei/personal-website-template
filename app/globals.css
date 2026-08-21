@@ -937,6 +937,84 @@ footer h2 {
   }
 }
 
+@media (max-width: 720px) {
+  .section > .section-label {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.55;
+  }
+
+  footer .contact-section-label {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+
+  .experience .timeline article > div:first-child,
+  .project-section .timeline article > div:first-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    row-gap: 0;
+    min-width: 0;
+  }
+
+  .experience .timeline h3,
+  .project-section .timeline h3 {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+
+  .experience-mobile-period,
+  .project-mobile-period {
+    display: block;
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: baseline;
+    margin-top: 0;
+    color: #383838;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .experience .timeline .job-title,
+  .project-section .project-subtitle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-top: 5px;
+  }
+
+  .experience .job-location {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+  }
+
+  .experience .bullet-list,
+  .project-section .project-methods {
+    grid-column: 1 / -1;
+    margin-top: 7px !important;
+  }
+
+  .project-section .bullet-list,
+  .project-section .project-link {
+    grid-column: 1 / -1;
+  }
+
+  .experience .timeline article + article {
+    margin-top: 20px;
+  }
+
+  .project-section .timeline article + article {
+    margin-top: 20px;
+  }
+}
+
 @media (min-width: 1025px) {
   main {
     padding-bottom: 40px;

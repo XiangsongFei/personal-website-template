@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type Locale = "zh" | "en";
 type ScrollSnapshot = { sectionId: string; progress: number; hash: string; previousScrollBehavior: string };
-type SavedScrollSnapshot = { scrollY: number; hash: string; bufferHeight: number; bufferMarginBottom: string; isContactBufferActive: boolean; wasDividerAligned: boolean };
+type SavedScrollSnapshot = { scrollY: number; hash: string; bufferHeight: number; bufferMarginBottom: string; isContactBufferActive: boolean; wasDividerAligned: boolean; visualSectionId: string | null; visualSectionOffsetFromNavBottom: number | null; visualViewportHeight: number | null; visualViewportOffsetTop: number | null };
 type Project = [title: string, subtitle: string, period: string, methods: string[], description: string, href: string];
 
 const protectedChineseIntroTerms = new Set(["管理信息系统", "本科生", "双学位"]);
@@ -24,6 +24,7 @@ const reloadScrollYStorageKey = "resume-scroll-y";
 const reloadScrollPathStorageKey = "resume-scroll-path";
 const reloadContactBufferStorageKey = "resume-contact-buffer";
 const scrollSectionIds = ["about", "education", "experience", "projects", "skills", "awards", "contact"];
+const visualAnchorSectionIds = ["about", "experience", "projects", "skills", "awards", "contact"];
 const dividerAlignedSectionIds = new Set(["experience", "projects", "skills", "awards"]);
 
 function MailIcon() {
@@ -690,6 +691,10 @@ export default function Home() {
       bufferMarginBottom: snapshot?.bufferMarginBottom ?? "",
       isContactBufferActive: snapshot?.isContactBufferActive ?? sectionId === "contact",
       wasDividerAligned: snapshot?.wasDividerAligned ?? false,
+      visualSectionId: snapshot?.visualSectionId ?? null,
+      visualSectionOffsetFromNavBottom: snapshot?.visualSectionOffsetFromNavBottom ?? null,
+      visualViewportHeight: snapshot?.visualViewportHeight ?? null,
+      visualViewportOffsetTop: snapshot?.visualViewportOffsetTop ?? null,
     } : null;
     contactHashRestoreRef.current = window.location.hash === "#contact" && !hasExactAnchorSnapshot;
   }, []);
@@ -741,6 +746,11 @@ export default function Home() {
         const buffer = anchorScrollBufferRef.current;
         const section = document.getElementById(window.location.hash.slice(1));
         const nav = document.querySelector(".sticky-nav nav");
+        const navBottom = nav?.getBoundingClientRect().bottom;
+        const visualAnchor = navBottom === undefined ? null : visualAnchorSectionIds
+          .map(id => document.getElementById(id))
+          .filter((element): element is HTMLElement => element !== null)
+          .reduce<HTMLElement | null>((nearest, element) => !nearest || Math.abs(element.getBoundingClientRect().top - navBottom) < Math.abs(nearest.getBoundingClientRect().top - navBottom) ? element : nearest, null);
         const snapshot = {
           scrollY: window.scrollY,
           hash: window.location.hash,
@@ -748,6 +758,10 @@ export default function Home() {
           bufferMarginBottom: buffer?.style.marginBottom ?? "",
           isContactBufferActive: buffer?.classList.contains("is-active") ?? false,
           wasDividerAligned: Boolean(section && nav && Math.abs(section.getBoundingClientRect().top - nav.getBoundingClientRect().bottom) <= 1),
+          visualSectionId: visualAnchor?.id ?? null,
+          visualSectionOffsetFromNavBottom: visualAnchor && navBottom !== undefined ? visualAnchor.getBoundingClientRect().top - navBottom : null,
+          visualViewportHeight: window.visualViewport?.height ?? null,
+          visualViewportOffsetTop: window.visualViewport?.offsetTop ?? null,
         } satisfies SavedScrollSnapshot;
         window.sessionStorage.setItem(scrollPositionStorageKey, JSON.stringify(snapshot));
         window.sessionStorage.setItem(reloadScrollYStorageKey, String(snapshot.scrollY));
@@ -815,20 +829,69 @@ export default function Home() {
         if (buffer && missingScrollRange > 0) buffer.style.height = `${buffer.offsetHeight + missingScrollRange}px`;
         window.scrollBy({ top: correction, behavior: "auto" });
       };
+      const correctVisualAnchorOffset = () => {
+        if (!window.matchMedia("(max-width: 720px)").matches || !reloadAnchorSnapshot.visualSectionId || reloadAnchorSnapshot.visualSectionOffsetFromNavBottom === null) return;
+        const target = document.getElementById(reloadAnchorSnapshot.visualSectionId);
+        const nav = document.querySelector(".sticky-nav nav");
+        if (!target || !nav) return;
+        const currentOffset = target.getBoundingClientRect().top - nav.getBoundingClientRect().bottom;
+        const correction = currentOffset - reloadAnchorSnapshot.visualSectionOffsetFromNavBottom;
+        if (Math.abs(correction) <= 0.25) return;
+        const targetScroll = window.scrollY + correction;
+        const missingScrollRange = Math.max(0, targetScroll - (document.documentElement.scrollHeight - window.innerHeight));
+        if (buffer && missingScrollRange > 0) buffer.style.height = `${buffer.offsetHeight + missingScrollRange}px`;
+        window.scrollBy({ top: correction, behavior: "auto" });
+      };
       let restoreBehaviorFrame: number | null = null;
       let layoutFrame: number | null = null;
       let verifyAlignmentFrame: number | null = null;
+      let viewportSettleFrame: number | null = null;
+      let stopViewportObservation: (() => void) | null = null;
+      const finishGeometryRestore = () => {
+        correctVisualAnchorOffset();
+        if (!window.matchMedia("(max-width: 720px)").matches) correctDividerAlignment();
+        verifyAlignmentFrame = requestAnimationFrame(() => {
+          correctVisualAnchorOffset();
+          if (!window.matchMedia("(max-width: 720px)").matches) correctDividerAlignment();
+          restoreBehaviorFrame = requestAnimationFrame(() => {
+            root.style.scrollBehavior = previousScrollBehavior;
+          });
+        });
+      };
       const finishReloadRestore = () => {
         restoreExactScroll();
-        layoutFrame = requestAnimationFrame(() => requestAnimationFrame(() => {
-          correctDividerAlignment();
-          verifyAlignmentFrame = requestAnimationFrame(() => {
-            correctDividerAlignment();
-            restoreBehaviorFrame = requestAnimationFrame(() => {
-              root.style.scrollBehavior = previousScrollBehavior;
-            });
-          });
-        }));
+        if (!window.matchMedia("(max-width: 720px)").matches) {
+          layoutFrame = requestAnimationFrame(() => requestAnimationFrame(finishGeometryRestore));
+          return;
+        }
+        const visualViewport = window.visualViewport;
+        let previousHeight = visualViewport?.height ?? window.innerHeight;
+        let previousOffsetTop = visualViewport?.offsetTop ?? 0;
+        let stableFrames = 0;
+        let checkedFrames = 0;
+        const resetStability = () => { stableFrames = 0; };
+        stopViewportObservation = () => {
+          visualViewport?.removeEventListener("resize", resetStability);
+          visualViewport?.removeEventListener("scroll", resetStability);
+          stopViewportObservation = null;
+        };
+        visualViewport?.addEventListener("resize", resetStability);
+        visualViewport?.addEventListener("scroll", resetStability);
+        const waitForVisualViewport = () => {
+          const height = visualViewport?.height ?? window.innerHeight;
+          const offsetTop = visualViewport?.offsetTop ?? 0;
+          stableFrames = Math.abs(height - previousHeight) <= 0.25 && Math.abs(offsetTop - previousOffsetTop) <= 0.25 ? stableFrames + 1 : 0;
+          previousHeight = height;
+          previousOffsetTop = offsetTop;
+          checkedFrames += 1;
+          if (stableFrames >= 3 || checkedFrames >= 36) {
+            stopViewportObservation?.();
+            finishGeometryRestore();
+            return;
+          }
+          viewportSettleFrame = requestAnimationFrame(waitForVisualViewport);
+        };
+        viewportSettleFrame = requestAnimationFrame(waitForVisualViewport);
       };
       restoreExactScroll();
       reloadAnchorSnapshotRef.current = null;
@@ -838,6 +901,8 @@ export default function Home() {
         window.removeEventListener("load", finishReloadRestore);
         if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
         if (verifyAlignmentFrame !== null) cancelAnimationFrame(verifyAlignmentFrame);
+        if (viewportSettleFrame !== null) cancelAnimationFrame(viewportSettleFrame);
+        stopViewportObservation?.();
         if (restoreBehaviorFrame !== null) cancelAnimationFrame(restoreBehaviorFrame);
         root.style.scrollBehavior = previousScrollBehavior;
       };
