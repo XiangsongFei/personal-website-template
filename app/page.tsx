@@ -18,7 +18,7 @@ function renderIntroParagraph(paragraph: string, locale: Locale) {
   );
 }
 
-const preferredLanguageStorageKey = "preferredLanguage";
+const preferredLanguageSessionKey = "preferredLanguageSession";
 const scrollPositionStorageKey = "resumeScrollPosition";
 const reloadScrollYStorageKey = "resume-scroll-y";
 const reloadScrollPathStorageKey = "resume-scroll-path";
@@ -650,11 +650,13 @@ export default function Home() {
   const [isContactBufferActive, setIsContactBufferActive] = useState(false);
   const setPreferredLocale = (nextLocale: Locale) => {
     hasExplicitLocaleChoiceRef.current = true;
+  
     try {
-      window.localStorage.setItem(preferredLanguageStorageKey, nextLocale);
+      window.sessionStorage.setItem(preferredLanguageSessionKey, nextLocale);
     } catch {
-      // Keep the in-memory choice when storage is unavailable.
+      // Keep the in-memory choice when session storage is unavailable.
     }
+  
     setLocale(nextLocale);
   };
   useLayoutEffect(() => {
@@ -704,37 +706,56 @@ export default function Home() {
   useLayoutEffect(() => {
     let isCurrent = true;
     const controller = new AbortController();
-    let savedLocale: string | null = null;
-
+    let savedSessionLocale: string | null = null;
+  
     try {
-      savedLocale = window.localStorage.getItem(preferredLanguageStorageKey);
+      savedSessionLocale = window.sessionStorage.getItem(preferredLanguageSessionKey);
     } catch {
-      // Fall through to first-visit detection when storage is unavailable.
+      // Fall through to IP detection when session storage is unavailable.
     }
-
-    if (savedLocale === "zh" || savedLocale === "en") {
+  
+    if (savedSessionLocale === "zh" || savedSessionLocale === "en") {
       hasExplicitLocaleChoiceRef.current = true;
-      setLocale(savedLocale);
+      setLocale(savedSessionLocale);
       setIsLocaleReady(true);
-      return () => { isCurrent = false; };
+  
+      return () => {
+        isCurrent = false;
+        controller.abort();
+      };
     }
-
-    const browserFallback: Locale = /^zh(?:-|$)/i.test(navigator.languages?.[0] ?? navigator.language) ? "zh" : "en";
+  
+    const browserFallback: Locale =
+      /^zh(?:-|$)/i.test(navigator.languages?.[0] ?? navigator.language)
+        ? "zh"
+        : "en";
+  
     const applyDetectedLocale = (nextLocale: Locale) => {
       if (isCurrent && !hasExplicitLocaleChoiceRef.current) {
         setLocale(nextLocale);
         setIsLocaleReady(true);
       }
     };
-
-    void fetch("https://ipapi.co/json/", { signal: controller.signal })
+  
+    void fetch("/api/locale", {
+      signal: controller.signal,
+      cache: "no-store",
+    })
       .then(async response => {
         if (!response.ok) throw new Error("IP region lookup failed");
-        const result = await response.json() as { country_code?: string };
-        applyDetectedLocale(result.country_code ? (result.country_code === "CN" ? "zh" : "en") : browserFallback);
+  
+        const result = await response.json() as {
+          locale?: Locale;
+        };
+  
+        applyDetectedLocale(
+          result.locale === "zh" || result.locale === "en"
+            ? result.locale
+            : browserFallback
+        );
       })
       .catch(() => applyDetectedLocale(browserFallback));
-
+  
     return () => {
       isCurrent = false;
       controller.abort();

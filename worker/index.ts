@@ -19,6 +19,12 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+type CloudflareRequest = Request & {
+  cf?: {
+    country?: string;
+  };
+};
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -28,6 +34,22 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/locale") {
+      const country = (request as CloudflareRequest).cf?.country ?? null;
+
+      return Response.json(
+        {
+          country,
+          locale: country === "CN" ? "zh" : "en",
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        },
+      );
+    }
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

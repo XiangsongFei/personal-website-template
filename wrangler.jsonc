@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "site-creator-vinext-starter",
+	"name": "example-cv-public",
 	"compatibility_date": "2026-08-18",
 	"compatibility_flags": [
 		"nodejs_compat"
@@ -18,7 +18,7 @@
 		
 		{
 			"binding": "VINEXT_KV_CACHE",
-			"id": "00000000000000000000000000000000"
+			"id": "02404693688b4bb7aa928b72db1dabce"
 		}
 	]
 }
