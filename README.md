@@ -50,3 +50,15 @@ personal-website-template/
 ├── wrangler.jsonc         # Cloudflare Workers configuration
 ├── package.json
 └── README.md
+
+## 📜 License
+
+This project is licensed under the MIT License.
+
+See the [LICENSE](LICENSE) file for details.
+
+## ⭐ Support
+
+If you find this template useful, consider giving the repository a star.
+
+You are welcome to fork the project and customize it for your own portfolio, resume, or personal website.
