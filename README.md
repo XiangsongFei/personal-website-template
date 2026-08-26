@@ -1,5 +1,7 @@
 # Personal Website Template
 
+English | [简体中文](README.zh-CN.md)
+
 A clean, responsive, and bilingual personal website template for building portfolios, online resumes, and professional profile websites.
 
 Designed to be easy to customize and deploy, this template provides reusable sections for education, experience, projects, skills, awards, contact information, and resume links without requiring you to build a portfolio website from scratch.
