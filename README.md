@@ -50,6 +50,7 @@ personal-website-template/
 ├── wrangler.jsonc         # Cloudflare Workers configuration
 ├── package.json
 └── README.md
+```
 
 ## 📜 License
 
