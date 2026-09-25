@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { resumeContent, type ResumeLocale } from "./data/resume";
+import { loadResumeContent } from "./data/resume-validation";
 
-type Locale = "zh" | "en";
+type Locale = ResumeLocale;
 type ScrollSnapshot = { sectionId: string; progress: number; hash: string; previousScrollBehavior: string };
 type SavedScrollSnapshot = { scrollY: number; hash: string; bufferHeight: number; bufferMarginBottom: string; isContactBufferActive: boolean; wasDividerAligned: boolean; visualSectionId: string | null; visualSectionOffsetFromNavBottom: number | null; visualViewportHeight: number | null; visualViewportOffsetTop: number | null };
-type Project = [title: string, subtitle: string, period: string, methods: string[], description: string, href: string];
 
 const protectedChineseIntroTerms = new Set(["管理信息系统", "本科生", "双学位"]);
 
@@ -590,53 +591,9 @@ function DataNetworkGraphic() {
   </svg>;
 }
 
-const cv = {
-  zh: {
-    intro: ["这是一个可公开发布的双语个人网站模板。请将示例内容替换为你自己的、已确认可公开的信息。", "模板展示数据分析、信息系统和产品项目的常见呈现方式；所有姓名、机构和链接均为示例。"],
-    nav: ["经历", "项目", "技能", "奖项", "联系"],
-    education: "教育背景", experience: "实习经历", projectHeading: "项目经历", skills: "技能", honors: "荣誉奖项",
-    edu: [
-      ["本科教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
-      ["研究生教育", "学位项目", "20XX — 20XX", "GPA: 示例"],
-      ["学术项目", "课程名称", "课程说明", "20XX", "示例成绩", "这是用于展示教育经历的通用课程内容。"],
-    ],
-    jobs: [
-      ["示例科技公司", "数据分析实习生", "2024.06 — 2024.08", "整理示例运营数据并制作可复用的分析报告。\n使用公开指标比较渠道表现，为团队讨论提供参考。"],
-      ["Example Lab", "课程助教", "2024.03 — 2024.06", "协助组织编程练习并提供基础答疑。\n将常见问题整理为匿名化的学习资料。"],
-    ],
-    projects: [
-      ["示例分析项目", "数据分析 · 项目实践", "2024.05 — 2024.06", ["数据整理", "指标分析", "结果汇总"], "使用示例数据完成基础整理、分析与结果汇总。\n对不同方案进行比较，并记录主要发现。\n将分析结果整理为简洁的项目说明。", ""],
-      ["示例流程设计项目", "流程设计 · 项目管理", "2024.03 — 2024.04", ["流程梳理", "资源规划", "方案优化"], "设计从需求到交付的示例流程。\n识别关键环节并提出可执行的优化建议。\n将流程与改进思路整理为结构化文档。", ""],
-    ] satisfies Project[],
-    skillGroups: [["编程", "Python · SQL · TypeScript"], ["数据与系统", "关系数据库 · API · 数据建模"], ["分析", "数据清洗 · 可视化 · 业务分析"], ["工具", "Git · Excel · 文档协作"], ["语言", "中文 · English"]],
-    honorsList: [["示例项目成果", "2024"], ["示例学术荣誉", "2023"]],
-    contact: "联系", availability: "欢迎就项目实践、专业学习与职业发展进行交流。", portfolioLabel: "中文简历", portfolioHref: "/resume_zh.pdf", kaggleLabel: "查看示例", updatedAt: "示例更新日期", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/",
-  },
-  en: {
-    intro: ["This is a public bilingual portfolio template. Replace the sample text with information you have confirmed is safe to publish.", "It demonstrates common sections for data analytics, information systems, and product work. All names, organisations, and links are examples."],
-    nav: ["Experience", "Projects", "Skills", "Awards", "Contact"],
-    education: "Education", experience: "Internship Experience", projectHeading: "Academic Projects", skills: "Skills", honors: "Honours & Awards",
-    edu: [
-      ["Undergraduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
-      ["Graduate Education", "Degree Program", "20XX — 20XX", "GPA: Example"],
-      ["Academic Program", "Course Title", "Course Description", "20XX", "Sample grade", "This is a general course description for an education entry."],
-    ],
-    jobs: [
-      ["Example Technology Company", "Data Analytics Intern", "Jun 2024 — Aug 2024", "Organised sample operational data and prepared reusable analysis reports.\nCompared public metrics to support team discussions."],
-      ["Example Lab", "Teaching Assistant", "Mar 2024 — Jun 2024", "Helped organise programming exercises and answer introductory questions.\nTurned recurring questions into anonymised learning materials."],
-    ],
-    projects: [
-      ["Example Analysis Project", "Data Analysis · Project Practice", "May 2024 — Jun 2024", ["Data Preparation", "Metric Analysis", "Result Summary"], "Used sample data to complete basic preparation, analysis, and result summarization.\nCompared alternative approaches and documented key observations.\nPresented the findings in a concise project summary.", ""],
-      ["Example Process Design Project", "Process Design · Project Management", "Mar 2024 — Apr 2024", ["Process Mapping", "Resource Planning", "Solution Improvement"], "Designed a sample workflow from requirements to delivery.\nIdentified key stages and proposed practical improvements.\nDocumented the workflow and improvement ideas in a structured format.", ""],
-    ] satisfies Project[],
-    skillGroups: [["Programming", "Python · SQL · TypeScript"], ["Data & Systems", "Relational Databases · APIs · Data Modelling"], ["Analytics", "Data Cleaning · Visualisation · Business Analysis"], ["Tools", "Git · Excel · Documentation"], ["Languages", "Chinese · English"]],
-    honorsList: [["Example Project Outcome", "2024"], ["Example Academic Honour", "2023"]],
-    contact: "Contact", availability: "Open to discussions on projects, learning, and professional development.", portfolioLabel: "English Resume", portfolioHref: "/resume_en.pdf", kaggleLabel: "View example", updatedAt: "Sample update date", linkedInLabel: "LinkedIn", linkedInHref: "https://www.linkedin.com/",
-  },
-};
-
 export default function Home() {
   const [locale, setLocale] = useState<Locale>("zh");
+  const [currentResumeContent, setCurrentResumeContent] = useState(resumeContent);
   const [isLocaleReady, setIsLocaleReady] = useState(false);
   const hasExplicitLocaleChoiceRef = useRef(false);
   const pendingScrollRef = useRef<ScrollSnapshot | null>(null);
@@ -700,9 +657,16 @@ export default function Home() {
     } : null;
     contactHashRestoreRef.current = window.location.hash === "#contact" && !hasExactAnchorSnapshot;
   }, []);
-  const t = cv[locale];
-  const contactFocusItems = locale === "zh" ? [["数据与分析", ""], ["商业与管理", ""], ["技术与系统", ""], ["项目与实践", ""]] : [["Data & Analysis", ""], ["Business & Management", ""], ["Technology & Systems", ""], ["Projects & Practice", ""]];
-  const contactStatusItems = locale === "zh" ? [{ type: "study", title: "示例模板", detail: "请替换为公开信息" }, { type: "graduation", title: "示例日期", detail: "使用年份或月份即可" }, { type: "open", title: "开放交流", detail: "项目交流 · 学习讨论 · 合作机会" }] : [{ type: "study", title: "Example Template", detail: "Replace with public information" }, { type: "graduation", title: "Example Date", detail: "Use a year or month" }, { type: "open", title: "Open to Discussions", detail: "Projects · Learning · Collaboration" }];
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadResumeContent(fetch, controller.signal).then(content => {
+      if (!controller.signal.aborted) setCurrentResumeContent(content);
+    });
+    return () => controller.abort();
+  }, []);
+  const t = currentResumeContent.locales[locale];
+  const contactFocusItems = t.contactFocusItems;
+  const contactStatusItems = t.contactStatusItems;
   useLayoutEffect(() => {
     let isCurrent = true;
     const controller = new AbortController();
@@ -1275,24 +1239,24 @@ export default function Home() {
   };
   if (!isLocaleReady) return null;
   return <main className={`locale-${locale}`}>
-    <div className="sticky-nav"><nav><a className="nav-name" href="#about" onClick={(event) => { event.preventDefault(); scrollToSection("about"); }}>{locale === "zh" ? "关于我" : "About"}</a><div className="nav-links"><div className="nav-section-links">{t.nav.map((item, i) => { const id = ["experience", "projects", "skills", "awards", "contact"][i]; return <a key={item} href={`#${id}`} onClick={(event) => { event.preventDefault(); scrollToSection(id); }}>{item}</a>; })}</div><button aria-label="Switch language" onClick={switchLocale}>{locale === "zh" ? "EN" : "中文"}</button></div></nav></div>
+    <div className="sticky-nav"><nav><a className="nav-name" href="#about" onClick={(event) => { event.preventDefault(); scrollToSection("about"); }}>{currentResumeContent.profile.navAboutLabel[locale]}</a><div className="nav-links"><div className="nav-section-links">{t.nav.map((item, i) => { const id = ["experience", "projects", "skills", "awards", "contact"][i]; return <a key={item} href={`#${id}`} onClick={(event) => { event.preventDefault(); scrollToSection(id); }}>{item}</a>; })}</div><button aria-label="Switch language" onClick={switchLocale}>{locale === "zh" ? "EN" : "中文"}</button></div></nav></div>
     <header className="hero" id="about">
-      <div className="hero-grid"><div className="hero-copy"><div className="hero-intro-main" ref={heroIntroMainRef}><h1 className={locale === "en" ? "english-name" : ""}>{locale === "zh" ? "示例用户" : "Demo User"}</h1><div className="intro">{t.intro.map((paragraph) => <p key={paragraph}>{renderIntroParagraph(paragraph, locale)}</p>)}</div></div><div className="hero-actions"><a className="cta" href="mailto:demo.user@example.com"><MailIcon/><span className="link-label">{locale === "zh" ? "发送邮件" : "Email"}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.portfolioHref} target="_blank" rel="noreferrer"><FileTextIcon/><span className="link-label">{t.portfolioLabel}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.linkedInHref} target="_blank" rel="noreferrer"><LinkedInIcon/><span className="link-label">LinkedIn</span><ExternalLinkIcon/></a><a className="resume-cta" href="https://github.com/" target="_blank" rel="noreferrer"><GitHubIcon/><span className="link-label">GitHub</span><ExternalLinkIcon/></a></div><div className="graduation-meta"><span className="label">{locale === "zh" ? "示例时间" : "Sample timeline"}</span><b className="value">2024</b></div></div><aside className="portrait-wrap" ref={heroPortraitRef} aria-label={locale === "zh" ? "示例头像占位符" : "Sample avatar placeholder"}><div className="portrait-placeholder" aria-hidden="true">DU</div></aside></div>
+      <div className="hero-grid"><div className="hero-copy"><div className="hero-intro-main" ref={heroIntroMainRef}><h1 className={locale === "en" ? "english-name" : ""}>{currentResumeContent.profile.name[locale]}</h1><div className="intro">{t.intro.map((paragraph) => <p key={paragraph}>{renderIntroParagraph(paragraph, locale)}</p>)}</div></div><div className="hero-actions"><a className="cta" href={`mailto:${currentResumeContent.publicLinks.email}`}><MailIcon/><span className="link-label">{currentResumeContent.profile.emailActionLabel[locale]}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.portfolioHref} target="_blank" rel="noreferrer"><FileTextIcon/><span className="link-label">{t.portfolioLabel}</span><ExternalLinkIcon/></a><a className="resume-cta" href={t.linkedInHref} target="_blank" rel="noreferrer"><LinkedInIcon/><span className="link-label">{currentResumeContent.publicLinks.linkedInLabel}</span><ExternalLinkIcon/></a><a className="resume-cta" href={currentResumeContent.publicLinks.github} target="_blank" rel="noreferrer"><GitHubIcon/><span className="link-label">{currentResumeContent.publicLinks.githubLabel}</span><ExternalLinkIcon/></a></div><div className="graduation-meta"><span className="label">{currentResumeContent.profile.graduationLabel[locale]}</span><b className="value">{currentResumeContent.profile.graduationValue}</b></div></div><aside className="portrait-wrap" ref={heroPortraitRef} aria-label={currentResumeContent.profile.avatarLabel[locale]}><div className="portrait-placeholder" aria-hidden="true">{currentResumeContent.profile.avatarInitials}</div></aside></div>
     </header>
-    <section className="section education resume-section-grid" id="education"><div className="section-label">{t.education}</div><div className="timeline">{t.edu.map((x, i) => <article className={i === 2 ? "summer-school" : ""} key={x[0]}><div><h3>{x[0]}</h3><p className="education-program">{x[1]}</p>{i === 2 && <><p className="course-title">{x[2]}</p><p className="course-description">{locale === "zh" ? <>{x[5].slice(0, -"完成分析与模型评估。".length)}<span className="keep-phrase">完成分析与模型评估。</span></> : x[5]}</p></>}</div><div className="meta">{i === 2 ? <><b className="edu-period">{x[3]}</b><span className="edu-grade-list"><span className="edu-grade">{x[4]}</span></span></> : <><b className="edu-period">{x[2]}</b><span className="edu-grade-list">{String(x[3]).split(" · ").map((line) => <span className="edu-grade" key={line}>{line}</span>)}</span></>}</div></article>)}</div></section>
-    <section className="section experience resume-section-grid" id="experience"><div className="section-label">{t.experience}</div><div className="timeline">{t.jobs.map((x) => <article key={x[0]}><div><h3>{x[0]}</h3><p className="job-title">{x[1]}</p>{x[4] && <p className="job-location">{x[4]}</p>}<span className="experience-mobile-period">{x[2]}</span><ul className="bullet-list">{toBullets(x[3]).map(item => <li key={item}>{item}</li>)}</ul></div><div className="meta"><b>{x[2]}</b></div></article>)}</div></section>
-    <section className="section project-section resume-section-grid" id="projects"><div className="section-label">{t.projectHeading}</div><div className="timeline project-timeline">{t.projects.map((x) => <article key={x[0]}><div><h3>{x[0]}</h3><p className="project-subtitle">{x[1]}</p><span className="project-mobile-period">{x[2]}</span><p className="project-methods">{x[3].join(" · ")}</p><ul className="bullet-list">{toBullets(x[4]).map(item => <li key={item}>{renderProjectBullet(item)}</li>)}</ul>{x[5] && <a className="project-link" href={x[5]} target="_blank" rel="noreferrer">{t.kaggleLabel} <span>↗</span></a>}</div><div className="meta"><b>{x[2]}</b></div></article>)}</div></section>
-    <section className="section skills-section" id="skills"><div className="section-label">{t.skills}</div><div className="skill-list">{t.skillGroups.map(x => <div key={x[0]}><b>{x[0]}</b><span>{x[1]}</span></div>)}</div></section>
-    <section className="section awards-section resume-section-grid" id="awards"><div className="section-label">{t.honors}</div><div className="timeline awards-list">{t.honorsList.map(([name, year]) => <article key={name}><h3>{name}</h3><div className="meta"><b>{year}</b></div></article>)}</div></section>
-    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎就<span className="keep-term">项目实践</span>、<span className="keep-term">专业学习</span>与<span className="keep-term">职业发展</span>进行交流。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">Email</span><a href="mailto:demo.user@example.com">demo.user@example.com <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">LinkedIn</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">Demo profile <span>↗</span></a></div></div><div className="footer-meta"><span>Demo User</span><span>{t.updatedAt}</span><span>© 2026 Demo User</span></div></footer>
+    <section className="section education resume-section-grid" id="education"><div className="section-label">{t.education}</div><div className="timeline">{t.edu.map((x) => <article className={x.entryType === "summerSchool" ? "summer-school" : ""} key={x.id}><div><h3>{x.title}</h3><p className="education-program">{x.program}</p>{x.entryType === "summerSchool" && <><p className="course-title">{x.courseTitle}</p><p className="course-description">{locale === "zh" ? <>{x.courseDescription!.slice(0, -"完成分析与模型评估。".length)}<span className="keep-phrase">完成分析与模型评估。</span></> : x.courseDescription}</p></>}</div><div className="meta">{x.entryType === "summerSchool" ? <><b className="edu-period">{x.period}</b><span className="edu-grade-list"><span className="edu-grade">{x.grade}</span></span></> : <><b className="edu-period">{x.period}</b><span className="edu-grade-list">{String(x.grade).split(" · ").map((line) => <span className="edu-grade" key={line}>{line}</span>)}</span></>}</div></article>)}</div></section>
+    <section className="section experience resume-section-grid" id="experience"><div className="section-label">{t.experience}</div><div className="timeline">{t.jobs.map((x) => <article key={x.id}><div><h3>{x.organization}</h3><p className="job-title">{x.title}</p>{x.location && <p className="job-location">{x.location}</p>}<span className="experience-mobile-period">{x.period}</span><ul className="bullet-list">{toBullets(x.description).map(item => <li key={item}>{item}</li>)}</ul></div><div className="meta"><b>{x.period}</b></div></article>)}</div></section>
+    <section className="section project-section resume-section-grid" id="projects"><div className="section-label">{t.projectHeading}</div><div className="timeline project-timeline">{t.projects.map((x) => <article key={x.id}><div><h3>{x.title}</h3><p className="project-subtitle">{x.subtitle}</p><span className="project-mobile-period">{x.period}</span><p className="project-methods">{x.methods.join(" · ")}</p><ul className="bullet-list">{toBullets(x.description).map(item => <li key={item}>{renderProjectBullet(item)}</li>)}</ul>{x.href && <a className="project-link" href={x.href} target="_blank" rel="noreferrer">{t.kaggleLabel} <span>↗</span></a>}</div><div className="meta"><b>{x.period}</b></div></article>)}</div></section>
+    <section className="section skills-section" id="skills"><div className="section-label">{t.skills}</div><div className="skill-list">{t.skillGroups.map(x => <div key={x.id}><b>{x.title}</b><span>{x.items}</span></div>)}</div></section>
+    <section className="section awards-section resume-section-grid" id="awards"><div className="section-label">{t.honors}</div><div className="timeline awards-list">{t.honorsList.map((item) => <article key={item.id}><h3>{item.name}</h3><div className="meta"><b>{item.year}</b></div></article>)}</div></section>
+    <footer id="contact"><p className="eyebrow contact-section-label">{t.contact}</p><h2>{locale === "zh" ? <>欢迎就<span className="keep-term">项目实践</span>、<span className="keep-term">专业学习</span>与<span className="keep-term">职业发展</span>进行交流。</> : t.availability}</h2><div className="contact-links"><div className="contact-link-group"><span className="contact-link-label">{currentResumeContent.publicLinks.emailLabel}</span><a href={`mailto:${currentResumeContent.publicLinks.email}`}>{currentResumeContent.publicLinks.email} <span>↗</span></a></div><div className="contact-link-group"><span className="contact-link-label">{currentResumeContent.publicLinks.linkedInLabel}</span><a href={t.linkedInHref} target="_blank" rel="noreferrer">{currentResumeContent.publicLinks.linkedInDisplayName} <span>↗</span></a></div></div><div className="footer-meta"><span>{currentResumeContent.profile.footerName}</span><span>{t.updatedAt}</span><span>{currentResumeContent.profile.copyright}</span></div></footer>
     <div ref={anchorScrollBufferRef} className={`anchor-scroll-buffer${isContactBufferActive ? " is-active" : ""}`} aria-hidden={!isContactBufferActive}>
       <section className="contact-extension">
         <div className="contact-extension-focus">
-          <h3 className="contact-extension-heading">{locale === "zh" ? "当前关注" : "CURRENT FOCUS"}</h3>
+          <h3 className="contact-extension-heading">{currentResumeContent.profile.contactFocusHeading[locale]}</h3>
           <div className="contact-focus-list">{contactFocusItems.map(([primary, secondary]) => <div className="contact-focus-item" key={primary}><p>{primary}</p>{secondary && <span>{secondary}</span>}</div>)}</div>
         </div>
         <div className="contact-extension-status">
-          <h3 className="contact-extension-heading">{locale === "zh" ? "当前状态" : "CURRENT STATUS"}</h3>
+          <h3 className="contact-extension-heading">{currentResumeContent.profile.contactStatusHeading[locale]}</h3>
           <div className="contact-status-list">{contactStatusItems.map(item => <div className="contact-status-item" key={item.title}><span className="contact-status-icon"><ContactStatusIcon type={item.type}/></span><div><p>{item.title}</p><span>{item.detail}</span></div></div>)}</div>
         </div>
         <div className="contact-extension-network"><DataNetworkGraphic/></div>

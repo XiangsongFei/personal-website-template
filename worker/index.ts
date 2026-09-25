@@ -1,8 +1,9 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleResumeApi, isResumeApiPath, type ResumeApiEnv } from "./resume-api";
 
-interface Env {
+interface Env extends ResumeApiEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -34,6 +35,10 @@ type CloudflareRequest = Request & {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (isResumeApiPath(url.pathname)) {
+      return handleResumeApi(request, env);
+    }
 
     if (url.pathname === "/api/locale") {
       const country = (request as CloudflareRequest).cf?.country ?? null;
