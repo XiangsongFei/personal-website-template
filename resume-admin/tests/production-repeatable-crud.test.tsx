@@ -73,6 +73,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
+    uploadResumePdf: vi.fn(async (locale: Locale) => `https://storage.example.test/example-cv/resume_${locale}.pdf`),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile), loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -545,6 +546,89 @@ describe("Batch 6A production repeatable CRUD", () => {
     await screen.findByText("No unsaved changes");
     expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { educationLabel: "Learning" });
     expect(siteText.methods.updateNavigationLabel).toHaveBeenCalledWith(resumeId, expect.any(String), "zh", "经历（更新）");
+  });
+
+  it.each([
+    ["zh", "Chinese Resume PDF", "resume_zh.pdf"],
+    ["en", "English Resume PDF", "resume_en.pdf"],
+  ] as const)("keeps a valid %s PDF selection as a draft and saves its stable public URL only on Save", async (locale, inputName, filename) => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/links" }, repository);
+    const input = await screen.findByLabelText(inputName);
+    const file = new File(["%PDF-1.7 test"], filename, { type: "application/pdf" });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await screen.findByText(`Selected: ${filename}`)).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(methods.uploadResumePdf).not.toHaveBeenCalled();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(locale, file);
+    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, locale, {
+      portfolioHref: `https://storage.example.test/example-cv/resume_${locale}.pdf`,
+    });
+  });
+
+  it.each([
+    ["non-PDF MIME type", new File(["text"], "resume.txt", { type: "text/plain" }), "Resume PDF must be a PDF file."],
+    ["file over 10 MB", new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.pdf", { type: "application/pdf" }), "Resume PDF must be 10 MB or smaller."],
+  ])("rejects a %s selection without uploading", async (_name, file, message) => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/links" }, repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(methods.uploadResumePdf).not.toHaveBeenCalled();
+  });
+
+  it("localizes PDF validation errors in the Chinese admin UI", async () => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/links" }, repository);
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    fireEvent.change(await screen.findByLabelText("中文 简历 PDF"), {
+      target: { files: [new File(["not pdf"], "resume.txt", { type: "text/plain" })] },
+    });
+    expect((await screen.findByRole("alert")).textContent).toBe("简历文件必须是 PDF 格式。");
+    expect(methods.uploadResumePdf).not.toHaveBeenCalled();
+  });
+
+  it("keeps the PDF draft dirty and reports upload failure without writing an invalid href", async () => {
+    const { repository, methods } = makeRepository("skills");
+    methods.uploadResumePdf.mockRejectedValueOnce(new Error("Resume PDF upload failed."));
+    open({ path: "/links" }, repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), {
+      target: { files: [new File(["%PDF"], "resume.pdf", { type: "application/pdf" })] },
+    });
+    save();
+    expect((await screen.findByRole("alert")).textContent).toBe("Resume PDF upload failed.");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(methods.updateSiteText).not.toHaveBeenCalledWith(resumeId, "zh", expect.objectContaining({ portfolioHref: expect.any(String) }));
+  });
+
+  it("retains selected PDF files across route navigation until Save or Cancel", async () => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/links" }, repository);
+    const file = new File(["%PDF"], "keep-this-draft.pdf", { type: "application/pdf" });
+    fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+    await screen.findByRole("heading", { name: "Overview" });
+    fireEvent.click(screen.getByRole("link", { name: "Links & Site Text" }));
+    expect(await screen.findByText("Selected: keep-this-draft.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith("en", file);
+  });
+
+  it("preserves existing PDF hrefs and saves unrelated Links fields without uploading", async () => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/links" }, repository);
+    fireEvent.change(await screen.findByLabelText("GitHub URL"), { target: { value: "https://github.example.test/updated" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(methods.updatePublicLinks).toHaveBeenCalledWith(resumeId, { github: "https://github.example.test/updated" });
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Chinese Resume PDF") as HTMLInputElement).files).toHaveLength(0);
+    expect((screen.getByLabelText("English Resume PDF") as HTMLInputElement).files).toHaveLength(0);
   });
 
   it.each([

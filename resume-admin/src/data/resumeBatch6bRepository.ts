@@ -92,6 +92,18 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     checkedRow(data, resumeId, id);
   }
   return {
+    uploadResumePdf: async (locale: Locale, file: File): Promise<string> => {
+      validateLocale(locale);
+      if (!(file instanceof File) || file.type !== "application/pdf") throw new Error("Resume PDF must be a PDF file.");
+      if (file.size > 10 * 1024 * 1024) throw new Error("Resume PDF must be 10 MB or smaller.");
+      const path = locale === "zh" ? "example-cv/resume_zh.pdf" : "example-cv/resume_en.pdf";
+      const bucket = client.storage.from("resume-files");
+      const { error } = await bucket.upload(path, file, { upsert: true, contentType: "application/pdf" });
+      if (error) throw new Error("Resume PDF upload failed.");
+      const { data } = bucket.getPublicUrl(path);
+      if (!data.publicUrl) throw new Error("Resume PDF public URL was not returned.");
+      return data.publicUrl;
+    },
     updateProjectPosition: (resumeId: string, id: string, position: number) => updatePosition("projects", resumeId, id, position),
     insertProject: (resumeId: string, position: number) => insertParent("projects", resumeId, position),
     updateProjectTranslation: (resumeId: string, id: string, locale: Locale, value: ProjectItem["translations"][Locale]) => persistTranslation(client, "projects", resumeId, id, locale, value, "update"),

@@ -74,12 +74,15 @@ const EditorContext = createContext<{
   onReloadAdditional: ((section: EditableRepeatableSection) => Promise<EditableSectionItem[]>) | null;
   repository: ResumeRepository | null; onProfileSaved: ((row: UpdatedProfileRow) => void) | null;
   onProfileTranslationSaved: ((row: UpdatedProfileTranslationRow) => void) | null;
+  pdfFiles: Partial<Record<Locale, File>>; setPdfFiles: Dispatch<SetStateAction<Partial<Record<Locale, File>>>>;
+  pdfErrors: Partial<Record<Locale, string>>; setPdfErrors: Dispatch<SetStateAction<Partial<Record<Locale, string>>>>;
   profileEditor: ProfileEditorState | null;
   setProfileEditor: Dispatch<SetStateAction<ProfileEditorState | null>>;
   educationEditor: EducationEditorState | null;
   setEducationEditor: Dispatch<SetStateAction<EducationEditorState | null>>;
   profileRequests: ProfileRequests;
 }>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalResumeId: null, onAdditionalChanged: null, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
+  pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
   profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } } });
 
 function useLocalDraft<T>(section: SectionKey, initial: T) {
@@ -193,10 +196,11 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
   )}</div>;
 }
 
-function SectionForm<T>({ section, title, description, initial, children, productionSave }: {
+function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void) => ReactNode;
   productionSave?: (draft: T, baseline: T) => Promise<T | void>;
+  productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -207,7 +211,7 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   const submit = async () => {
     if (editor.production && productionSave) {
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
-      try { const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; editor.confirm(confirmed); editor.setMessage("Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
+      try { const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; editor.confirm(confirmed); onProductionSaved?.(); editor.setMessage("Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : "Production save failed. Your changes remain unsaved; please retry."); }
       finally { saveLock.current = false; setSaving(false); }
       return;
@@ -219,10 +223,10 @@ function SectionForm<T>({ section, title, description, initial, children, produc
     <form className="editor-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {children(editor.draft, editor.update)}
       <div className="save-bar">
-        <span className={editor.dirty ? "state-pill is-dirty" : "state-pill"}>{editor.dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+        <span className={editor.dirty || productionDirty ? "state-pill is-dirty" : "state-pill"}>{editor.dirty || productionDirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
         <div className="save-actions">
-          <button type="button" className="button secondary" onClick={editor.cancel} disabled={!editor.dirty || saving}>{t("Cancel changes")}</button>
-          <button type="submit" className="button primary" disabled={!editor.dirty || saving}>{saving ? t("Saving…") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
+          <button type="button" className="button secondary" onClick={() => { editor.cancel(); onProductionCancel?.(); }} disabled={!(editor.dirty || productionDirty) || saving}>{t("Cancel changes")}</button>
+          <button type="submit" className="button primary" disabled={!(editor.dirty || productionDirty) || saving}>{saving ? t("Saving…") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
         </div>
       </div>
       <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(editor.notice) || (editor.production ? t("Local draft only. Production writes are disabled for this section.") : t("Fixture saves stay in this browser session."))}</p>
@@ -1153,14 +1157,21 @@ async function saveContactProduction(repository: ResumeRepository, resumeId: str
   return confirmed;
 }
 
-async function saveLinksProduction(repository: ResumeRepository, resumeId: string, next: LinksSection, baseline: LinksSection): Promise<LinksSection> {
+async function saveLinksProduction(repository: ResumeRepository, resumeId: string, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}): Promise<LinksSection> {
   if (!repository.updatePublicLinks || !repository.updateSiteText || !repository.updateNavigationLabel) throw new Error("Links & Site Text production writes are unavailable.");
   const shared: Partial<LinksSection["shared"]> = {};
   for (const key of Object.keys(next.shared) as (keyof LinksSection["shared"])[]) if (next.shared[key] !== baseline.shared[key]) shared[key] = next.shared[key];
   if (Object.keys(shared).length) await repository.updatePublicLinks(resumeId, shared);
+  const confirmed = structuredClone(next);
   for (const locale of ["zh", "en"] as const) {
     const fields: Partial<LinksSection["translations"][Locale]> = {};
     for (const key of Object.keys(next.translations[locale]) as (keyof LinksSection["translations"][Locale])[]) if (next.translations[locale][key] !== baseline.translations[locale][key]) fields[key] = next.translations[locale][key];
+    const file = pdfFiles[locale];
+    if (file) {
+      if (!repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
+      fields.portfolioHref = await repository.uploadResumePdf(locale, file);
+      confirmed.translations[locale].portfolioHref = fields.portfolioHref;
+    }
     if (Object.keys(fields).length) await repository.updateSiteText(resumeId, locale, fields);
   }
   for (const item of next.navigation) {
@@ -1169,7 +1180,27 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     for (const locale of ["zh", "en"] as const) if (item.translations[locale].label !== old.translations[locale].label) await repository.updateNavigationLabel(resumeId, item.id, locale, item.translations[locale].label);
   }
   if (next.navigation.length !== baseline.navigation.length) throw new Error("Navigation structure is fixed; only labels may be edited.");
-  return next;
+  return confirmed;
+}
+
+function ResumePdfUpload({ locale, href, file, error, onSelect }: {
+  locale: Locale; href: string; file?: File; error?: string; onSelect: (file?: File) => void;
+}) {
+  const { t } = useUiLocale();
+  const language = locale === "zh" ? t("Chinese") : t("English");
+  const currentName = href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "";
+  return <div className="field pdf-upload-field">
+    <span className="pdf-upload-label">{language} {t("Resume PDF")}</span>
+    <div className="pdf-upload-status">
+      {href ? <a href={href} target="_blank" rel="noreferrer">{t("Current PDF")}: {currentName}</a> : <span>{t("No PDF uploaded")}</span>}
+      {file && <span className="pdf-selected-name">{t("Selected")}: {file.name}</span>}
+      <label className="button secondary pdf-file-picker">{t("Select PDF")}
+        <input type="file" accept="application/pdf,.pdf" aria-label={`${language} ${t("Resume PDF")}`}
+          onChange={event => { onSelect(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
+      </label>
+    </div>
+    {error && <p className="field-hint pdf-upload-error" role="alert">{t(error)}</p>}
+  </div>;
 }
 
 function Contact() {
@@ -1213,15 +1244,34 @@ function Links() {
   const context = useContext(EditorContext);
   const { sections } = context;
   const { t } = useUiLocale();
+  const { pdfFiles, setPdfFiles, pdfErrors, setPdfErrors } = context;
+  const selectPdf = (locale: Locale, file: File | undefined) => {
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setPdfFiles(current => ({ ...current, [locale]: undefined }));
+      setPdfErrors(current => ({ ...current, [locale]: "Resume PDF must be a PDF file." }));
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setPdfFiles(current => ({ ...current, [locale]: undefined }));
+      setPdfErrors(current => ({ ...current, [locale]: "Resume PDF must be 10 MB or smaller." }));
+      return;
+    }
+    setPdfFiles(current => ({ ...current, [locale]: file }));
+    setPdfErrors(current => ({ ...current, [locale]: undefined }));
+  };
+  const clearPdfDrafts = () => { setPdfFiles({}); setPdfErrors({}); };
   return <SectionForm section="links" title="Links & Site Text" description="Edit shared contact links, locale-specific public labels and URLs, and the five fixed navigation labels." initial={sections.links}
-    productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveLinksProduction(context.repository!, context.additionalResumeId!, draft, baseline) : undefined}>
+    productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
+    productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveLinksProduction(context.repository!, context.additionalResumeId!, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange) => <>
       <div className="panel"><h2>{t("Shared public links")}</h2><SharedFields idPrefix="links-shared" value={links.shared}
         onChange={shared => onChange({ ...links, shared })}
         fields={[{ key: "email", label: "Email address", type: "email" }, { key: "github", label: "GitHub URL", type: "url" }, { key: "githubLabel", label: "GitHub label" }, { key: "linkedInDisplayName", label: "LinkedIn display name" }, { key: "emailLabel", label: "Email label" }, { key: "linkedInLabel", label: "LinkedIn action label" }]} /></div>
       <div className="panel"><h2>{t("Localized links and headings")}</h2><BilingualFields idPrefix="links-localized" value={links.translations}
         onChange={translations => onChange({ ...links, translations })}
-        fields={[{ key: "portfolioLabel", label: "Resume PDF label" }, { key: "portfolioHref", label: "Resume PDF path" }, { key: "linkedInHref", label: "LinkedIn URL", type: "url" }, { key: "linkedInLabel", label: "LinkedIn text" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated date label" }, { key: "educationLabel", label: "Education heading" }, { key: "experienceLabel", label: "Experience heading" }, { key: "projectHeading", label: "Projects heading" }, { key: "skillsLabel", label: "Skills heading" }, { key: "honorsLabel", label: "Awards heading" }]} /></div>
+        footer={locale => <ResumePdfUpload locale={locale} href={links.translations[locale].portfolioHref} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />}
+        fields={[{ key: "portfolioLabel", label: "Resume PDF label" }, { key: "linkedInHref", label: "LinkedIn URL", type: "url" }, { key: "linkedInLabel", label: "LinkedIn text" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated date label" }, { key: "educationLabel", label: "Education heading" }, { key: "experienceLabel", label: "Experience heading" }, { key: "projectHeading", label: "Projects heading" }, { key: "skillsLabel", label: "Skills heading" }, { key: "honorsLabel", label: "Awards heading" }]} /></div>
       <div className="panel"><h2>{t("Navigation labels")}</h2><p>{t("The five destinations are fixed in the public page. Only their bilingual labels are editable here.")}</p>
         <div className="navigation-labels">{links.navigation.map(item => <div className="navigation-label-row" key={item.id}><strong>{item.sectionId}</strong>
           <BilingualFields idPrefix={item.id} value={item.translations} fields={[{ key: "label", label: "Navigation label" }]}
@@ -1288,6 +1338,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const [educationEditor, setEducationEditor] = useState<EducationEditorState | null>(() => resume ? initialEducationEditorState(resume.sections.education) : null);
   const educationInitialized = useRef(resume !== null);
   const profileRequests = useRef<ProfileRequests>({ shared: false, translations: { zh: false, en: false } }).current;
+  const [pdfFiles, setPdfFiles] = useState<Partial<Record<Locale, File>>>({});
+  const [pdfErrors, setPdfErrors] = useState<Partial<Record<Locale, string>>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const firstLink = useRef<HTMLAnchorElement>(null);
@@ -1325,7 +1377,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     productionMode, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
     educationSection, educationResumeId: educationResumeId ?? resume?.resumeId ?? null, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted,
     additionalSections, additionalResumeId, onAdditionalChanged, onReloadAdditional,
-    repository, onProfileSaved, onProfileTranslationSaved, profileEditor, setProfileEditor,
+    repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     educationEditor, setEducationEditor, profileRequests }}><div className="app-shell">
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">

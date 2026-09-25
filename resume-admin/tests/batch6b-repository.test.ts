@@ -7,6 +7,9 @@ const projectId = "project-id";
 const methodId = "method-id";
 function database() {
   const calls: Array<{ table: string; op: string; payload?: Record<string, unknown>; filters: Array<[string, unknown]> }> = [];
+  const storageUpload = vi.fn(async (): Promise<{ error: Error | null }> => ({ error: null }));
+  const getPublicUrl = vi.fn((path: string) => ({ data: { publicUrl: `https://storage.example.test/${path}` } }));
+  const storageFrom = vi.fn(() => ({ upload: storageUpload, getPublicUrl }));
   const from = vi.fn((table: string) => {
     const call = { table, op: "select", filters: [] as Array<[string, unknown]>, payload: undefined as Record<string, unknown> | undefined };
     calls.push(call);
@@ -31,7 +34,7 @@ function database() {
     q.then = ((resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve({ data: response(), error: null }).then(resolve, reject)) as never;
     return q;
   });
-  return { client: { from } as unknown as SupabaseClient, calls };
+  return { client: { from, storage: { from: storageFrom } } as unknown as SupabaseClient, calls, storageUpload, getPublicUrl, storageFrom };
 }
 
 describe("Batch 6B scoped repository writes", () => {
@@ -74,5 +77,29 @@ describe("Batch 6B scoped repository writes", () => {
     const db = database(); const repo = createResumeRepository(db.client);
     await repo.updatePublicLinks!(resumeId, { github: "https://github.example.test/new" });
     expect(db.calls[0]).toMatchObject({ table: "resume_public_links", op: "update", payload: { github: "https://github.example.test/new" }, filters: [["resume_id", resumeId]] });
+  });
+  it.each([
+    ["zh", "example-cv/resume_zh.pdf"],
+    ["en", "example-cv/resume_en.pdf"],
+  ] as const)("uploads the %s PDF to its stable public bucket path with replacement enabled", async (locale, path) => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    const file = new File(["%PDF-1.7 test"], `resume-${locale}.pdf`, { type: "application/pdf" });
+    await expect(repo.uploadResumePdf!(locale, file)).resolves.toBe(`https://storage.example.test/${path}`);
+    expect(db.storageFrom).toHaveBeenCalledWith("resume-files");
+    expect(db.storageUpload).toHaveBeenCalledWith(path, file, { upsert: true, contentType: "application/pdf" });
+    expect(db.getPublicUrl).toHaveBeenCalledWith(path);
+  });
+  it("rejects invalid PDF files and files above 10 MB before contacting Storage", async () => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    await expect(repo.uploadResumePdf!("zh", new File(["not pdf"], "bad.txt", { type: "text/plain" }))).rejects.toThrow("Resume PDF must be a PDF file.");
+    const tooLarge = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.pdf", { type: "application/pdf" });
+    await expect(repo.uploadResumePdf!("en", tooLarge)).rejects.toThrow("Resume PDF must be 10 MB or smaller.");
+    expect(db.storageUpload).not.toHaveBeenCalled();
+  });
+  it("does not claim success when the Storage upload fails", async () => {
+    const db = database(); db.storageUpload.mockResolvedValueOnce({ error: new Error("storage unavailable") });
+    const repo = createResumeRepository(db.client);
+    await expect(repo.uploadResumePdf!("zh", new File(["pdf"], "resume.pdf", { type: "application/pdf" }))).rejects.toThrow("Resume PDF upload failed.");
+    expect(db.getPublicUrl).not.toHaveBeenCalled();
   });
 });

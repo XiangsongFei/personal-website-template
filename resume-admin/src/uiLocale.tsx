@@ -78,6 +78,10 @@ Object.assign(dictionary, {
   "Loading Awards...": "正在加载荣誉奖项……", "Unable to load Awards.": "无法加载荣誉奖项。",
   "Unsaved edits were reverted. Incomplete production-created entries remain visible so they can be completed or deleted.": "未保存的修改已撤销。尚未完成的生产条目仍会显示，您可以继续补全或删除。",
   "Changes reverted to the last confirmed production values.": "已恢复到上次确认的生产数据。",
+  "Resume PDF": "简历 PDF", "Current PDF": "当前 PDF", "No PDF uploaded": "尚未上传 PDF", "Selected": "已选择",
+  "Select PDF": "选择 PDF", "Resume PDF must be a PDF file.": "简历文件必须是 PDF 格式。",
+  "Resume PDF must be 10 MB or smaller.": "简历 PDF 文件不能超过 10 MB。", "Resume PDF upload failed.": "简历 PDF 上传失败。",
+  "Resume PDF upload is unavailable.": "简历 PDF 上传功能当前不可用。", "Resume PDF public URL was not returned.": "未能获取简历 PDF 的公开链接。",
 });
 
 export function readUiLocale(): UiLocale {
