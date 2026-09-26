@@ -40,7 +40,8 @@ function open(path: string, productionRepeatable = false) {
 function preview() { return within(screen.getByTestId("resume-preview")); }
 function previewNode() { return screen.getByTestId("resume-preview"); }
 function setPreviewLocale(locale: "Chinese" | "English") {
-  fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: `Preview ${locale}` }));
+  const expected = locale === "Chinese" ? "zh" : "en";
+  if (previewNode().getAttribute("lang") !== expected) fireEvent.click(preview().getByRole("button", { name: "Preview language" }));
 }
 
 afterEach(() => {

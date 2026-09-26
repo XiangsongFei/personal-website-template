@@ -104,6 +104,7 @@ export function mapEditorSnapshotToResumeContent(snapshot: ResumePreviewSnapshot
       graduationValue: profile.shared.graduationValue,
       avatarLabel: { zh: profile.translations.zh.avatarLabel, en: profile.translations.en.avatarLabel },
       avatarInitials: profile.shared.avatarInitials,
+      photoUrl: profile.shared.photoUrl,
       contactFocusHeading: { zh: profile.translations.zh.contactFocusHeading, en: profile.translations.en.contactFocusHeading },
       contactStatusHeading: { zh: profile.translations.zh.contactStatusHeading, en: profile.translations.en.contactStatusHeading },
       footerName: profile.shared.footerName,

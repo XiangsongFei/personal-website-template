@@ -7,7 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient } from "../src/auth/supabase";
-import { mapResumeRows, type ResumeRows } from "../src/data/resumeMapper";
+import { mapProfileRows, mapResumeRows, type ResumeRows } from "../src/data/resumeMapper";
 import { createResumeRepository, resumeTables, type ResumeRepository, type ResumeSectionRepository } from "../src/data/resumeRepository";
 
 const resumeId = "runtime-resume-id";
@@ -16,7 +16,7 @@ const r = (fields: Record<string, unknown>) => ({ resume_id: resumeId, ...fields
 function databaseRows(): ResumeRows {
   const rows = Object.fromEntries(resumeTables.map(table => [table, []])) as unknown as ResumeRows;
   rows.resume_sites = [{ id: resumeId, site_key: "example-cv", is_published: false, updated_at: "2026-01-01T00:00:00Z" }];
-  rows.resume_profile = [r({ graduation_value: "2024", avatar_initials: "XY", footer_name: "Actual Name", copyright: "© Actual Name" })];
+  rows.resume_profile = [r({ graduation_value: "2024", avatar_initials: "XY", photo_url: null, footer_name: "Actual Name", copyright: "© Actual Name" })];
   rows.resume_public_links = [r({ email: "real@example.test", github: "https://example.test/git", github_label: "GitHub", linkedin_display_name: "Real profile", email_label: "Email", linkedin_label: "LinkedIn" })];
   for (const locale of ["zh", "en"] as const) {
     rows.resume_profile_translations.push(r({ locale, name: locale === "zh" ? "真实姓名" : "Actual Name", nav_about_label: "About", email_action_label: "Email", graduation_label: "Graduation", avatar_label: "Avatar", contact_focus_heading: "Focus", contact_status_heading: "Status" }));
@@ -121,6 +121,15 @@ describe("Stage 4D normalized read and mapping", () => {
     expect(education[0].translations.en.courseTitle).toBeNull();
   });
 
+  it("maps the shared nullable Profile photo URL from the Profile row", () => {
+    const rows = databaseRows();
+    rows.resume_profile[0].photo_url = "https://storage.example.test/profile-images/example-cv/profile/photo.webp";
+    expect(mapProfileRows(rows.resume_profile, rows.resume_profile_translations, resumeId).shared.photoUrl)
+      .toBe("https://storage.example.test/profile-images/example-cv/profile/photo.webp");
+    rows.resume_profile[0].photo_url = null;
+    expect(mapProfileRows(rows.resume_profile, rows.resume_profile_translations, resumeId).shared.photoUrl).toBeNull();
+  });
+
   it("preserves UUIDs, nullable source keys, multiline text, and deterministic position ties in section parsers", async () => {
     const rows = databaseRows();
     const uuid = "a4b55180-98d2-4f2a-9a7e-01c831a3c157";
@@ -196,7 +205,7 @@ describe("Stage 4D normalized read and mapping", () => {
 
   it("exposes scoped reads and explicitly allowlisted production mutation paths", () => {
     const repository = createResumeRepository(mockSupabase(databaseRows()).client);
-    expect(Object.keys(repository)).toEqual(["updateEditableEntryPosition", "insertEditableEntry", "updateEditableTranslation", "insertEditableTranslation", "readEditableTranslation", "deleteEditableTranslation", "deleteEditableEntry", "uploadResumePdf", "updateProjectPosition", "insertProject", "updateProjectTranslation", "insertProjectTranslation", "readProjectTranslation", "deleteProjectTranslation", "deleteProject", "updateProjectMethod", "insertProjectMethod", "readProjectMethodByPosition", "deleteProjectMethod", "updateFocusPosition", "insertFocus", "updateFocusTranslation", "insertFocusTranslation", "readFocusTranslation", "deleteFocusTranslation", "deleteFocus", "updateStatusPosition", "updateStatusType", "insertStatus", "updateStatusTranslation", "insertStatusTranslation", "readStatusTranslation", "deleteStatusTranslation", "deleteStatus", "updateContactAvailability", "updateContactLabel", "updatePublicLinks", "updateSiteText", "updateNavigationLabel", "load", "loadSiteMetadata", "loadOverview", "loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks", "updateProfileSharedDetails", "updateProfileTranslation", "updateEducationEntry", "updateEducationTranslation", "insertEducationEntry", "insertEducationTranslation", "readEducationTranslation", "deleteEducationEntry"]);
+    expect(Object.keys(repository)).toEqual(["updateEditableEntryPosition", "insertEditableEntry", "updateEditableTranslation", "insertEditableTranslation", "readEditableTranslation", "deleteEditableTranslation", "deleteEditableEntry", "uploadProfilePhoto", "uploadResumePdf", "updateProjectPosition", "insertProject", "updateProjectTranslation", "insertProjectTranslation", "readProjectTranslation", "deleteProjectTranslation", "deleteProject", "updateProjectMethod", "insertProjectMethod", "readProjectMethodByPosition", "deleteProjectMethod", "updateFocusPosition", "insertFocus", "updateFocusTranslation", "insertFocusTranslation", "readFocusTranslation", "deleteFocusTranslation", "deleteFocus", "updateStatusPosition", "updateStatusType", "insertStatus", "updateStatusTranslation", "insertStatusTranslation", "readStatusTranslation", "deleteStatusTranslation", "deleteStatus", "updateContactAvailability", "updateContactLabel", "updatePublicLinks", "updateSiteText", "updateNavigationLabel", "load", "loadSiteMetadata", "loadOverview", "loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks", "updateProfileSharedDetails", "updateProfileTranslation", "updateEducationEntry", "updateEducationTranslation", "insertEducationEntry", "insertEducationTranslation", "readEducationTranslation", "deleteEducationEntry"]);
     const source = readFileSync(resolve("src/data/resumeRepository.ts"), "utf8");
     expect(source).not.toMatch(/\.upsert\s*\(/);
     expect(source.match(/\.update\s*\(/g)).toHaveLength(6);

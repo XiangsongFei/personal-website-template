@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient, AdminIdentity } from "../src/auth/supabase";
 import type { ResumeRepository } from "../src/data/resumeRepository";
 import { fixtureSections } from "../src/fixtures";
+import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
 const admin: AdminIdentity = { id: "admin-id", email: "admin@example.test", sessionKey: "admin-session" };
 
@@ -32,18 +33,74 @@ function show(client: AdminAuthClient, path = "/overview") {
   const resumeRepository: ResumeRepository = { load: vi.fn().mockResolvedValue({
     resumeId: "test-resume-id", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: fixtureSections,
   }), updateProfileSharedDetails: vi.fn(), updateProfileTranslation: vi.fn() };
-  return render(<MemoryRouter initialEntries={[path]}><AuthGate client={client} resumeRepository={resumeRepository} /></MemoryRouter>);
+  return render(<UiLocaleProvider><MemoryRouter initialEntries={[path]}><PathnameProbe /><AuthGate client={client} resumeRepository={resumeRepository} /></MemoryRouter></UiLocaleProvider>);
 }
 
-afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
+function PathnameProbe() { const location = useLocation(); return <div data-testid="current-path">{location.pathname}</div>; }
+
+beforeEach(() => { window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.spyOn(window, "scrollTo").mockImplementation(() => {}); });
+afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Stage 4C auth gate", () => {
-  it("does not mount the CMS during session restoration", () => {
+  it("does not present an intermediate page while restoring a session", () => {
     const auth = mockClient();
     vi.mocked(auth.client.getIdentity).mockReturnValue(deferred<AdminIdentity | null>().promise);
-    show(auth.client);
-    expect(screen.getByRole("heading", { name: "Checking access" })).toBeTruthy();
+    show(auth.client, "/experience");
+    expect(screen.getByTestId("current-path").textContent).toBe("/experience");
+    expect(document.querySelector(".auth-screen, .app-shell")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+  });
+
+  it("does not mount the CMS until admin authorization is confirmed", async () => {
+    const auth = mockClient(admin, true);
+    const check = deferred<boolean>();
+    vi.mocked(auth.client.isResumeAdmin).mockReturnValue(check.promise);
+    show(auth.client, "/profile");
+    await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
+    expect(screen.getByTestId("current-path").textContent).toBe("/profile");
+    expect(document.querySelector(".auth-screen, .app-shell")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+    check.resolve(true);
+    expect(await screen.findByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+  });
+
+  it("preserves every supported deep route through session and admin checks", async () => {
+    const routes = [
+      ["/overview", "Overview"], ["/profile", "Profile"], ["/introduction", "Introduction"],
+      ["/education", "Education"], ["/experience", "Experience"], ["/projects", "Projects"],
+      ["/skills", "Skills"], ["/awards", "Awards"], ["/contact", "Contact"], ["/links", "Links & Site Text"],
+    ] as const;
+    for (const [path, title] of routes) {
+      cleanup();
+      window.sessionStorage.clear();
+      const auth = mockClient(admin, true);
+      show(auth.client, path);
+      expect(await screen.findByRole("heading", { name: title, level: 1 })).toBeTruthy();
+      expect(screen.getByTestId("current-path").textContent).toBe(path);
+    }
+  });
+
+  it("uses the not-found route only for an invalid path without rewriting its URL", async () => {
+    const auth = mockClient(admin, true);
+    show(auth.client, "/not-a-cms-section");
+    expect(await screen.findByRole("heading", { name: "Section not found" })).toBeTruthy();
+    expect(screen.getByTestId("current-path").textContent).toBe("/not-a-cms-section");
+  });
+
+  it("preserves the saved UI locale through session and authorization restoration", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const auth = mockClient(admin, true);
+    const check = deferred<boolean>();
+    vi.mocked(auth.client.isResumeAdmin).mockReturnValue(check.promise);
+    show(auth.client, "/education");
+    await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
+    expect(document.querySelector(".auth-screen, .app-shell")).toBeNull();
+    expect(screen.getByTestId("current-path").textContent).toBe("/education");
+    check.resolve(true);
+    expect(await screen.findByRole("heading", { name: "教育经历" })).toBeTruthy();
   });
 
   it("shows sign-in when there is no session", async () => {

@@ -80,7 +80,7 @@ describe("route-first Profile loading", () => {
     const reads: string[] = [];
     const row = (fields: Record<string, unknown>) => ({ resume_id: resumeId, ...fields });
     const tableRows: Record<string, Record<string, unknown>[]> = {
-      resume_profile: [row({ graduation_value: "2024", avatar_initials: "XY", footer_name: "Actual", copyright: "© Actual" })],
+      resume_profile: [row({ graduation_value: "2024", avatar_initials: "XY", photo_url: null, footer_name: "Actual", copyright: "© Actual" })],
       resume_profile_translations: (["zh", "en"] as const).map(locale => row({ locale, name: locale === "zh" ? "真实姓名" : "Actual Name", nav_about_label: "About", email_action_label: "Email", graduation_label: "Graduation", avatar_label: "Avatar", contact_focus_heading: "Focus", contact_status_heading: "Status" })),
     };
     const from = vi.fn((table: string) => ({
@@ -198,20 +198,20 @@ describe("route-first Profile loading", () => {
     show(repo, "/profile", store);
     await screen.findByLabelText("English Name");
     change("Graduation value", "2035");
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    await screen.findByText("Shared profile details saved to production.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    await screen.findByText("Profile changes saved.");
     let cached = store.getSectionState(identity.sessionKey, resumeId, "profile");
     expect(cached).toMatchObject({ status: "loaded", value: { shared: updatedShared.shared, translations: fixtureSections.profile.translations } });
 
     change("Chinese Name", "新中文名");
-    fireEvent.click(screen.getByRole("button", { name: "Save Chinese" }));
-    await screen.findByText("Chinese profile translation saved to production.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    await screen.findByText("Profile changes saved.");
     cached = store.getSectionState(identity.sessionKey, resumeId, "profile");
     expect(cached).toMatchObject({ status: "loaded", value: { shared: updatedShared.shared, translations: { zh: updatedZh.translation, en: fixtureSections.profile.translations.en } } });
 
     change("English Name", "New English Name");
-    fireEvent.click(screen.getByRole("button", { name: "Save English" }));
-    await screen.findByText("English profile translation saved to production.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    await screen.findByText("Profile changes saved.");
     cached = store.getSectionState(identity.sessionKey, resumeId, "profile");
     expect(cached).toMatchObject({ status: "loaded", value: { shared: updatedShared.shared, translations: { zh: updatedZh.translation, en: updatedEn.translation } } });
     expect(repo.load).not.toHaveBeenCalled();
@@ -225,10 +225,10 @@ describe("route-first Profile loading", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(inputValue("Graduation value")).toBe(fixtureSections.profile.shared.graduationValue);
     change("Chinese Name", "临时中文名");
-    fireEvent.click(screen.getByRole("button", { name: "Cancel Chinese" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(inputValue("Chinese Name")).toBe(fixtureSections.profile.translations.zh.name);
     change("English Name", "Temporary English name");
-    fireEvent.click(screen.getByRole("button", { name: "Cancel English" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(inputValue("English Name")).toBe(fixtureSections.profile.translations.en.name);
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     expect(repo.loadProfile).toHaveBeenCalledOnce();

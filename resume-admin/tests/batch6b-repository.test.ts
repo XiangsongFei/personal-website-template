@@ -7,7 +7,10 @@ const projectId = "project-id";
 const methodId = "method-id";
 function database() {
   const calls: Array<{ table: string; op: string; payload?: Record<string, unknown>; filters: Array<[string, unknown]> }> = [];
-  const storageUpload = vi.fn(async (): Promise<{ error: Error | null }> => ({ error: null }));
+  const storageUpload = vi.fn(async (_path: string, _file: File, _options?: Record<string, unknown>): Promise<{ error: Error | null }> => {
+    void _path; void _file; void _options;
+    return { error: null };
+  });
   const getPublicUrl = vi.fn((path: string) => ({ data: { publicUrl: `https://storage.example.test/${path}` } }));
   const storageFrom = vi.fn(() => ({ upload: storageUpload, getPublicUrl }));
   const from = vi.fn((table: string) => {
@@ -38,6 +41,31 @@ function database() {
 }
 
 describe("Batch 6B scoped repository writes", () => {
+  it("uploads validated profile photos to unique non-overwriting paths in profile-images", async () => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    const first = new File(["photo"], "portrait.webp", { type: "image/webp" });
+    const second = new File(["photo2"], "portrait.webp", { type: "image/webp" });
+    const firstUrl = await repo.uploadProfilePhoto!(first);
+    await repo.uploadProfilePhoto!(second);
+    expect(db.storageFrom).toHaveBeenCalledWith("profile-images");
+    const paths = db.storageUpload.mock.calls.map(call => call[0]);
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.webp$/i);
+    expect(paths[1]).not.toBe(paths[0]);
+    expect(db.storageUpload).toHaveBeenNthCalledWith(1, paths[0], first, { upsert: false, contentType: "image/webp", cacheControl: "31536000" });
+    expect(db.getPublicUrl).toHaveBeenCalledWith(paths[1]);
+    expect(firstUrl).toBe(`https://storage.example.test/${paths[0]}`);
+  });
+  it("accepts only JPEG, PNG, and WebP up to 5 MB before contacting Storage", async () => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    for (const type of ["image/jpeg", "image/png", "image/webp"]) {
+      await expect(repo.uploadProfilePhoto!(new File(["image"], "photo", { type }))).resolves.toMatch(/storage\.example\.test/);
+    }
+    await expect(repo.uploadProfilePhoto!(new File(["svg"], "photo.svg", { type: "image/svg+xml" }))).rejects.toThrow("JPG, PNG, or WebP");
+    const tooLarge = new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.png", { type: "image/png" });
+    await expect(repo.uploadProfilePhoto!(tooLarge)).rejects.toThrow("5 MB or smaller");
+    expect(db.storageUpload).toHaveBeenCalledTimes(3);
+  });
   it("inserts methods with actual project identity and returns the database UUID", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
     const row = await repo.insertProjectMethod!(resumeId, projectId, "zh", 2, "新方法");

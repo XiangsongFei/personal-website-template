@@ -15,7 +15,7 @@ const row = (fields: Record<string, unknown>) => ({ resume_id: resumeId, ...fiel
 function snapshot(withSecondEducation = false) {
   const rows = Object.fromEntries(resumeTables.map(table => [table, []])) as unknown as ResumeRows;
   rows.resume_sites = [{ id: resumeId, site_key: "example-cv", is_published: false, updated_at: null }];
-  rows.resume_profile = [row({ graduation_value: "2024", avatar_initials: "XY", footer_name: "Name", copyright: "© Name" })];
+  rows.resume_profile = [row({ graduation_value: "2024", avatar_initials: "XY", photo_url: null, footer_name: "Name", copyright: "© Name" })];
   rows.resume_public_links = [row({ email: "a@example.test", github: "https://example.test", github_label: "GitHub", linkedin_display_name: "Profile", email_label: "Email", linkedin_label: "LinkedIn" })];
   for (const locale of ["zh", "en"] as const) {
     rows.resume_profile_translations.push(row({ locale, name: locale === "zh" ? "姓名" : "Name", nav_about_label: "About", email_action_label: "Email", graduation_label: "Graduation", avatar_label: "Avatar", contact_focus_heading: "Focus", contact_status_heading: "Status" }));
@@ -249,7 +249,10 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
     expect(repo.insertEducationEntry).not.toHaveBeenCalled();
     expect(window.localStorage.length).toBe(0);
-    expect(window.sessionStorage.length).toBe(0);
+    const sessionKeys = Array.from({ length: window.sessionStorage.length }, (_, index) => window.sessionStorage.key(index) ?? "");
+    expect(sessionKeys.every(key => key.startsWith("example-cv-cms:ui:"))).toBe(true);
+    expect(Array.from({ length: window.sessionStorage.length }, (_, index) => window.sessionStorage.getItem(window.sessionStorage.key(index) ?? "")))
+      .not.toContain("Navigation draft");
   });
 
   it("discards Education drafts after an application remount", () => {

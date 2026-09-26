@@ -1,15 +1,10 @@
 .preview-route-main{max-width:none;padding-left:clamp(20px,2vw,32px);padding-right:clamp(20px,2vw,32px)}
-.editor-preview-layout{width:100%;max-width:1240px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) clamp(500px,calc(50vw - 220px),520px);align-items:start;gap:32px}
+.editor-preview-layout{width:100%;max-width:1310px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) clamp(500px,calc(50vw - 220px),582px);align-items:start;gap:32px}
 .editor-preview-pane{min-width:0}
 .editor-preview-pane>.page-section{max-width:800px;margin-inline:auto}
 .editor-preview-toggle{display:none}
 .resume-preview-panel{position:sticky;top:calc(var(--shell-header-height,68px) + 18px);min-width:0;max-height:calc(100vh - var(--shell-header-height,68px) - 36px);display:flex;flex-direction:column;background:#fff;color:#202020}
-.resume-preview-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:0 0 12px;border-bottom:1px solid #e9e8e4}
-.resume-preview-toolbar h2{margin:0;color:#555;font-size:12px;font-weight:550;letter-spacing:.04em}
-.resume-preview-languages{display:flex;align-items:center;gap:7px;color:#aaa;font-size:12px}
-.resume-preview-languages button{padding:2px 0;border:0;background:transparent;color:#777;font:inherit;cursor:pointer}
-.resume-preview-languages button[aria-pressed=true]{color:#222;font-weight:650}
-.resume-preview-viewport{min-height:320px;margin-top:14px;overflow:auto;overscroll-behavior:contain;background:#fff}
+.resume-preview-viewport{min-height:320px;margin-top:0;overflow:auto;overscroll-behavior:contain;background:#fff}
 .resume-preview-stage{position:relative;width:100%;overflow:hidden}
 .resume-preview-canvas{width:980px;transform-origin:top left}
 .resume-preview-page{width:980px;background:#fff;color:#202020;font-family:Arial,"PingFang SC","Microsoft YaHei",sans-serif;font-size:16px;line-height:1.65}
@@ -34,12 +29,13 @@
 .resume-preview-action-icon.is-github{fill:currentColor;stroke:none}
 .resume-preview-external-icon{width:14px;height:14px;flex-basis:14px}
 .resume-preview-graduation{margin-top:18px;color:#202020}
-.resume-preview-graduation span,.resume-preview-graduation strong{display:block}
-.resume-preview-graduation span{color:rgb(0 0 0 / 55%);font-size:13px}
+.resume-preview-graduation>span,.resume-preview-graduation>strong{display:block}
+.resume-preview-graduation>span{color:rgb(0 0 0 / 55%);font-size:13px}
 .resume-preview-graduation strong{margin-top:4px;font-size:16px;font-weight:600}
 .resume-preview-graduation::after{display:block;width:48px;height:1px;margin-top:10px;background:currentColor;content:""}
 .resume-preview-portrait{justify-self:end;align-self:center;width:100%;height:345px;transform:translateY(-20px)}
 .resume-preview-portrait>div{display:grid;width:100%;height:100%;place-items:center;border:1px solid #d5d5d5;border-radius:50%;color:#555;font:400 84px/1 Georgia,"Songti SC",serif;letter-spacing:-.08em}
+.resume-preview-portrait>img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}
 .resume-preview-education-section{display:grid;max-width:980px;margin:0 auto;padding:34px 49px 36px;grid-template-columns:100px minmax(0,1fr) 220px;column-gap:18px;border-bottom:1px solid #dedede}
 .resume-preview-section-label{padding-top:0;color:#333;font-size:14px;font-weight:600;letter-spacing:.3px;line-height:1.65}
 .resume-preview-education-list{display:contents}
@@ -55,7 +51,8 @@
 .resume-preview-education-meta>span{display:flex;flex-direction:column;color:#666}
 .resume-preview-grade{display:block}
 .resume-preview-empty{color:#777;font-size:12px}
-@media(max-width:1439px){.editor-preview-layout{display:block;max-width:800px}.editor-preview-toggle{display:flex;gap:16px;margin:0 auto 22px;width:100%;max-width:800px;border-bottom:1px solid #eee}.editor-preview-toggle button{padding:8px 0;border:0;border-bottom:1px solid transparent;background:transparent;color:#777;font:inherit;font-size:14px;cursor:pointer}.editor-preview-toggle button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:600}.editor-preview-layout[data-preview-view=editor] .resume-preview-panel{display:none}.editor-preview-layout[data-preview-view=preview] .editor-preview-pane{display:none}.editor-preview-layout[data-preview-view=preview]{max-width:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-panel{position:static;max-height:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-viewport{width:100%;max-width:680px;max-height:calc(100vh - 190px);margin-right:auto;margin-left:auto}}
+@media(max-width:1439px){.editor-preview-layout{display:block;max-width:800px}.editor-preview-toggle{display:flex;gap:16px;margin:0 auto 22px;width:100%;max-width:800px;border-bottom:1px solid #eee}.editor-preview-toggle button{padding:8px 0;border:0;border-bottom:1px solid transparent;background:transparent;color:#777;font:inherit;font-size:14px;cursor:pointer}.editor-preview-toggle button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:600}.editor-preview-layout[data-preview-view=editor] .resume-preview-panel{display:none}.editor-preview-layout[data-preview-view=preview] .editor-preview-pane{display:none}.editor-preview-layout[data-preview-view=preview]{max-width:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-panel{position:static;max-height:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-viewport{width:100%;max-width:760px;max-height:calc(100vh - 190px);margin-right:auto;margin-left:auto}}
+@media(max-width:1439px){.preview-route-main{padding-top:18px}.editor-preview-toggle{position:sticky;top:var(--shell-header-height,68px);z-index:24;background:#fff}}
 @media(min-width:1440px){.preview-route-main{padding-left:16px;padding-right:16px}}
 @media(max-width:720px){.resume-preview-nav-links{gap:12px}.resume-preview-nav-links a{display:none}.resume-preview-hero-grid{grid-template-columns:1fr;gap:24px;margin-top:36px}.resume-preview-portrait{justify-self:center;order:-1;width:250px;height:260px;transform:none}.resume-preview-portrait>div{font-size:68px}.resume-preview-education-section{grid-template-columns:1fr;gap:18px;padding-top:42px;padding-bottom:42px}.resume-preview-education-list{display:block}.resume-preview-education-list article{grid-template-columns:1fr;gap:7px}.resume-preview-education-list article+article{margin-top:32px}.resume-preview-education-meta{align-items:flex-start;text-align:left}}
 .resume-preview-content-section{display:grid;max-width:980px;margin:0 auto;padding:34px 49px 36px;grid-template-columns:100px minmax(0,1fr) 120px;column-gap:18px;border-bottom:1px solid #dedede}
@@ -77,12 +74,12 @@
 .resume-preview-projects .resume-preview-timeline article+article{margin-top:34px}
 .resume-preview-projects .resume-preview-bullets{margin-top:10px}
 .resume-preview-project-link{display:inline-flex;align-items:center;gap:6px;margin-top:11px;padding-bottom:2px;border-bottom:1px solid #555;color:#333;font-size:13px;font-weight:600;text-decoration:none}
-.resume-preview-project-link span{font-size:15px}
+.resume-preview-project-link>span:last-child{font-size:15px}
 .resume-preview-skills{grid-template-columns:100px minmax(0,1fr)}
 .resume-preview-skill-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:42px;row-gap:28px}
-.resume-preview-skill-list>div strong,.resume-preview-skill-list>div span{display:block}
+.resume-preview-skill-list>div>strong,.resume-preview-skill-list>div>span{display:block}
 .resume-preview-skill-list>div strong{color:#303030;font-size:14px;font-weight:600;line-height:1.5}
-.resume-preview-skill-list>div span{margin-top:7px;color:#666;font-size:14px;line-height:1.6}
+.resume-preview-skill-list>div>span{margin-top:7px;color:#666;font-size:14px;line-height:1.6}
 @media(max-width:720px){.resume-preview-content-section{grid-template-columns:1fr;gap:18px;padding-top:42px;padding-bottom:42px}.resume-preview-timeline{display:block}.resume-preview-timeline article{grid-template-columns:1fr;gap:0}.resume-preview-timeline article+article{margin-top:20px}.resume-preview-entry-meta{display:none}.resume-preview-mobile-period{display:block;margin-top:2px;color:#666;font-size:12px;font-weight:600}.resume-preview-experience .resume-preview-bullets{margin-top:9px}.resume-preview-projects .resume-preview-timeline article+article{margin-top:30px}.resume-preview-projects .resume-preview-mobile-period{margin-top:4px}.resume-preview-skill-list{grid-template-columns:1fr;row-gap:26px}}
 .resume-preview-awards{grid-template-columns:100px minmax(0,1fr) 120px}
 .resume-preview-award-list{display:contents}
@@ -116,3 +113,6 @@
 .resume-preview-status-list article{display:grid;grid-template-columns:20px minmax(0,1fr);gap:9px;align-items:start}
 .resume-preview-status-list article>span{display:grid;width:18px;height:18px;place-items:center;border:1px solid #d7d7d7;border-radius:50%;color:#777;font-size:10px;line-height:1}
 @media(max-width:720px){.resume-preview-awards{grid-template-columns:1fr;gap:18px}.resume-preview-award-list{display:block}.resume-preview-award-list article{grid-template-columns:minmax(0,1fr) auto;gap:12px}.resume-preview-contact-area footer{padding:42px 24px 24px}.resume-preview-contact-area footer h2{font-size:25px}.resume-preview-contact-links{flex-direction:column;gap:22px}.resume-preview-footer-meta{flex-direction:column;gap:5px}.resume-preview-contact-extension{grid-template-columns:1fr;gap:30px;padding:28px 24px 40px}}
+.resume-preview-page .resume-preview-marked-text[data-preview-modified="true"]{background-color:rgba(245,183,66,.42);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.resume-preview-page .resume-preview-marked-text[data-preview-review="true"]{text-decoration:underline dotted #92763e;text-underline-offset:2px}
+.resume-preview-page .resume-preview-portrait[data-preview-modified="true"]{outline:1px solid rgba(202,148,46,.65);outline-offset:-1px}

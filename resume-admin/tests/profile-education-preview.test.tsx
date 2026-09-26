@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
@@ -53,6 +54,11 @@ function preview() {
   return within(screen.getByTestId("resume-preview"));
 }
 
+function setPreviewLocale(locale: "zh" | "en") {
+  const viewport = screen.getByTestId("resume-preview");
+  if (viewport.getAttribute("lang") !== locale) fireEvent.click(within(viewport).getByRole("button", { name: "Preview language" }));
+}
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
@@ -61,6 +67,30 @@ afterEach(() => {
 });
 
 describe("Profile and Education live-preview prototype", () => {
+  it("keeps the workspace tabs sticky below the shell header and omits the duplicate Preview toolbar", () => {
+    open("/profile");
+    const tabs = screen.getByRole("group", { name: "Editor or preview view" });
+    const editorTab = within(tabs).getByRole("button", { name: "Editor" });
+    const previewTab = within(tabs).getByRole("button", { name: "Preview" });
+    expect(editorTab.getAttribute("aria-pressed")).toBe("true");
+
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    expect(css).toContain(".preview-route-main{padding-top:18px}");
+    expect(css).toContain("position:sticky;top:var(--shell-header-height,68px);z-index:24;background:#fff");
+    expect(css).toContain(".editor-preview-toggle button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:600}");
+
+    fireEvent.click(previewTab);
+    expect(previewTab.getAttribute("aria-pressed")).toBe("true");
+    const panel = screen.getByRole("complementary", { name: "Resume preview" });
+    expect(panel.querySelector(".resume-preview-toolbar")).toBeNull();
+    expect(panel.querySelector(".resume-preview-languages")).toBeNull();
+    expect(panel.querySelector(".resume-preview-nav-links button[aria-label='Preview language']")).toBeTruthy();
+    expect(css).toContain(".resume-preview-viewport{min-height:320px;margin-top:0");
+
+    fireEvent.click(editorTab);
+    expect(editorTab.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("renders Profile as a public-style hero followed by the beginning of Education", () => {
     open("/profile");
     expect(preview().getByRole("navigation", { name: "Public resume navigation" })).toBeTruthy();
@@ -83,7 +113,7 @@ describe("Profile and Education live-preview prototype", () => {
 
   it("updates the Profile preview immediately for an unsaved Chinese edit", () => {
     open("/profile");
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview Chinese" }));
+    setPreviewLocale("zh");
     fireEvent.change(screen.getByLabelText("Chinese Name"), { target: { value: "新的中文姓名" } });
     expect(preview().getByRole("heading", { level: 1, name: "新的中文姓名" })).toBeTruthy();
   });
@@ -103,22 +133,23 @@ describe("Profile and Education live-preview prototype", () => {
 
   it("keeps preview language independent from the admin UI language", () => {
     open("/profile");
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview Chinese" }));
+    setPreviewLocale("zh");
     fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
     expect(preview().getByRole("heading", { level: 1, name: "示例用户" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "个人资料" })).toBeTruthy();
-    expect(within(screen.getByTestId("resume-preview").closest("aside")!).getByRole("button", { name: "预览中文" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("resume-preview").getAttribute("lang")).toBe("zh");
+    expect(preview().getByRole("button", { name: "预览语言" })).toBeTruthy();
   });
 
   it("updates Education text and locale immediately without repository writes", () => {
     const repo = repository();
     open("/education", repo);
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview Chinese" }));
+    setPreviewLocale("zh");
     fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "未保存的中文教育" } });
     expect(preview().getByRole("heading", { level: 3, name: "未保存的中文教育" })).toBeTruthy();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Unsaved English education" } });
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview English" }));
+    setPreviewLocale("en");
     expect(preview().getByRole("heading", { level: 3, name: "Unsaved English education" })).toBeTruthy();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
   });
@@ -132,7 +163,7 @@ describe("Profile and Education live-preview prototype", () => {
     fireEvent.change(chineseTitles[chineseTitles.length - 1], { target: { value: "新增教育条目" } });
     fireEvent.change(englishTitles[englishTitles.length - 1], { target: { value: "New education entry" } });
     expect(preview().getByRole("heading", { level: 3, name: "New education entry" })).toBeTruthy();
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview Chinese" }));
+    setPreviewLocale("zh");
     expect(preview().getByRole("heading", { level: 3, name: "新增教育条目" })).toBeTruthy();
     expect(repo.insertEducationEntry).not.toHaveBeenCalled();
   });
@@ -156,30 +187,30 @@ describe("Profile and Education live-preview prototype", () => {
     fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Unsaved until click" } });
     expect(preview().getByRole("heading", { level: 1, name: "Unsaved until click" })).toBeTruthy();
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Save English" }));
-    expect(await screen.findByText("English profile translation saved to production.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(repo.updateProfileTranslation).toHaveBeenCalledOnce();
   });
 
   it("focuses Introduction at the hero while keeping the shared preview available", () => {
     open("/introduction");
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-focus")).toBe("about");
-    expect(screen.getByRole("group", { name: "Preview language" })).toBeTruthy();
+    expect(within(screen.getByTestId("resume-preview")).getByRole("button", { name: "Preview language" })).toBeTruthy();
   });
 
   it("updates Introduction drafts in the hero immediately and keeps preview locale independent", () => {
     const repo = repository();
     open("/introduction", repo);
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview Chinese" }));
+    setPreviewLocale("zh");
     fireEvent.change(screen.getByLabelText("English Paragraph"), { target: { value: "Unsaved introduction paragraph" } });
     expect(preview().getByText("这是一个双语个人网站模板。")).toBeTruthy();
     expect(preview().queryByText("Unsaved introduction paragraph")).toBeNull();
     fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
     expect(screen.getByRole("heading", { name: "个人简介" })).toBeTruthy();
     fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "English" }));
-    expect(screen.getByRole("heading", { name: "Introduction" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Introduction" })).toBeTruthy();
     expect(preview().getByText("这是一个双语个人网站模板。")).toBeTruthy();
-    fireEvent.click(within(screen.getByRole("group", { name: "Preview language" })).getByRole("button", { name: "Preview English" }));
+    setPreviewLocale("en");
     expect(preview().getByText("Unsaved introduction paragraph")).toBeTruthy();
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();

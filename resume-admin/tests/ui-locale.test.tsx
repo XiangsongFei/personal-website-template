@@ -37,17 +37,19 @@ describe("global CMS UI locale", () => {
     expect(window.localStorage.getItem(UI_LOCALE_KEY)).toBe("zh");
   });
 
-  it("groups the existing routes under compact Content and Website navigation labels", () => {
+  it("groups the existing routes under the resume-structure navigation labels", () => {
     renderApp("/overview");
     const navigation = screen.getByRole("navigation", { name: "CMS sections" });
-    expect(within(navigation).getByText("CONTENT")).toBeTruthy();
-    expect(within(navigation).getByText("WEBSITE")).toBeTruthy();
+    expect(within(navigation).getByText("Home")).toBeTruthy();
+    expect(within(navigation).getByText("Resume")).toBeTruthy();
+    expect(within(navigation).getByText("Settings")).toBeTruthy();
     expect(within(navigation).getAllByRole("link").map(link => link.getAttribute("href"))).toEqual([
       "/overview", "/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links",
     ]);
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(within(navigation).getByText("内容")).toBeTruthy();
-    expect(within(navigation).getByText("网站")).toBeTruthy();
+    expect(within(navigation).getByText("首页")).toBeTruthy();
+    expect(within(navigation).getByText("简历内容")).toBeTruthy();
+    expect(within(navigation).getByText("设置")).toBeTruthy();
   });
 
   it("visually pairs Chinese and English inputs for the same semantic field", () => {
@@ -95,18 +97,30 @@ describe("global CMS UI locale", () => {
     expect(chinese.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("localizes Profile production save controls and helper messages without changing resume values or writing", () => {
+  it("localizes the unified Profile save action and section copy without changing resume values or writing", () => {
     const { repository } = renderProductionApp("/profile");
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByText("共享信息：没有未保存修改")).toBeTruthy();
+    expect(screen.getByText("共享信息")).toBeTruthy();
+    expect(screen.getByText("个人资料内容")).toBeTruthy();
+    expect(screen.queryByText("中文内容")).toBeNull();
+    expect(screen.queryByText("英文内容")).toBeNull();
+    expect(document.querySelector(".bilingual-column-headings [lang='zh']")?.textContent).toBe("中文");
+    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("English");
+    expect(screen.getByText("没有未保存修改")).toBeTruthy();
     expect(screen.getByRole("button", { name: "取消修改" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "保存共享信息" })).toBeTruthy();
-    expect(screen.getByText("中文个人资料将单独保存到生产环境。")).toBeTruthy();
-    expect(screen.getByText("英文个人资料将单独保存到生产环境。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存个人资料修改" })).toBeTruthy();
+    expect(screen.queryByText(/生产环境|数据库|API|分别保存/)).toBeNull();
     expect((screen.getByLabelText("英文 姓名") as HTMLInputElement).value).toBe("Demo User");
     fireEvent.click(screen.getByRole("button", { name: "English" }));
-    expect(screen.getByText("Shared details: No unsaved changes")).toBeTruthy();
-    expect(screen.getByText("Chinese profile translation saves to production separately.")).toBeTruthy();
+    expect(screen.getByText("Shared information")).toBeTruthy();
+    expect(screen.getByText("Profile content")).toBeTruthy();
+    expect(screen.queryByText("Chinese content")).toBeNull();
+    expect(screen.queryByText("English content")).toBeNull();
+    expect(document.querySelector(".bilingual-column-headings [lang='zh']")?.textContent).toBe("Chinese");
+    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("English");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save profile changes" })).toBeTruthy();
+    expect(screen.queryByText(/production environment|database|API|separately/i)).toBeNull();
     expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Demo User");
     expect(repository.updateProfileSharedDetails).not.toHaveBeenCalled();
     expect(repository.updateProfileTranslation).not.toHaveBeenCalled();
@@ -128,22 +142,32 @@ describe("global CMS UI locale", () => {
     expect(repository.deleteEducationEntry).not.toHaveBeenCalled();
   });
 
-  it("localizes Overview summaries and keeps English resume data intact", () => {
+  it("localizes Overview content while keeping the dynamic resume identity", () => {
     renderProductionApp("/overview");
-    expect(screen.getByText("The current example-cv resume is loaded. All resume content sections save to production.")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("Profile, Education, Introduction, Experience, Projects, Skills, Awards, Contact, and Links & Site Text save to production.");
+    expect(screen.getByText("Workspace Overview")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeTruthy();
+    expect(screen.getByText("Manage and maintain your bilingual resume content.")).toBeTruthy();
+    expect(screen.getByText("Current resume")).toBeTruthy();
+    expect(screen.getByText("Content languages")).toBeTruthy();
+    expect(screen.getByText("Last updated")).toBeTruthy();
+    expect(screen.getByText("Choose a section to start editing.")).toBeTruthy();
+    expect(within(screen.getByLabelText("Resume summary")).getByText("Demo User")).toBeTruthy();
+    expect(screen.queryByText(/production environment|production data|Published|editable modules|completeness/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByText("当前示例简历已加载。所有简历内容模块均可保存到生产环境。")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("个人资料、教育经历、个人简介、工作经历、项目、技能、荣誉奖项、联系信息、链接与网站文本均保存到生产环境。");
-    expect(screen.getByText("简历")).toBeTruthy();
-    expect(screen.getByText("中文 + 英文")).toBeTruthy();
-    expect(screen.getByText("9 个编辑模块")).toBeTruthy();
-    expect(screen.getByText("9 个可编辑模块")).toBeTruthy();
-    expect(screen.getByText("打开一个模块以查看共享字段、中英文内容和有序条目。")).toBeTruthy();
-    expect(screen.getByText("Demo User")).toBeTruthy();
+    expect(screen.getByText("工作区概览")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "概览" })).toBeTruthy();
+    expect(screen.getByText("管理并维护你的中英文简历内容。")).toBeTruthy();
+    expect(screen.getByText("当前简历")).toBeTruthy();
+    expect(screen.getByText("内容语言")).toBeTruthy();
+    expect(screen.getByText("最后更新")).toBeTruthy();
+    expect(screen.getByText("中文 · English")).toBeTruthy();
+    expect(screen.getByText("选择一个部分开始编辑。")).toBeTruthy();
+    expect(screen.queryByText(/生产环境|生产数据|已发布|内容完整度|编辑模块/)).toBeNull();
+    expect(screen.getByRole("navigation", { name: "内容管理" }).querySelectorAll("a")).toHaveLength(9);
+    expect(within(screen.getByLabelText("简历摘要")).getByText("示例用户")).toBeTruthy();
   });
 
-  it("keeps one locale-neutral shell identity and removes repeated environment labels", () => {
+  it("localizes the shell identity and removes repeated environment labels", () => {
     renderProductionApp("/overview");
     expect(screen.getAllByText("Resume Editor")).toHaveLength(1);
     const header = screen.getByRole("banner");
@@ -154,7 +178,7 @@ describe("global CMS UI locale", () => {
     expect(document.querySelector(".sidebar-foot")).toBeNull();
     expect(document.querySelector(".topbar-badge")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getAllByText("Resume Editor")).toHaveLength(1);
+    expect(screen.getAllByText("简历编辑器")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "English" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "退出登录" })).toBeTruthy();
   });

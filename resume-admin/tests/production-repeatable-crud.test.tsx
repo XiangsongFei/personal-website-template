@@ -89,7 +89,7 @@ function open(spec: { path: string }, repository: ResumeRepository, store = new 
   const tree = <UiLocaleProvider><MemoryRouter initialEntries={[spec.path]}><AuthGate client={auth()} resumeRepository={repository} sectionStore={store} /></MemoryRouter></UiLocaleProvider>;
   return { ...render(strict ? <StrictMode>{tree}</StrictMode> : tree), store };
 }
-function save() { fireEvent.click(screen.getByRole("button", { name: "Save production changes" })); }
+function save() { fireEvent.click(document.querySelector(".save-bar .button.primary") as HTMLButtonElement); }
 async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextAreaElement> {
   await waitFor(() => expect(document.getElementById(id)).toBeTruthy());
   return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
@@ -103,12 +103,44 @@ describe("Batch 6A production repeatable CRUD", () => {
   ])("renders the helper before the sticky save bar on $path", async ({ path, section }) => {
     const { repository } = makeRepository(section);
     open({ path }, repository);
-    await screen.findByRole("button", { name: "Save production changes" });
+    await screen.findByRole("button", { name: path === "/introduction" ? "Save Introduction changes" : "Save production changes" });
     const page = document.querySelector(".page-section")!;
-    const helper = page.querySelector(".production-save-helper")!;
     const saveBar = page.querySelector(".save-bar")!;
-    expect(Array.from(page.children).indexOf(helper)).toBeLessThan(Array.from(page.children).indexOf(saveBar));
     expect(page.classList.contains("production-save-tail")).toBe(false);
+    if (path === "/introduction") {
+      expect(page.querySelector(".production-save-helper")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+    } else {
+      const helper = page.querySelector(".production-save-helper")!;
+      expect(Array.from(page.children).indexOf(helper)).toBeLessThan(Array.from(page.children).indexOf(saveBar));
+    }
+  });
+
+  it("uses localized Introduction save copy without exposing production-environment wording", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const { repository } = makeRepository("introduction");
+    open({ path: "/introduction" }, repository);
+    const paragraph = await screen.findByLabelText("中文 Paragraph");
+    fireEvent.change(paragraph, { target: { value: "更新后的中文简介" } });
+    expect(screen.getAllByRole("button", { name: "保存个人简介修改" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "取消修改" })).toHaveLength(1);
+    save();
+    await screen.findByText("个人简介修改已保存。");
+    const scope = document.querySelector(".introduction-editor-scope")!;
+    expect(scope.textContent).not.toMatch(/保存到生产环境|生产环境|Save production changes|production/i);
+  });
+
+  it("allows multiple production Introduction entries to stay expanded independently", async () => {
+    const { repository } = makeRepository("introduction");
+    open({ path: "/introduction" }, repository);
+    await screen.findByLabelText("Chinese Paragraph");
+    const cards = Array.from(document.querySelectorAll<HTMLElement>(".introduction-editor-scope .item-card"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Introduction 2" }));
+    expect(cards.map(card => Boolean(card.querySelector(".item-card-body")))).toEqual([true, true]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close editor for Introduction 1" }));
+    expect(cards.map(card => Boolean(card.querySelector(".item-card-body")))).toEqual([false, true]);
   });
 
   it.each(cases)("$title saves bilingual edits by real UUID and patches only its section cache", async spec => {
@@ -135,7 +167,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const { repository, methods, createdIds } = makeRepository(spec.section);
     const store = new ResumeSectionStore(); open(spec, repository, store);
     await screen.findByLabelText(spec.input);
-    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.click(screen.getByRole("button", { name: spec.section === "introduction" ? "Add paragraph" : "Add item" }));
     const inputs = screen.getAllByLabelText(spec.input);
     fireEvent.change(inputs[inputs.length - 1], { target: { value: `${spec.changed} new` } });
     save();
@@ -185,7 +217,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const { repository, methods } = makeRepository(spec.section, { failEnOnce: true });
     open(spec, repository);
     await screen.findByLabelText(spec.input);
-    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add paragraph" }));
     fireEvent.change(screen.getAllByLabelText(spec.input).at(-1)!, { target: { value: "Recovery paragraph" } });
     save();
     await screen.findByRole("alert");
@@ -205,12 +237,12 @@ describe("Batch 6A production repeatable CRUD", () => {
     vi.mocked(methods.insertEditableEntry).mockRejectedValueOnce(new Error("Parent creation was not confirmed; verify production before retrying"));
     open(spec, repository);
     await screen.findByLabelText(spec.input);
-    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add paragraph" }));
     fireEvent.change(screen.getAllByLabelText(spec.input).at(-1)!, { target: { value: "Unconfirmed parent" } });
     save();
     await screen.findByRole("alert");
     expect(methods.insertEditableEntry).toHaveBeenCalledOnce();
-    expect((screen.getByRole("button", { name: "Save production changes" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save Introduction changes" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Cancel changes" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -230,7 +262,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(returnedField.value).toBe(`Unsaved ${spec.title} draft`);
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     expect((document.getElementById(fieldId) as HTMLInputElement | HTMLTextAreaElement).value).toBe(`Unsaved ${spec.title} draft`);
-    fireEvent.click(screen.getByRole("button", { name: "保存到生产环境" }));
+    fireEvent.click(screen.getByRole("button", { name: spec.section === "introduction" ? "保存个人简介修改" : "保存到生产环境" }));
     await screen.findByText("没有未保存修改");
     expect(methods.updateEditableTranslation).toHaveBeenCalledOnce();
     expect(repository.load).not.toHaveBeenCalled();
@@ -582,6 +614,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   it("localizes PDF validation errors in the Chinese admin UI", async () => {
     const { repository, methods } = makeRepository("skills");
     open({ path: "/links" }, repository);
+    await screen.findByRole("button", { name: "English" });
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     fireEvent.change(await screen.findByLabelText("中文 简历 PDF"), {
       target: { files: [new File(["not pdf"], "resume.txt", { type: "text/plain" })] },
@@ -610,7 +643,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("link", { name: "Overview" }));
     await screen.findByRole("heading", { name: "Overview" });
-    fireEvent.click(screen.getByRole("link", { name: "Links & Site Text" }));
+    fireEvent.click(screen.getByRole("link", { name: "Site & Links" }));
     expect(await screen.findByText("Selected: keep-this-draft.pdf")).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save();

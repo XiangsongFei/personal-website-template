@@ -171,7 +171,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   }
 
   if (!client) return <AuthScreen title={t("Configuration required")} message={t("Set the local Supabase URL and publishable key to use the admin app.")} />;
-  if (state.kind === "restoring" || state.kind === "checking") return <AuthScreen title={t("Checking access")} message={t("Please wait while your session and admin access are verified.")} busy />;
+  if (state.kind === "restoring" || state.kind === "checking") return null;
   if (state.kind === "signedOut") return <div className="auth-screen"><div className="auth-card">
     <UiLocaleSwitch /><p className="auth-eyebrow">{t("Example CV CMS")}</p><h1>{t("Sign in")}</h1><p>{t("Use your administrator account to continue.")}</p>
     <form onSubmit={submit}>

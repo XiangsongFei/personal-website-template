@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ResumeContent } from "../../../app/data/resume";
 import type { Locale } from "../model";
+import type { BilingualReviewReminder } from "../bilingualReview";
 import { useUiLocale } from "../uiLocale";
 import "./preview.css";
 
@@ -8,7 +9,11 @@ export type PreviewSection = "profile" | "education" | "introduction" | "experie
 
 const PUBLIC_PAGE_WIDTH = 980;
 
-function PreviewLink({ href, label, icon }: { href: string; label: string; icon: "mail" | "file" | "linkedin" | "github" }) {
+function MarkedText({ children, modified, review = false }: { children: ReactNode; modified: boolean; review?: boolean }) {
+  return <span className="resume-preview-marked-text" data-preview-modified={modified} data-preview-review={review}>{children}</span>;
+}
+
+function PreviewLink({ href, label, icon, modified = false }: { href: string; label: string; icon: "mail" | "file" | "linkedin" | "github"; modified?: boolean }) {
   const iconContent = icon === "mail"
     ? <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></>
     : icon === "file"
@@ -19,19 +24,27 @@ function PreviewLink({ href, label, icon }: { href: string; label: string; icon:
 
   return <a className="resume-preview-action" href={href} target={icon === "mail" ? undefined : "_blank"} rel={icon === "mail" ? undefined : "noreferrer"}>
     <svg className={`resume-preview-action-icon is-${icon}`} viewBox="0 0 24 24" aria-hidden="true">{iconContent}</svg>
-    <span>{label}</span><svg className="resume-preview-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
+    <MarkedText modified={modified}>{label}</MarkedText><svg className="resume-preview-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>
   </a>;
 }
 
-export function ResumePreviewPanel({ content, section, locale, statusMessage, onLocaleChange }: {
+export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false }: {
   content: ResumeContent | null;
+  confirmedContent?: ResumeContent | null;
+  bilingualReviews?: BilingualReviewReminder[];
   section: PreviewSection;
   locale: Locale;
   statusMessage: string;
   onLocaleChange: (locale: Locale) => void;
+  photoPreviewUrl?: string;
+  preserveScroll?: boolean;
 }) {
   const { t } = useUiLocale();
   const text = content?.locales[locale];
+  const confirmedText = confirmedContent?.locales[locale];
+  const differs = (next: unknown, previous: unknown) => JSON.stringify(next) !== JSON.stringify(previous);
+  const hasReview = (sectionKey: BilingualReviewReminder["section"], itemId: string, field: string) =>
+    bilingualReviews.some(review => review.section === sectionKey && review.itemId === itemId && review.field === field && review.targetLocale === locale);
   const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -70,6 +83,7 @@ export function ResumePreviewPanel({ content, section, locale, statusMessage, on
   }, [content, locale, section]);
 
   useLayoutEffect(() => {
+    if (preserveScroll) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     const targetId = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" || section === "contact"
@@ -93,18 +107,10 @@ export function ResumePreviewPanel({ content, section, locale, statusMessage, on
       cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [section, scale]);
+  }, [section, scale, preserveScroll]);
 
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
-    <div className="resume-preview-toolbar">
-      <h2>{t("Preview")}</h2>
-      <div className="resume-preview-languages" role="group" aria-label={t("Preview language")}>
-        <button type="button" aria-label={t("Preview Chinese")} aria-pressed={locale === "zh"} onClick={() => onLocaleChange("zh")}>中文</button>
-        <span aria-hidden="true">|</span>
-        <button type="button" aria-label={t("Preview English")} aria-pressed={locale === "en"} onClick={() => onLocaleChange("en")}>English</button>
-      </div>
-    </div>
-    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
+    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
       {content && text && <div className="resume-preview-stage" style={{ height: `${canvasHeight * scale}px` }}>
         <div className="resume-preview-canvas" ref={canvasRef} style={{ transform: `scale(${scale})` }}>
@@ -120,7 +126,7 @@ export function ResumePreviewPanel({ content, section, locale, statusMessage, on
                       const target = viewportRef.current?.querySelector<HTMLElement>(`#preview-${id}`);
                       const viewport = viewportRef.current;
                       if (target && viewport) viewport.scrollTop += target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-                    }}>{item}</a>;
+                    }}><MarkedText modified={differs(item, confirmedText?.nav[index])}>{item}</MarkedText></a>;
                   })}
                   <button type="button" aria-label={t("Preview language")} onClick={() => onLocaleChange(locale === "zh" ? "en" : "zh")}>{locale === "zh" ? "EN" : "中文"}</button>
                 </div>
@@ -129,113 +135,115 @@ export function ResumePreviewPanel({ content, section, locale, statusMessage, on
             <section className="resume-preview-hero" id="preview-about">
               <div className="resume-preview-hero-grid">
                 <div className="resume-preview-hero-copy">
-                  <h1 className={locale === "en" ? "is-english" : ""}>{content.profile.name[locale]}</h1>
-                  <div className="resume-preview-intro">{text.intro.map((paragraph, index) => <p key={`${index}-${paragraph}`}>{paragraph}</p>)}</div>
+                  <h1 className={locale === "en" ? "is-english" : ""}><MarkedText modified={differs(content.profile.name[locale], confirmedContent?.profile.name[locale])} review={hasReview("profile", "profile", "name")}>{content.profile.name[locale]}</MarkedText></h1>
+                  <div className="resume-preview-intro">{text.intro.map((paragraph, index) => <p key={`${index}-${paragraph}`}><MarkedText modified={differs(paragraph, confirmedText?.intro[index])}>{paragraph}</MarkedText></p>)}</div>
                   <div className="resume-preview-actions">
-                    {content.publicLinks.email && <PreviewLink href={`mailto:${content.publicLinks.email}`} label={content.profile.emailActionLabel[locale]} icon="mail"/>}
-                    {text.portfolioHref && <PreviewLink href={text.portfolioHref} label={text.portfolioLabel} icon="file"/>}
-                    {text.linkedInHref && <PreviewLink href={text.linkedInHref} label={content.publicLinks.linkedInLabel} icon="linkedin"/>}
-                    {content.publicLinks.github && <PreviewLink href={content.publicLinks.github} label={content.publicLinks.githubLabel} icon="github"/>}
+                    {content.publicLinks.email && <PreviewLink href={`mailto:${content.publicLinks.email}`} label={content.profile.emailActionLabel[locale]} icon="mail" modified={differs(content.profile.emailActionLabel[locale], confirmedContent?.profile.emailActionLabel[locale]) || differs(content.publicLinks.email, confirmedContent?.publicLinks.email)}/>}
+                    {text.portfolioHref && <PreviewLink href={text.portfolioHref} label={text.portfolioLabel} icon="file" modified={differs(text.portfolioHref, confirmedText?.portfolioHref) || differs(text.portfolioLabel, confirmedText?.portfolioLabel)}/>}
+                    {text.linkedInHref && <PreviewLink href={text.linkedInHref} label={content.publicLinks.linkedInLabel} icon="linkedin" modified={differs(text.linkedInHref, confirmedText?.linkedInHref) || differs(content.publicLinks.linkedInLabel, confirmedContent?.publicLinks.linkedInLabel)}/>}
+                    {content.publicLinks.github && <PreviewLink href={content.publicLinks.github} label={content.publicLinks.githubLabel} icon="github" modified={differs(content.publicLinks.github, confirmedContent?.publicLinks.github) || differs(content.publicLinks.githubLabel, confirmedContent?.publicLinks.githubLabel)}/>}
                   </div>
                   <div className="resume-preview-graduation">
-                    <span>{content.profile.graduationLabel[locale]}</span>
-                    <strong>{content.profile.graduationValue}</strong>
+                    <span><MarkedText modified={differs(content.profile.graduationLabel[locale], confirmedContent?.profile.graduationLabel[locale])}>{content.profile.graduationLabel[locale]}</MarkedText></span>
+                    <strong><MarkedText modified={differs(content.profile.graduationValue, confirmedContent?.profile.graduationValue)}>{content.profile.graduationValue}</MarkedText></strong>
                   </div>
                 </div>
-                <aside className="resume-preview-portrait" aria-label={content.profile.avatarLabel[locale]}>
-                  <div>{content.profile.avatarInitials}</div>
+                <aside className="resume-preview-portrait" data-preview-modified={differs(content.profile.photoUrl, confirmedContent?.profile.photoUrl)} aria-label={content.profile.avatarLabel[locale]}>
+                  {photoPreviewUrl || content.profile.photoUrl
+                    ? <img src={photoPreviewUrl || content.profile.photoUrl || undefined} alt="" aria-hidden="true" />
+                    : <div>{content.profile.avatarInitials}</div>}
                 </aside>
               </div>
             </section>
             <section className="resume-preview-education-section" id="preview-education" ref={educationRef}>
-              <div className="resume-preview-section-label">{text.education}</div>
+              <div className="resume-preview-section-label"><MarkedText modified={differs(text.education, confirmedText?.education)}>{text.education}</MarkedText></div>
               <div className="resume-preview-education-list">
                 {(section === "profile" ? text.edu.slice(0, 1) : text.edu).map(entry => <article className={`resume-preview-education-entry${entry.entryType === "summerSchool" ? " is-summer-school" : ""}`} key={entry.id}>
                   <div className="resume-preview-education-copy">
-                    <h3>{entry.title}</h3>
-                    <p className="resume-preview-program">{entry.program}</p>
+                    <h3><MarkedText modified={differs(entry.title, confirmedText?.edu.find(value => value.id === entry.id)?.title)} review={hasReview("education", entry.id, "title")}>{entry.title}</MarkedText></h3>
+                    <p className="resume-preview-program"><MarkedText modified={differs(entry.program, confirmedText?.edu.find(value => value.id === entry.id)?.program)} review={hasReview("education", entry.id, "program")}>{entry.program}</MarkedText></p>
                     {entry.entryType === "summerSchool" && <>
-                      {entry.courseTitle && <p className="resume-preview-course-title">{entry.courseTitle}</p>}
-                      {entry.courseDescription && <p className="resume-preview-course-description">{entry.courseDescription}</p>}
+                      {entry.courseTitle && <p className="resume-preview-course-title"><MarkedText modified={differs(entry.courseTitle, confirmedText?.edu.find(value => value.id === entry.id)?.courseTitle)} review={hasReview("education", entry.id, "courseTitle")}>{entry.courseTitle}</MarkedText></p>}
+                      {entry.courseDescription && <p className="resume-preview-course-description"><MarkedText modified={differs(entry.courseDescription, confirmedText?.edu.find(value => value.id === entry.id)?.courseDescription)} review={hasReview("education", entry.id, "courseDescription")}>{entry.courseDescription}</MarkedText></p>}
                     </>}
                   </div>
                   <div className="resume-preview-education-meta">
-                    <strong>{entry.period}</strong>
-                    {entry.grade && <span>{entry.grade.split(" · ").map((value, index) => <span className="resume-preview-grade" key={`${index}-${value}`}>{value}</span>)}</span>}
+                    <strong><MarkedText modified={differs(entry.period, confirmedText?.edu.find(value => value.id === entry.id)?.period)} review={hasReview("education", entry.id, "period")}>{entry.period}</MarkedText></strong>
+                    {entry.grade && <span>{entry.grade.split(" · ").map((value, index) => <span className="resume-preview-grade" key={`${index}-${value}`}><MarkedText modified={differs(entry.grade, confirmedText?.edu.find(value => value.id === entry.id)?.grade)} review={hasReview("education", entry.id, "grade")}>{value}</MarkedText></span>)}</span>}
                   </div>
                 </article>)}
                 {text.edu.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无教育经历" : "No education entries"}</p>}
               </div>
             </section>
             <section className="resume-preview-content-section resume-preview-experience" id="preview-experience">
-              <div className="resume-preview-section-label">{text.experience}</div>
+              <div className="resume-preview-section-label"><MarkedText modified={differs(text.experience, confirmedText?.experience)}>{text.experience}</MarkedText></div>
               <div className="resume-preview-timeline">
                 {text.jobs.map(job => <article key={job.id}>
                   <div>
-                    <h3>{job.organization}</h3>
-                    <p className="resume-preview-job-title">{job.title}</p>
-                    {job.location && <p className="resume-preview-job-location">{job.location}</p>}
-                    <span className="resume-preview-mobile-period">{job.period}</span>
-                    <ul className="resume-preview-bullets">{toBullets(job.description, locale).map((bullet, index) => <li key={`${index}-${bullet}`}>{bullet}</li>)}</ul>
+                    <h3><MarkedText modified={differs(job.organization, confirmedText?.jobs.find(value => value.id === job.id)?.organization)} review={hasReview("experience", job.id, "organization")}>{job.organization}</MarkedText></h3>
+                    <p className="resume-preview-job-title"><MarkedText modified={differs(job.title, confirmedText?.jobs.find(value => value.id === job.id)?.title)} review={hasReview("experience", job.id, "title")}>{job.title}</MarkedText></p>
+                    {job.location && <p className="resume-preview-job-location"><MarkedText modified={differs(job.location, confirmedText?.jobs.find(value => value.id === job.id)?.location)} review={hasReview("experience", job.id, "location")}>{job.location}</MarkedText></p>}
+                    <span className="resume-preview-mobile-period"><MarkedText modified={differs(job.period, confirmedText?.jobs.find(value => value.id === job.id)?.period)}>{job.period}</MarkedText></span>
+                    <ul className="resume-preview-bullets">{toBullets(job.description, locale).map((bullet, index) => <li key={`${index}-${bullet}`}><MarkedText modified={differs(job.description, confirmedText?.jobs.find(value => value.id === job.id)?.description)} review={hasReview("experience", job.id, "description")}>{bullet}</MarkedText></li>)}</ul>
                   </div>
-                  <div className="resume-preview-entry-meta"><strong>{job.period}</strong></div>
+                  <div className="resume-preview-entry-meta"><strong><MarkedText modified={differs(job.period, confirmedText?.jobs.find(value => value.id === job.id)?.period)}>{job.period}</MarkedText></strong></div>
                 </article>)}
                 {text.jobs.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无工作经历" : "No experience entries"}</p>}
               </div>
             </section>
             <section className="resume-preview-content-section resume-preview-projects" id="preview-projects">
-              <div className="resume-preview-section-label">{text.projectHeading}</div>
+              <div className="resume-preview-section-label"><MarkedText modified={differs(text.projectHeading, confirmedText?.projectHeading)}>{text.projectHeading}</MarkedText></div>
               <div className="resume-preview-timeline">
                 {text.projects.map(project => <article key={project.id}>
                   <div>
-                    <h3>{project.title}</h3>
-                    <p className="resume-preview-project-subtitle">{project.subtitle}</p>
-                    <span className="resume-preview-mobile-period">{project.period}</span>
-                    <p className="resume-preview-project-methods">{project.methods.join(" · ")}</p>
-                    <ul className="resume-preview-bullets">{toBullets(project.description, locale).map((bullet, index) => <li key={`${index}-${bullet}`}>{bullet}</li>)}</ul>
-                    {project.href && <a className="resume-preview-project-link" href={project.href} target="_blank" rel="noreferrer">{text.kaggleLabel} <span>↗</span></a>}
+                    <h3><MarkedText modified={differs(project.title, confirmedText?.projects.find(value => value.id === project.id)?.title)}>{project.title}</MarkedText></h3>
+                    <p className="resume-preview-project-subtitle"><MarkedText modified={differs(project.subtitle, confirmedText?.projects.find(value => value.id === project.id)?.subtitle)}>{project.subtitle}</MarkedText></p>
+                    <span className="resume-preview-mobile-period"><MarkedText modified={differs(project.period, confirmedText?.projects.find(value => value.id === project.id)?.period)}>{project.period}</MarkedText></span>
+                    <p className="resume-preview-project-methods"><MarkedText modified={differs(project.methods, confirmedText?.projects.find(value => value.id === project.id)?.methods)}>{project.methods.join(" · ")}</MarkedText></p>
+                    <ul className="resume-preview-bullets">{toBullets(project.description, locale).map((bullet, index) => <li key={`${index}-${bullet}`}><MarkedText modified={differs(project.description, confirmedText?.projects.find(value => value.id === project.id)?.description)}>{bullet}</MarkedText></li>)}</ul>
+                    {project.href && <a className="resume-preview-project-link" href={project.href} target="_blank" rel="noreferrer"><MarkedText modified={differs(project.href, confirmedText?.projects.find(value => value.id === project.id)?.href) || differs(text.kaggleLabel, confirmedText?.kaggleLabel)}>{text.kaggleLabel}</MarkedText> <span>↗</span></a>}
                   </div>
-                  <div className="resume-preview-entry-meta"><strong>{project.period}</strong></div>
+                  <div className="resume-preview-entry-meta"><strong><MarkedText modified={differs(project.period, confirmedText?.projects.find(value => value.id === project.id)?.period)}>{project.period}</MarkedText></strong></div>
                 </article>)}
                 {text.projects.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无项目经历" : "No projects"}</p>}
               </div>
             </section>
             <section className="resume-preview-content-section resume-preview-skills" id="preview-skills">
-              <div className="resume-preview-section-label">{text.skills}</div>
+              <div className="resume-preview-section-label"><MarkedText modified={differs(text.skills, confirmedText?.skills)}>{text.skills}</MarkedText></div>
               <div className="resume-preview-skill-list">
-                {text.skillGroups.map(group => <div key={group.id}><strong>{group.title}</strong><span>{group.items}</span></div>)}
+                {text.skillGroups.map(group => <div key={group.id}><strong><MarkedText modified={differs(group.title, confirmedText?.skillGroups.find(value => value.id === group.id)?.title)}>{group.title}</MarkedText></strong><span><MarkedText modified={differs(group.items, confirmedText?.skillGroups.find(value => value.id === group.id)?.items)}>{group.items}</MarkedText></span></div>)}
                 {text.skillGroups.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无技能" : "No skills"}</p>}
               </div>
             </section>
             <section className="resume-preview-content-section resume-preview-awards" id="preview-awards">
-              <div className="resume-preview-section-label">{text.honors}</div>
+              <div className="resume-preview-section-label"><MarkedText modified={differs(text.honors, confirmedText?.honors)}>{text.honors}</MarkedText></div>
               <div className="resume-preview-award-list">
-                {text.honorsList.map(award => <article key={award.id}><h3>{award.name}</h3><strong>{award.year}</strong></article>)}
+                {text.honorsList.map(award => <article key={award.id}><h3><MarkedText modified={differs(award.name, confirmedText?.honorsList.find(value => value.id === award.id)?.name)}>{award.name}</MarkedText></h3><strong><MarkedText modified={differs(award.year, confirmedText?.honorsList.find(value => value.id === award.id)?.year)}>{award.year}</MarkedText></strong></article>)}
                 {text.honorsList.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无奖项" : "No awards"}</p>}
               </div>
             </section>
             <div className="resume-preview-contact-area" id="preview-contact">
               <footer>
-                <p className="resume-preview-contact-label">{text.contact}</p>
-                <h2>{text.availability}</h2>
+                <p className="resume-preview-contact-label"><MarkedText modified={differs(text.contact, confirmedText?.contact)}>{text.contact}</MarkedText></p>
+                <h2><MarkedText modified={differs(text.availability, confirmedText?.availability)}>{text.availability}</MarkedText></h2>
                 <div className="resume-preview-contact-links">
-                  <div><span>{content.publicLinks.emailLabel}</span><a href={`mailto:${content.publicLinks.email}`}>{content.publicLinks.email} <b aria-hidden="true">↗</b></a></div>
-                  <div><span>{text.linkedInLabel}</span><a aria-label={`${content.publicLinks.linkedInLabel}: ${content.publicLinks.linkedInDisplayName}`} href={text.linkedInHref} target="_blank" rel="noreferrer">{content.publicLinks.linkedInDisplayName} <b aria-hidden="true">↗</b></a></div>
+                  <div><span><MarkedText modified={differs(content.publicLinks.emailLabel, confirmedContent?.publicLinks.emailLabel)}>{content.publicLinks.emailLabel}</MarkedText></span><a href={`mailto:${content.publicLinks.email}`}><MarkedText modified={differs(content.publicLinks.email, confirmedContent?.publicLinks.email)}>{content.publicLinks.email}</MarkedText> <b aria-hidden="true">↗</b></a></div>
+                  <div><span><MarkedText modified={differs(text.linkedInLabel, confirmedText?.linkedInLabel)}>{text.linkedInLabel}</MarkedText></span><a aria-label={`${content.publicLinks.linkedInLabel}: ${content.publicLinks.linkedInDisplayName}`} href={text.linkedInHref} target="_blank" rel="noreferrer"><MarkedText modified={differs(content.publicLinks.linkedInDisplayName, confirmedContent?.publicLinks.linkedInDisplayName) || differs(text.linkedInHref, confirmedText?.linkedInHref)}>{content.publicLinks.linkedInDisplayName}</MarkedText> <b aria-hidden="true">↗</b></a></div>
                 </div>
-                <div className="resume-preview-footer-meta"><span>{content.profile.footerName}</span><span>{text.updatedAt}</span><span>{content.profile.copyright}</span></div>
+                <div className="resume-preview-footer-meta"><span><MarkedText modified={differs(content.profile.footerName, confirmedContent?.profile.footerName)}>{content.profile.footerName}</MarkedText></span><span><MarkedText modified={differs(text.updatedAt, confirmedText?.updatedAt)}>{text.updatedAt}</MarkedText></span><span><MarkedText modified={differs(content.profile.copyright, confirmedContent?.profile.copyright)}>{content.profile.copyright}</MarkedText></span></div>
               </footer>
               <section className="resume-preview-contact-extension" aria-label={text.contact}>
                 <div>
-                  <h3>{content.profile.contactFocusHeading[locale]}</h3>
+                  <h3><MarkedText modified={differs(content.profile.contactFocusHeading[locale], confirmedContent?.profile.contactFocusHeading[locale])}>{content.profile.contactFocusHeading[locale]}</MarkedText></h3>
                   <div className="resume-preview-focus-list">
-                    {text.contactFocusItems.map(([title, detail], index) => <article key={`${index}-${title}`}><p>{title}</p>{detail && <span>{detail}</span>}</article>)}
+                    {text.contactFocusItems.map(([title, detail], index) => <article key={`${index}-${title}`}><p><MarkedText modified={differs(title, confirmedText?.contactFocusItems[index]?.[0])}>{title}</MarkedText></p>{detail && <span><MarkedText modified={differs(detail, confirmedText?.contactFocusItems[index]?.[1])}>{detail}</MarkedText></span>}</article>)}
                     {text.contactFocusItems.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无当前重点" : "No current focus items"}</p>}
                   </div>
                 </div>
                 <div>
-                  <h3>{content.profile.contactStatusHeading[locale]}</h3>
+                  <h3><MarkedText modified={differs(content.profile.contactStatusHeading[locale], confirmedContent?.profile.contactStatusHeading[locale])}>{content.profile.contactStatusHeading[locale]}</MarkedText></h3>
                   <div className="resume-preview-status-list">
-                    {text.contactStatusItems.map((item, index) => <article key={`${index}-${item.type}-${item.title}`} data-status-type={item.type}><span aria-hidden="true">{item.type === "study" ? "◷" : item.type === "graduation" ? "✓" : "↗"}</span><div><p>{item.title}</p>{item.detail && <small>{item.detail}</small>}</div></article>)}
+                    {text.contactStatusItems.map((item, index) => <article key={`${index}-${item.type}-${item.title}`} data-status-type={item.type}><span aria-hidden="true">{item.type === "study" ? "◷" : item.type === "graduation" ? "✓" : "↗"}</span><div><p><MarkedText modified={differs(item.title, confirmedText?.contactStatusItems[index]?.title)}>{item.title}</MarkedText></p>{item.detail && <small><MarkedText modified={differs(item.detail, confirmedText?.contactStatusItems[index]?.detail)}>{item.detail}</MarkedText></small>}</div></article>)}
                     {text.contactStatusItems.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无当前状态" : "No current status items"}</p>}
                   </div>
                 </div>

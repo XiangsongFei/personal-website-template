@@ -130,6 +130,7 @@ export function mapProfileRows(profileRows: Row[], profileTranslationRows: Row[]
   return {
     shared: {
       graduationValue: value(profile, "graduation_value"), avatarInitials: value(profile, "avatar_initials"),
+      photoUrl: optional(profile, "photo_url"),
       footerName: value(profile, "footer_name"), copyright: value(profile, "copyright"),
     },
     translations: {
@@ -343,6 +344,7 @@ export function mapResumeRows(rows: ResumeRows): LoadedResume {
     profile: {
       shared: {
         graduationValue: value(profile, "graduation_value"), avatarInitials: value(profile, "avatar_initials"),
+        photoUrl: optional(profile, "photo_url"),
         footerName: value(profile, "footer_name"), copyright: value(profile, "copyright"),
       },
       translations: {

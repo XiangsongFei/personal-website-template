@@ -43,14 +43,14 @@ describe("in-memory Profile draft persistence", () => {
     expect(await screen.findByRole("heading", { name: "Education" })).toBeTruthy();
     go("Profile");
     expect(value("Graduation value")).toBe("2027");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(value("Graduation value")).toBe(fixtureSections.profile.shared.graduationValue);
-    expect(screen.getByText("Shared details: No unsaved changes")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(repository.updateProfileSharedDetails).not.toHaveBeenCalled();
   });
 
-  it("preserves Chinese changes and keeps Chinese, English, and shared dirty states independent", async () => {
+  it("preserves Chinese changes and reports a single dirty Profile state", async () => {
     showProfile();
     edit("Chinese Current Focus heading", "当前关注测试");
     go("Education");
@@ -59,9 +59,7 @@ describe("in-memory Profile draft persistence", () => {
     await screen.findByRole("heading", { name: "Experience" });
     go("Profile");
     expect(value("Chinese Current Focus heading")).toBe("当前关注测试");
-    expect(screen.getByText("Unsaved Chinese changes")).toBeTruthy();
-    expect(screen.getByText("No unsaved English changes")).toBeTruthy();
-    expect(screen.getByText("Shared details: No unsaved changes")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
   it("restores a Chinese translation's last confirmed baseline after navigation and Cancel", async () => {
@@ -71,9 +69,9 @@ describe("in-memory Profile draft persistence", () => {
     await screen.findByRole("heading", { name: "Education" });
     go("Profile");
     expect(value("Chinese Current Focus heading")).toBe("当前关注临时修改");
-    fireEvent.click(screen.getByRole("button", { name: "Cancel Chinese" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(value("Chinese Current Focus heading")).toBe(fixtureSections.profile.translations.zh.contactFocusHeading);
-    expect(screen.getByText("No unsaved Chinese changes")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
   it("preserves English edits over Projects navigation while the other boundaries stay clean", async () => {
@@ -83,12 +81,10 @@ describe("in-memory Profile draft persistence", () => {
     await screen.findByRole("heading", { name: "Projects" });
     go("Profile");
     expect(value("English Current Status heading")).toBe("Current Status test");
-    expect(screen.getByText("Unsaved English changes")).toBeTruthy();
-    expect(screen.getByText("No unsaved Chinese changes")).toBeTruthy();
-    expect(screen.getByText("Shared details: No unsaved changes")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
-  it("keeps all three save boundaries dirty independently through navigation without writing", async () => {
+  it("keeps all Profile drafts dirty together through navigation without writing", async () => {
     const { repository } = showProfile();
     edit("Graduation value", "2027");
     edit("Chinese Current Focus heading", "当前关注测试");
@@ -99,9 +95,7 @@ describe("in-memory Profile draft persistence", () => {
     expect(value("Graduation value")).toBe("2027");
     expect(value("Chinese Current Focus heading")).toBe("当前关注测试");
     expect(value("English Current Status heading")).toBe("Current Status test");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
-    expect(screen.getByText("Unsaved Chinese changes")).toBeTruthy();
-    expect(screen.getByText("Unsaved English changes")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(repository.updateProfileSharedDetails).not.toHaveBeenCalled();
     expect(repository.updateProfileTranslation).not.toHaveBeenCalled();
   });
@@ -109,16 +103,15 @@ describe("in-memory Profile draft persistence", () => {
   it.each(["zh", "en"] as const)("keeps a successful %s save clean after navigation", async locale => {
     const field = locale === "zh" ? "Chinese Current Focus heading" : "English Current Status heading";
     const changed = locale === "zh" ? "当前关注已保存" : "Current Status saved";
-    const language = locale === "zh" ? "Chinese" : "English";
     const { repository } = showProfile();
     edit(field, changed);
-    fireEvent.click(screen.getByRole("button", { name: `Save ${language}` }));
-    expect(await screen.findByText(`${language} profile translation saved to production.`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     go("Education");
     await screen.findByRole("heading", { name: "Education" });
     go("Profile");
     expect(value(field)).toBe(changed);
-    expect(screen.getByText(`No unsaved ${language} changes`)).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(repository.updateProfileTranslation).toHaveBeenCalledOnce();
   });
 
@@ -127,15 +120,15 @@ describe("in-memory Profile draft persistence", () => {
     vi.mocked(repository.updateProfileTranslation).mockRejectedValueOnce(new Error("network"));
     const { repository: used } = showProfile(repository);
     edit("Chinese Current Focus heading", "当前关注待重试");
-    fireEvent.click(screen.getByRole("button", { name: "Save Chinese" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     go("Education");
     await screen.findByRole("heading", { name: "Education" });
     go("Profile");
     expect(value("Chinese Current Focus heading")).toBe("当前关注待重试");
-    expect(screen.getByText("Unsaved Chinese changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Save Chinese" }));
-    expect(await screen.findByText("Chinese profile translation saved to production.")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(used.updateProfileTranslation).toHaveBeenCalledTimes(2);
   });
 
@@ -144,15 +137,15 @@ describe("in-memory Profile draft persistence", () => {
     vi.mocked(repository.updateProfileSharedDetails).mockRejectedValueOnce(new Error("network"));
     const { repository: used } = showProfile(repository);
     edit("Graduation value", "2027");
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not save shared profile details. Your edits are still here; please retry.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Profile changes were not saved. Your edits remain; please retry.");
     go("Education");
     await screen.findByRole("heading", { name: "Education" });
     go("Profile");
     expect(value("Graduation value")).toBe("2027");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    expect(await screen.findByText("Shared profile details saved to production.")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(used.updateProfileSharedDetails).toHaveBeenCalledTimes(2);
   });
 
@@ -163,7 +156,7 @@ describe("in-memory Profile draft persistence", () => {
     first.unmount();
     showProfile(repository);
     expect(value("Chinese Current Focus heading")).toBe(fixtureSections.profile.translations.zh.contactFocusHeading);
-    expect(screen.getByText("No unsaved Chinese changes")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
   it("discards Profile drafts after sign-out and a later sign-in", async () => {
@@ -189,6 +182,6 @@ describe("in-memory Profile draft persistence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await screen.findByLabelText("Chinese Current Focus heading");
     expect(value("Chinese Current Focus heading")).toBe(fixtureSections.profile.translations.zh.contactFocusHeading);
-    expect(screen.getByText("No unsaved Chinese changes")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 });

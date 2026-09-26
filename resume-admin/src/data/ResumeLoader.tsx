@@ -6,6 +6,7 @@ import type {
   ResumeRepository, ResumeSectionRepository, UpdatedProfileRow, UpdatedProfileTranslationRow,
 } from "./resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "./resumeSectionStore";
+import { isDocumentReloadNavigation } from "../refreshState";
 import type { EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections } from "../model";
 
 const pendingLoads = new WeakMap<ResumeRepository, Map<string, Promise<LoadedResume>>>();
@@ -113,6 +114,8 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   sectionStore?: ResumeSectionStore;
 }) {
   const location = useLocation();
+  const initialPathname = useRef(location.pathname);
+  const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const isProfileRoute = location.pathname === "/profile";
   const isEducationRoute = location.pathname === "/education";
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
@@ -335,6 +338,31 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     || (additionalRouteKey && !useSectionAdditional && fullSnapshotState === "error") ? "error" : "loading";
   const additionalRoute = additionalRouteState?.kind === "loaded" ? additionalRouteState : null;
   const additionalSections = additionalRoute ? { [additionalRoute.key]: additionalRoute.value } as AdditionalRouteSections : {};
+
+  // On a document refresh, wait for the requested route's first data read before
+  // mounting the editor shell. This avoids showing a transient route-loading page
+  // and ensures the layout exists before App attempts to restore document scroll.
+  // Subsequent in-app route changes keep the existing loading/error presentation.
+  const initialPath = initialPathname.current;
+  const initialIsProfile = initialPath === "/profile";
+  const initialIsEducation = initialPath === "/education";
+  const initialIsOverview = initialPath === "/" || initialPath === "/overview";
+  const initialAdditionalKey = routeKeys[initialPath] ?? null;
+  const initialUsesProfileRead = initialIsProfile && supportsProfileReads(repository);
+  const initialUsesEducationRead = initialIsEducation && supportsEducationReads(repository);
+  const initialUsesOverviewRead = initialIsOverview && supportsOverviewReads(repository);
+  const initialUsesAdditionalRead = supportsAdditionalReads(repository, initialAdditionalKey);
+  const initialRouteReady = initialUsesProfileRead
+    ? profileState.kind === "loaded" || profileState.kind === "error"
+    : initialUsesEducationRead
+      ? educationState.kind === "loaded" || educationState.kind === "error"
+      : initialUsesOverviewRead
+        ? overviewState.kind === "loaded" || overviewState.kind === "error"
+        : initialUsesAdditionalRead && initialAdditionalKey
+          ? additionalStates[initialAdditionalKey]?.kind === "loaded" || additionalStates[initialAdditionalKey]?.kind === "error"
+          : resume !== null || fullSnapshotState === "error";
+
+  if (isDocumentReload && location.pathname === initialPath && !initialRouteReady) return null;
 
   return <App identityEmail={identityEmail} onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
     productionMode={true} repository={repository} resume={resume} profileSection={profile} profileResumeId={profileResumeId}

@@ -73,9 +73,10 @@ export const isResumeContent = (value: unknown): value is ResumeContent => {
   if (!isRecord(value) || !hasKeys(value, ["profile", "publicLinks", "locales"])) return false;
   const { profile, publicLinks, locales } = value;
   if (!isRecord(profile) || !isRecord(publicLinks) || !isRecord(locales)) return false;
-  if (!hasKeys(profile, ["name", "navAboutLabel", "emailActionLabel", "graduationLabel", "graduationValue", "avatarLabel", "avatarInitials", "contactFocusHeading", "contactStatusHeading", "footerName", "copyright"])) return false;
+  if (!hasKeys(profile, ["name", "navAboutLabel", "emailActionLabel", "graduationLabel", "graduationValue", "avatarLabel", "avatarInitials", "photoUrl", "contactFocusHeading", "contactStatusHeading", "footerName", "copyright"])) return false;
   if (!["name", "navAboutLabel", "emailActionLabel", "graduationLabel", "avatarLabel", "contactFocusHeading", "contactStatusHeading"].every(key => isLocalizedString(profile[key]))) return false;
   if (!["graduationValue", "avatarInitials", "footerName", "copyright"].every(key => isString(profile[key]))) return false;
+  if (profile.photoUrl !== null && (!isString(profile.photoUrl) || !/^https?:\/\//i.test(profile.photoUrl))) return false;
   if (!hasKeys(publicLinks, ["email", "github", "githubLabel", "linkedInDisplayName", "emailLabel", "linkedInLabel"])) return false;
   if (!["email", "github", "githubLabel", "linkedInDisplayName", "emailLabel", "linkedInLabel"].every(key => isString(publicLinks[key]))) return false;
   if (!hasKeys(locales, ["zh", "en"]) || !isLocaleContent(locales.zh) || !isLocaleContent(locales.en)) return false;

@@ -77,6 +77,15 @@ function optionalText(row: Row, key: string, where: string): string | undefined 
   return value;
 }
 
+function optionalPhotoUrl(row: Row, key: string, where: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(row, key)) return fail(`${where}.${key} is required`);
+  const value = row[key];
+  if (value === null) return null;
+  if (typeof value !== "string") return fail(`${where}.${key} must be a string or null`);
+  if (!/^https?:\/\//i.test(value)) return fail(`${where}.${key} must be an http(s) URL or null`);
+  return value;
+}
+
 function rowPosition(row: Row, where: string): number {
   if (!Number.isInteger(row.position) || (row.position as number) < 0) {
     return fail(`${where}.position must be a non-negative integer`);
@@ -257,6 +266,7 @@ export function adaptResumeRows(input: ResumeDatabaseRows): typeof import("./res
       graduationValue: text(profile, "graduation_value", "profile"),
       avatarLabel: { zh: text(profileTranslations.zh, "avatar_label", "profile.zh"), en: text(profileTranslations.en, "avatar_label", "profile.en") },
       avatarInitials: text(profile, "avatar_initials", "profile"),
+      photoUrl: optionalPhotoUrl(profile, "photo_url", "profile"),
       contactFocusHeading: { zh: text(profileTranslations.zh, "contact_focus_heading", "profile.zh"), en: text(profileTranslations.en, "contact_focus_heading", "profile.en") },
       contactStatusHeading: { zh: text(profileTranslations.zh, "contact_status_heading", "profile.zh"), en: text(profileTranslations.en, "contact_status_heading", "profile.en") },
       footerName: text(profile, "footer_name", "profile"),

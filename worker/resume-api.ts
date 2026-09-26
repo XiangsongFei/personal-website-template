@@ -8,7 +8,7 @@ export type ResumeApiEnv = {
 type TableName = Exclude<keyof ResumeDatabaseRows, "resume_sites">;
 
 const tableColumns: Record<TableName, string> = {
-  resume_profile: "resume_id,graduation_value,avatar_initials,footer_name,copyright",
+  resume_profile: "resume_id,graduation_value,avatar_initials,photo_url,footer_name,copyright",
   resume_profile_translations: "resume_id,locale,name,nav_about_label,email_action_label,graduation_label,avatar_label,contact_focus_heading,contact_status_heading",
   resume_public_links: "resume_id,email,github,github_label,linkedin_display_name,email_label,linkedin_label",
   resume_locale_content: "resume_id,locale,education_label,experience_label,project_heading,skills_label,honors_label,contact_label,availability,portfolio_label,portfolio_href,kaggle_label,updated_at_label,linkedin_label,linkedin_href",

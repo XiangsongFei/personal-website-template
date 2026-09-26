@@ -87,3 +87,15 @@ test("preserves empty strings and absent optional fields", async () => {
   const result = await loadResumeContent(async () => Response.json(payload));
   assert.deepStrictEqual(result, payload);
 });
+
+test("accepts a nullable shared photo URL and rejects a non-string photo value", () => {
+  const withPhoto = mutablePayload();
+  (withPhoto.profile as Record<string, unknown>).photoUrl = "https://storage.example.test/photo.webp";
+  assert.equal(isResumeContent(withPhoto), true);
+  const invalid = mutablePayload();
+  (invalid.profile as Record<string, unknown>).photoUrl = { url: "not a URL string" };
+  assert.equal(isResumeContent(invalid), false);
+  const temporary = mutablePayload();
+  (temporary.profile as Record<string, unknown>).photoUrl = "blob:temporary-photo";
+  assert.equal(isResumeContent(temporary), false);
+});

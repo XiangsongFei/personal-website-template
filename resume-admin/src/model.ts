@@ -12,7 +12,7 @@ export type ProfileTranslation = {
   contactStatusHeading: string;
 };
 export type ProfileSection = {
-  shared: { graduationValue: string; avatarInitials: string; footerName: string; copyright: string };
+  shared: { graduationValue: string; avatarInitials: string; photoUrl: string | null; footerName: string; copyright: string };
   translations: Bilingual<ProfileTranslation>;
 };
 

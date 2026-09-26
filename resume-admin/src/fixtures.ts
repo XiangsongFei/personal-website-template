@@ -9,7 +9,7 @@ export const fixtureMeta = {
 
 export const fixtureSections: EditorSections = {
   profile: {
-    shared: { graduationValue: "2024", avatarInitials: "DU", footerName: "Demo User", copyright: "© 2026 Demo User" },
+    shared: { graduationValue: "2024", avatarInitials: "DU", photoUrl: null, footerName: "Demo User", copyright: "© 2026 Demo User" },
     translations: {
       zh: { name: "示例用户", navAboutLabel: "关于我", emailActionLabel: "发送邮件", graduationLabel: "示例时间", avatarLabel: "示例头像占位符", contactFocusHeading: "当前关注", contactStatusHeading: "当前状态" },
       en: { name: "Demo User", navAboutLabel: "About", emailActionLabel: "Email", graduationLabel: "Sample timeline", avatarLabel: "Sample avatar placeholder", contactFocusHeading: "CURRENT FOCUS", contactStatusHeading: "CURRENT STATUS" },

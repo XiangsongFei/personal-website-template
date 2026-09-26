@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthGate } from "../src/auth/AuthGate";
@@ -66,14 +66,58 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(await screen.findByText("Database English Name")).toBeTruthy();
     expect(reads).toEqual(["resume_sites", "resume_profile_translations"]);
     expect(full).not.toHaveBeenCalled();
-    expect(screen.getByText("Unpublished")).toBeTruthy();
-    expect(screen.getByText("2026-09-25T00:00:00Z")).toBeTruthy();
-    expect(screen.getByText("9 editor sections")).toBeTruthy();
-    expect(screen.getByText("9 editable")).toBeTruthy();
-    expect(screen.getByText("Chinese + English")).toBeTruthy();
+    expect(screen.getByText("Current resume")).toBeTruthy();
+    expect(screen.getByText("Content languages")).toBeTruthy();
+    expect(screen.getByText("Last updated")).toBeTruthy();
+    expect(screen.getByText("2026-09-25 08:00:00")).toBeTruthy();
+    expect(screen.getByText("Beijing Time")).toBeTruthy();
+    expect(screen.getByText("Chinese · English")).toBeTruthy();
+    expect(screen.queryByText("Unpublished")).toBeNull();
+    expect(screen.queryByText("9 editor sections")).toBeNull();
+    expect(screen.queryByText("9 editable")).toBeNull();
+    expect(screen.queryByText(/production environment|production data|Published|Content completeness|editable modules/i)).toBeNull();
+    const destinations = ["/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links"];
+    const management = screen.getByRole("navigation", { name: "Content management" });
+    const managementLinks = Array.from(management.querySelectorAll("a"));
+    expect(managementLinks.map(link => link.getAttribute("href"))).toEqual(destinations);
+    expect(managementLinks.map(link => [link.querySelector("strong")?.textContent, link.querySelector("small")?.textContent])).toEqual([
+      ["Profile", "Identity, photo, and shared information"], ["Introduction", "Homepage introduction"],
+      ["Education", "Schools and education background"], ["Experience", "Internships and work experience"],
+      ["Projects", "Projects and outcomes"], ["Skills", "Skill categories and content"], ["Awards", "Awards and honors"],
+      ["Contact", "Contact information"], ["Site & Links", "Navigation, links, and site text"],
+    ]);
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
     expect(reads.some(table => table !== "resume_sites" && table !== "resume_profile_translations")).toBe(false);
+  });
+
+  it("localizes the Overview and all sidebar group labels while keeping the resume identity dynamic", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const repo = repository({ loadOverview: vi.fn().mockResolvedValue({ profileName: "中文界面动态姓名" }) });
+    show(repo);
+    expect(await screen.findByText("中文界面动态姓名")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "概览" })).toBeTruthy();
+    expect(screen.getByText("工作区概览")).toBeTruthy();
+    expect(screen.getByText("管理并维护你的中英文简历内容。")).toBeTruthy();
+    expect(screen.getByText("中文界面动态姓名")).toBeTruthy();
+    expect(screen.getByText("中文 · English")).toBeTruthy();
+    expect(screen.getByText("北京时间")).toBeTruthy();
+    const sidebar = screen.getByRole("navigation", { name: "CMS 模块" });
+    expect(within(sidebar).getByText("首页")).toBeTruthy();
+    expect(within(sidebar).getByText("简历内容")).toBeTruthy();
+    expect(within(sidebar).getByText("设置")).toBeTruthy();
+    expect(within(sidebar).getByText("网站与链接")).toBeTruthy();
+    const management = screen.getByRole("navigation", { name: "内容管理" });
+    const managementLinks = Array.from(management.querySelectorAll("a"));
+    expect(managementLinks.map(link => link.getAttribute("href"))).toEqual([
+      "/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links",
+    ]);
+    expect(managementLinks.map(link => [link.querySelector("strong")?.textContent, link.querySelector("small")?.textContent])).toEqual([
+      ["个人资料", "基本身份、头像与共享信息"], ["个人简介", "首页个人介绍"], ["教育经历", "学校与教育背景"],
+      ["工作经历", "实习与工作经验"], ["项目经历", "项目与成果"], ["技能", "技能分类与内容"],
+      ["荣誉奖项", "奖项与荣誉"], ["联系方式", "联系信息"], ["网站与链接", "导航、链接及网站文字"],
+    ]);
+    expect(screen.queryByText(/生产环境|生产数据|已发布|内容完整度|编辑模块/)).toBeNull();
   });
 
   it.each([

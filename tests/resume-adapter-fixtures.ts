@@ -11,7 +11,7 @@ export function createResumeRowsFixture(): ResumeDatabaseRows {
   const siteRow = (fields: Record<string, unknown>) => ({ created_at: timestamp, updated_at: timestamp, ...fields });
   const result: ResumeDatabaseRows = {
     resume_sites: [siteRow({ id: resumeId, site_key: "example-cv", is_published: true })],
-    resume_profile: [row({ graduation_value: resumeContent.profile.graduationValue, avatar_initials: resumeContent.profile.avatarInitials, footer_name: resumeContent.profile.footerName, copyright: resumeContent.profile.copyright })],
+    resume_profile: [row({ graduation_value: resumeContent.profile.graduationValue, avatar_initials: resumeContent.profile.avatarInitials, photo_url: resumeContent.profile.photoUrl, footer_name: resumeContent.profile.footerName, copyright: resumeContent.profile.copyright })],
     resume_profile_translations: [],
     resume_public_links: [row({ email: resumeContent.publicLinks.email, github: resumeContent.publicLinks.github, github_label: resumeContent.publicLinks.githubLabel, linkedin_display_name: resumeContent.publicLinks.linkedInDisplayName, email_label: resumeContent.publicLinks.emailLabel, linkedin_label: resumeContent.publicLinks.linkedInLabel })],
     resume_locale_content: [],

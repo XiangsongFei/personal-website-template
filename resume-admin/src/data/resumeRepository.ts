@@ -196,20 +196,23 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");
       if (!shared || typeof shared.graduationValue !== "string" || typeof shared.avatarInitials !== "string"
+        || (shared.photoUrl !== null && (typeof shared.photoUrl !== "string" || !/^https?:\/\//i.test(shared.photoUrl)))
         || typeof shared.footerName !== "string" || typeof shared.copyright !== "string") {
         throw new Error("Invalid shared profile details");
       }
       const payload = {
         graduation_value: shared.graduationValue,
         avatar_initials: shared.avatarInitials,
+        photo_url: shared.photoUrl,
         footer_name: shared.footerName,
         copyright: shared.copyright,
       };
       const { data, error } = await supabase.from("resume_profile")
         .update(payload).eq("resume_id", resumeId)
-        .select("resume_id,graduation_value,avatar_initials,footer_name,copyright,updated_at").single();
+        .select("resume_id,graduation_value,avatar_initials,photo_url,footer_name,copyright,updated_at").single();
       if (error || !data || data.resume_id !== resumeId) throw new Error("Profile save was not confirmed");
       if (typeof data.graduation_value !== "string" || typeof data.avatar_initials !== "string"
+        || (data.photo_url !== null && (typeof data.photo_url !== "string" || !/^https?:\/\//i.test(data.photo_url)))
         || typeof data.footer_name !== "string" || typeof data.copyright !== "string") {
         throw new Error("Invalid profile save response");
       }
@@ -218,6 +221,7 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
         shared: {
           graduationValue: data.graduation_value,
           avatarInitials: data.avatar_initials,
+          photoUrl: data.photo_url,
           footerName: data.footer_name,
           copyright: data.copyright,
         },

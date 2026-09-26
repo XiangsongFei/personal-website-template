@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FocusItem, LinksSection, Locale, ProjectItem, StatusItem } from "../model";
+import { profilePhotoExtension, validateProfilePhoto } from "./profilePhoto";
 
 type Row = Record<string, unknown>;
 type OrderedParent = { resumeId: string; entryId: string; position: number; sourceKey: string | null; statusType?: StatusItem["statusType"] };
@@ -92,6 +93,17 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     checkedRow(data, resumeId, id);
   }
   return {
+    uploadProfilePhoto: async (file: File): Promise<string> => {
+      const validationError = validateProfilePhoto(file);
+      if (validationError) throw new Error(validationError);
+      const path = `example-cv/profile/${crypto.randomUUID()}.${profilePhotoExtension(file)}`;
+      const bucket = client.storage.from("profile-images");
+      const { error } = await bucket.upload(path, file, { upsert: false, contentType: file.type, cacheControl: "31536000" });
+      if (error) throw new Error("Profile photo upload failed.");
+      const { data } = bucket.getPublicUrl(path);
+      if (!data.publicUrl || !/^https?:\/\//i.test(data.publicUrl)) throw new Error("Profile photo public URL was not returned.");
+      return data.publicUrl;
+    },
     uploadResumePdf: async (locale: Locale, file: File): Promise<string> => {
       validateLocale(locale);
       if (!(file instanceof File) || file.type !== "application/pdf") throw new Error("Resume PDF must be a PDF file.");

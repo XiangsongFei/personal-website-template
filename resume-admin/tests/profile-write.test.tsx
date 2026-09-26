@@ -17,7 +17,7 @@ const snapshot = (): LoadedResume => ({
 
 const confirmed = (graduationValue: string): UpdatedProfileRow => ({
   resumeId, updatedAt: "2026-09-24T00:00:00Z",
-  shared: { graduationValue, avatarInitials: "DU", footerName: "Demo User", copyright: "© 2026 Demo User" },
+  shared: { graduationValue, avatarInitials: "DU", photoUrl: null, footerName: "Demo User", copyright: "© 2026 Demo User" },
 });
 
 function mockRepository(update = vi.fn().mockResolvedValue(confirmed("2030"))): ResumeRepository {
@@ -45,9 +45,10 @@ function deferred<T>() {
 afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Stage 4E repository write allowlist", () => {
-  it("updates only the four shared columns on resume_profile, filtered by loaded resume_id", async () => {
+  it("updates only the shared profile columns including photo_url, filtered by loaded resume_id", async () => {
+    const photoUrl = "https://storage.example.test/profile-images/example-cv/profile/photo.webp";
     const single = vi.fn().mockResolvedValue({ data: {
-      resume_id: resumeId, graduation_value: "2030", avatar_initials: "DU", footer_name: "Demo User",
+      resume_id: resumeId, graduation_value: "2030", avatar_initials: "DU", photo_url: photoUrl, footer_name: "Demo User",
       copyright: "© 2026 Demo User", updated_at: "2026-09-24T00:00:00Z",
     }, error: null });
     const select = vi.fn().mockReturnValue({ single });
@@ -55,16 +56,16 @@ describe("Stage 4E repository write allowlist", () => {
     const update = vi.fn().mockReturnValue({ eq });
     const from = vi.fn().mockReturnValue({ update });
     const repo = createResumeRepository({ from } as unknown as SupabaseClient);
-    const input = { ...confirmed("2030").shared, name: "NOT ALLOWED", resume_id: "WRONG" };
+    const input = { ...confirmed("2030").shared, photoUrl, name: "NOT ALLOWED", resume_id: "WRONG" };
     const row = await repo.updateProfileSharedDetails(resumeId, input);
     expect(from).toHaveBeenCalledExactlyOnceWith("resume_profile");
     expect(update).toHaveBeenCalledExactlyOnceWith({
-      graduation_value: "2030", avatar_initials: "DU", footer_name: "Demo User", copyright: "© 2026 Demo User",
+      graduation_value: "2030", avatar_initials: "DU", photo_url: photoUrl, footer_name: "Demo User", copyright: "© 2026 Demo User",
     });
     expect(eq).toHaveBeenCalledExactlyOnceWith("resume_id", resumeId);
-    expect(select).toHaveBeenCalledExactlyOnceWith("resume_id,graduation_value,avatar_initials,footer_name,copyright,updated_at");
+    expect(select).toHaveBeenCalledExactlyOnceWith("resume_id,graduation_value,avatar_initials,photo_url,footer_name,copyright,updated_at");
     expect(single).toHaveBeenCalledOnce();
-    expect(row).toEqual(confirmed("2030"));
+    expect(row).toEqual({ ...confirmed("2030"), shared: { ...confirmed("2030").shared, photoUrl } });
   });
 
   it("rejects missing or mismatched confirmation and invalid shared values", async () => {
@@ -81,13 +82,13 @@ describe("Stage 4E repository write allowlist", () => {
 describe("Stage 4E Profile editor", () => {
   it("makes shared edits dirty while translation controls stay independent", () => {
     showProfile(mockRepository());
-    expect(screen.getByRole("button", { name: "Save shared details" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
     expect((screen.getByLabelText("English Name") as HTMLInputElement).readOnly).toBe(false);
     expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).readOnly).toBe(false);
-    expect(screen.getByRole("button", { name: "Save Chinese" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
     editGraduation("2030");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save shared details" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("waits for confirmation, disables duplicate saves, then advances the baseline", async () => {
@@ -95,22 +96,22 @@ describe("Stage 4E Profile editor", () => {
     const update = vi.fn().mockReturnValue(pending.promise);
     const { onProfileSaved } = showProfile(mockRepository(update));
     editGraduation("2030");
-    const form = screen.getByRole("button", { name: "Save shared details" }).closest("form")!;
+    const form = screen.getByRole("button", { name: "Save profile changes" }).closest("form")!;
     fireEvent.submit(form);
     fireEvent.submit(form);
     expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, {
-      graduationValue: "2030", avatarInitials: "DU", footerName: "Demo User", copyright: "© 2026 Demo User",
+      graduationValue: "2030", avatarInitials: "DU", photoUrl: null, footerName: "Demo User", copyright: "© 2026 Demo User",
     });
-    expect(screen.getByRole("button", { name: "Saving shared…" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
-    expect(screen.queryByText("Shared profile details saved to production.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Saving…" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.queryByText("Profile changes saved.")).toBeNull();
     pending.resolve(confirmed("2030"));
-    expect(await screen.findByText("Shared profile details saved to production.")).toBeTruthy();
-    expect(screen.getByText("Shared details: No unsaved changes")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save shared details" }).hasAttribute("disabled")).toBe(true);
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
     expect(onProfileSaved).toHaveBeenCalledExactlyOnceWith(confirmed("2030"));
     editGraduation("2031");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect((screen.getByLabelText("Graduation value") as HTMLInputElement).value).toBe("2030");
   });
@@ -119,12 +120,12 @@ describe("Stage 4E Profile editor", () => {
     const update = vi.fn().mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce(confirmed("2030"));
     showProfile(mockRepository(update));
     editGraduation("2030");
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not save shared profile details. Your edits are still here; please retry.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Profile changes were not saved. Your edits remain; please retry.");
     expect((screen.getByLabelText("Graduation value") as HTMLInputElement).value).toBe("2030");
-    expect(screen.getByText("Shared details: Unsaved changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    expect(await screen.findByText("Shared profile details saved to production.")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(update).toHaveBeenCalledTimes(2);
   });
 
@@ -138,13 +139,13 @@ describe("Stage 4E Profile editor", () => {
     render(<MemoryRouter initialEntries={["/profile"]}><AuthGate client={client} resumeRepository={repository} /></MemoryRouter>);
     await screen.findByLabelText("Graduation value");
     editGraduation("2030");
-    fireEvent.click(screen.getByRole("button", { name: "Save shared details" }));
-    await screen.findByText("Shared profile details saved to production.");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    await screen.findByText("Profile changes saved.");
     fireEvent.click(screen.getByRole("link", { name: "Overview" }));
     await screen.findByRole("heading", { name: "Overview" });
     fireEvent.click(screen.getByRole("navigation", { name: "CMS sections" }).querySelector('a[href="/profile"]')!);
     expect((screen.getByLabelText("Graduation value") as HTMLInputElement).value).toBe("2030");
-    expect(screen.getByRole("button", { name: "Save shared details" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("keeps non-Profile, non-Education sections on local-only save", () => {
@@ -171,6 +172,6 @@ describe("Stage 4E Profile editor", () => {
     await screen.findByRole("heading", { name: "Access denied" });
     expect(repository.load).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Save shared details" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save profile changes" })).toBeNull();
   });
 });

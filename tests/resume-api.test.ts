@@ -32,6 +32,7 @@ function fakeSupabaseFetch(
     assert.equal(requestUrl.searchParams.get("resume_id"), `eq.${fixture.resume_sites[0].id}`);
     const result = fixture[table as keyof ResumeDatabaseRows];
     assert.ok(Array.isArray(result), `unexpected table request: ${table}`);
+    if (table === "resume_profile") assert.match(requestUrl.searchParams.get("select") ?? "", /photo_url/);
     return Response.json(result);
   };
 }
@@ -56,6 +57,16 @@ test("GET /api/resume is recognized and returns normalized content through the r
   assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepStrictEqual(await response.json(), resumeContent);
+});
+
+test("GET /api/resume returns the shared photo URL from resume_profile", async () => {
+  const fixture = createResumeRowsFixture();
+  const photoUrl = "https://storage.example.test/profile-images/example-cv/profile/photo.webp";
+  fixture.resume_profile[0].photo_url = photoUrl;
+  const response = await withFetch(fakeSupabaseFetch(fixture), () => handleResumeApi(new Request("https://example.test/api/resume"), env));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as typeof resumeContent;
+  assert.equal(payload.profile.photoUrl, photoUrl);
 });
 
 test("non-GET requests to /api/resume are rejected", async () => {

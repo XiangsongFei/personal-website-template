@@ -125,7 +125,7 @@ describe("Phase 5D Links route-first loading", () => {
     expect(await screen.findByLabelText("English Section label")).toBeTruthy();
     expect(store.getSectionState("links-session", resumeId, "contact").status).toBe("loaded");
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("idle");
-    go("Links & Site Text");
+    go("Site & Links");
     expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
     expect(repo.loadLinks).toHaveBeenCalledOnce();
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
@@ -152,16 +152,16 @@ describe("Phase 5D Links route-first loading", () => {
     go("Contact");
     expect(await screen.findByLabelText("English Section label")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Section label"), { target: { value: "Dirty Contact draft" } });
-    go("Links & Site Text");
+    go("Site & Links");
     expect((screen.getByLabelText("GitHub URL") as HTMLInputElement).value).toBe("https://draft.example.test");
     go("Contact");
     expect((screen.getByLabelText("English Section label") as HTMLInputElement).value).toBe("Dirty Contact draft");
-    go("Links & Site Text");
+    go("Site & Links");
     go("Overview");
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeTruthy();
     await waitFor(() => expect(repo.loadOverview).toHaveBeenCalledOnce());
     expect(repo.load).not.toHaveBeenCalled();
-    go("Links & Site Text");
+    go("Site & Links");
     expect((screen.getByLabelText("GitHub URL") as HTMLInputElement).value).toBe("https://draft.example.test");
     go("Contact");
     expect((screen.getByLabelText("English Section label") as HTMLInputElement).value).toBe("Dirty Contact draft");

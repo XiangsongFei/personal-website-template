@@ -69,6 +69,7 @@ export type ResumeContent = {
     graduationValue: string;
     avatarLabel: Record<ResumeLocale, string>;
     avatarInitials: string;
+    photoUrl: string | null;
     contactFocusHeading: Record<ResumeLocale, string>;
     contactStatusHeading: Record<ResumeLocale, string>;
     footerName: string;
@@ -87,6 +88,7 @@ export const resumeContent: ResumeContent = {
     graduationValue: "2024",
     avatarLabel: { zh: "示例头像占位符", en: "Sample avatar placeholder" },
     avatarInitials: "DU",
+    photoUrl: null,
     contactFocusHeading: { zh: "当前关注", en: "CURRENT FOCUS" },
     contactStatusHeading: { zh: "当前状态", en: "CURRENT STATUS" },
     footerName: "Demo User",
