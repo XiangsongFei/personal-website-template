@@ -4,7 +4,7 @@ export type UiLocale = "en" | "zh";
 export const UI_LOCALE_KEY = "cms-ui-locale";
 
 const dictionary: Record<string, string> = {
-  "Example CV CMS": "示例简历 CMS", "Admin workspace · production write": "管理员工作区 · 支持生产写入", "Admin workspace · demo": "管理员工作区 · 演示", Add: "添加", "Add item": "添加项目", Move: "移动", up: "上移", down: "下移", "Move up": "上移", "Move down": "下移", "Close editor for": "关闭编辑器：", Close: "关闭", "New item": "新项目", "No items yet. Add one to start this section.": "暂无项目，添加一个开始编辑。", "Local draft only. Production writes are disabled for this section.": "仅为本地草稿，生产写入已禁用。", "Fixture saves stay in this browser session.": "演示保存仅存在于当前浏览器会话。",
+  "Example CV CMS": "示例简历 CMS", "Example Resume CMS": "示例简历 CMS", CONTENT: "内容", WEBSITE: "网站", "Admin workspace · production write": "管理员工作区 · 支持生产写入", "Admin workspace · demo": "管理员工作区 · 演示", Add: "添加", "Add item": "添加项目", Move: "移动", up: "上移", down: "下移", "Move up": "上移", "Move down": "下移", "Close editor for": "关闭编辑器：", Close: "关闭", "New item": "新项目", "No items yet. Add one to start this section.": "暂无项目，添加一个开始编辑。", "Local draft only. Production writes are disabled for this section.": "仅为本地草稿，生产写入已禁用。", "Fixture saves stay in this browser session.": "演示保存仅存在于当前浏览器会话。",
   Overview: "概览", Profile: "个人资料", Introduction: "个人简介", Education: "教育经历", Experience: "工作经历", Projects: "项目经历", Skills: "技能", Awards: "荣誉奖项", Contact: "联系方式", "Links & Site Text": "链接与网站文本",
   "Sign Out": "退出登录", "Checking access": "正在检查访问权限", "Please wait while your session and admin access are verified.": "正在验证会话和管理员权限，请稍候。", "Sign in": "登录", "Use your administrator account to continue.": "请使用管理员账户继续。", Email: "邮箱", Password: "密码", "Signing in…": "正在登录…", "Unable to sign in. Check your email and password.": "登录失败，请检查邮箱和密码。", "Access denied": "访问被拒绝", "Unable to check access": "无法检查访问权限", "The session or administrator check failed. Please retry.": "会话或管理员检查失败，请重试。", Retry: "重试", "Configuration required": "需要配置", "Set the local Supabase URL and publishable key to use the admin app.": "请设置本地 Supabase URL 和 publishable key 以使用管理后台。", "Unable to sign out. Please try again.": "退出登录失败，请重试。",
   "Resume content": "简历内容", "Shared details": "共享信息", "Chinese and English profile": "中文和英文个人资料", Chinese: "中文", English: "英文", "Chinese content": "中文内容", "English content": "英文内容", Save: "保存", Cancel: "取消", Edit: "编辑", Delete: "删除", Confirm: "确认", Unsaved: "未保存", changes: "修改", "No unsaved": "没有未保存", "No unsaved changes": "没有未保存修改", "Unsaved changes": "有未保存修改", "Unsaved Chinese changes": "中文内容有未保存修改", "Unsaved English changes": "英文内容没有未保存修改", "Saving…": "正在保存…", "Saved": "已保存", "Cancel changes": "取消修改", "Save local draft": "保存本地草稿", "Save section": "保存此部分", "Saved as a local draft only. Production data was not changed.": "仅保存为本地草稿，生产数据未改变。", "Production data was not changed": "生产数据未改变",
@@ -34,6 +34,13 @@ function translate(text: string, locale: UiLocale): string {
 }
 
 Object.assign(dictionary, {
+  "Editor": "编辑器", "Preview": "预览", "Editor or preview view": "编辑器或预览视图", "Resume preview": "简历预览", "Preview language": "预览语言", "Preview Chinese": "预览中文", "Preview English": "预览英文",
+  "Loading Profile preview…": "正在加载个人资料预览……", "Profile preview is unavailable because its data could not be loaded.": "个人资料预览不可用，因为无法加载对应数据。",
+  "Loading Education preview…": "正在加载教育经历预览……", "Education preview is unavailable because its data could not be loaded.": "教育经历预览不可用，因为无法加载对应数据。",
+  "Loading Introduction preview…": "正在加载个人简介预览……", "Introduction preview is unavailable because its data could not be loaded.": "个人简介预览不可用，因为无法加载对应数据。",
+  "Loading Experience preview…": "正在加载工作经历预览……", "Experience preview is unavailable because its data could not be loaded.": "工作经历预览不可用，因为无法加载对应数据。",
+  "Loading Projects preview…": "正在加载项目经历预览……", "Projects preview is unavailable because its data could not be loaded.": "项目经历预览不可用，因为无法加载对应数据。",
+  "Loading Skills preview…": "正在加载技能预览……", "Skills preview is unavailable because its data could not be loaded.": "技能预览不可用，因为无法加载对应数据。",
   "Open a section to see shared fields, Chinese and English text, and ordered entries.": "打开一个模块以查看共享字段、中英文内容和有序条目。",
   "Cancel Chinese": "取消中文修改", "Cancel English": "取消英文修改",
   "Saved in this browser session only. No production data was changed.": "仅保存在当前浏览器会话中，生产数据未改变。",

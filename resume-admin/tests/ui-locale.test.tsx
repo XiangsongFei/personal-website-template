@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
 import { fixtureSections } from "../src/fixtures";
@@ -35,6 +35,30 @@ describe("global CMS UI locale", () => {
     expect(screen.getAllByRole("link", { name: "教育经历" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "English" }).getAttribute("aria-pressed")).toBe("false");
     expect(window.localStorage.getItem(UI_LOCALE_KEY)).toBe("zh");
+  });
+
+  it("groups the existing routes under compact Content and Website navigation labels", () => {
+    renderApp("/overview");
+    const navigation = screen.getByRole("navigation", { name: "CMS sections" });
+    expect(within(navigation).getByText("CONTENT")).toBeTruthy();
+    expect(within(navigation).getByText("WEBSITE")).toBeTruthy();
+    expect(within(navigation).getAllByRole("link").map(link => link.getAttribute("href"))).toEqual([
+      "/overview", "/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(within(navigation).getByText("内容")).toBeTruthy();
+    expect(within(navigation).getByText("网站")).toBeTruthy();
+  });
+
+  it("visually pairs Chinese and English inputs for the same semantic field", () => {
+    renderApp("/profile");
+    const nameHeading = screen.getByRole("heading", { level: 3, name: "Name" });
+    const namePair = nameHeading.parentElement;
+    expect(namePair).toBeTruthy();
+    expect(within(namePair as HTMLElement).getByLabelText("Chinese Name")).toBeTruthy();
+    expect(within(namePair as HTMLElement).getByLabelText("English Name")).toBeTruthy();
+    expect(within(namePair as HTMLElement).getByText("中文", { selector: "span[aria-hidden='true']" })).toBeTruthy();
+    expect(within(namePair as HTMLElement).getByText("EN", { selector: "span[aria-hidden='true']" })).toBeTruthy();
   });
 
   it("restores valid preference and falls back for invalid preference", () => {
@@ -119,13 +143,20 @@ describe("global CMS UI locale", () => {
     expect(screen.getByText("Demo User")).toBeTruthy();
   });
 
-  it("localizes the production-write capability badge", () => {
+  it("keeps one locale-neutral shell identity and removes repeated environment labels", () => {
     renderProductionApp("/overview");
-    expect(screen.getByText("PRODUCTION WRITE")).toBeTruthy();
-    expect(screen.getByText("Admin workspace · production write")).toBeTruthy();
+    expect(screen.getAllByText("Resume Editor")).toHaveLength(1);
+    const header = screen.getByRole("banner");
+    expect(header.textContent).not.toContain("Example CV CMS");
+    expect(header.textContent).not.toContain("PRODUCTION WRITE");
+    expect(header.textContent).not.toContain("LOCAL DEMO");
+    expect(header.textContent).toContain("admin@example.test");
+    expect(document.querySelector(".sidebar-foot")).toBeNull();
+    expect(document.querySelector(".topbar-badge")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByText("支持生产写入")).toBeTruthy();
-    expect(screen.getByText("管理员工作区 · 支持生产写入")).toBeTruthy();
+    expect(screen.getAllByText("Resume Editor")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "English" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "退出登录" })).toBeTruthy();
   });
 
   it("keeps the authenticated topbar class used by the sticky header", () => {

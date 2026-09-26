@@ -233,7 +233,9 @@ describe("Stage 4D auth-gated editor", () => {
     expect(screen.queryByText("Demo User")).toBeNull();
     resolve(mapResumeRows(databaseRows()));
     expect((await screen.findByLabelText("English Name") as HTMLInputElement).value).toBe("Actual Name");
-    expect(screen.getByText("PRODUCTION WRITE")).toBeTruthy();
+    expect(screen.getByText("Resume Editor")).toBeTruthy();
+    expect(screen.getByRole("banner").textContent).toContain("admin@example.test");
+    expect(screen.getByRole("banner").textContent).not.toContain("PRODUCTION WRITE");
   });
 
   it("shows an error on query failure and retries without signing out", async () => {
@@ -258,7 +260,7 @@ describe("Stage 4D auth-gated editor", () => {
     window.sessionStorage.setItem("example-cv-cms-fixture-education", JSON.stringify([{ id: "old", position: 0, translations: { en: { title: "Old fixture value" } } }]));
     const resume = mapResumeRows(databaseRows());
     const view = render(<MemoryRouter initialEntries={["/education"]}><App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter>);
-    expect(screen.getByText("Actual Education")).toBeTruthy();
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Actual Education");
     expect(screen.queryByText("Old fixture value")).toBeNull();
     fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Temporary local title" } });
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
@@ -266,7 +268,7 @@ describe("Stage 4D auth-gated editor", () => {
     expect(window.sessionStorage.getItem("example-cv-cms-fixture-education")).toContain("Old fixture value");
     view.unmount();
     render(<MemoryRouter initialEntries={["/education"]}><App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter>);
-    expect(screen.getByText("Actual Education")).toBeTruthy();
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Actual Education");
   });
 
   it("exposes explicit production save for Links and performs no write before Save", async () => {

@@ -1,6 +1,4 @@
-import { resumeContent, type ResumeLocale, type ResumeLocaleContent } from "./resume";
-
-type ResumeContent = typeof resumeContent;
+import { resumeContent, type ResumeContent, type ResumeLocale, type ResumeLocaleContent } from "./resume";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

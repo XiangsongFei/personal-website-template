@@ -60,7 +60,7 @@ export type ResumeLocaleContent = {
   contactStatusItems: ResumeContactStatus[];
 };
 
-export const resumeContent: {
+export type ResumeContent = {
   profile: {
     name: Record<ResumeLocale, string>;
     navAboutLabel: Record<ResumeLocale, string>;
@@ -76,7 +76,9 @@ export const resumeContent: {
   };
   publicLinks: { email: string; github: string; githubLabel: string; linkedInDisplayName: string; emailLabel: string; linkedInLabel: string };
   locales: Record<ResumeLocale, ResumeLocaleContent>;
-} = {
+};
+
+export const resumeContent: ResumeContent = {
   profile: {
     name: { zh: "示例用户", en: "Demo User" },
     navAboutLabel: { zh: "关于我", en: "About" },
