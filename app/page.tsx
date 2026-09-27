@@ -596,6 +596,7 @@ export default function Home() {
   const [locale, setLocale] = useState<Locale>("zh");
   const [currentResumeContent, setCurrentResumeContent] = useState(resumeContent);
   const [isLocaleReady, setIsLocaleReady] = useState(false);
+  const [isResumeReady, setIsResumeReady] = useState(false);
   const hasExplicitLocaleChoiceRef = useRef(false);
   const pendingScrollRef = useRef<ScrollSnapshot | null>(null);
   const anchorScrollBufferRef = useRef<HTMLDivElement | null>(null);
@@ -661,7 +662,10 @@ export default function Home() {
   useEffect(() => {
     const controller = new AbortController();
     void loadResumeContent(fetch, controller.signal).then(content => {
-      if (!controller.signal.aborted) setCurrentResumeContent(content);
+      if (!controller.signal.aborted) {
+        setCurrentResumeContent(content);
+        setIsResumeReady(true);
+      }
     });
     return () => controller.abort();
   }, []);
@@ -782,7 +786,7 @@ export default function Home() {
     };
   }, []);
   useLayoutEffect(() => {
-    if (!isLocaleReady) return;
+    if (!isLocaleReady || !isResumeReady) return;
     const reloadAnchorSnapshot = reloadAnchorSnapshotRef.current;
     if (reloadAnchorSnapshot) {
       hasRestoredReloadScrollRef.current = true;
@@ -920,8 +924,9 @@ export default function Home() {
       root.style.scrollBehavior = previousScrollBehavior;
     });
     return () => cancelAnimationFrame(restoreBehaviorFrame);
-  }, [isLocaleReady]);
+  }, [isLocaleReady, isResumeReady]);
   useEffect(() => {
+    if (!isLocaleReady || !isResumeReady) return;
     const introMain = heroIntroMainRef.current;
     const portrait = heroPortraitRef.current;
     if (!introMain || !portrait) return;
@@ -951,7 +956,7 @@ export default function Home() {
       window.removeEventListener("resize", alignPortraitToIntro);
       portrait.style.transform = "";
     };
-  }, [isLocaleReady, locale]);
+  }, [isLocaleReady, isResumeReady, locale]);
   const toBullets = (text: string) => text.includes("\n") ? text.split("\n").map(item => item.trim()).filter(Boolean) : text.split(locale === "zh" ? /[；。]/ : /\.\s+(?=[A-Z])/).map(item => item.trim()).filter(Boolean);
   const renderProjectBullet = (item: string) => <>{item.split(/(80\.75%|0\.80000)/g).map((part, index) => part === "80.75%" || part === "0.80000" ? <strong className="project-result" key={index}>{part}</strong> : part)}</>;
   const scrollToSection = (id: string, instant = false) => {
@@ -1128,7 +1133,7 @@ export default function Home() {
     else requestAnimationFrame(performScroll);
   };
   useLayoutEffect(() => {
-    if (!isLocaleReady || hasRestoredReloadScrollRef.current || window.location.hash !== "#contact" || !contactHashRestoreRef.current) return;
+    if (!isLocaleReady || !isResumeReady || hasRestoredReloadScrollRef.current || window.location.hash !== "#contact" || !contactHashRestoreRef.current) return;
     const root = document.documentElement;
     const previousScrollBehavior = root.style.scrollBehavior;
     root.style.scrollBehavior = "auto";
@@ -1149,7 +1154,7 @@ export default function Home() {
       if (restoreBehaviorFrame !== null) cancelAnimationFrame(restoreBehaviorFrame);
       root.style.scrollBehavior = previousScrollBehavior;
     };
-  }, [isLocaleReady, locale]);
+  }, [isLocaleReady, isResumeReady, locale]);
   useEffect(() => {
     const releaseBuffer = () => {
       if (!anchorScrollBufferRef.current || anchorScrollBufferRef.current.offsetHeight === 0) return;
@@ -1238,7 +1243,7 @@ export default function Home() {
 
     setPreferredLocale(locale === "zh" ? "en" : "zh");
   };
-  if (!isLocaleReady) return null;
+  if (!isLocaleReady || !isResumeReady) return null;
   return <main className={`locale-${locale}`}>
     <div className="sticky-nav"><nav><a className="nav-name" href="#about" onClick={(event) => { event.preventDefault(); scrollToSection("about"); }}>{currentResumeContent.profile.navAboutLabel[locale]}</a><div className="nav-links"><div className="nav-section-links">{t.nav.map((item, i) => { const id = ["experience", "projects", "skills", "awards", "contact"][i]; return <a key={item} href={`#${id}`} onClick={(event) => { event.preventDefault(); scrollToSection(id); }}>{item}</a>; })}</div><button aria-label="Switch language" onClick={switchLocale}>{locale === "zh" ? "EN" : "中文"}</button></div></nav></div>
     <header className="hero" id="about">

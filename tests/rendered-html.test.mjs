@@ -89,3 +89,24 @@ test("keeps the loading skeleton scoped and disposable", async () => {
     access(new URL("public/_sites-preview", templateRoot)),
   );
 });
+
+test("keeps the public resume hidden until both locale and resume data are ready", async () => {
+  const [page, loader] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/data/resume-validation.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /const \[isResumeReady, setIsResumeReady\] = useState\(false\);/);
+  assert.match(page, /loadResumeContent\(fetch, controller\.signal\)\.then\(content => \{\s*if \(!controller\.signal\.aborted\) \{\s*setCurrentResumeContent\(content\);\s*setIsResumeReady\(true\);/);
+  const readinessGate = page.indexOf("if (!isLocaleReady || !isResumeReady) return null;");
+  const resumeMarkup = page.indexOf("return <main className={`locale-${locale}`}");
+  assert.ok(readinessGate >= 0 && resumeMarkup > readinessGate, "resume markup must stay behind the readiness gate");
+
+  assert.match(page, /if \(!isLocaleReady \|\| !isResumeReady\) return;[\s\S]*?\}, \[isLocaleReady, isResumeReady\]\);/);
+  assert.match(page, /if \(!isLocaleReady \|\| !isResumeReady\) return;[\s\S]*?\}, \[isLocaleReady, isResumeReady, locale\]\);/);
+  assert.match(page, /if \(!isLocaleReady \|\| !isResumeReady \|\| hasRestoredReloadScrollRef\.current/);
+
+  assert.match(loader, /if \(!response\.ok\) return resumeContent;/);
+  assert.match(loader, /return isResumeContent\(payload\) \? payload : resumeContent;/);
+  assert.match(loader, /catch \{\s*return resumeContent;/);
+});
