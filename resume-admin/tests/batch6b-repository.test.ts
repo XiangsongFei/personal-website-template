@@ -56,6 +56,28 @@ describe("Batch 6B scoped repository writes", () => {
     expect(db.getPublicUrl).toHaveBeenCalledWith(paths[1]);
     expect(firstUrl).toBe(`https://storage.example.test/${paths[0]}`);
   });
+  it("uploads Profile photos with unique paths and remains retryable when crypto.randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", {});
+    try {
+      const db = database();
+      db.storageUpload.mockResolvedValueOnce({ error: new Error("temporary storage failure") });
+      const repo = createResumeRepository(db.client);
+      const file = new File(["photo"], "portrait.png", { type: "image/png" });
+
+      await expect(repo.uploadProfilePhoto!(file)).rejects.toThrow("Profile photo upload failed.");
+      const savedUrl = await repo.uploadProfilePhoto!(file);
+
+      const paths = db.storageUpload.mock.calls.map(([path]) => path);
+      expect(paths).toHaveLength(2);
+      expect(paths[0]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.png$/i);
+      expect(paths[1]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.png$/i);
+      expect(paths[1]).not.toBe(paths[0]);
+      expect(db.storageUpload).toHaveBeenCalledTimes(2);
+      expect(savedUrl).toBe(`https://storage.example.test/${paths[1]}`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("accepts only JPEG, PNG, and WebP up to 5 MB before contacting Storage", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
     for (const type of ["image/jpeg", "image/png", "image/webp"]) {

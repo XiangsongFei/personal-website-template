@@ -6,6 +6,7 @@ type Row = Record<string, unknown>;
 type OrderedParent = { resumeId: string; entryId: string; position: number; sourceKey: string | null; statusType?: StatusItem["statusType"] };
 type Translation<K> = { resumeId: string; entryId: string; locale: Locale; translation: K };
 type MethodRow = { resumeId: string; projectId: string; methodId: string; locale: Locale; position: number; value: string };
+let uploadIdCounter = 0;
 const tableSpec = {
   focus: { parent: "resume_contact_focus_items", translations: "resume_contact_focus_translations", fk: "focus_item_id" },
   status: { parent: "resume_contact_status_items", translations: "resume_contact_status_translations", fk: "status_item_id" },
@@ -14,6 +15,33 @@ type ContactEntryKind = keyof typeof tableSpec;
 
 function assertIdentity(resumeId: string, id?: string): void { if (!resumeId || (id !== undefined && !id)) throw new Error("Invalid resume mutation identity"); }
 function validateLocale(locale: Locale): void { if (locale !== "zh" && locale !== "en") throw new Error("Invalid resume locale"); }
+function createUploadId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === "function") {
+    try { return cryptoApi.randomUUID.call(cryptoApi); } catch { /* Use the compatible fallback below. */ }
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    try { cryptoApi.getRandomValues(bytes); } catch { fillWithMathRandom(bytes); }
+  } else {
+    fillWithMathRandom(bytes);
+  }
+  // Keep the fallback UUID-shaped so generated object paths remain compatible
+  // with existing path expectations even on runtimes without randomUUID().
+  uploadIdCounter = (uploadIdCounter + 1) >>> 0;
+  bytes[12] = uploadIdCounter & 0xff;
+  bytes[13] = (uploadIdCounter >>> 8) & 0xff;
+  bytes[14] = (uploadIdCounter >>> 16) & 0xff;
+  bytes[15] = (uploadIdCounter >>> 24) & 0xff;
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+function fillWithMathRandom(bytes: Uint8Array): void {
+  for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+}
 function checkedRow(data: Row | null, resumeId: string, id?: string): Row {
   if (!data || data.resume_id !== resumeId || (id !== undefined && data.id !== id)) throw new Error("Production write was not confirmed");
   return data;
@@ -96,7 +124,7 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     uploadProfilePhoto: async (file: File): Promise<string> => {
       const validationError = validateProfilePhoto(file);
       if (validationError) throw new Error(validationError);
-      const path = `example-cv/profile/${crypto.randomUUID()}.${profilePhotoExtension(file)}`;
+      const path = `example-cv/profile/${createUploadId()}.${profilePhotoExtension(file)}`;
       const bucket = client.storage.from("profile-images");
       const { error } = await bucket.upload(path, file, { upsert: false, contentType: file.type, cacheControl: "31536000" });
       if (error) throw new Error("Profile photo upload failed.");
