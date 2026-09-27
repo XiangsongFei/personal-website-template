@@ -4,6 +4,7 @@ export type UiLocale = "en" | "zh";
 export const UI_LOCALE_KEY = "cms-ui-locale";
 
 const dictionary: Record<string, string> = {
+  "Resume CMS": "简历内容管理", "Welcome back": "欢迎回来", "Sign in to continue managing your resume.": "登录以继续管理你的简历内容。", "Enter your email": "请输入邮箱", "Enter your password": "请输入密码",
   "Profile photo": "个人照片", "Profile photo preview": "个人照片预览", "No profile photo": "尚未设置个人照片", "Choose profile photo": "选择个人照片", "Replace profile photo": "更换个人照片", "JPG, PNG, or WebP; maximum 5 MB. Saves with shared Profile details.": "仅支持 JPG、PNG 或 WebP，最大 5 MB。与共享个人资料一起保存。", "Profile photo must be a JPG, PNG, or WebP image.": "个人照片必须为 JPG、PNG 或 WebP 图片。", "Profile photo must be 5 MB or smaller.": "个人照片不能超过 5 MB。",
   "Example CV CMS": "示例简历 CMS", "Example Resume CMS": "示例简历 CMS", CONTENT: "内容", WEBSITE: "网站", "Admin workspace · production write": "管理员工作区 · 支持生产写入", "Admin workspace · demo": "管理员工作区 · 演示", Add: "添加", "Add item": "添加项目", Move: "移动", up: "上移", down: "下移", "Move up": "上移", "Move down": "下移", "Close editor for": "关闭编辑器：", Close: "关闭", "New item": "新项目", "No items yet. Add one to start this section.": "暂无项目，添加一个开始编辑。", "Local draft only. Production writes are disabled for this section.": "仅为本地草稿，生产写入已禁用。", "Fixture saves stay in this browser session.": "演示保存仅存在于当前浏览器会话。",
   Overview: "概览", Profile: "个人资料", Introduction: "个人简介", Education: "教育经历", Experience: "工作经历", Projects: "项目经历", Skills: "技能", Awards: "荣誉奖项", Contact: "联系方式", "Links & Site Text": "链接与网站文本",

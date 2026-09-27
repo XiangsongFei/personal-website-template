@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { ResumeLoader } from "../data/ResumeLoader";
 import type { ResumeRepository } from "../data/resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "../data/resumeSectionStore";
@@ -19,6 +20,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   sectionStore?: ResumeSectionStore;
 }) {
   const { t } = useUiLocale();
+  const navigate = useNavigate();
   const [state, setState] = useState<AuthState>({ kind: "restoring" });
   const [loginPending, setLoginPending] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -140,7 +142,10 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
     setLoginError("");
     try {
       await client.signIn(email, password);
-      if (mounted.current) await restore();
+      if (mounted.current) {
+        navigate("/overview", { replace: true });
+        await restore();
+      }
     } catch {
       if (mounted.current) setLoginError(t("Unable to sign in. Check your email and password."));
     } finally {
@@ -172,15 +177,19 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
 
   if (!client) return <AuthScreen title={t("Configuration required")} message={t("Set the local Supabase URL and publishable key to use the admin app.")} />;
   if (state.kind === "restoring" || state.kind === "checking") return null;
-  if (state.kind === "signedOut") return <div className="auth-screen"><div className="auth-card">
-    <UiLocaleSwitch /><p className="auth-eyebrow">{t("Example CV CMS")}</p><h1>{t("Sign in")}</h1><p>{t("Use your administrator account to continue.")}</p>
+  if (state.kind === "signedOut") return <main className="auth-screen auth-login-screen"><section className="auth-card auth-login-content">
+    <header className="auth-login-header">
+      <div className="auth-login-brand"><span>EXAMPLE_CV</span><span>{t("Resume CMS")}</span></div>
+      <UiLocaleSwitch />
+    </header>
+    <h1>{t("Welcome back")}</h1><p className="auth-login-description">{t("Sign in to continue managing your resume.")}</p>
     <form onSubmit={submit}>
-      <label htmlFor="auth-email">{t("Email")}</label><input id="auth-email" name="email" type="email" autoComplete="username" required />
-      <label htmlFor="auth-password">{t("Password")}</label><input id="auth-password" name="password" type="password" autoComplete="current-password" required />
+      <label htmlFor="auth-email">{t("Email")}</label><input id="auth-email" name="email" type="email" autoComplete="username" placeholder={t("Enter your email")} required />
+      <label htmlFor="auth-password">{t("Password")}</label><input id="auth-password" name="password" type="password" autoComplete="current-password" placeholder={t("Enter your password")} required />
       {loginError && <p className="auth-error" role="alert">{loginError}</p>}
       <button type="submit" disabled={loginPending}>{loginPending ? t("Signing in…") : t("Sign in")}</button>
     </form>
-  </div></div>;
+  </section></main>;
   if (state.kind === "authorized") return <ResumeLoader key={state.identity.sessionKey} repository={resumeRepository} sessionKey={state.identity.sessionKey} identityEmail={state.identity.email}
     onSignOut={() => void signOut()} signOutPending={signOutPending} signOutError={signOutError} sectionStore={sectionStore} />;
   if (state.kind === "denied") return <AuthScreen title={t("Access denied")} message={`${t("This account is not authorized to edit this resume.")}${state.identity.email ? ` (${state.identity.email})` : ""}`} action={<><button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;

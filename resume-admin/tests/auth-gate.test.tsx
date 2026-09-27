@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient, AdminIdentity } from "../src/auth/supabase";
 import type { ResumeRepository } from "../src/data/resumeRepository";
@@ -36,7 +36,7 @@ function show(client: AdminAuthClient, path = "/overview") {
   return render(<UiLocaleProvider><MemoryRouter initialEntries={[path]}><PathnameProbe /><AuthGate client={client} resumeRepository={resumeRepository} /></MemoryRouter></UiLocaleProvider>);
 }
 
-function PathnameProbe() { const location = useLocation(); return <div data-testid="current-path">{location.pathname}</div>; }
+function PathnameProbe() { const location = useLocation(); const navigationType = useNavigationType(); return <div data-testid="current-path" data-navigation-type={navigationType}>{location.pathname}</div>; }
 
 beforeEach(() => { window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.spyOn(window, "scrollTo").mockImplementation(() => {}); });
 afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
@@ -105,9 +105,29 @@ describe("Stage 4C auth gate", () => {
 
   it("shows sign-in when there is no session", async () => {
     const auth = mockClient(); show(auth.client);
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
+    expect(screen.getByText("EXAMPLE_CV")).toBeTruthy();
+    expect(screen.getByText("Resume CMS")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Enter your email")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Enter your password")).toBeTruthy();
     expect(auth.client.isResumeAdmin).not.toHaveBeenCalled();
     expect((screen.getByLabelText("Password") as HTMLInputElement).type).toBe("password");
+  });
+
+  it("localizes the login composition and preserves its language switch", async () => {
+    const auth = mockClient(); show(auth.client);
+    await screen.findByRole("heading", { name: "Welcome back" });
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(screen.getByRole("heading", { name: "欢迎回来" })).toBeTruthy();
+    expect(screen.getByText("简历内容管理")).toBeTruthy();
+    expect(screen.getByText("登录以继续管理你的简历内容。")).toBeTruthy();
+    expect(screen.getByLabelText("邮箱")).toBeTruthy();
+    expect(screen.getByPlaceholderText("请输入邮箱")).toBeTruthy();
+    expect(screen.getByPlaceholderText("请输入密码")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录" })).toBeTruthy();
+    expect(screen.getByText("EXAMPLE_CV")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeTruthy();
   });
 
   it("mounts the fixture CMS only after explicit admin true", async () => {
@@ -136,12 +156,52 @@ describe("Stage 4C auth gate", () => {
 
   it("shows a generic error for invalid credentials", async () => {
     const auth = mockClient();
+    vi.mocked(auth.client.getIdentity).mockResolvedValueOnce(null);
     vi.mocked(auth.client.signIn).mockRejectedValue(new Error("specific provider error"));
-    show(auth.client); await screen.findByRole("heading", { name: "Sign in" });
+    show(auth.client, "/links"); await screen.findByRole("heading", { name: "Welcome back" });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "user@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "invalid" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Unable to sign in. Check your email and password.");
+    expect(screen.getByTestId("current-path").textContent).toBe("/links");
+    expect(screen.getByTestId("current-path").getAttribute("data-navigation-type")).toBe("POP");
+  });
+
+  it.each(["/links", "/profile", "/overview"])("navigates a fresh successful sign-in from %s to Overview", async path => {
+    const auth = mockClient(admin, true);
+    vi.mocked(auth.client.getIdentity).mockResolvedValueOnce(null).mockResolvedValue(admin);
+    show(auth.client, path);
+    await screen.findByRole("heading", { name: "Welcome back" });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/overview");
+      expect(screen.getByTestId("current-path").getAttribute("data-navigation-type")).toBe("REPLACE");
+    });
+    expect(await screen.findByRole("heading", { name: "Overview", level: 1 })).toBeTruthy();
+  });
+
+  it("keeps an already-authenticated session on its requested route", async () => {
+    const auth = mockClient(admin, true);
+    show(auth.client, "/links");
+    expect(await screen.findByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+    expect(screen.getByTestId("current-path").textContent).toBe("/links");
+    expect(screen.getByTestId("current-path").getAttribute("data-navigation-type")).toBe("POP");
+  });
+
+  it("submits from the form keyboard path and preserves its loading state", async () => {
+    const auth = mockClient();
+    const signIn = deferred<void>();
+    vi.mocked(auth.client.signIn).mockReturnValue(signIn.promise);
+    show(auth.client);
+    await screen.findByRole("heading", { name: "Welcome back" });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
+    fireEvent.submit(screen.getByLabelText("Password").closest("form")!);
+    expect(screen.getByRole("button", { name: "Signing in…" }).hasAttribute("disabled")).toBe(true);
+    signIn.resolve(undefined);
+    await waitFor(() => expect(auth.client.signIn).toHaveBeenCalledOnce());
   });
 
   it("checks authorization after login before mounting the CMS", async () => {
@@ -149,7 +209,7 @@ describe("Stage 4C auth gate", () => {
     const check = deferred<boolean>();
     vi.mocked(auth.client.getIdentity).mockResolvedValueOnce(null).mockResolvedValue(admin);
     vi.mocked(auth.client.isResumeAdmin).mockReturnValue(check.promise);
-    show(auth.client); await screen.findByRole("heading", { name: "Sign in" });
+    show(auth.client); await screen.findByRole("heading", { name: "Welcome back" });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -164,7 +224,7 @@ describe("Stage 4C auth gate", () => {
     await screen.findByRole("navigation", { name: "CMS sections" });
     window.sessionStorage.setItem("example-cv-cms-fixture-profile", "fixture");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(auth.client.signOut).toHaveBeenCalledOnce();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
     expect(window.sessionStorage.getItem("example-cv-cms-fixture-profile")).toBe("fixture");
@@ -172,7 +232,7 @@ describe("Stage 4C auth gate", () => {
 
   it("does not reveal a direct protected editor route while signed out", async () => {
     const auth = mockClient(); show(auth.client, "/education");
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(screen.queryByRole("heading", { name: "Education" })).toBeNull();
   });
 
@@ -183,7 +243,7 @@ describe("Stage 4C auth gate", () => {
 
   it("cleans up its single auth subscription", async () => {
     const auth = mockClient(); const view = show(auth.client);
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(auth.client.subscribe).toHaveBeenCalledOnce();
     view.unmount(); expect(auth.unsubscribe).toHaveBeenCalledOnce();
   });
@@ -199,7 +259,7 @@ describe("Stage 4C auth gate", () => {
     const auth = mockClient(admin, true); show(auth.client);
     await screen.findByRole("navigation", { name: "CMS sections" });
     auth.emit("SIGNED_OUT");
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
   });
 
   it("reports sign-out failure without claiming success", async () => {
