@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resumeContent } from "../app/data/resume";
+import { isResumeContent } from "../app/data/resume-validation";
 import { createResumeRowsFixture } from "./resume-adapter-fixtures";
 import type { ResumeDatabaseRows } from "../app/data/resume-adapter";
 import { handleResumeApi, isResumeApiPath } from "../worker/resume-api";
@@ -57,6 +58,27 @@ test("GET /api/resume is recognized and returns normalized content through the r
   assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepStrictEqual(await response.json(), resumeContent);
+});
+
+test("GET /api/resume returns a complete valid payload when an affected parent has a null source_key", async () => {
+  const cases = [
+    { table: "resume_education_entries", getId: (content: typeof resumeContent) => content.locales.zh.edu[0].id },
+    { table: "resume_experience_entries", getId: (content: typeof resumeContent) => content.locales.zh.jobs[0].id },
+    { table: "resume_project_entries", getId: (content: typeof resumeContent) => content.locales.zh.projects[0].id },
+    { table: "resume_skill_groups", getId: (content: typeof resumeContent) => content.locales.zh.skillGroups[0].id },
+    { table: "resume_award_entries", getId: (content: typeof resumeContent) => content.locales.zh.honorsList[0].id },
+  ] as const;
+
+  for (const { table, getId } of cases) {
+    const fixture = createResumeRowsFixture();
+    const parent = fixture[table][0];
+    parent.source_key = null;
+    const response = await withFetch(fakeSupabaseFetch(fixture), () => handleResumeApi(new Request("https://example.test/api/resume"), env));
+    assert.equal(response.status, 200, table);
+    const payload: unknown = await response.json();
+    assert.equal(isResumeContent(payload), true, table);
+    assert.equal(getId(payload as typeof resumeContent), parent.id, table);
+  }
 });
 
 test("GET /api/resume returns the shared photo URL from resume_profile", async () => {

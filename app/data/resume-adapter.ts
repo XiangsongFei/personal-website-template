@@ -223,8 +223,10 @@ function oneForResume(rows: Row[], resumeId: string, table: string): Row {
 
 function stableSourceKey(row: Row, where: string): string {
   const value = optionalText(row, "source_key", where);
-  if (value === undefined) return fail(`${where}.source_key is required to reconstruct the public item ID`);
-  return value;
+  if (value !== undefined && value.length > 0) return value;
+  const fallbackId = text(row, "id", where);
+  if (fallbackId.length === 0) return fail(`${where}.id must be a non-empty string to reconstruct the public item ID`);
+  return fallbackId;
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resumeContent } from "../app/data/resume";
 import { adaptResumeRows, ResumeDataValidationError } from "../app/data/resume-adapter";
+import { isResumeContent } from "../app/data/resume-validation";
 import { createResumeRowsFixture } from "./resume-adapter-fixtures";
+
+const stableIdCases = [
+  { table: "resume_education_entries", collection: "edu" },
+  { table: "resume_experience_entries", collection: "jobs" },
+  { table: "resume_project_entries", collection: "projects" },
+  { table: "resume_skill_groups", collection: "skillGroups" },
+  { table: "resume_award_entries", collection: "honorsList" },
+] as const;
 
 test("production-shaped rows adapt deeply to the current static resume content", () => {
   assert.deepStrictEqual(adaptResumeRows(createResumeRowsFixture()), resumeContent);
@@ -47,10 +56,46 @@ test("fails closed when a row references a different resume", () => {
   assert.throws(() => adaptResumeRows(fixture), ResumeDataValidationError);
 });
 
-test("fails closed when a required stable source_key is null", () => {
-  const fixture = createResumeRowsFixture();
-  fixture.resume_education_entries[0].source_key = null;
-  assert.throws(() => adaptResumeRows(fixture), ResumeDataValidationError);
+for (const { table, collection } of stableIdCases) {
+  test(`${collection} keeps its populated source_key as the public ID`, () => {
+    const fixture = createResumeRowsFixture();
+    const row = fixture[table][0];
+    row.source_key = `preserved-${collection}-key`;
+    const mapped = adaptResumeRows(fixture);
+    assert.equal(mapped.locales.zh[collection][0].id, `preserved-${collection}-key`);
+    assert.equal(mapped.locales.en[collection][0].id, `preserved-${collection}-key`);
+  });
+
+  test(`${collection} uses the database row ID when source_key is null`, () => {
+    const fixture = createResumeRowsFixture();
+    const row = fixture[table][0];
+    row.source_key = null;
+    const mapped = adaptResumeRows(fixture);
+    assert.equal(mapped.locales.zh[collection][0].id, row.id);
+    assert.equal(mapped.locales.en[collection][0].id, row.id);
+    assert.equal(isResumeContent(mapped), true);
+  });
+
+  test(`${collection} uses the database row ID when source_key is missing`, () => {
+    const fixture = createResumeRowsFixture();
+    const row = fixture[table][0];
+    delete row.source_key;
+    const mapped = adaptResumeRows(fixture);
+    assert.equal(mapped.locales.zh[collection][0].id, row.id);
+    assert.equal(mapped.locales.en[collection][0].id, row.id);
+  });
+}
+
+test("fails closed when neither source_key nor a non-empty database ID is available", () => {
+  const missingId = createResumeRowsFixture();
+  missingId.resume_education_entries[0].source_key = null;
+  delete missingId.resume_education_entries[0].id;
+  assert.throws(() => adaptResumeRows(missingId), ResumeDataValidationError);
+
+  const emptyId = createResumeRowsFixture();
+  emptyId.resume_award_entries[0].source_key = "";
+  emptyId.resume_award_entries[0].id = "";
+  assert.throws(() => adaptResumeRows(emptyId), ResumeDataValidationError);
 });
 
 test("fails closed when a project method references a missing project", () => {
