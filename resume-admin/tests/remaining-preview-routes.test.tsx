@@ -55,7 +55,7 @@ describe("Awards, Contact, and Links live preview", () => {
   it("previews Awards continuously in both locales and reflects edits, adds, reorder, and delete without writes", () => {
     const { write } = open("/awards", true);
     expect(previewNode().getAttribute("data-preview-focus")).toBe("awards");
-    const awards = previewNode().querySelector("#preview-awards");
+    const awards = previewNode().querySelector("#preview-awards") as HTMLElement;
     expect(awards).toBeTruthy();
     expect(within(awards as HTMLElement).getByRole("heading", { level: 3, name: "Example Project Outcome" })).toBeTruthy();
     expect(previewNode().querySelector("#preview-skills")).toBeTruthy();
@@ -63,7 +63,8 @@ describe("Awards, Contact, and Links live preview", () => {
     fireEvent.change(screen.getAllByLabelText("English Award name")[0], { target: { value: "Unsaved award title" } });
     fireEvent.change(screen.getAllByLabelText("Chinese Award name")[0], { target: { value: "未保存荣誉" } });
     expect(within(awards as HTMLElement).getByRole("heading", { level: 3, name: "Unsaved award title" })).toBeTruthy();
-    const list = document.querySelector('[aria-label="Awards items"]') as HTMLElement;
+    expect(awards.querySelector(".resume-preview-award-list h3 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
+    const list = document.querySelector(".awards-editor-scope .repeatable-group") as HTMLElement;
     fireEvent.click(within(list).getByRole("button", { name: "Move Unsaved award title down" }));
     expect(Array.from(awards!.querySelectorAll(".resume-preview-award-list h3"), item => item.textContent)).toEqual([
       "Example Academic Honour", "Unsaved award title",
@@ -72,7 +73,7 @@ describe("Awards, Contact, and Links live preview", () => {
     expect(within(awards as HTMLElement).getByRole("heading", { level: 3, name: "未保存荣誉" })).toBeTruthy();
     setPreviewLocale("English");
 
-    fireEvent.click(within(list).getByRole("button", { name: "Add item" }));
+    fireEvent.click(within(list).getByRole("button", { name: "Add award" }));
     const awardNames = screen.getAllByLabelText("English Award name");
     fireEvent.change(awardNames[awardNames.length - 1], { target: { value: "New preview award" } });
     expect(within(awards as HTMLElement).getByRole("heading", { level: 3, name: "New preview award" })).toBeTruthy();
@@ -91,31 +92,43 @@ describe("Awards, Contact, and Links live preview", () => {
     expect(within(contact).getByText("Data & Analysis")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Availability"), { target: { value: "Open to a new discussion." } });
     expect(within(contact).getByRole("heading", { level: 2, name: "Open to a new discussion." })).toBeTruthy();
+    expect(contact.querySelector("footer h2 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
 
     const focus = document.querySelector('[aria-label="Current Focus"]') as HTMLElement;
     fireEvent.change(screen.getAllByLabelText("English Focus title")[0], { target: { value: "Unsaved focus" } });
     fireEvent.change(screen.getAllByLabelText("Chinese Focus title")[0], { target: { value: "未保存重点" } });
     expect(within(contact).getByText("Unsaved focus")).toBeTruthy();
+    const changedFocusId = contact.querySelector(".resume-preview-focus-list article")?.getAttribute("data-preview-item-id");
+    expect(contact.querySelector(`.resume-preview-focus-list article[data-preview-item-id="${changedFocusId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     fireEvent.click(within(focus).getByRole("button", { name: "Move Unsaved focus down" }));
     expect(Array.from(contact.querySelectorAll(".resume-preview-focus-list article p"), item => item.textContent)).toEqual(["Projects & Practice", "Unsaved focus"]);
-    fireEvent.click(within(focus).getByRole("button", { name: "Add item" }));
+    expect(contact.querySelector(`.resume-preview-focus-list article[data-preview-item-id="${changedFocusId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(contact.querySelector(`.resume-preview-focus-list article:not([data-preview-item-id="${changedFocusId}"]) .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
+    fireEvent.click(within(focus).getByRole("button", { name: "Add focus" }));
     const focusTitles = screen.getAllByLabelText("English Focus title");
     fireEvent.change(focusTitles[focusTitles.length - 1], { target: { value: "Added focus" } });
     expect(within(contact).getByText("Added focus")).toBeTruthy();
+    const addedFocus = contact.querySelector(".resume-preview-focus-list article:last-child");
+    expect(addedFocus?.querySelector(".resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
     fireEvent.click(within(focus).getByRole("button", { name: "Delete Added focus" }));
     fireEvent.click(within(focus).getByRole("button", { name: "Confirm delete" }));
     expect(within(contact).queryByText("Added focus")).toBeNull();
+    expect(contact.querySelector(`.resume-preview-focus-list article:not([data-preview-item-id="${changedFocusId}"]) .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
 
     const status = document.querySelector('[aria-label="Current Status"]') as HTMLElement;
     fireEvent.change(screen.getAllByLabelText("English Status title")[0], { target: { value: "Unsaved status" } });
     expect(within(contact).getByText("Unsaved status")).toBeTruthy();
+    const changedStatusId = contact.querySelector(".resume-preview-status-list article")?.getAttribute("data-preview-item-id");
+    expect(contact.querySelector(`.resume-preview-status-list article[data-preview-item-id="${changedStatusId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     fireEvent.click(within(status).getByRole("button", { name: "Move Unsaved status down" }));
     expect(Array.from(contact.querySelectorAll(".resume-preview-status-list p"), item => item.textContent)).toEqual(["Open to Discussions", "Unsaved status"]);
-    fireEvent.click(within(status).getByRole("button", { name: "Add item" }));
+    expect(contact.querySelector(`.resume-preview-status-list article[data-preview-item-id="${changedStatusId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(contact.querySelector(`.resume-preview-status-list article:not([data-preview-item-id="${changedStatusId}"]) .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
+    fireEvent.click(within(status).getByRole("button", { name: "Add status" }));
     const statusTitles = screen.getAllByLabelText("English Status title");
     fireEvent.change(statusTitles[statusTitles.length - 1], { target: { value: "Added status" } });
     expect(within(contact).getByText("Added status")).toBeTruthy();
-    fireEvent.change(screen.getAllByLabelText("Status type (shared)")[screen.getAllByLabelText("Status type (shared)").length - 1], { target: { value: "graduation" } });
+    fireEvent.change(screen.getAllByLabelText("Status type")[screen.getAllByLabelText("Status type").length - 1], { target: { value: "graduation" } });
     expect(contact.querySelector('[data-status-type="graduation"]')).toBeTruthy();
     fireEvent.click(within(status).getByRole("button", { name: "Delete Added status" }));
     fireEvent.click(within(status).getByRole("button", { name: "Confirm delete" }));
@@ -130,21 +143,32 @@ describe("Awards, Contact, and Links live preview", () => {
   it("reflects Links & Site Text drafts at their public locations; locale changes remain preview-only", () => {
     const { write } = open("/links", true);
     expect(previewNode().getAttribute("data-preview-focus")).toBe("about");
+    fireEvent.change(screen.getByLabelText("LinkedIn action label"), { target: { value: "LinkedIn Action" } });
+    const linkedInAction = previewNode().querySelector('.resume-preview-actions a[href="https://www.linkedin.com/"]');
+    expect(linkedInAction?.textContent).toContain("LinkedIn Action");
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "preview@example.test" } });
     expect(previewNode().querySelector('.resume-preview-actions a[href="mailto:preview@example.test"]')).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Resume PDF label"), { target: { value: "Updated resume button" } });
     expect(preview().getByRole("link", { name: /Updated resume button/ })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English LinkedIn URL"), { target: { value: "https://linkedin.example.test/profile" } });
     expect(previewNode().querySelector('.resume-preview-actions a[href="https://linkedin.example.test/profile"]')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("English LinkedIn text"), { target: { value: "LinkedIn destination" } });
-    expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) > span")?.textContent).toBe("LinkedIn destination");
+    fireEvent.change(screen.getByLabelText("English LinkedIn text"), { target: { value: "LinkedIn Profile" } });
+    const englishContactLink = previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) a");
+    expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) > span")?.textContent).toBe("LinkedIn Profile");
+    expect(englishContactLink?.getAttribute("aria-label")).toBe("LinkedIn Profile: Demo profile");
+    expect(linkedInAction?.textContent).toContain("LinkedIn Action");
+    fireEvent.change(screen.getByLabelText("Chinese LinkedIn text"), { target: { value: "领英" } });
     const firstNavigationRow = document.querySelector(".navigation-label-row") as HTMLElement;
     fireEvent.change(within(firstNavigationRow).getByLabelText("English Navigation label"), { target: { value: "Career" } });
     fireEvent.change(within(firstNavigationRow).getByLabelText("Chinese Navigation label"), { target: { value: "职业经历" } });
     expect(preview().getByRole("link", { name: "Resume preview Career" })).toBeTruthy();
+    expect(previewNode().querySelector(".resume-preview-nav-links a[data-preview-item-id] .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
     setPreviewLocale("Chinese");
     expect(preview().getByRole("link", { name: "Resume preview 职业经历" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Links & Site Text" })).toBeTruthy();
+    expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) > span")?.textContent).toBe("领英");
+    expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) a")?.getAttribute("aria-label")).toBe("领英: Demo profile");
+    expect(previewNode().querySelector('.resume-preview-actions a[href="https://www.linkedin.com/"]')?.textContent).toContain("LinkedIn Action");
+    expect(screen.getByRole("heading", { name: "Public links" })).toBeTruthy();
     expect(write).not.toHaveBeenCalled();
     setPreviewLocale("English");
     expect(preview().getByRole("link", { name: "Resume preview Career" })).toBeTruthy();

@@ -174,7 +174,7 @@ describe("Phase 5B Projects route-first loading", () => {
     expect(await screen.findByLabelText("English Title")).toBeTruthy();
     expect(store.getSectionState("projects-session", resumeId, "projects").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(store.getSectionState("projects-session", resumeId, "projects").status).toBe("idle");
     for (const path of ["/overview"]) {
       cleanup(); const next = repository();

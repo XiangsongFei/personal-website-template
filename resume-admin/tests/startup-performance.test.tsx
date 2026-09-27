@@ -89,7 +89,7 @@ describe("startup request coalescing", () => {
   it("does not launch a second verification after manual sign-in event plus submit continuation", async () => {
     const app = harness(null);
     app.render();
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -113,13 +113,13 @@ describe("startup request coalescing", () => {
     app.render();
     await screen.findByRole("navigation", { name: "CMS sections" });
     act(() => app.emit("SIGNED_OUT", null));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
     expect(app.repository.loadProfile).toHaveBeenCalledOnce();
 
     const invalid = harness(null);
     invalid.render();
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(invalid.client.isResumeAdmin).not.toHaveBeenCalled();
 
     const expired = harness();

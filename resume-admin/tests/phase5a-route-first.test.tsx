@@ -169,7 +169,7 @@ describe("Phase 5A route-first section loading", () => {
     expect(await screen.findByLabelText("Chinese Group title")).toBeTruthy();
     expect(store.getSectionState("phase5a-session", resumeId, "skills").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(store.getSectionState("phase5a-session", resumeId, "skills").status).toBe("idle");
 
     store.setSession("phase5a-session");

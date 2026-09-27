@@ -78,7 +78,8 @@ describe("Stage 4C auth gate", () => {
       window.sessionStorage.clear();
       const auth = mockClient(admin, true);
       show(auth.client, path);
-      expect(await screen.findByRole("heading", { name: title, level: 1 })).toBeTruthy();
+      if (path === "/links") expect(await screen.findByRole("heading", { name: "Public links" })).toBeTruthy();
+      else expect(await screen.findByRole("heading", { name: title, level: 1 })).toBeTruthy();
       expect(screen.getByTestId("current-path").textContent).toBe(path);
     }
   });
@@ -185,7 +186,7 @@ describe("Stage 4C auth gate", () => {
   it("keeps an already-authenticated session on its requested route", async () => {
     const auth = mockClient(admin, true);
     show(auth.client, "/links");
-    expect(await screen.findByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Public links" })).toBeTruthy();
     expect(screen.getByTestId("current-path").textContent).toBe("/links");
     expect(screen.getByTestId("current-path").getAttribute("data-navigation-type")).toBe("POP");
   });

@@ -11,8 +11,12 @@ function database() {
     void _path; void _file; void _options;
     return { error: null };
   });
+  const storageInfo = vi.fn(async (_path: string): Promise<{ data: unknown; error: Error | null }> => {
+    void _path;
+    return { data: { metadata: {} }, error: null };
+  });
   const getPublicUrl = vi.fn((path: string) => ({ data: { publicUrl: `https://storage.example.test/${path}` } }));
-  const storageFrom = vi.fn(() => ({ upload: storageUpload, getPublicUrl }));
+  const storageFrom = vi.fn(() => ({ upload: storageUpload, info: storageInfo, getPublicUrl }));
   const from = vi.fn((table: string) => {
     const call = { table, op: "select", filters: [] as Array<[string, unknown]>, payload: undefined as Record<string, unknown> | undefined };
     calls.push(call);
@@ -29,7 +33,7 @@ function database() {
       if (table === "resume_contact_status_items") return { id: projectId, resume_id: resumeId, position: 0, status_type: "study", ...(call.payload ?? {}) };
       if (table === "resume_navigation_item_translations") return { resume_id: resumeId, navigation_item_id: "nav-id", locale: "zh", label: "中文", ...(call.payload ?? {}) };
       if (table === "resume_public_links") return { resume_id: resumeId };
-      if (table === "resume_locale_content") return { resume_id: resumeId, locale: "en", ...(call.payload ?? {}) };
+      if (table === "resume_locale_content") return { resume_id: resumeId, locale: call.filters.find(([key]) => key === "locale")?.[1] ?? "en", ...(call.payload ?? {}) };
       return { resume_id: resumeId, project_entry_id: projectId, locale: "zh", title: "title", subtitle: "subtitle", period: "period", description: "description", href: "/", ...(call.payload ?? {}) };
     };
     q.single = (async () => ({ data: response(), error: null })) as never;
@@ -37,7 +41,7 @@ function database() {
     q.then = ((resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise.resolve({ data: response(), error: null }).then(resolve, reject)) as never;
     return q;
   });
-  return { client: { from, storage: { from: storageFrom } } as unknown as SupabaseClient, calls, storageUpload, getPublicUrl, storageFrom };
+  return { client: { from, storage: { from: storageFrom } } as unknown as SupabaseClient, calls, storageUpload, storageInfo, getPublicUrl, storageFrom };
 }
 
 describe("Batch 6B scoped repository writes", () => {
@@ -110,12 +114,14 @@ describe("Batch 6B scoped repository writes", () => {
     await repo.updateNavigationLabel!(resumeId, "nav-id", "zh", "经历");
     expect(db.calls[0]).toMatchObject({ table: "resume_navigation_item_translations", op: "update", payload: { label: "经历" }, filters: [["resume_id", resumeId], ["navigation_item_id", "nav-id"], ["locale", "zh"]] });
   });
-  it("keeps status type on parent insertion and forbids Chinese availability writes", async () => {
+  it("keeps status type on parent insertion and writes Availability for either locale", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
     await repo.insertStatus!(resumeId, 0, "graduation");
     expect(db.calls[0]).toEqual({ table: "resume_contact_status_items", op: "insert", payload: { resume_id: resumeId, position: 0, status_type: "graduation" }, filters: [] });
-    await expect(repo.updateContactAvailability!(resumeId, "zh", "not allowed")).rejects.toThrow("Chinese availability remains read-only");
-    expect(db.calls).toHaveLength(1);
+    await repo.updateContactAvailability!(resumeId, "zh", "新的中文状态");
+    expect(db.calls[1]).toMatchObject({ table: "resume_locale_content", op: "update", payload: { availability: "新的中文状态" }, filters: [["resume_id", resumeId], ["locale", "zh"]] });
+    await repo.updateContactAvailability!(resumeId, "en", "New English availability");
+    expect(db.calls[2]).toMatchObject({ table: "resume_locale_content", op: "update", payload: { availability: "New English availability" }, filters: [["resume_id", resumeId], ["locale", "en"]] });
   });
   it("creates Focus using only columns present in the production Focus table", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
@@ -134,10 +140,68 @@ describe("Batch 6B scoped repository writes", () => {
   ] as const)("uploads the %s PDF to its stable public bucket path with replacement enabled", async (locale, path) => {
     const db = database(); const repo = createResumeRepository(db.client);
     const file = new File(["%PDF-1.7 test"], `resume-${locale}.pdf`, { type: "application/pdf" });
-    await expect(repo.uploadResumePdf!(locale, file)).resolves.toBe(`https://storage.example.test/${path}`);
+    const uploadedUrl = await repo.uploadResumePdf!(locale, file);
+    const parsedUrl = new URL(uploadedUrl);
+    expect(parsedUrl.origin).toBe("https://storage.example.test");
+    expect(parsedUrl.pathname).toBe(`/${path}`);
+    expect(parsedUrl.searchParams.getAll("cacheNonce")).toHaveLength(1);
+    expect(parsedUrl.searchParams.get("cacheNonce")).toMatch(/^[\w-]+$/);
     expect(db.storageFrom).toHaveBeenCalledWith("resume-files");
-    expect(db.storageUpload).toHaveBeenCalledWith(path, file, { upsert: true, contentType: "application/pdf" });
+    expect(db.storageUpload).toHaveBeenCalledWith(path, file, { upsert: true, contentType: "application/pdf", cacheControl: "60", metadata: { originalFilename: file.name } });
     expect(db.getPublicUrl).toHaveBeenCalledWith(path);
+  });
+  it("preserves existing public URL parameters, replaces cacheNonce, and creates a new nonce per successful upload", async () => {
+    const db = database();
+    db.getPublicUrl.mockImplementation(path => ({ data: { publicUrl: `https://storage.example.test/${path}?download=1&cacheNonce=old#pdf` } }));
+    const repo = createResumeRepository(db.client);
+    const file = new File(["%PDF replacement"], "replacement.pdf", { type: "application/pdf" });
+
+    const first = new URL(await repo.uploadResumePdf!("zh", file));
+    const second = new URL(await repo.uploadResumePdf!("zh", file));
+
+    expect(first.searchParams.get("download")).toBe("1");
+    expect(second.searchParams.get("download")).toBe("1");
+    expect(first.hash).toBe("#pdf");
+    expect(second.hash).toBe("#pdf");
+    expect(first.searchParams.getAll("cacheNonce")).toHaveLength(1);
+    expect(second.searchParams.getAll("cacheNonce")).toHaveLength(1);
+    expect(first.searchParams.get("cacheNonce")).not.toBe("old");
+    expect(second.searchParams.get("cacheNonce")).not.toBe("old");
+    expect(second.searchParams.get("cacheNonce")).not.toBe(first.searchParams.get("cacheNonce"));
+    expect(db.storageUpload).toHaveBeenCalledTimes(2);
+    expect(db.storageUpload.mock.calls.every(([path]) => path === "example-cv/resume_zh.pdf")).toBe(true);
+  });
+  it("uploads PDFs with stable paths and fresh cache nonces when crypto.randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", {});
+    try {
+      const db = database();
+      db.storageUpload.mockResolvedValueOnce({ error: new Error("temporary storage failure") });
+      const repo = createResumeRepository(db.client);
+      const file = new File(["%PDF test"], "费湘淞_中文简历.pdf", { type: "application/pdf" });
+
+      await expect(repo.uploadResumePdf!("zh", file)).rejects.toThrow("Resume PDF upload failed.");
+      const firstRetryUrl = new URL(await repo.uploadResumePdf!("zh", file));
+      const secondSuccessUrl = new URL(await repo.uploadResumePdf!("zh", file));
+
+      expect(db.storageFrom).toHaveBeenCalledWith("resume-files");
+      expect(db.storageUpload).toHaveBeenCalledTimes(3);
+      expect(db.storageUpload.mock.calls.map(([path]) => path)).toEqual([
+        "example-cv/resume_zh.pdf",
+        "example-cv/resume_zh.pdf",
+        "example-cv/resume_zh.pdf",
+      ]);
+      expect(db.storageUpload).toHaveBeenNthCalledWith(2, "example-cv/resume_zh.pdf", file, {
+        upsert: true,
+        contentType: "application/pdf",
+        cacheControl: "60",
+        metadata: { originalFilename: file.name },
+      });
+      expect(firstRetryUrl.searchParams.get("cacheNonce")).toMatch(/^[\w-]+$/);
+      expect(secondSuccessUrl.searchParams.get("cacheNonce")).toMatch(/^[\w-]+$/);
+      expect(firstRetryUrl.searchParams.get("cacheNonce")).not.toBe(secondSuccessUrl.searchParams.get("cacheNonce"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it("rejects invalid PDF files and files above 10 MB before contacting Storage", async () => {
     const db = database(); const repo = createResumeRepository(db.client);

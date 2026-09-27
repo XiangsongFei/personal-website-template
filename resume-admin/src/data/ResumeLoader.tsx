@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { App } from "../App";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./resumeMapper";
@@ -42,6 +42,29 @@ function supportsOverviewReads(repository: ResumeRepository | null): repository 
   if (!repository) return false;
   const candidate = repository as ResumeRepository & Partial<ResumeSectionRepository>;
   return typeof candidate.loadSiteMetadata === "function" && typeof candidate.loadOverview === "function";
+}
+
+function supportsCanonicalPreviewReads(repository: ResumeRepository | null): repository is ResumeRepository & ResumeSectionRepository {
+  if (!repository) return false;
+  const candidate = repository as ResumeRepository & Partial<ResumeSectionRepository>;
+  return ["loadSiteMetadata", "loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks"]
+    .every(method => typeof candidate[method as keyof ResumeSectionRepository] === "function");
+}
+
+async function loadCanonicalPreviewFromStore(sessionKey: string, repository: ResumeRepository & ResumeSectionRepository, store: ResumeSectionStore): Promise<LoadedResume> {
+  const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
+  const [profile, introduction, education, experience, projects, skills, awards, contact, links] = await Promise.all([
+    store.loadSection(sessionKey, metadata.resumeId, "profile", () => repository.loadProfile(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "introduction", () => repository.loadIntroduction(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "education", () => repository.loadEducation(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "experience", () => repository.loadExperience(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "projects", () => repository.loadProjects(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "skills", () => repository.loadSkills(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "awards", () => repository.loadAwards(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "contact", () => repository.loadContact(metadata.resumeId)),
+    store.loadSection(sessionKey, metadata.resumeId, "links", () => repository.loadLinks(metadata.resumeId)),
+  ]);
+  return { ...metadata, sections: { profile, introduction, education, experience, projects, skills, awards, contact, links } };
 }
 
 type AdditionalRouteKey = "introduction" | "experience" | "projects" | "skills" | "awards" | "contact" | "links";
@@ -121,12 +144,15 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
   const useSectionOverview = isOverviewRoute && supportsOverviewReads(repository);
   const additionalRouteKey = routeKeys[location.pathname] ?? null;
+  const isPreviewRoute = isProfileRoute || isEducationRoute || additionalRouteKey !== null;
   const useSectionAdditional = supportsAdditionalReads(repository, additionalRouteKey);
   const useSectionProfile = isProfileRoute && supportsProfileReads(repository);
   const useSectionEducation = isEducationRoute && supportsEducationReads(repository);
   const [resume, setResume] = useState<LoadedResume | null>(null);
   const [fullSnapshotState, setFullSnapshotState] = useState<"idle" | "loading" | "error">("idle");
   const [fullAttempt, setFullAttempt] = useState(0);
+  const [canonicalPreviewRequested, setCanonicalPreviewRequested] = useState(false);
+  const requestCanonicalPreview = useCallback(() => setCanonicalPreviewRequested(true), []);
   const [profileState, setProfileState] = useState<ProfileLoadState>({ kind: "idle" });
   const [profileAttempt, setProfileAttempt] = useState(0);
   const profileLoaded = useRef(false);
@@ -148,6 +174,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
 
   // Non-Profile routes keep the existing complete snapshot and start it only when visited.
   useEffect(() => {
+    if (supportsCanonicalPreviewReads(repository) && isPreviewRoute) return;
     if ((isProfileRoute && supportsProfileReads(repository)) || (isEducationRoute && supportsEducationReads(repository)) || useSectionAdditional || useSectionOverview) return;
     let active = true;
     if (!repository) { setFullSnapshotState("error"); return () => { active = false; }; }
@@ -161,7 +188,23 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       if (active) setFullSnapshotState("error");
     });
     return () => { active = false; };
-  }, [isProfileRoute, isEducationRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume]);
+  }, [isProfileRoute, isEducationRoute, isPreviewRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume]);
+
+  // Editors remain route-first. Fetch the remaining confirmed slices only when
+  // the Preview is visible, reusing any section reads already in the session cache.
+  useEffect(() => {
+    if (!canonicalPreviewRequested || !isPreviewRoute || !repository || !supportsCanonicalPreviewReads(repository) || resume) return;
+    let active = true;
+    setFullSnapshotState("loading");
+    loadCanonicalPreviewFromStore(sessionKey, repository, sectionStore).then(value => {
+      if (!active) return;
+      setResume(value);
+      setFullSnapshotState("idle");
+    }, () => {
+      if (active) setFullSnapshotState("error");
+    });
+    return () => { active = false; };
+  }, [canonicalPreviewRequested, isPreviewRoute, repository, sessionKey, sectionStore, fullAttempt, resume]);
 
   useEffect(() => {
     if (!useSectionOverview || !repository || !supportsOverviewReads(repository) || resume) return;
@@ -262,11 +305,13 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     if (!repository || !supportsAdditionalReads(repository, key)) throw new Error("Section reload is unavailable");
     const value = await loadAdditionalFromStore(sessionKey, repository, sectionStore, key, true);
     setAdditionalStates(current => ({ ...current, [key]: { kind: "loaded", ...value } }));
+    setResume(current => current?.resumeId === value.resumeId ? { ...current, sections: { ...current.sections, [key]: value.value } } : current);
     return value;
   }
 
   function patchAdditional(key: AdditionalRouteKey, resumeId: string, value: AdditionalRouteValue) {
     sectionStore.patchSection(sessionKey, resumeId, key, () => value as never);
+    setResume(current => current?.resumeId === resumeId ? { ...current, sections: { ...current.sections, [key]: value } } : current);
     setAdditionalStates(current => {
       const existing = current[key];
       return existing?.kind === "loaded" && existing.resumeId === resumeId
@@ -379,6 +424,6 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     additionalRouteLoadState={additionalRouteLoadState}
     onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => retryAdditional(additionalRouteKey) : retryFullSnapshot}
     additionalResumeId={additionalRoute?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
-    fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot}
+    fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved} />;
 }

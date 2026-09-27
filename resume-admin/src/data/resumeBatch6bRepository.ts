@@ -138,11 +138,13 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
       if (file.size > 10 * 1024 * 1024) throw new Error("Resume PDF must be 10 MB or smaller.");
       const path = locale === "zh" ? "example-cv/resume_zh.pdf" : "example-cv/resume_en.pdf";
       const bucket = client.storage.from("resume-files");
-      const { error } = await bucket.upload(path, file, { upsert: true, contentType: "application/pdf" });
+      const { error } = await bucket.upload(path, file, { upsert: true, contentType: "application/pdf", cacheControl: "60", metadata: { originalFilename: file.name } });
       if (error) throw new Error("Resume PDF upload failed.");
       const { data } = bucket.getPublicUrl(path);
       if (!data.publicUrl) throw new Error("Resume PDF public URL was not returned.");
-      return data.publicUrl;
+      const publicUrl = new URL(data.publicUrl);
+      publicUrl.searchParams.set("cacheNonce", createUploadId());
+      return publicUrl.toString();
     },
     updateProjectPosition: (resumeId: string, id: string, position: number) => updatePosition("projects", resumeId, id, position),
     insertProject: (resumeId: string, position: number) => insertParent("projects", resumeId, position),
@@ -201,7 +203,7 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     deleteStatusTranslation: (resumeId: string, id: string, locale: Locale) => deleteTranslation("status", resumeId, id, locale),
     deleteStatus: async (resumeId: string, id: string) => { await deleteTranslation("status", resumeId, id, "zh"); await deleteTranslation("status", resumeId, id, "en"); await deleteParent("status", resumeId, id); },
     updateContactAvailability: async (resumeId: string, locale: Locale, availability: string) => {
-      assertIdentity(resumeId); validateLocale(locale); if (locale === "zh") throw new Error("Chinese availability remains read-only");
+      assertIdentity(resumeId); validateLocale(locale);
       const { data, error } = await client.from("resume_locale_content").update({ availability }).eq("resume_id", resumeId).eq("locale", locale).select("resume_id,locale,availability").single();
       if (error || !data || data.resume_id !== resumeId || data.locale !== locale || data.availability !== availability) throw new Error("Contact availability save was not confirmed");
     },

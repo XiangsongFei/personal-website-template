@@ -37,8 +37,7 @@ describe("Stage 4G Education repository contract", () => {
     await createResumeRepository(db.client).updateEducationTranslation!("resume-uuid", "education-uuid", locale, trans);
     expect(db.operations[0]).toMatchObject({ table: "resume_education_translations", operation: "update", filters: [["resume_id", "resume-uuid"], ["education_entry_id", "education-uuid"], ["locale", locale]] });
     expect(db.operations[0].payload).toMatchObject({ title: "Title", program: "Program", period: "Period", grade: "Grade", course_title: null });
-    if (locale === "zh") expect(db.operations[0].payload).not.toHaveProperty("course_description");
-    else expect(db.operations[0].payload).toHaveProperty("course_description", "Description");
+    expect(db.operations[0].payload).toHaveProperty("course_description", "Description");
   });
 
   it("uses database-generated parent identity and actual translation FK fields for creation", async () => {
@@ -50,6 +49,26 @@ describe("Stage 4G Education repository contract", () => {
     const translationDb = mockClient({ data: { resume_id: "resume-uuid", education_entry_id: "generated-uuid", locale: "zh", ...{ title: "Title", program: "Program", period: "Period", grade: "Grade", course_title: null, course_description: "Description" } }, error: null });
     await createResumeRepository(translationDb.client).insertEducationTranslation!("resume-uuid", parent.entryId, "zh", trans);
     expect(translationDb.operations[0]).toMatchObject({ table: "resume_education_translations", operation: "insert", payload: { resume_id: "resume-uuid", education_entry_id: "generated-uuid", locale: "zh", course_title: null, course_description: "Description" } });
+  });
+
+  it("persists category separately while retaining the legacy structural entry_type", async () => {
+    const db = mockClient({ data: { id: "education-uuid", resume_id: "resume-uuid", source_key: "stable-key", position: 2, entry_type: "standard", education_category: "graduate" }, error: null });
+    const row = await createResumeRepository(db.client).updateEducationEntry!("resume-uuid", "education-uuid", { entryType: "standard", category: "graduate" });
+    expect(db.operations[0]).toMatchObject({ operation: "update", payload: { entry_type: "standard", education_category: "graduate" } });
+    expect(row).toMatchObject({ category: "graduate", entryType: "standard" });
+
+    const created = mockClient({ data: { id: "generated-uuid", resume_id: "resume-uuid", source_key: null, position: 0, entry_type: "summerSchool", education_category: "summerSchool" }, error: null });
+    const parent = await createResumeRepository(created.client).insertEducationEntry!("resume-uuid", 0, "summerSchool", "summerSchool");
+    expect(created.operations[0].payload).toMatchObject({ entry_type: "summerSchool", education_category: "summerSchool" });
+    expect(parent.category).toBe("summerSchool");
+  });
+
+  it("stores and reads Custom category names in the existing bilingual translation rows", async () => {
+    const custom = { ...trans, customCategoryLabel: "Exchange Program" };
+    const db = mockClient({ data: { resume_id: "resume-uuid", education_entry_id: "education-uuid", locale: "en", title: "Title", program: "Program", period: "Period", grade: "Grade", course_title: null, course_description: "Description", custom_category_label: "Exchange Program" }, error: null });
+    const result = await createResumeRepository(db.client).updateEducationTranslation!("resume-uuid", "education-uuid", "en", custom);
+    expect(db.operations[0].payload).toMatchObject({ custom_category_label: "Exchange Program", title: "Title" });
+    expect(result.translation.customCategoryLabel).toBe("Exchange Program");
   });
 
   it("fails an existing translation update when no row was returned and deletes only the parent UUID", async () => {

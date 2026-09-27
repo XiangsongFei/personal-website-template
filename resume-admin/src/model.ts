@@ -17,12 +17,16 @@ export type ProfileSection = {
 };
 
 export type IntroItem = OrderedItem & { translations: Bilingual<{ text: string }> };
+export type EducationCategory = "undergraduate" | "graduate" | "doctoral" | "summerSchool" | "custom";
 export type EducationItem = OrderedItem & {
   sourceKey: string | null;
   entryType: "standard" | "summerSchool";
+  /** Null is the safe legacy value for existing standard records. */
+  category?: EducationCategory | null;
   translations: Bilingual<{
     title: string; program: string; period: string; grade: string;
     courseTitle: string | null; courseDescription: string | null;
+    customCategoryLabel?: string | null;
   }>;
 };
 export type ExperienceItem = OrderedItem & {
@@ -62,6 +66,8 @@ export type LinksSection = {
   shared: { email: string; github: string; githubLabel: string; linkedInDisplayName: string; emailLabel: string; linkedInLabel: string };
   translations: Bilingual<SiteTextTranslation>;
   navigation: NavigationItem[];
+  /** Admin-only display names read from resume-files Storage metadata; public links remain unchanged. */
+  resumePdfFilenames?: Bilingual<string>;
 };
 
 export type EditorSections = {

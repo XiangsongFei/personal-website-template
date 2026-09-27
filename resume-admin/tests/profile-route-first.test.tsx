@@ -243,7 +243,7 @@ describe("route-first Profile loading", () => {
     await screen.findByLabelText("English Name");
     expect(store.getSectionState(identity.sessionKey, resumeId, "profile").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(store.getSectionState(identity.sessionKey, resumeId, "profile").status).toBe("idle");
     view.unmount();
 

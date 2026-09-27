@@ -176,10 +176,12 @@ describe("in-memory Profile draft persistence", () => {
     await screen.findByLabelText("Chinese Current Focus heading");
     edit("Chinese Current Focus heading", "只存在于当前会话");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Overview", level: 1 });
+    go("Profile");
     await screen.findByLabelText("Chinese Current Focus heading");
     expect(value("Chinese Current Focus heading")).toBe(fixtureSections.profile.translations.zh.contactFocusHeading);
     expect(screen.getByText("No unsaved changes")).toBeTruthy();

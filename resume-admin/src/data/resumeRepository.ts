@@ -6,7 +6,7 @@ import {
   mapSkillRows, type LoadedResume, type OverviewResumeData, type ResumeRows, type ResumeSiteMetadata, type ResumeTable,
 } from "./resumeMapper";
 import type {
-  AwardItem, ContactSection, EducationItem, ExperienceItem, IntroItem, LinksSection,
+  AwardItem, ContactSection, EducationCategory, EducationItem, ExperienceItem, IntroItem, LinksSection,
   Locale, ProfileSection, ProfileTranslation, ProjectItem, SkillItem,
 } from "../model";
 
@@ -27,9 +27,9 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
-  updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType">>): Promise<UpdatedEducationEntryRow>;
+  updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
   updateEducationTranslation?(resumeId: string, entryId: string, locale: Locale, translation: EducationItem["translations"][Locale]): Promise<UpdatedEducationTranslationRow>;
-  insertEducationEntry?(resumeId: string, position: number, entryType: EducationItem["entryType"]): Promise<UpdatedEducationEntryRow>;
+  insertEducationEntry?(resumeId: string, position: number, entryType: EducationItem["entryType"], category?: EducationCategory | null): Promise<UpdatedEducationEntryRow>;
   insertEducationTranslation?(resumeId: string, entryId: string, locale: Locale, translation: EducationItem["translations"][Locale]): Promise<UpdatedEducationTranslationRow>;
   readEducationTranslation?(resumeId: string, entryId: string, locale: Locale): Promise<UpdatedEducationTranslationRow | null>;
   deleteEducationEntry?(resumeId: string, entryId: string): Promise<void>;
@@ -72,7 +72,7 @@ export type UpdatedProfileTranslationRow = {
   updatedAt: string | null;
 };
 
-export type UpdatedEducationEntryRow = { resumeId: string; entryId: string; position: number; entryType: EducationItem["entryType"]; sourceKey: string | null };
+export type UpdatedEducationEntryRow = { resumeId: string; entryId: string; position: number; entryType: EducationItem["entryType"]; category: EducationCategory | null; sourceKey: string | null };
 export type UpdatedEducationTranslationRow = { resumeId: string; entryId: string; locale: Locale; translation: EducationItem["translations"][Locale] };
 
 export type EditableRepeatableSection = "introduction" | "experience" | "projects" | "skills" | "awards";
@@ -103,6 +103,34 @@ async function readResumeRows(supabase: SupabaseClient, table: ResumeTable, resu
   const { data, error } = await supabase.from(table).select("*").eq("resume_id", resumeId);
   if (error) throw new Error(`Unable to load ${table}`);
   return rows(data, table);
+}
+
+const resumePdfPath = (locale: Locale) => locale === "zh" ? "example-cv/resume_zh.pdf" : "example-cv/resume_en.pdf";
+
+function pdfFilenameFallback(href: string): string {
+  return href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "";
+}
+
+async function readResumePdfFilename(supabase: SupabaseClient, locale: Locale, href: string): Promise<string> {
+  const fallback = pdfFilenameFallback(href);
+  if (!href) return fallback;
+  const storage = supabase.storage as unknown as { from?: (bucket: string) => { info?: (path: string) => Promise<{ data: unknown; error: unknown }> } } | undefined;
+  if (!storage || typeof storage.from !== "function") return fallback;
+  const bucket = storage.from("resume-files");
+  // Some lightweight repository test doubles and older SDKs may not expose info().
+  if (typeof bucket.info !== "function") return fallback;
+  try {
+    const { data, error } = await bucket.info(resumePdfPath(locale));
+    if (error) return fallback;
+    const metadata = data && typeof data === "object" ? (data as { metadata?: unknown }).metadata : undefined;
+    if (metadata && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).originalFilename === "string"
+      && (metadata as Record<string, string>).originalFilename.length > 0) {
+      return (metadata as Record<string, string>).originalFilename;
+    }
+  } catch {
+    // Preserve access to the stable public link when metadata is missing or unavailable.
+  }
+  return fallback;
 }
 
 /** Site-scoped reads plus the explicitly allowlisted Profile and Education write paths. */
@@ -191,7 +219,10 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
         readResumeRows(supabase, "resume_navigation_items", resumeId),
         readResumeRows(supabase, "resume_navigation_item_translations", resumeId),
       ]);
-      return mapLinksRows(links, localeContent, navigation, navigationTranslations, resumeId);
+      const mapped = mapLinksRows(links, localeContent, navigation, navigationTranslations, resumeId);
+      const [zh, en] = await Promise.all(((["zh", "en"] as const).map(locale =>
+        readResumePdfFilename(supabase, locale, mapped.translations[locale].portfolioHref))));
+      return { ...mapped, resumePdfFilenames: { zh, en } };
     },
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");
@@ -276,19 +307,23 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
     async updateEducationEntry(resumeId, entryId, changes) {
       if (!resumeId || !entryId || !changes || Object.keys(changes).length === 0
         || (changes.position !== undefined && (!Number.isInteger(changes.position) || changes.position < 0))
-        || (changes.entryType !== undefined && changes.entryType !== "standard" && changes.entryType !== "summerSchool")) {
+        || (changes.entryType !== undefined && changes.entryType !== "standard" && changes.entryType !== "summerSchool")
+        || (changes.category !== undefined && changes.category !== null && !isEducationCategory(changes.category))
+        || (changes.category === "summerSchool" && changes.entryType !== "summerSchool")
+        || (changes.category !== null && changes.category !== undefined && changes.category !== "summerSchool" && changes.entryType !== "standard")) {
         throw new Error("Invalid Education entry update");
       }
       const payload: Record<string, unknown> = {};
       if (changes.position !== undefined) payload.position = changes.position;
       if (changes.entryType !== undefined) payload.entry_type = changes.entryType;
+      if (changes.category !== undefined) payload.education_category = changes.category;
       const { data, error } = await supabase.from("resume_education_entries").update(payload)
         .eq("resume_id", resumeId).eq("id", entryId)
-        .select("id,resume_id,source_key,position,entry_type").single();
+        .select("*").single();
       if (error || !data || data.id !== entryId || data.resume_id !== resumeId) throw new Error("Education entry save was not confirmed");
       if (!Number.isInteger(data.position) || (data.entry_type !== "standard" && data.entry_type !== "summerSchool")
         || (data.source_key !== null && typeof data.source_key !== "string")) throw new Error("Invalid Education entry save response");
-      return { resumeId, entryId, position: data.position as number, entryType: data.entry_type, sourceKey: data.source_key };
+      return { resumeId, entryId, position: data.position as number, entryType: data.entry_type, category: parsedEducationCategory(data), sourceKey: data.source_key };
     },
     async updateEducationTranslation(resumeId, entryId, locale, translation) {
       if (!resumeId || !entryId || (locale !== "zh" && locale !== "en")) throw new Error("Invalid Education translation identity");
@@ -297,21 +332,25 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
         title: translation.title, program: translation.program, period: translation.period, grade: translation.grade,
         course_title: translation.courseTitle, course_description: translation.courseDescription,
       };
-      // This field remains read-only in Chinese because the public renderer has phrase-specific markup.
-      if (locale === "zh") delete payload.course_description;
+      if (typeof translation.customCategoryLabel === "string") payload.custom_category_label = translation.customCategoryLabel;
       return persistEducationTranslation(supabase, "update", resumeId, entryId, locale, payload);
     },
-    async insertEducationEntry(resumeId, position, entryType) {
-      if (!resumeId || !Number.isInteger(position) || position < 0 || (entryType !== "standard" && entryType !== "summerSchool")) {
+    async insertEducationEntry(resumeId, position, entryType, category) {
+      if (!resumeId || !Number.isInteger(position) || position < 0 || (entryType !== "standard" && entryType !== "summerSchool")
+        || (category !== undefined && category !== null && !isEducationCategory(category))
+        || (category === "summerSchool" && entryType !== "summerSchool")
+        || (category !== null && category !== undefined && category !== "summerSchool" && entryType !== "standard")) {
         throw new Error("Invalid new Education entry");
       }
+      const payload: Record<string, unknown> = { resume_id: resumeId, position, entry_type: entryType, source_key: null };
+      if (category !== null && category !== undefined) payload.education_category = category;
       const { data, error } = await supabase.from("resume_education_entries")
-        .insert({ resume_id: resumeId, position, entry_type: entryType, source_key: null })
-        .select("id,resume_id,source_key,position,entry_type").single();
+        .insert(payload)
+        .select("*").single();
       if (error || !data || typeof data.id !== "string" || !data.id || data.resume_id !== resumeId) throw new Error("Education parent creation was not confirmed; verify production before retrying");
       if (!Number.isInteger(data.position) || (data.entry_type !== "standard" && data.entry_type !== "summerSchool")
         || (data.source_key !== null && typeof data.source_key !== "string")) throw new Error("Invalid Education parent creation response");
-      return { resumeId, entryId: data.id, position: data.position as number, entryType: data.entry_type, sourceKey: data.source_key };
+      return { resumeId, entryId: data.id, position: data.position as number, entryType: data.entry_type, category: parsedEducationCategory(data), sourceKey: data.source_key };
     },
     async insertEducationTranslation(resumeId, entryId, locale, translation) {
       if (!resumeId || !entryId || (locale !== "zh" && locale !== "en")) throw new Error("Invalid Education translation identity");
@@ -321,6 +360,9 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
         program: translation.program, period: translation.period, grade: translation.grade,
         course_title: translation.courseTitle, course_description: translation.courseDescription,
       };
+      if (typeof translation.customCategoryLabel === "string" && translation.customCategoryLabel !== "") {
+        payload.custom_category_label = translation.customCategoryLabel;
+      }
       return persistEducationTranslation(supabase, "insert", resumeId, entryId, locale, payload);
     },
     async readEducationTranslation(resumeId, entryId, locale) {
@@ -465,12 +507,28 @@ function createEditableSectionWrites(supabase: SupabaseClient): Pick<ResumeRepos
 function validateEducationTranslation(value: EducationItem["translations"][Locale]): void {
   if (!value || [value.title, value.program, value.period, value.grade].some(field => typeof field !== "string")
     || (value.courseTitle !== null && typeof value.courseTitle !== "string")
-    || (value.courseDescription !== null && typeof value.courseDescription !== "string")) throw new Error("Invalid Education translation");
+    || (value.courseDescription !== null && typeof value.courseDescription !== "string")
+    || (value.customCategoryLabel !== undefined && value.customCategoryLabel !== null && typeof value.customCategoryLabel !== "string")) throw new Error("Invalid Education translation");
+}
+
+function isEducationCategory(value: unknown): value is EducationCategory {
+  return value === "undergraduate" || value === "graduate" || value === "doctoral" || value === "summerSchool" || value === "custom";
+}
+
+function parsedEducationCategory(data: Record<string, unknown>): EducationCategory | null {
+  const value = data.education_category;
+  const entryType = data.entry_type;
+  if (entryType !== "standard" && entryType !== "summerSchool") throw new Error("Invalid Education entry type response");
+  if (value === undefined || value === null) return entryType === "summerSchool" ? "summerSchool" : null;
+  if (!isEducationCategory(value) || ((value === "summerSchool") !== (entryType === "summerSchool"))) {
+    throw new Error("Invalid Education category response");
+  }
+  return value;
 }
 
 async function persistEducationTranslation(supabase: SupabaseClient, operation: "insert" | "update", resumeId: string,
   entryId: string, locale: Locale, values: Record<string, unknown>): Promise<UpdatedEducationTranslationRow> {
-  const selected = "resume_id,education_entry_id,locale,title,program,period,grade,course_title,course_description";
+  const selected = "*";
   const mutation = supabase.from("resume_education_translations");
   const query = operation === "insert"
     ? mutation.insert(values).select(selected).single()
@@ -487,8 +545,13 @@ function parseEducationTranslation(data: Record<string, unknown>, resumeId: stri
     || (data.course_description !== null && typeof data.course_description !== "string")) {
     throw new Error("Invalid Education translation response");
   }
+  const customCategoryLabel = data.custom_category_label;
+  if (customCategoryLabel !== undefined && customCategoryLabel !== null && typeof customCategoryLabel !== "string") {
+    throw new Error("Invalid Education custom category label response");
+  }
   return { resumeId, entryId, locale, translation: {
     title: data.title as string, program: data.program as string, period: data.period as string, grade: data.grade as string,
     courseTitle: data.course_title as string | null, courseDescription: data.course_description as string | null,
+    customCategoryLabel: customCategoryLabel as string | null | undefined ?? null,
   } };
 }

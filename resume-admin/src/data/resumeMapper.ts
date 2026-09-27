@@ -86,6 +86,21 @@ function nullableField(row: Row | undefined, key: string): string | null {
   return row ? optional(row, key) : null;
 }
 
+function nullableOptionalField(row: Row | undefined, key: string): string | null {
+  if (!row || row[key] === undefined || row[key] === null) return null;
+  return value(row, key);
+}
+
+function educationCategory(row: Row, entryType: EducationItem["entryType"]): EducationItem["category"] {
+  const category = row.education_category;
+  if (category === undefined || category === null) return entryType === "summerSchool" ? "summerSchool" : null;
+  if (category !== "undergraduate" && category !== "graduate" && category !== "doctoral" && category !== "summerSchool" && category !== "custom") {
+    throw new Error("Invalid Education category");
+  }
+  if ((category === "summerSchool") !== (entryType === "summerSchool")) throw new Error("Education category conflicts with entry_type");
+  return category;
+}
+
 function item(row: Row) {
   return {
     id: value(row, "id"), position: position(row),
@@ -159,10 +174,11 @@ export function mapEducationRows(parents: Row[], translations: Row[], resumeId: 
   return sorted(parents).map(parent => {
     const entryType = value(parent, "entry_type");
     if (entryType !== "standard" && entryType !== "summerSchool") throw new Error("Invalid education entry type");
-    return { ...item(parent), entryType,
+    return { ...item(parent), entryType, category: educationCategory(parent, entryType),
       translations: translated(translations, "education_entry_id", value(parent, "id"), row => ({
         title: field(row, "title"), program: field(row, "program"), period: field(row, "period"), grade: field(row, "grade"),
         courseTitle: nullableField(row, "course_title"), courseDescription: nullableField(row, "course_description"),
+        customCategoryLabel: nullableOptionalField(row, "custom_category_label"),
       })) };
   });
 }
@@ -279,11 +295,12 @@ export function mapResumeRows(rows: ResumeRows): LoadedResume {
     const entryType = value(parent, "entry_type");
     if (entryType !== "standard" && entryType !== "summerSchool") throw new Error("Invalid education entry type");
     return {
-      ...item(parent), entryType,
+      ...item(parent), entryType, category: educationCategory(parent, entryType),
       translations: translated(rows.resume_education_translations, "education_entry_id", value(parent, "id"), row => ({
         title: field(row, "title"), program: field(row, "program"), period: field(row, "period"),
         grade: field(row, "grade"), courseTitle: nullableField(row, "course_title"),
         courseDescription: nullableField(row, "course_description"),
+        customCategoryLabel: nullableOptionalField(row, "custom_category_label"),
       })),
     };
   });

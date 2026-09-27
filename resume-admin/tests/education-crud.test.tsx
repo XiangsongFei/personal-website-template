@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
@@ -9,6 +9,7 @@ import type { ResumeRepository } from "../src/data/resumeRepository";
 import type { EducationItem, Locale } from "../src/model";
 import { resumeTables } from "../src/data/resumeRepository";
 import type { ResumeRows } from "../src/data/resumeMapper";
+import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
 const resumeId = "runtime-resume-id";
 const row = (fields: Record<string, unknown>) => ({ resume_id: resumeId, ...fields });
@@ -26,10 +27,10 @@ function snapshot(withSecondEducation = false) {
     rows.resume_navigation_items.push(row({ id, position, source_key: null }));
     for (const locale of ["zh", "en"] as const) rows.resume_navigation_item_translations.push(row({ navigation_item_id: id, locale, label: `${locale} nav ${position}` }));
   }
-  rows.resume_education_entries = [row({ id: "education-id", source_key: "education-source", position: 0, entry_type: "summerSchool" })];
-  for (const locale of ["zh", "en"] as const) rows.resume_education_translations.push(row({ education_entry_id: "education-id", locale, title: locale === "zh" ? "中文教育" : "English Education", program: "Program", period: "2024", grade: "A", course_title: null, course_description: locale === "zh" ? "固定描述" : "English course" }));
+  rows.resume_education_entries = [row({ id: "education-id", source_key: "education-source", position: 0, entry_type: "summerSchool", education_category: "summerSchool" })];
+  for (const locale of ["zh", "en"] as const) rows.resume_education_translations.push(row({ education_entry_id: "education-id", locale, title: locale === "zh" ? "中文教育" : "English Education", program: "Program", period: "2024", grade: "A", course_title: null, course_description: locale === "zh" ? "固定描述" : "English course", custom_category_label: null }));
   if (withSecondEducation) {
-    rows.resume_education_entries.push(row({ id: "second-id", source_key: "second-source", position: 1, entry_type: "standard" }));
+    rows.resume_education_entries.push(row({ id: "second-id", source_key: "second-source", position: 1, entry_type: "standard", education_category: null }));
     for (const locale of ["zh", "en"] as const) rows.resume_education_translations.push(row({ education_entry_id: "second-id", locale, title: locale === "zh" ? "第二项" : "Second Education", program: "Second Program", period: "2023", grade: "B", course_title: null, course_description: null }));
   }
   return mapResumeRows(rows);
@@ -44,17 +45,17 @@ function makeRepository(overrides: Partial<ResumeRepository> = {}, withSecondEdu
     updateEducationEntry: vi.fn(async (_resume, id, changes) => {
       items = items.map(item => item.id === id ? { ...item, ...changes } : item);
       const item = items.find(value => value.id === id)!;
-      return { resumeId, entryId: id, position: item.position, entryType: item.entryType, sourceKey: item.sourceKey };
+      return { resumeId, entryId: id, position: item.position, entryType: item.entryType, category: item.category ?? (item.entryType === "summerSchool" ? "summerSchool" : null), sourceKey: item.sourceKey };
     }),
     updateEducationTranslation: vi.fn(async (_resume, id, locale, translation) => {
       items = items.map(item => item.id === id ? { ...item, translations: { ...item.translations, [locale]: translation } } : item);
       return { resumeId, entryId: id, locale, translation };
     }),
-    insertEducationEntry: vi.fn(async (_resume, position, entryType) => {
-      const parent = { resumeId, entryId: "created-real-id", position, entryType, sourceKey: null };
-      items.push({ id: parent.entryId, position, entryType, sourceKey: null, translations: {
-        zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null },
-        en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null },
+    insertEducationEntry: vi.fn(async (_resume, position, entryType, category) => {
+      const parent = { resumeId, entryId: "created-real-id", position, entryType, category: category ?? (entryType === "summerSchool" ? "summerSchool" : null), sourceKey: null };
+      items.push({ id: parent.entryId, position, entryType, category: parent.category, sourceKey: null, translations: {
+        zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
+        en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
       } });
       return parent;
     }),
@@ -71,9 +72,10 @@ function makeRepository(overrides: Partial<ResumeRepository> = {}, withSecondEdu
   return repo;
 }
 
-function openEducation(repository: ResumeRepository, path = "/education", resume = snapshot(), onReloadEducation?: () => Promise<EducationItem[]>) {
-  return render(<MemoryRouter initialEntries={[path]}><App identityEmail="admin@example.test" onSignOut={() => {}}
-    signOutPending={false} signOutError="" resume={resume} repository={repository} onReloadEducation={onReloadEducation ?? null} /></MemoryRouter>);
+function openEducation(repository: ResumeRepository, path = "/education", resume = snapshot(), onReloadEducation?: () => Promise<EducationItem[]>, withLocaleProvider = false) {
+  const app = <MemoryRouter initialEntries={[path]}><App identityEmail="admin@example.test" onSignOut={() => {}}
+    signOutPending={false} signOutError="" resume={resume} repository={repository} onReloadEducation={onReloadEducation ?? null} /></MemoryRouter>;
+  return render(withLocaleProvider ? <UiLocaleProvider>{app}</UiLocaleProvider> : app);
 }
 
 function adminAuth(): AdminAuthClient {
@@ -81,25 +83,132 @@ function adminAuth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn().mockReturnValue(() => {}) };
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Stage 4G Education production CRUD", () => {
-  it("renders the helper before the sticky production save bar without the tail-padding workaround", async () => {
+  it("omits generic save instructions while keeping the route save area", async () => {
     openEducation(makeRepository());
     await screen.findByRole("button", { name: "Save Education changes" });
     const page = document.querySelector(".page-section")!;
-    const helper = page.querySelector(".production-save-helper")!;
-    const saveBar = page.querySelector(".save-bar")!;
-    expect(Array.from(page.children).indexOf(helper)).toBeLessThan(Array.from(page.children).indexOf(saveBar));
+    expect(page.querySelector(".production-save-helper")).toBeNull();
+    expect(page.querySelector(".save-bar")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Education items" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add Education" })).toBeTruthy();
     expect(page.classList.contains("production-save-tail")).toBe(false);
+  });
+
+  it("places the category selector after each order number and preserves the title content", async () => {
+    openEducation(makeRepository(), "/education", snapshot(true));
+    expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
+    const cards = Array.from(document.querySelectorAll<HTMLElement>(".education-editor-scope .item-card"));
+    expect(cards.map(card => Array.from(card.querySelector(".item-card-heading")!.children[0].children).map(child => child.className))).toEqual([
+      ["item-number", "education-category-control"], ["item-number", "education-category-control"],
+    ]);
+    const typeSelect = screen.getByLabelText("Education category 01") as HTMLSelectElement;
+    expect(typeSelect.value).toBe("summerSchool");
+    expect(Array.from(typeSelect.options, option => option.textContent)).toEqual(["Undergraduate", "Graduate", "Doctoral", "Summer School", "Custom"]);
+    expect((screen.getByLabelText("Education category 02") as HTMLSelectElement).value).toBe("");
+    expect(screen.getByDisplayValue("English Education")).toBeTruthy();
+    expect(screen.queryByText("Education type")).toBeNull();
+  });
+
+  it("localizes the category selector in the Chinese admin UI", async () => {
+    window.localStorage.setItem("cms-ui-locale", "en");
+    openEducation(makeRepository(), "/education", snapshot(true), undefined, true);
+    fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
+    const categorySelect = screen.getByLabelText("教育分类 01") as HTMLSelectElement;
+    expect(categorySelect.value).toBe("summerSchool");
+    expect(Array.from(categorySelect.options, option => option.textContent)).toEqual(["本科", "研究生", "博士", "暑期学校", "自定义"]);
+    expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "添加教育经历" })).toBeTruthy();
+    window.localStorage.removeItem("cms-ui-locale");
+  });
+
+  it("marks a category edit dirty, Cancel restores it, and Save persists classification without changing titles", async () => {
+    const repo = makeRepository(); openEducation(repo);
+    const category = screen.getByLabelText("Education category 01") as HTMLSelectElement;
+    expect(category.value).toBe("summerSchool");
+    fireEvent.change(category, { target: { value: "graduate" } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("summerSchool");
+    expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
+    expect(repo.updateEducationEntry).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "graduate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await screen.findByText("Education changes saved to production.");
+    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "graduate" });
+    expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
+    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("graduate");
+  });
+
+  it("persists custom category labels bilingually without replacing resume titles", async () => {
+    window.localStorage.setItem("cms-ui-locale", "en");
+    const repo = makeRepository(); openEducation(repo, "/education", snapshot(), undefined, true);
+    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByLabelText("Chinese Custom category name"), { target: { value: "交换学习" } });
+    fireEvent.change(screen.getByLabelText("English Custom category name"), { target: { value: "Exchange Program" } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await screen.findByText("Education changes saved to production.");
+    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "custom" });
+    expect(repo.updateEducationTranslation).toHaveBeenCalledTimes(2);
+    expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "zh", expect.objectContaining({ customCategoryLabel: "交换学习", title: "中文教育" }));
+    expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "en", expect.objectContaining({ customCategoryLabel: "Exchange Program", title: "English Education" }));
+    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).selectedOptions[0].textContent).toBe("Exchange Program");
+    expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
+    expect((screen.getByLabelText("教育分类 01") as HTMLSelectElement).selectedOptions[0].textContent).toBe("交换学习");
+    window.localStorage.removeItem("cms-ui-locale");
+  });
+
+  it("keeps category identity and independent expansion when entries are reordered", async () => {
+    const repo = makeRepository({}, true); openEducation(repo, "/education", snapshot(true));
+    fireEvent.change(screen.getByLabelText("Education category 02"), { target: { value: "doctoral" } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit Doctoral" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Doctoral up" }));
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await screen.findByText("Education changes saved to production.");
+    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "second-id", { entryType: "standard", category: "doctoral" });
+    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("doctoral");
+    expect((screen.getByLabelText("Education category 02") as HTMLSelectElement).value).toBe("summerSchool");
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
+  });
+
+  it("keeps Education entries independently expanded by UUID through reorder, add, and delete", async () => {
+    const repo = makeRepository({}, true);
+    openEducation(repo, "/education", snapshot(true));
+    const cards = Array.from(document.querySelectorAll<HTMLElement>(".education-editor-scope .item-card"));
+    expect(cards[0].querySelector(".item-card-body")).toBeTruthy();
+    expect(cards[1].querySelector(".item-card-body")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Uncategorized" }));
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
+    const stableFieldIds = cards.map(card => card.querySelector<HTMLInputElement>("input")!.id);
+    fireEvent.click(screen.getByRole("button", { name: "Move Uncategorized up" }));
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
+    for (const id of stableFieldIds) expect(document.getElementById(id)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Education" }));
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(3);
+    const secondEntry = Array.from(document.querySelectorAll<HTMLElement>(".education-editor-scope .item-card"))
+      .find(card => card.querySelector<HTMLInputElement>('input[id^="second-id-"]'))!;
+    fireEvent.click(secondEntry.querySelector<HTMLButtonElement>(".danger-text")!);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+    await screen.findByText("Education entry deleted from production.");
+    expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
   });
 
   it("updates a shared entry field against its real UUID and retains that UUID", async () => {
     const repo = makeRepository(); openEducation(repo);
-    fireEvent.change(screen.getByLabelText("Entry type (shared)"), { target: { value: "standard" } });
+    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "undergraduate" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
-    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard" });
+    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "undergraduate" });
     expect(repo.deleteEducationEntry).not.toHaveBeenCalled();
   });
 
@@ -114,19 +223,31 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.deleteEducationEntry).not.toHaveBeenCalled();
   });
 
-  it("preserves the Chinese summer-school description as read-only", () => {
-    openEducation(makeRepository());
+  it("edits and saves Chinese summer-school descriptions through the normal bilingual flow", async () => {
+    const repo = makeRepository();
+    openEducation(repo);
     const field = screen.getByLabelText("Chinese Course description") as HTMLTextAreaElement;
-    expect(field.readOnly).toBe(true);
+    expect(field.readOnly).toBe(false);
     expect(field.value).toBe("固定描述");
-    expect(screen.getByLabelText("English Course description").getAttribute("readonly")).toBeNull();
+    expect((screen.getByLabelText("English Course description") as HTMLTextAreaElement).readOnly).toBe(false);
+    expect(screen.queryByText("Not editable in the first CMS release. The public renderer uses fixed phrase styling here.")).toBeNull();
+
+    const updated = "这是一个完全由内容管理系统控制的课程描述。";
+    fireEvent.change(field, { target: { value: updated } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await screen.findByText("Education changes saved to production.");
+
+    expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "zh", expect.objectContaining({ courseDescription: updated }));
+    expect(repo.updateEducationTranslation).not.toHaveBeenCalledWith(resumeId, "education-id", "en", expect.anything());
+    expect((screen.getByLabelText("Chinese Course description") as HTMLTextAreaElement).value).toBe(updated);
   });
 
   it("creates one parent and two independent translations, then adopts the returned UUID", async () => {
     const repo = makeRepository(); openEducation(repo);
     fireEvent.click(screen.getByRole("button", { name: "Add Education" }));
-    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "新增中文" } });
-    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "New English" } });
+    fireEvent.change(screen.getAllByLabelText("Chinese Title").at(-1)!, { target: { value: "新增中文" } });
+    fireEvent.change(screen.getAllByLabelText("English Title").at(-1)!, { target: { value: "New English" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.insertEducationEntry).toHaveBeenCalledOnce();
@@ -134,6 +255,8 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.insertEducationTranslation).toHaveBeenCalledWith(resumeId, "created-real-id", "zh", expect.objectContaining({ title: "新增中文" }));
     expect(repo.insertEducationTranslation).toHaveBeenCalledWith(resumeId, "created-real-id", "en", expect.objectContaining({ title: "New English" }));
     expect(screen.getByDisplayValue("新增中文").id).toContain("created-real-id");
+    expect(document.getElementById("created-real-id-zh-title")?.closest(".item-card")?.querySelector(".item-card-body")).toBeTruthy();
+    expect(document.getElementById("education-id-zh-title")?.closest(".item-card")?.querySelector(".item-card-body")).toBeTruthy();
   });
 
   it("keeps a partial create visibly incomplete and resumes only the missing locale", async () => {
@@ -182,7 +305,7 @@ describe("Stage 4G Education production CRUD", () => {
   it("reorders with real UUIDs and leaves source keys untouched", async () => {
     const repo = makeRepository({}, true);
     openEducation(repo, "/education", snapshot(true));
-    fireEvent.click(screen.getByRole("button", { name: "Move Second Education up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Uncategorized up" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "second-id", { position: expect.any(Number) });
@@ -194,14 +317,14 @@ describe("Stage 4G Education production CRUD", () => {
   it("surfaces partial reorder failure and refreshes only Education from authoritative production", async () => {
     const load = vi.fn(async () => snapshot());
     const loadEducation = vi.fn(async () => snapshot(true).sections.education);
-    const update = vi.fn(async (_resume: string, _id: string, changes: Partial<Pick<EducationItem, "position" | "entryType">>) => {
+    const update = vi.fn(async (_resume: string, _id: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>) => {
       if (changes.position === 1) throw new Error("position update failed");
-      return { resumeId, entryId: "education-id", position: changes.position ?? 0, entryType: "summerSchool" as const, sourceKey: "education-source" };
+      return { resumeId, entryId: "education-id", position: changes.position ?? 0, entryType: "summerSchool" as const, category: "summerSchool" as const, sourceKey: "education-source" };
     });
     const repo = makeRepository({ load, updateEducationEntry: update }, true);
     openEducation(repo, "/education", snapshot(true), loadEducation);
     fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "Unsaved field survives recovery" } });
-    fireEvent.click(screen.getByRole("button", { name: "Move Second Education up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Uncategorized up" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText(/partially applied; the displayed order was refreshed/);
     expect(loadEducation).toHaveBeenCalledOnce();
@@ -220,6 +343,25 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("中文教育");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(screen.queryByText(/last confirmed production values|changes reverted|上次确认的生产数据|已恢复/i)).toBeNull();
+  });
+
+  it.each([
+    { locale: "en" as const, cancel: "Cancel changes", clean: "No unsaved changes" },
+    { locale: "zh" as const, cancel: "取消修改", clean: "没有未保存修改" },
+  ])("Education Cancel clears the normal success notice in $locale UI", async ({ locale, cancel, clean }) => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
+    openEducation(makeRepository(), "/education", snapshot(), undefined, true);
+    const field = await screen.findByDisplayValue("中文教育") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "未保存的教育修改" } });
+    expect(screen.getByText(locale === "zh" ? "有未保存修改" : "Unsaved changes")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: cancel }));
+
+    expect(field.value).toBe("中文教育");
+    expect(screen.getByText(clean)).toBeTruthy();
+    expect(screen.queryByText(/last confirmed production values|changes reverted|上次确认的生产数据|已恢复/i)).toBeNull();
   });
 
   it("discards an unsaved new local draft without issuing DELETE", () => {
@@ -232,11 +374,11 @@ describe("Stage 4G Education production CRUD", () => {
 
   it("retains the standard and summerSchool type distinction", async () => {
     const repo = makeRepository(); openEducation(repo);
-    expect((screen.getByLabelText("Entry type (shared)") as HTMLSelectElement).value).toBe("summerSchool");
-    fireEvent.change(screen.getByLabelText("Entry type (shared)"), { target: { value: "standard" } });
+    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("summerSchool");
+    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "undergraduate" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
-    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard" });
+    expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "undergraduate" });
     expect(screen.queryByLabelText("Chinese Course description")).toBeNull();
   });
 
@@ -271,7 +413,7 @@ describe("Stage 4G Education production CRUD", () => {
     render(<MemoryRouter initialEntries={["/education"]}><AuthGate client={client} resumeRepository={repo} /></MemoryRouter>);
     fireEvent.change(await screen.findByLabelText("English Title"), { target: { value: "Sign-out-only draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
   });
 });

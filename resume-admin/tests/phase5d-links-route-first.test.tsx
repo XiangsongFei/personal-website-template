@@ -50,6 +50,45 @@ const go = (label: string) => fireEvent.click(screen.getAllByRole("link", { name
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Phase 5D Links route-first loading", () => {
+  it("uses one shared locale heading row for the editable navigation labels", async () => {
+    const repo = repository();
+    show(repo);
+    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    const scope = document.querySelector(".links-editor-scope")!;
+    expect(scope.querySelectorAll(".navigation-column-headings")).toHaveLength(1);
+    expect(scope.querySelectorAll(".navigation-label-row")).toHaveLength(5);
+    expect(scope.querySelectorAll(".navigation-label-row .bilingual-column-headings")).toHaveLength(0);
+    expect(screen.getByLabelText("Email address")).toBeTruthy();
+    expect(screen.getByLabelText("English Resume PDF label")).toBeTruthy();
+  });
+
+  it("starts directly with the four restrained Links sections", async () => {
+    const repo = repository();
+    show(repo);
+    await screen.findByLabelText("GitHub URL");
+    const scope = document.querySelector(".links-editor-scope")!;
+    expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
+      "Public links", "Localized links & text", "Resume files", "Navigation labels",
+    ]);
+    expect(scope.querySelectorAll(".page-heading")).toHaveLength(0);
+    expect(scope.querySelectorAll(".panel")).toHaveLength(0);
+    expect(scope.textContent).not.toContain("The five destinations are fixed");
+    expect(scope.textContent).not.toContain("Local draft only. Production writes are disabled");
+    expect(screen.getByRole("button", { name: "Save site & link changes" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("localizes the Links section hierarchy and save action in Chinese", async () => {
+    const repo = repository();
+    show(repo);
+    await screen.findByLabelText("GitHub URL");
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    const scope = document.querySelector(".links-editor-scope")!;
+    expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
+      "公开链接", "本地化链接与文本", "简历文件", "导航标签",
+    ]);
+    expect(screen.getByRole("button", { name: "保存网站与链接修改" })).toBeTruthy();
+  });
+
   it("cold /links reads only the actual Links schema tables and maps public links without an id", async () => {
     const reads: string[] = [];
     const navigationRows = [
@@ -62,8 +101,8 @@ describe("Phase 5D Links route-first loading", () => {
     const rows: Record<string, Record<string, unknown>[]> = {
       resume_public_links: [{ resume_id: resumeId, email: "a@example.test", github: "https://github.test/a", github_label: "GitHub", linkedin_display_name: "Name", email_label: "Email", linkedin_label: "LinkedIn" }],
       resume_locale_content: [
-        { resume_id: resumeId, locale: "zh", education_label: "教育", experience_label: "经历", project_heading: "项目", skills_label: "技能", honors_label: "荣誉", portfolio_label: "中文 PDF", portfolio_href: "/zh.pdf", kaggle_label: "Kaggle 中", updated_at_label: "更新中", linkedin_label: "领英中", linkedin_href: "https://zh.test" },
-        { resume_id: resumeId, locale: "en", education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "English PDF", portfolio_href: "/en.pdf", kaggle_label: "Kaggle EN", updated_at_label: "Updated", linkedin_label: "LinkedIn EN", linkedin_href: "https://en.test" },
+        { resume_id: resumeId, locale: "zh", education_label: "教育", experience_label: "经历", project_heading: "项目", skills_label: "技能", honors_label: "荣誉", portfolio_label: "中文 PDF", portfolio_href: "https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=zh-version", kaggle_label: "Kaggle 中", updated_at_label: "更新中", linkedin_label: "领英中", linkedin_href: "https://zh.test" },
+        { resume_id: resumeId, locale: "en", education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "English PDF", portfolio_href: "https://storage.example.test/example-cv/resume_en.pdf?cacheNonce=en-version", kaggle_label: "Kaggle EN", updated_at_label: "Updated", linkedin_label: "LinkedIn EN", linkedin_href: "https://en.test" },
       ],
       resume_navigation_items: navigationRows,
       resume_navigation_item_translations: navigationRows.flatMap(row => (["zh", "en"] as const).map(locale => ({
@@ -76,10 +115,17 @@ describe("Phase 5D Links route-first loading", () => {
       if (table in rows) return Promise.resolve({ data: rows[table], error: null });
       throw new Error(`Unexpected table read ${table}`);
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const storageInfo = vi.fn(async (path: string) => path.endsWith("resume_zh.pdf")
+      ? { data: { metadata: { originalFilename: "费湘淞_中文简历.pdf" } }, error: null }
+      : { data: null, error: new Error("metadata unavailable") });
+    const repo = createResumeRepository({ from, storage: { from: vi.fn(() => ({ info: storageInfo })) } } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/links", new ResumeSectionStore(), true);
     expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Current PDF: 费湘淞_中文简历.pdf" }).getAttribute("href"))
+      .toBe("https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=zh-version");
+    expect(screen.getByRole("link", { name: "Current PDF: resume_en.pdf" }).getAttribute("href"))
+      .toBe("https://storage.example.test/example-cv/resume_en.pdf?cacheNonce=en-version");
     expect(reads).toEqual(["resume_sites", "resume_public_links", "resume_locale_content", "resume_navigation_items", "resume_navigation_item_translations"]);
     expect(full).not.toHaveBeenCalled();
     expect(screen.getByRole("banner")).toBeTruthy();
@@ -88,6 +134,9 @@ describe("Phase 5D Links route-first loading", () => {
     expect(mapped.shared).toEqual({ email: "a@example.test", github: "https://github.test/a", githubLabel: "GitHub", linkedInDisplayName: "Name", emailLabel: "Email", linkedInLabel: "LinkedIn" });
     expect(mapped.translations.zh.portfolioLabel).toBe("中文 PDF");
     expect(mapped.translations.en.portfolioLabel).toBe("English PDF");
+    expect(mapped.resumePdfFilenames).toEqual({ zh: "费湘淞_中文简历.pdf", en: "resume_en.pdf" });
+    expect(storageInfo).toHaveBeenCalledWith("example-cv/resume_zh.pdf");
+    expect(storageInfo).toHaveBeenCalledWith("example-cv/resume_en.pdf");
     expect(mapped.translations.zh.linkedInHref).toBe("https://zh.test");
     expect(mapped.translations.en.linkedInHref).toBe("https://en.test");
     expect(mapped.navigation.map(item => [item.id, item.sourceKey, item.position, item.sectionId])).toEqual([
@@ -222,7 +271,7 @@ describe("Phase 5D Links route-first loading", () => {
     store.setSession("different-links-session");
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("idle");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("idle");
     cleanup(); const overview = repository(); show(overview, "/overview");
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeTruthy();

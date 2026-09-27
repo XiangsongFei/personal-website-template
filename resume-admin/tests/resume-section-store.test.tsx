@@ -190,7 +190,7 @@ describe("authenticated resume section store", () => {
     await sectionStore.loadSection(sessionA, site, "profile", async () => fixtureSections.profile);
     expect(sectionStore.getSectionState(sessionA, site, "profile").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(sectionStore.getSectionState(sessionA, site, "profile").status).toBe("idle");
   });
 });

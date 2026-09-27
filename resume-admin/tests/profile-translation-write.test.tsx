@@ -255,7 +255,7 @@ describe("unified Profile save", () => {
     view.unmount();
     render(<MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={snapshot()} repository={repository} onProfileSaved={() => {}} onProfileTranslationSaved={() => {}} /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("GitHub label"), { target: { value: "Local label" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save local draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
     expect(update).not.toHaveBeenCalled();
   });
 });

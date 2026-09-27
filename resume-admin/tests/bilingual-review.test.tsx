@@ -87,6 +87,35 @@ describe("bilingual review and modified content", () => {
     expect(localeWarning("en")).toBeNull();
   });
 
+  it.each(["zh", "en"] as const)("reviews and previews Contact Availability drafts edited in %s", locale => {
+    showRoute("/contact");
+    const sourceLocale = locale === "zh" ? "Chinese" : "English";
+    const targetLocale = locale === "zh" ? "en" : "zh";
+    const source = screen.getByLabelText(`${sourceLocale} Availability`) as HTMLTextAreaElement;
+    const nextValue = locale === "zh" ? "新的中文可用状态" : "New English availability";
+    expect(source.readOnly).toBe(false);
+    fireEvent.change(source, { target: { value: nextValue } });
+
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(source.closest(".field")?.querySelector(".field-edit-status")?.textContent).toContain("Modified");
+    const pair = source.closest(".bilingual-field-pair") as HTMLElement;
+    const counterpart = screen.getByLabelText(`${targetLocale === "zh" ? "Chinese" : "English"} Availability`);
+    const counterpartField = counterpart.closest(".field") as HTMLElement;
+    expect(counterpartField.querySelector(".field-review-warning")).toBeTruthy();
+    expect(localeWarning(targetLocale)).toBeTruthy();
+    fireEvent.click(within(counterpartField).getByRole("button", { name: /No change needed|无需修改/ }));
+    expect(counterpartField.querySelector(".field-review-warning")).toBeNull();
+    expect(localeWarning("zh")).toBeNull();
+    expect(localeWarning("en")).toBeNull();
+
+    setPreviewLocale(locale);
+    const preview = screen.getByTestId("resume-preview");
+    const availability = preview.querySelector("#preview-contact footer h2") as HTMLElement;
+    expect(availability.textContent).toBe(nextValue);
+    expect(availability.querySelector(":scope > .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
+    expect(pair.querySelectorAll(".field-edit-status")).toHaveLength(1);
+  });
+
   it.each(["zh", "en"] as const)("shows and clears the locale warning symmetrically for a %s source edit", locale => {
     showExperience();
     const source = field(locale, "title");
@@ -144,7 +173,7 @@ describe("bilingual review and modified content", () => {
     showExperience();
     const en = field("en", "title");
     fireEvent.change(en, { target: { value: `${(en as HTMLInputElement).value} saved` } });
-    fireEvent.click(screen.getByRole("button", { name: "Save section" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save experience changes" }));
     expect(await screen.findByText("Review Chinese")).toBeTruthy();
     expect(screen.queryByText("Modified")).toBeNull();
     expect(localeWarning("zh")).toBeTruthy();

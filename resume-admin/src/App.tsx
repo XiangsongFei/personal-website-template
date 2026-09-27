@@ -1,14 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent, type ReactNode, type SetStateAction } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
 import type { EditableRepeatableSection, EditableTranslation, ResumeRepository, UpdatedEducationEntryRow, UpdatedEducationTranslationRow, UpdatedProfileRow, UpdatedProfileTranslationRow } from "./data/resumeRepository";
 import type {
-  AwardItem, Bilingual, ContactSection, EducationItem, ExperienceItem, FocusItem,
+  AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
   SkillItem, StatusItem,
 } from "./model";
-import { mapEditorSnapshotToResumeContent } from "./preview/resumeContentMapper";
+import { buildCanonicalResumePreview, type CanonicalResumePreview } from "./preview/resumeContentMapper";
 import { ResumePreviewPanel, type PreviewSection } from "./preview/ResumePreviewPanel";
 import { validateProfilePhoto } from "./data/profilePhoto";
 import { bilingualFieldKey, collectChangedBilingualFieldKeys, type BilingualFieldIdentity, type BilingualReviewReminder } from "./bilingualReview";
@@ -28,6 +28,11 @@ const navigation = [
   { label: "Contact", path: "/contact" },
   { label: "Site & Links", path: "/links" },
 ] as const;
+const previewRouteByPath: Partial<Record<string, PreviewSection>> = {
+  "/profile": "profile", "/education": "education", "/introduction": "introduction",
+  "/experience": "experience", "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "links",
+};
+const previewSections: PreviewSection[] = ["profile", "introduction", "education", "experience", "projects", "skills", "awards", "contact", "links"];
 
 const clone = <T,>(value: T): T => structuredClone(value);
 const renumber = <T extends OrderedItem,>(items: T[]): T[] => items.map((item, position) => ({ ...item, position }));
@@ -44,6 +49,10 @@ function readPreviewMode(section: PreviewSection): "editor" | "preview" {
 
 function persistPreviewMode(section: PreviewSection, view: "editor" | "preview") {
   try { window.sessionStorage.setItem(previewModeStorageKey(section), view); } catch { /* UI preference is optional. */ }
+}
+
+function readPreviewModes(): Record<PreviewSection, "editor" | "preview"> {
+  return Object.fromEntries(previewSections.map(section => [section, readPreviewMode(section)])) as Record<PreviewSection, "editor" | "preview">;
 }
 
 function getDocumentScrollOwner(): HTMLElement | null {
@@ -92,7 +101,7 @@ function initialEducationEditorState(items: EducationItem[]): EducationEditorSta
 const EditorContext = createContext<{
   sections: EditorSections; resume: LoadedResume | null; overviewData: OverviewResumeData | null; overviewSiteMetadata: ResumeSiteMetadata | null;
   overviewLoadState: "loading" | "error"; onRetryOverview: (() => void) | null; drafts: Map<SectionKey, unknown>;
-  productionMode: boolean; profileResumeId: string | null; profileLoadState: "loading" | "error"; onRetryProfile: (() => void) | null;
+  productionMode: boolean; fullSnapshotState: "idle" | "loading" | "error"; profileResumeId: string | null; profileLoadState: "loading" | "error"; onRetryProfile: (() => void) | null;
   educationSection: EducationItem[] | null; educationResumeId: string | null; educationLoadState: "loading" | "error";
   onRetryEducation: (() => void) | null; onEducationChanged: ((resumeId: string, education: EducationItem[]) => void) | null;
   onReloadEducation: (() => Promise<EducationItem[]>) | null; onEducationDeleted: ((resumeId: string, entryId: string) => void) | null;
@@ -110,6 +119,11 @@ const EditorContext = createContext<{
   educationEditor: EducationEditorState | null;
   setEducationEditor: Dispatch<SetStateAction<EducationEditorState | null>>;
   previewDrafts: PreviewDrafts;
+  canonicalPreview: CanonicalResumePreview | null;
+  onRequestCanonicalPreview: () => void;
+  previewModes: Record<PreviewSection, "editor" | "preview">;
+  previewFocusRequests: Record<PreviewSection, number>;
+  onPreviewModeChange: (section: PreviewSection, view: "editor" | "preview") => void;
   onPreviewDraftChanged: (section: PreviewSection, value: PreviewDraftValue) => void;
   previewLocale: Locale | null;
   setPreviewLocale: Dispatch<SetStateAction<Locale | null>>;
@@ -125,9 +139,9 @@ const EditorContext = createContext<{
   onBilingualReviewConfirm: (identity: BilingualFieldIdentity, locale: Locale) => void;
   onBilingualCancel: (changedKeys: Set<string>) => void;
   onBilingualSave: (changedKeys: Set<string>) => void;
-}>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
+}>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
-  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
+  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
 function useLocalDraft<T>(section: SectionKey, initial: T) {
   const { productionMode, drafts } = useContext(EditorContext);
@@ -184,10 +198,10 @@ function useLocalDraft<T>(section: SectionKey, initial: T) {
   };
   const confirm = (next: T) => { setSaved(clone(next)); setDraft(clone(next)); if (production) drafts.set(section, { saved: clone(next), draft: clone(next) }); };
   const setMessage = (message: string) => setNotice(message);
-  const cancel = () => {
+  const cancel = (quiet = false) => {
     setDraft(clone(saved));
     if (production) drafts.set(section, { saved: clone(saved), draft: clone(saved) });
-    setNotice("Local changes reverted.");
+    setNotice(quiet ? "" : "Local changes reverted.");
   };
   return { draft, update, dirty, notice, save, cancel, production, confirm, setMessage, saved };
 }
@@ -223,10 +237,10 @@ function SharedFields<T extends object>({ value, fields, onChange, idPrefix, rea
   )}</div>;
 }
 
-function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false }: {
+function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false }: {
   value: Bilingual<T>; fields: FieldSpec<T>[]; onChange: (value: Bilingual<T>, locale: Locale) => void; idPrefix: string;
   readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode;
-  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean;
+  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -255,7 +269,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
             readOnly={readOnly}
             modified={modified} reviewLabel={reviewLabel}
             onReviewConfirm={identity ? () => context.onBilingualReviewConfirm(identity, locale) : undefined}
-            hint={locale === "zh" && field.readOnlyZh && !readOnlyAll ? t("Not editable in the first CMS release. The public renderer uses fixed phrase styling here.") : undefined}
+            hint={!hideReadOnlyHint && locale === "zh" && field.readOnlyZh && !readOnlyAll ? t("Not editable in the first CMS release. The public renderer uses fixed phrase styling here.") : undefined}
             onChange={next => {
               if (identity) context.onBilingualFieldEdit(identity, locale, next !== baseValue);
               onChange({ ...value, [locale]: { ...value[locale], [field.key]: next } }, locale);
@@ -272,11 +286,12 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
   </div>;
 }
 
-function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved }: {
+function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void, confirmed: T) => ReactNode;
   productionSave?: (draft: T, baseline: T) => Promise<T | void>;
-  productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void;
+  productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void; quietCancelNotice?: boolean;
+  hidePageHeading?: boolean; hideSaveModeNotice?: boolean; saveLabel?: string;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -284,7 +299,7 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   const editor = useLocalDraft(section, initial);
   const cancelDraft = () => {
     context.onBilingualCancel(collectChangedBilingualFieldKeys(section, editor.draft, editor.saved));
-    editor.cancel();
+    editor.cancel(quietCancelNotice);
     onProductionCancel?.();
   };
   const [saving, setSaving] = useState(false);
@@ -296,8 +311,8 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   const submit = async () => {
     if (editor.production && productionSave) {
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
-      try { const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); editor.setMessage(section === "introduction" ? "Introduction changes saved." : "Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
-      catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
+      try { const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); editor.setMessage(section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
+      catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
       finally { saveLock.current = false; setSaving(false); }
       return;
     }
@@ -305,26 +320,35 @@ function SectionForm<T>({ section, title, description, initial, children, produc
     editor.save();
     context.onBilingualSave(changedKeys);
   };
+  const hiddenModeNotice = hideSaveModeNotice && [
+    "Saved as a local draft only. Production data was not changed.",
+    "Saved in this browser session only. No production data was changed.",
+    "Local session storage is unavailable. Changes remain on this screen only.",
+  ].includes(editor.notice);
+  const saveNotice = hiddenModeNotice ? "" : editor.notice || (hideSaveModeNotice ? "" : editor.production
+    ? productionSave ? "" : "Local draft only. Production writes are disabled for this section."
+    : "Fixture saves stay in this browser session.");
   return <section className="page-section">
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>
+    {!hidePageHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
     <form className="editor-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {children(editor.draft, editor.update, editor.saved)}
       <div className="save-bar">
         <span className={editor.dirty || productionDirty ? "state-pill is-dirty" : "state-pill"}>{editor.dirty || productionDirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
         <div className="save-actions">
           <button type="button" className="button secondary" onClick={cancelDraft} disabled={!(editor.dirty || productionDirty) || saving}>{t("Cancel changes")}</button>
-          <button type="submit" className="button primary" disabled={!(editor.dirty || productionDirty) || saving}>{saving ? t("Saving…") : section === "introduction" ? t("Save Introduction changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
+          <button type="submit" className="button primary" disabled={!(editor.dirty || productionDirty) || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
         </div>
       </div>
-      <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(editor.notice) || (editor.production ? t("Local draft only. Production writes are disabled for this section.") : t("Fixture saves stay in this browser session."))}</p>
+      {saveNotice && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
     </form>
   </section>;
 }
 
-function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, onConfirmedDelete, deleteDisabled, confirmedItems = [] }: {
+function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity }: {
   items: T[]; onChange: (items: T[]) => void; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode; groupLabel: string; addLabel?: string; allowMultipleOpen?: boolean; confirmedItems?: T[];
   onConfirmedDelete?: (id: string) => void; deleteDisabled?: (id: string) => boolean;
+  headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
 }) {
   const { t } = useUiLocale();
   const [openId, setOpenId] = useState<string | null>(items[0]?.id ?? null);
@@ -354,14 +378,14 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
     if (allowMultipleOpen) setOpenIds(current => new Set(current).add(newItem.id));
     else setOpenId(newItem.id);
   };
-  return <div className="repeatable-group" aria-label={groupLabel}>
-    <div className="group-heading"><h2>{t(groupLabel)}</h2><button type="button" className="button secondary" onClick={add}>{t(addLabel)}</button></div>
+  return <div className="repeatable-group" aria-label={groupLabel || undefined}>
+    <div className="group-heading">{groupLabel && <h2>{t(groupLabel)}</h2>}<button type="button" className="button secondary" onClick={add}>{t(addLabel)}</button></div>
     {items.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
     <div className="item-stack">{items.map((item, index) => {
       const itemLabel = label(item, index) || t("New item");
       const isOpen = allowMultipleOpen ? openIds.has(item.id) : openId === item.id;
       return <article className="item-card" key={item.id}>
-        <div className="item-card-heading"><div><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3>{itemLabel}</h3></div>
+        <div className="item-card-heading"><div>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3>{itemLabel}</h3></>}</div>
           <div className="item-actions">
             <button type="button" onClick={() => toggleOpen(item.id, isOpen)} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${itemLabel}`}>{isOpen ? t("Close") : t("Edit")}</button>
             <button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`${t("Move")} ${itemLabel} ${t("up")}`}>↑</button>
@@ -377,15 +401,18 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
   </div>;
 }
 
-function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render }: {
+function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render, headerIdentity }: {
   section: "introduction" | "education" | "experience" | "projects" | "skills" | "awards";
   title: string; description: string; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode;
+  headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
 }) {
   const context = useContext(EditorContext);
   const { locale } = useUiLocale();
   const { sections, productionMode } = context;
-  const scopeClass = section === "introduction" ? "introduction-editor-scope" : undefined;
+  const scopeClass = section === "introduction" ? "introduction-editor-scope"
+    : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? `${section}-editor-scope`
+    : undefined;
   if (productionMode && editableSections.has(section)) {
     const key = section as EditableRepeatableSection;
     const items = (context.additionalSections[key] ?? sections[key]) as unknown as T[];
@@ -394,10 +421,10 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
       onReload={context.onReloadAdditional} title={title} description={description} create={create as unknown as (id: string, position: number) => EditableSectionItem}
       label={label as unknown as (item: EditableSectionItem, index: number) => string} render={render as unknown as (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void) => ReactNode} /></div>;
   }
-  const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : `${title} items`;
-  const addLabel = section === "introduction" ? "Add paragraph" : "Add item";
+  const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
+  const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction"} />}
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} />}
   </SectionForm></div>;
 }
 
@@ -621,7 +648,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         }
       }
       contextOnSave(collectChangedBilingualFieldKeys(section, working.draft, editor.baseline));
-      working = { ...working, baseline: clone(working.draft), draft: clone(working.draft), saving: false, notice: section === "introduction" ? "Introduction changes saved." : "Changes saved to production.", error: false };
+      working = { ...working, baseline: clone(working.draft), draft: clone(working.draft), saving: false, notice: section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : "Changes saved to production.", error: false };
       commit(working); patchCache();
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production save failed. Your changes remain unsaved; please retry.";
@@ -633,18 +660,18 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const cancel = () => {
     if (hasRecovery || editor.saving) return;
     contextOnCancel?.(collectChangedBilingualFieldKeys(section, draft, baseline));
-    stateUpdate(current => ({ ...current, draft: clone(current.baseline), notice: section === "introduction" ? "Introduction changes reverted." : "Changes reverted to the last confirmed production values.", error: false }));
+    stateUpdate(current => ({ ...current, draft: clone(current.baseline), notice: section === "introduction" ? "Introduction changes reverted." : "", error: false }));
   };
-  const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : `${title} items`;
-  const addLabel = section === "introduction" ? "Add paragraph" : "Add item";
+  const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
+  const addLabel = section === "introduction" ? "Add paragraph" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   return <section className="page-section" aria-busy={editor.saving}>
     <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>
-    <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction"}
+    <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"}
       onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)} />
-    {(section !== "introduction" || editor.notice) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Changes are written to production only when saved.")}</p>}
+    {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
     <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
       <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
-        <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : "Save production changes")}</button></div>
+        <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
     </div>
   </section>;
 }
@@ -692,41 +719,28 @@ function Overview() {
 function PreviewWorkspace({ section, children }: { section: PreviewSection; children: ReactNode }) {
   const context = useContext(EditorContext);
   const { locale: uiLocale, t } = useUiLocale();
-  const [view, setView] = useState<"editor" | "preview">(() => readPreviewMode(section));
+  const view = context.previewModes[section];
+  const focusRequest = context.previewFocusRequests[section];
+  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1440px)").matches);
+  const requestCanonicalPreview = context.onRequestCanonicalPreview;
   const changeView = (next: "editor" | "preview") => {
-    setView(next);
-    persistPreviewMode(section, next);
+    context.onPreviewModeChange(section, next);
   };
-  const previewReady = !context.productionMode || context.resume !== null || (section === "profile"
-    ? context.profileEditor !== null
-      : section === "education"
-        ? context.educationEditor !== null || context.educationSection !== null
-        : context.additionalSections[section] !== undefined);
-  const profile = context.profileEditor
-    ? { shared: context.profileEditor.draft, translations: context.profileEditor.translationDraft }
-    : context.previewDrafts.profile ?? context.sections.profile;
-  const education = context.educationEditor?.draft
-    ?? context.previewDrafts.education
-    ?? context.educationSection
-    ?? context.sections.education;
-  const content = previewReady
-    ? mapEditorSnapshotToResumeContent({ ...context.sections, ...context.previewDrafts, profile, education })
-    : null;
-  const confirmedProfile = context.profileEditor
-    ? { shared: context.profileEditor.baseline, translations: context.profileEditor.translationBaseline }
-    : context.sections.profile;
-  const confirmedContent = previewReady ? mapEditorSnapshotToResumeContent({
-    ...context.sections,
-    profile: confirmedProfile,
-    education: context.educationEditor?.baseline ?? context.sections.education,
-  }) : null;
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 1440px)");
+    const update = () => setWideDesktop(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+  useEffect(() => {
+    if (view === "preview" || wideDesktop) requestCanonicalPreview();
+  }, [requestCanonicalPreview, view, wideDesktop]);
   const locale = context.previewLocale ?? uiLocale;
-  const previewRouteTitle = ({ profile: "Profile", education: "Education", introduction: "Introduction", experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact", links: "Links & Site Text" } as const)[section];
-  const statusMessage = section === "profile"
-    ? context.profileLoadState === "error" ? t("Profile preview is unavailable because its data could not be loaded.") : t("Loading Profile preview…")
-      : section === "education"
-      ? context.educationLoadState === "error" ? t("Education preview is unavailable because its data could not be loaded.") : t("Loading Education preview…")
-      : context.additionalRouteLoadState === "error" ? t(`${previewRouteTitle} preview is unavailable because its data could not be loaded.`) : t(`Loading ${previewRouteTitle} preview…`);
+  const statusMessage = context.fullSnapshotState === "error"
+    ? t("The complete resume preview is unavailable because its data could not be loaded.")
+    : t("Loading complete resume preview…");
 
   return <div className="editor-preview-layout" data-preview-view={view}>
     <div className="editor-preview-toggle" role="group" aria-label={t("Editor or preview view")}>
@@ -734,7 +748,10 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
     </div>
     <div className="editor-preview-pane">{children}</div>
-    <ResumePreviewPanel content={content} confirmedContent={confirmedContent} bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
+    <ResumePreviewPanel content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
+      entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
+      bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
+      focusRequest={focusRequest}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
   </div>;
@@ -1002,9 +1019,43 @@ function Introduction() {
       fields={[{ key: "text", label: "Paragraph", multiline: true }]} />} />;
 }
 
+function educationCategoryFor(item: Pick<EducationItem, "category" | "entryType">): EducationCategory | null {
+  return item.category ?? (item.entryType === "summerSchool" ? "summerSchool" : null);
+}
+
+function educationCategoryLabel(item: EducationItem, locale: Locale, t: (text: string) => string): string {
+  const category = educationCategoryFor(item);
+  if (category === "custom") return item.translations[locale].customCategoryLabel || t("Custom");
+  if (category === "undergraduate") return t("Undergraduate");
+  if (category === "graduate") return t("Graduate");
+  if (category === "doctoral") return t("Doctoral");
+  if (category === "summerSchool") return t("Summer School");
+  return t("Uncategorized");
+}
+
+function educationCategorySelect(item: EducationItem, index: number, locale: Locale, t: (text: string) => string,
+  onChange: (category: EducationCategory) => void, disabled = false) {
+  const category = educationCategoryFor(item);
+  return <><span className="item-number">{String(index + 1).padStart(2, "0")}</span>
+    <select className="education-category-control" aria-label={`${t("Education category")} ${String(index + 1).padStart(2, "0")}`}
+      value={category ?? ""} disabled={disabled} onChange={event => onChange(event.target.value as EducationCategory)}>
+      {!category && <option value="" disabled>{t("Uncategorized")}</option>}
+      <option value="undergraduate">{t("Undergraduate")}</option>
+      <option value="graduate">{t("Graduate")}</option>
+      <option value="doctoral">{t("Doctoral")}</option>
+      <option value="summerSchool">{t("Summer School")}</option>
+      <option value="custom">{item.translations[locale].customCategoryLabel || t("Custom")}</option>
+    </select>
+  </>;
+}
+
+function educationCategoryChanged(item: EducationItem, category: EducationCategory): EducationItem {
+  return { ...item, category, entryType: category === "summerSchool" ? "summerSchool" : "standard" };
+}
+
 function Education() {
   const { resume, repository, productionMode, educationResumeId, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted, educationEditor, setEducationEditor } = useContext(EditorContext);
-  const { t } = useUiLocale();
+  const { t, locale } = useUiLocale();
   if (productionMode) {
     if (educationEditor && (educationResumeId || resume?.resumeId)) return <ProductionEducation resumeId={educationResumeId ?? resume!.resumeId} editor={educationEditor}
       setEditor={setEducationEditor} repository={repository} onEducationChanged={onEducationChanged} onReloadEducation={onReloadEducation} onEducationDeleted={onEducationDeleted} />;
@@ -1013,20 +1064,20 @@ function Education() {
         <button type="button" className="button secondary" onClick={onRetryEducation ?? undefined}>{t("Retry")}</button></div>}
     </div></section>;
   }
-  return <RepeatableSection<EducationItem> section="education" title="Education" description="Reorder entries, set a shared entry type, and edit both translations together."
-    create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", translations: {
-      zh: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "" },
-      en: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "" },
+  return <RepeatableSection<EducationItem> section="education" title="Education" description=""
+    create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", category: null, translations: {
+      zh: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
+      en: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
     } })}
-    label={item => item.translations.en.title || item.translations.zh.title}
+    label={item => educationCategoryLabel(item, locale, t)}
+    headerIdentity={(item, index, _itemLabel, onChange) => educationCategorySelect(item, index, locale, t, category => onChange(educationCategoryChanged(item, category)))}
     render={(item, onChange, confirmed) => <>
-      <div className="shared-select"><label htmlFor={`${item.id}-entry-type`}>{t("Entry type (shared)")}</label><select id={`${item.id}-entry-type`} value={item.entryType}
-        onChange={event => onChange({ ...item, entryType: event.target.value as EducationItem["entryType"] })}>
-        <option value="standard">{t("Standard")}</option><option value="summerSchool">{t("Summer school")}</option>
-      </select></div>
-      <BilingualFields idPrefix={item.id} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
+      {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders idPrefix={`${item.id}-category`} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id}
+        confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
+        fields={[{ key: "customCategoryLabel", label: "Custom category name" }]} />}
+      <BilingualFields showLocaleHeaders idPrefix={item.id} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
         fields={[{ key: "title", label: "Title" }, { key: "program", label: "Program" }, { key: "period", label: "Period" }, { key: "grade", label: "Grade" },
-          ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true, readOnlyZh: true }] as const : [])]} />
+          ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} />
     </>} />;
 }
 
@@ -1035,9 +1086,9 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   onEducationChanged: ((resumeId: string, education: EducationItem[]) => void) | null;
   onReloadEducation: (() => Promise<EducationItem[]>) | null; onEducationDeleted: ((resumeId: string, entryId: string) => void) | null;
 }) {
-  const { t } = useUiLocale();
+  const { t, locale } = useUiLocale();
   const context = useContext(EditorContext);
-  const [openId, setOpenId] = useState<string | null>(editor.draft[0]?.id ?? null);
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set(editor.draft[0] ? [editor.draft[0].id] : []));
   const methodsReady = Boolean(repository?.updateEducationEntry && repository.updateEducationTranslation
     && repository.insertEducationEntry && repository.insertEducationTranslation && repository.readEducationTranslation && repository.deleteEducationEntry);
   const baselineById = new Map(editor.baseline.map(item => [item.id, item]));
@@ -1064,7 +1115,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         if (!baseline && !partial) {
           const position = Math.max(-1, ...workingBaseline.map(value => value.position)) + 1;
           let parent: UpdatedEducationEntryRow;
-          try { parent = await repository.insertEducationEntry!(resumeId, position, item.entryType); }
+          try { parent = await repository.insertEducationEntry!(resumeId, position, item.entryType, item.category ?? null); }
           catch (cause) {
             partialCreates[item.id] = { inserted: [], blocked: true };
             setEditor(current => current ? { ...current, partialCreates: { ...current.partialCreates, [item.id]: { inserted: [], blocked: true } } } : current);
@@ -1072,8 +1123,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           }
           confirmedParentCreated = true;
           const oldId = item.id;
-          item = { ...item, id: parent.entryId, position: parent.position, sourceKey: parent.sourceKey, entryType: parent.entryType };
-          setOpenId(parent.entryId);
+          item = { ...item, id: parent.entryId, position: parent.position, sourceKey: parent.sourceKey, entryType: parent.entryType, category: parent.category };
+          setOpenIds(current => { const next = new Set(current); if (next.delete(oldId)) next.add(parent.entryId); return next; });
           workingDraft = workingDraft.map(value => value.id === oldId ? item : value);
           partialCreates[parent.entryId] = { inserted: [] };
           partial = partialCreates[parent.entryId];
@@ -1109,11 +1160,11 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           continue;
         }
 
-        if (item.entryType !== baseline.entryType) {
-          const confirmed = await repository.updateEducationEntry!(resumeId, item.id, { entryType: item.entryType });
+        if (item.entryType !== baseline.entryType || educationCategoryFor(item) !== educationCategoryFor(baseline)) {
+          const confirmed = await repository.updateEducationEntry!(resumeId, item.id, { entryType: item.entryType, category: educationCategoryFor(item) });
           baseline = mergeEducationParent(baseline, confirmed);
           workingBaseline = workingBaseline.map(value => value.id === item.id ? baseline! : value);
-          item = { ...item, entryType: confirmed.entryType, sourceKey: confirmed.sourceKey };
+          item = { ...item, entryType: confirmed.entryType, category: confirmed.category, sourceKey: confirmed.sourceKey };
           workingDraft = workingDraft.map(value => value.id === item.id ? item : value);
           reconcileBaselineEntry(item.id, value => mergeEducationParent(value, confirmed));
         }
@@ -1153,7 +1204,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
               const currentDraftById = new Map(current.draft.map(value => [value.id, value]));
               const reconciled = authoritative.map(value => {
                 const draft = currentDraftById.get(value.id);
-                return draft ? { ...value, entryType: draft.entryType, translations: draft.translations } : value;
+                return draft ? { ...value, entryType: draft.entryType, category: draft.category, translations: draft.translations } : value;
               });
               const localDrafts = current.draft.filter(value => !byCurrentId.has(value.id));
               return { ...current, baseline: authoritative, draft: [...reconciled, ...localDrafts] };
@@ -1204,6 +1255,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
       && (editor.baseline.some(value => value.id === id) || Boolean(editor.partialCreates[id]));
     if (!isPersisted) {
       setEditor(current => current ? { ...current, draft: current.draft.filter(value => value.id !== id), partialCreates: Object.fromEntries(Object.entries(current.partialCreates).filter(([key]) => key !== id)), deleteTarget: null, notice: "Unsaved Education draft discarded.", error: false } : current);
+      setOpenIds(current => { const next = new Set(current); next.delete(id); return next; });
       return;
     }
     if (!repository?.deleteEducationEntry || editor.deleting) return;
@@ -1211,6 +1263,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     try {
       await repository.deleteEducationEntry(resumeId, id);
       setEditor(current => current ? { ...current, baseline: current.baseline.filter(value => value.id !== id), draft: current.draft.filter(value => value.id !== id), partialCreates: Object.fromEntries(Object.entries(current.partialCreates).filter(([key]) => key !== id)), deleteTarget: null, notice: "Education entry deleted from production.", error: false } : current);
+      setOpenIds(current => { const next = new Set(current); next.delete(id); return next; });
       onEducationDeleted?.(resumeId, id);
     } catch (cause) {
       setEditor(current => current ? { ...current, notice: cause instanceof Error ? cause.message : "Education delete failed. Retry.", error: true } : current);
@@ -1221,12 +1274,12 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const addEntry = () => {
     const position = editor.draft.length ? Math.max(...editor.draft.map(item => item.position)) + 1 : 0;
     const id = `local-education-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const blank: EducationItem = { id, sourceKey: null, position, entryType: "standard", translations: {
-      zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null },
-      en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null },
+    const blank: EducationItem = { id, sourceKey: null, position, entryType: "standard", category: null, translations: {
+      zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
+      en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
     } };
     setEditor(current => current ? { ...current, draft: [...current.draft, blank], notice: "", error: false } : current);
-    setOpenId(id);
+    setOpenIds(current => new Set(current).add(id));
   };
   const move = (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -1236,29 +1289,32 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   };
   const cancel = () => {
     context.onBilingualCancel(collectChangedBilingualFieldKeys("education", editor.draft, editor.baseline));
+    const retainedIds = new Set([...editor.baseline, ...editor.draft.filter(item => Boolean(editor.partialCreates[item.id]))].map(item => item.id));
+    setOpenIds(current => new Set([...current].filter(id => retainedIds.has(id))));
     setEditor(current => {
     if (!current) return current;
     const partialIds = new Set(Object.keys(current.partialCreates));
     const partialDrafts = current.draft.filter(item => partialIds.has(item.id));
     return { ...current, draft: [...clone(current.baseline), ...partialDrafts], notice: partialDrafts.length
       ? "Unsaved edits were reverted. Incomplete production-created entries remain visible so they can be completed or deleted."
-      : "Changes reverted to the last confirmed production values.", error: partialDrafts.length > 0 };
+      : "", error: partialDrafts.length > 0 };
     });
   };
 
-  return <section className="page-section">
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1><p>{t("Edit Chinese and English independently. Changes are written only when saved; reordering and deletion are explicit.")}</p></div>
-    <div className="repeatable-group" aria-label="Education items">
-      <div className="group-heading"><h2>{t("Education items")}</h2><button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button></div>
+  return <section className="page-section education-editor-scope">
+    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1></div>
+    <div className="repeatable-group" aria-label={t("Education")}>
+      <div className="group-heading"><button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button></div>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
       <div className="item-stack">{editor.draft.map((item, index) => {
-        const label = item.translations.en.title || item.translations.zh.title || t("New Education item");
-        const isOpen = openId === item.id;
+        const label = educationCategoryLabel(item, locale, t);
+        const isOpen = openIds.has(item.id);
         const localOnly = item.id.startsWith("local-education-");
         const partial = editor.partialCreates[item.id];
         return <article className="item-card" key={item.id}>
-          <div className="item-card-heading"><div><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3>{label}</h3></div>
-            <div className="item-actions"><button type="button" onClick={() => setOpenId(isOpen ? null : item.id)} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${label}`}>{isOpen ? t("Close") : t("Edit")}</button>
+          <div className="item-card-heading"><div>{educationCategorySelect(item, index, locale, t,
+            category => patchDraft(item.id, value => educationCategoryChanged(value, category)), editor.saving)}</div>
+            <div className="item-actions"><button type="button" onClick={() => setOpenIds(current => { const next = new Set(current); if (isOpen) next.delete(item.id); else next.add(item.id); return next; })} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${label}`}>{isOpen ? t("Close") : t("Edit")}</button>
               <button type="button" onClick={() => move(index, -1)} disabled={index === 0 || editor.saving} aria-label={`${t("Move")} ${label} ${t("up")}`}>↑</button>
               <button type="button" onClick={() => move(index, 1)} disabled={index === editor.draft.length - 1 || editor.saving} aria-label={`${t("Move")} ${label} ${t("down")}`}>↓</button>
               <button type="button" className="danger-text" onClick={() => localOnly ? void deleteEntry(item.id) : setEditor(current => current ? { ...current, deleteTarget: item.id, notice: "", error: false } : current)} disabled={editor.saving || editor.deleting || Boolean(partial?.blocked)}>{localOnly ? t("Discard draft") : t("Delete")}</button>
@@ -1272,19 +1328,19 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           {isOpen && <div className="item-card-body">
             {partial?.blocked && <p className="save-notice" role="alert">{t("Parent creation returned no confirmed row. Verify production manually before retrying this item.")}</p>}
             {partial && !partial.blocked && <p className="save-notice" role="status">{t("Production created the parent. Translation rows confirmed:")} {partial.inserted.join(", ") || t("none")}. {t("Save again to finish.")}</p>}
-            <div className="shared-select"><label htmlFor={`${item.id}-entry-type`}>{t("Entry type (shared)")}</label><select id={`${item.id}-entry-type`} value={item.entryType} disabled={editor.saving}
-              onChange={event => patchDraft(item.id, value => ({ ...value, entryType: event.target.value as EducationItem["entryType"] }))}>
-              <option value="standard">{t("Standard")}</option><option value="summerSchool">{t("Summer school")}</option>
-            </select></div>
-            <BilingualFields idPrefix={item.id} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id} confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
+            {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders idPrefix={`${item.id}-category`} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id}
+              confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
+              onChange={(translations, locale) => patchDraft(item.id, value => ({ ...value, translations: { ...value.translations, [locale]: translations[locale] } }))}
+              fields={[{ key: "customCategoryLabel", label: "Custom category name" }]} />}
+            <BilingualFields showLocaleHeaders idPrefix={item.id} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id} confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
               onChange={(translations, locale) => patchDraft(item.id, value => ({ ...value, translations: { ...value.translations, [locale]: translations[locale] } }))}
               fields={[{ key: "title", label: "Title" }, { key: "program", label: "Program" }, { key: "period", label: "Period" }, { key: "grade", label: "Grade" },
-                ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true, readOnlyZh: true }] as const : [])]} />
+                ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} />
           </div>}
         </article>;
       })}</div>
     </div>
-    <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || (methodsReady ? "Education saves to production explicitly. Chinese and English remain separate." : "Education production writes are unavailable in this editor instance."))}</p>
+    {(editor.notice || !methodsReady) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
     <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
       <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving}>{t("Cancel changes")}</button>
         <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : t("Save Education changes")}</button></div>
@@ -1293,17 +1349,18 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
 }
 
 function mergeEducationParent(item: EducationItem, row: UpdatedEducationEntryRow): EducationItem {
-  return { ...item, id: row.entryId, position: row.position, entryType: row.entryType, sourceKey: row.sourceKey };
+  return { ...item, id: row.entryId, position: row.position, entryType: row.entryType, category: row.category, sourceKey: row.sourceKey };
 }
 
 function Experience() {
-  return <RepeatableSection<ExperienceItem> section="experience" title="Experience" description="Descriptions retain their line breaks; the public resume renders them as bullets."
+  const { t, locale } = useUiLocale();
+  return <RepeatableSection<ExperienceItem> section="experience" title="Experience" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: {
       zh: { organization: "", title: "", period: "", description: "", location: null },
       en: { organization: "", title: "", period: "", description: "", location: null },
     } })}
-    label={item => item.translations.en.organization || item.translations.zh.organization}
-    render={(item, onChange, confirmed) => <BilingualFields idPrefix={item.id} section="experience" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    label={(item, index) => item.translations[locale].organization || item.translations[locale === "zh" ? "en" : "zh"].organization || `${t("Experience")} ${index + 1}`}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="experience" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "organization", label: "Organization" }, { key: "title", label: "Role" }, { key: "period", label: "Period" }, { key: "location", label: "Location" }, { key: "description", label: "Description", multiline: true }]} />} />;
 }
@@ -1311,7 +1368,9 @@ function Experience() {
 function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPrefix, projectId }: { locale: Locale; methods: ProjectMethod[]; confirmedMethods?: ProjectMethod[]; onChange: (items: ProjectMethod[]) => void; idPrefix: string; projectId: string }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
-  const title = t(locale === "zh" ? "Chinese methods" : "English methods");
+  const title = t(locale === "zh" ? "Chinese" : "English");
+  const methodsTitle = t(locale === "zh" ? "Chinese methods" : "English methods");
+  const addLabel = locale === "zh" ? "Add Chinese method" : "Add English method";
   const move = (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= methods.length) return;
@@ -1319,12 +1378,12 @@ function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPref
     [next[index], next[target]] = [next[target], next[index]];
     onChange(renumber(next));
   };
-  return <div className="method-group"><div className="group-heading"><h4>{title}</h4><button className="text-button" type="button" onClick={() => onChange([...methods, { id: `local-method-${Date.now()}-${methods.length}`, position: methods.length, value: "" }])}>{t("Add method")}</button></div>
+  return <div className="method-group"><div className="group-heading"><h4>{title}</h4><button className="text-button" type="button" onClick={() => onChange([...methods, { id: `local-method-${Date.now()}-${methods.length}`, position: methods.length, value: "" }])}>{t(addLabel)}</button></div>
     {methods.map((method, index) => {
       const identity = { section: "projects" as const, itemId: projectId, field: `method:${method.id}` };
       const review = context.bilingualReviews[bilingualFieldKey(identity, locale)];
       return <div className="method-row" key={method.id}>
-      <InputField id={`${idPrefix}-${locale}-method-${method.id}`} label={`${title} ${index + 1}`} value={method.value}
+      <InputField id={`${idPrefix}-${locale}-method-${method.id}`} label={`${methodsTitle} ${index + 1}`} compactLabel={String(index + 1).padStart(2, "0")} value={method.value}
         modified={confirmedMethods.find(value => value.id === method.id)?.value !== method.value}
         reviewLabel={review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined}
         onReviewConfirm={() => context.onBilingualReviewConfirm(identity, locale)}
@@ -1332,43 +1391,58 @@ function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPref
           context.onBilingualFieldEdit(identity, locale, value !== (confirmedMethods.find(entry => entry.id === method.id)?.value ?? ""));
           onChange(methods.map(entry => entry.id === method.id ? { ...entry, value } : entry));
         }} />
-      <div className="method-actions"><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={`Move ${title} ${index + 1} up`}>↑</button>
-        <button type="button" disabled={index === methods.length - 1} onClick={() => move(index, 1)} aria-label={`Move ${title} ${index + 1} down`}>↓</button>
-        <button type="button" onClick={() => onChange(renumber(methods.filter(entry => entry.id !== method.id)))} aria-label={`${t("Delete")} ${title} ${index + 1}`}>{t("Delete")}</button></div>
+      <div className="method-actions"><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={`Move ${methodsTitle} ${index + 1} up`}>↑</button>
+        <button type="button" disabled={index === methods.length - 1} onClick={() => move(index, 1)} aria-label={`Move ${methodsTitle} ${index + 1} down`}>↓</button>
+        <button type="button" onClick={() => onChange(renumber(methods.filter(entry => entry.id !== method.id)))} aria-label={`${t("Delete")} ${methodsTitle} ${index + 1}`}>{t("Delete")}</button></div>
     </div>;
     })}
   </div>;
 }
 
 function Projects() {
-  return <RepeatableSection<ProjectItem> section="projects" title="Projects" description="Edit bilingual project details and the ordered methods shown with each project."
+  const { t, locale } = useUiLocale();
+  const context = useContext(EditorContext);
+  const methodsHeading = t("Methods");
+  return <RepeatableSection<ProjectItem> section="projects" title="Projects" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: {
       zh: { title: "", subtitle: "", period: "", description: "", href: "" },
       en: { title: "", subtitle: "", period: "", description: "", href: "" },
     }, methods: { zh: [], en: [] } })}
-    label={item => item.translations.en.title || item.translations.zh.title}
+    label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || (locale === "zh" ? `项目经历 ${index + 1}` : `Project ${index + 1}`)}
     render={(item, onChange, confirmed) => <>
-      <BilingualFields idPrefix={item.id} section="projects" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
-        fields={[{ key: "title", label: "Title" }, { key: "subtitle", label: "Subtitle" }, { key: "period", label: "Period" }, { key: "description", label: "Description", multiline: true }, { key: "href", label: "Project URL", type: "url" }]} />
+      <BilingualFields showLocaleHeaders idPrefix={item.id} section="projects" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
+        fields={[{ key: "title", label: "Title" }, { key: "subtitle", label: "Subtitle" }, { key: "period", label: "Period" }, { key: "description", label: "Description", multiline: true }]} />
+      <div className="project-shared-field"><InputField id={`${item.id}-project-url`} label="Project URL" type="url"
+        value={item.translations.zh.href === item.translations.en.href ? item.translations.zh.href : item.translations.zh.href || item.translations.en.href}
+        modified={confirmed ? item.translations.zh.href !== confirmed.translations.zh.href || item.translations.en.href !== confirmed.translations.en.href : false}
+        onChange={href => {
+          const identity = { section: "projects" as const, itemId: confirmed?.sourceKey ?? item.sourceKey ?? item.id, field: "href" };
+          for (const fieldLocale of ["zh", "en"] as const) context.onBilingualFieldEdit(identity, fieldLocale, href !== (confirmed?.translations[fieldLocale].href ?? ""));
+          onChange({ ...item, translations: { zh: { ...item.translations.zh, href }, en: { ...item.translations.en, href } } });
+        }} />
+      </div>
+      <div className="projects-methods-heading"><h3>{methodsHeading}</h3></div>
       <div className="bilingual-grid methods-grid">{(["zh", "en"] as const).map(locale => <MethodFields key={locale} idPrefix={item.id} projectId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} locale={locale}
         methods={item.methods[locale]} confirmedMethods={confirmed?.methods[locale]} onChange={methods => onChange({ ...item, methods: { ...item.methods, [locale]: methods } })} />)}</div>
     </>} />;
 }
 
 function Skills() {
-  return <RepeatableSection<SkillItem> section="skills" title="Skills" description="Organize bilingual skill groups in the order they should appear."
+  const { t, locale } = useUiLocale();
+  return <RepeatableSection<SkillItem> section="skills" title="Skills" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { title: "", items: "" }, en: { title: "", items: "" } } })}
-    label={item => item.translations.en.title || item.translations.zh.title}
-    render={(item, onChange, confirmed) => <BilingualFields idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${t("Skill group")} ${index + 1}`}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "title", label: "Group title" }, { key: "items", label: "Skills" }]} />} />;
 }
 
 function Awards() {
-  return <RepeatableSection<AwardItem> section="awards" title="Awards" description="Add, remove, and reorder recognitions while keeping both languages paired."
+  const { t, locale } = useUiLocale();
+  return <RepeatableSection<AwardItem> section="awards" title="Awards" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { name: "", year: "" }, en: { name: "", year: "" } } })}
-    label={item => item.translations.en.name || item.translations.zh.name}
-    render={(item, onChange, confirmed) => <BilingualFields idPrefix={item.id} section="awards" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    label={(item, index) => item.translations[locale].name || item.translations[locale === "zh" ? "en" : "zh"].name || `${locale === "zh" ? "荣誉奖项" : t("Award")} ${index + 1}`}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="awards" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "name", label: "Award name" }, { key: "year", label: "Year" }]} />} />;
 }
@@ -1384,11 +1458,10 @@ async function saveContactProduction(repository: ResumeRepository, resumeId: str
   const confirmed = structuredClone(next);
   for (const locale of ["zh", "en"] as const) {
     if (next.translations[locale].contactLabel !== baseline.translations[locale].contactLabel) await repository.updateContactLabel!(resumeId, locale, next.translations[locale].contactLabel);
-    // Chinese availability remains read-only under the existing public-renderer limitation.
-    if (locale === "en" && next.translations.en.availability !== baseline.translations.en.availability) {
+    if (next.translations[locale].availability !== baseline.translations[locale].availability) {
       const method = repository.updateContactAvailability;
       if (!method) throw new Error("Contact availability production write is unavailable.");
-      await method(resumeId, locale, next.translations.en.availability);
+      await method(resumeId, locale, next.translations[locale].availability);
     }
   }
   const sync = async (kind: "focus" | "status") => {
@@ -1469,6 +1542,9 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
       confirmed.translations[locale].portfolioHref = fields.portfolioHref;
     }
     if (Object.keys(fields).length) await repository.updateSiteText(resumeId, locale, fields);
+    if (file) {
+      confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: file.name };
+    }
   }
   for (const item of next.navigation) {
     const old = baseline.navigation.find(value=>value.id===item.id);
@@ -1479,14 +1555,14 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
   return confirmed;
 }
 
-function ResumePdfUpload({ locale, href, file, error, onSelect }: {
-  locale: Locale; href: string; file?: File; error?: string; onSelect: (file?: File) => void;
+function ResumePdfUpload({ locale, href, filename, file, error, onSelect }: {
+  locale: Locale; href: string; filename?: string; file?: File; error?: string; onSelect: (file?: File) => void;
 }) {
   const { t } = useUiLocale();
   const language = locale === "zh" ? t("Chinese") : t("English");
-  const currentName = href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "";
+  const currentName = filename || (href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "");
   return <div className="field pdf-upload-field">
-    <span className="pdf-upload-label">{language} {t("Resume PDF")}</span>
+    <span className="pdf-upload-label">{t(locale === "zh" ? "Chinese resume" : "English resume")}</span>
     <div className="pdf-upload-status">
       {href ? <a href={href} target="_blank" rel="noreferrer">{t("Current PDF")}: {currentName}</a> : <span>{t("No PDF uploaded")}</span>}
       {file && <span className="pdf-selected-name">{t("Selected")}: {file.name}</span>}
@@ -1502,38 +1578,37 @@ function ResumePdfUpload({ locale, href, file, error, onSelect }: {
 function Contact() {
   const context = useContext(EditorContext);
   const { sections } = context;
-  const { t } = useUiLocale();
-  return <SectionForm<ContactSection> section="contact" title="Contact" description="Manage public contact text, Current Focus, and Current Status."
+  const { t, locale } = useUiLocale();
+  return <div className="contact-editor-scope"><SectionForm<ContactSection> section="contact" title="Contact" description="" quietCancelNotice
     initial={sections.contact} productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveContactProduction(context.repository!, context.additionalResumeId!, draft, baseline) : undefined}>
     {(contact, onChange, confirmed) => <>
-      <div className="panel"><h2>{t("Contact text")}</h2><BilingualFields idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
+      <div className="panel"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
         onChange={translations => onChange({ ...contact, translations })}
-        fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true, readOnlyZh: true }]} />
-        <p className="limitation-note">{t("Chinese availability is not editable in the first CMS release because the public page uses fixed phrase-specific markup.")}</p>
+        fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true }]} />
       </div>
-      <div className="panel"><RepeatableList groupLabel="Current Focus" items={contact.focus} confirmedItems={confirmed.focus}
+      <div className="panel"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen items={contact.focus} confirmedItems={confirmed.focus}
         onChange={focus => onChange({ ...contact, focus })}
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
-        label={item => item.translations.en.title || item.translations.zh.title}
-        render={(item, change, base) => <BilingualFields idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
+        label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${locale === "zh" ? "关注" : "Focus"} ${index + 1}`}
+        render={(item, change, base) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
-      <div className="panel"><RepeatableList groupLabel="Current Status" items={contact.status} confirmedItems={confirmed.status}
+      <div className="panel"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen items={contact.status} confirmedItems={confirmed.status}
         onChange={status => onChange({ ...contact, status })}
         onConfirmedDelete={id => onChange({ ...contact, status: renumber(contact.status.filter(item => item.id !== id)) })}
         create={(id, position): StatusItem => ({ id, position, statusType: "open", translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
-        label={item => item.translations.en.title || item.translations.zh.title}
+        label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${locale === "zh" ? "状态" : "Status"} ${index + 1}`}
         render={(item, change, base) => <>
-          <div className="shared-select"><label htmlFor={`${item.id}-status-type`}>{t("Status type (shared)")}</label><select id={`${item.id}-status-type`} value={item.statusType}
+          <div className="shared-select"><label htmlFor={`${item.id}-status-type`}>{t("Status type")}</label><select id={`${item.id}-status-type`} value={item.statusType}
             onChange={event => change({ ...item, statusType: event.target.value as StatusItem["statusType"] })}>
             <option value="study">{t("Study")}</option><option value="graduation">{t("Graduation")}</option><option value="open">{t("Open")}</option>
           </select></div>
-          <BilingualFields idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
+          <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
             fields={[{ key: "title", label: "Status title" }, { key: "detail", label: "Detail" }]} />
         </>} /></div>
     </>}
-  </SectionForm>;
+  </SectionForm></div>;
 }
 
 function Links() {
@@ -1557,25 +1632,28 @@ function Links() {
     setPdfErrors(current => ({ ...current, [locale]: undefined }));
   };
   const clearPdfDrafts = () => { setPdfFiles({}); setPdfErrors({}); };
-  return <SectionForm section="links" title="Links & Site Text" description="Edit shared contact links, locale-specific public labels and URLs, and the five fixed navigation labels." initial={sections.links}
+  return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
     productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveLinksProduction(context.repository!, context.additionalResumeId!, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange, confirmed) => <>
-      <div className="panel"><h2>{t("Shared public links")}</h2><SharedFields idPrefix="links-shared" value={links.shared}
+      <section className="links-section"><h2>{t("Public links")}</h2><SharedFields idPrefix="links-shared" value={links.shared}
         onChange={shared => onChange({ ...links, shared })}
-        fields={[{ key: "email", label: "Email address", type: "email" }, { key: "github", label: "GitHub URL", type: "url" }, { key: "githubLabel", label: "GitHub label" }, { key: "linkedInDisplayName", label: "LinkedIn display name" }, { key: "emailLabel", label: "Email label" }, { key: "linkedInLabel", label: "LinkedIn action label" }]} /></div>
-      <div className="panel"><h2>{t("Localized links and headings")}</h2><BilingualFields idPrefix="links-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+        fields={[{ key: "email", label: "Email address", type: "email" }, { key: "github", label: "GitHub URL", type: "url" }, { key: "githubLabel", label: "GitHub label" }, { key: "linkedInDisplayName", label: "LinkedIn display name" }, { key: "emailLabel", label: "Email label" }, { key: "linkedInLabel", label: "LinkedIn action label" }]} /></section>
+      <section className="links-section"><h2>{t("Localized links & text")}</h2><BilingualFields showLocaleHeaders idPrefix="links-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
         onChange={translations => onChange({ ...links, translations })}
-        footer={locale => <ResumePdfUpload locale={locale} href={links.translations[locale].portfolioHref} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />}
-        fields={[{ key: "portfolioLabel", label: "Resume PDF label" }, { key: "linkedInHref", label: "LinkedIn URL", type: "url" }, { key: "linkedInLabel", label: "LinkedIn text" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated date label" }, { key: "educationLabel", label: "Education heading" }, { key: "experienceLabel", label: "Experience heading" }, { key: "projectHeading", label: "Projects heading" }, { key: "skillsLabel", label: "Skills heading" }, { key: "honorsLabel", label: "Awards heading" }]} /></div>
-      <div className="panel"><h2>{t("Navigation labels")}</h2><p>{t("The five destinations are fixed in the public page. Only their bilingual labels are editable here.")}</p>
-        <div className="navigation-labels">{links.navigation.map(item => <div className="navigation-label-row" key={item.id}><strong>{item.sectionId}</strong>
+        fields={[{ key: "portfolioLabel", label: "Resume PDF label" }, { key: "linkedInHref", label: "LinkedIn URL", type: "url" }, { key: "linkedInLabel", label: "LinkedIn text" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated date label" }, { key: "educationLabel", label: "Education heading" }, { key: "experienceLabel", label: "Experience heading" }, { key: "projectHeading", label: "Projects heading" }, { key: "skillsLabel", label: "Skills heading" }, { key: "honorsLabel", label: "Awards heading" }]} /></section>
+      <section className="links-section links-resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">
+        {(["zh", "en"] as const).map(locale => <ResumePdfUpload key={locale} locale={locale} href={links.translations[locale].portfolioHref} filename={links.resumePdfFilenames?.[locale]} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />)}
+      </div></section>
+      <section className="links-section"><h2>{t("Navigation labels")}</h2>
+        <div className="navigation-labels"><div className="bilingual-column-headings navigation-column-headings" aria-hidden="true"><span />
+          <span lang="zh">{t("Chinese")}</span><span lang="en">{t("English")}</span></div>{links.navigation.map(item => <div className="navigation-label-row" key={item.id}><strong>{item.sectionId}</strong>
           <BilingualFields idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: "Navigation label" }]}
             onChange={translations => onChange({ ...links, navigation: links.navigation.map(current => current.id === item.id ? { ...current, translations } : current) })} />
         </div>)}</div>
-      </div>
+      </section>
     </>}
-  </SectionForm>;
+  </SectionForm></div>;
 }
 
 function NotFound() { const { t } = useUiLocale(); return <section className="page-section"><div className="page-heading"><h1>{t("Section not found")}</h1><p>{t("Choose a CMS section from the navigation.")}</p><Link to="/overview">{t("Return to Overview")}</Link></div></section>; }
@@ -1587,7 +1665,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   onEducationChanged = null, onReloadEducation = null, onEducationDeleted = null,
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
-  onProfileSaved = null, onProfileTranslationSaved = null }: {
+  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {} }: {
   identityEmail: string | null;
   onSignOut: () => void;
   signOutPending: boolean;
@@ -1623,10 +1701,19 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   repository?: ResumeRepository | null;
   onProfileSaved?: ((row: UpdatedProfileRow) => void) | null;
   onProfileTranslationSaved?: ((row: UpdatedProfileTranslationRow) => void) | null;
+  onRequestCanonicalPreview?: () => void;
 }) {
   const { t } = useUiLocale();
   const location = useLocation();
   const navigationType = useNavigationType();
+  const [previewModes, setPreviewModes] = useState<Record<PreviewSection, "editor" | "preview">>(readPreviewModes);
+  const [previewFocusRequests, setPreviewFocusRequests] = useState<Record<PreviewSection, number>>(() => Object.fromEntries(previewSections.map(section => [section, 0])) as Record<PreviewSection, number>);
+  const onPreviewModeChange = useCallback((section: PreviewSection, view: "editor" | "preview") => {
+    if (previewModes[section] === view) return;
+    setPreviewModes(current => ({ ...current, [section]: view }));
+    persistPreviewMode(section, view);
+    if (view === "preview") setPreviewFocusRequests(current => ({ ...current, [section]: current[section] + 1 }));
+  }, [previewModes]);
   const initialPathname = useRef(location.pathname);
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const restoredScrollIdentity = useRef<string | null>(null);
@@ -1648,6 +1735,23 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     return initialEducation ? initialEducationEditorState(initialEducation) : null;
   });
   const educationInitialized = useRef(educationSection !== null || resume !== null);
+  const confirmedPreviewSections = resume?.sections ?? sections;
+  const previewProfile = profileEditor
+    ? { shared: profileEditor.draft, translations: profileEditor.translationDraft }
+    : previewDrafts.profile ?? confirmedPreviewSections.profile;
+  const previewEducation = educationEditor?.draft ?? previewDrafts.education ?? confirmedPreviewSections.education;
+  const previewSnapshot: EditorSections = { ...confirmedPreviewSections, ...previewDrafts, profile: previewProfile, education: previewEducation };
+  const confirmedPreviewProfile = profileEditor
+    ? { shared: profileEditor.baseline, translations: profileEditor.translationBaseline }
+    : confirmedPreviewSections.profile;
+  const confirmedPreviewSnapshot: EditorSections = {
+    ...confirmedPreviewSections,
+    profile: confirmedPreviewProfile,
+    education: educationEditor?.baseline ?? confirmedPreviewSections.education,
+  };
+  const canonicalPreview = productionMode && !resume
+    ? null
+    : buildCanonicalResumePreview(previewSnapshot, confirmedPreviewSnapshot);
   const profileRequests = useRef<ProfileRequests>({ shared: false, translations: { zh: false, en: false } }).current;
   const [pdfFiles, setPdfFiles] = useState<Partial<Record<Locale, File>>>({});
   const [pdfErrors, setPdfErrors] = useState<Partial<Record<Locale, string>>>({});
@@ -1705,6 +1809,12 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const firstLink = useRef<HTMLAnchorElement>(null);
+  const handleSidebarNavigation = (path: string, event: MouseEvent<HTMLAnchorElement>) => {
+    setMenuOpen(false);
+    const section = previewRouteByPath[path];
+    if (!section || event.defaultPrevented) return;
+    onPreviewModeChange(section, "editor");
+  };
   useEffect(() => {
     const profile = profileSection ?? resume?.sections.profile ?? null;
     if (!profileInitialized.current && profile) {
@@ -1735,10 +1845,6 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const additionalRouteTitle = additionalRouteKey ? ({ introduction: "Introduction", experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact", links: "Links & Site Text" } as const)[additionalRouteKey] : "";
   const additionalLoadingText = additionalRouteKey ? ({ introduction: "Loading Introduction...", experience: "Loading Experience...", projects: "Loading Projects...", skills: "Loading Skills...", awards: "Loading Awards...", contact: "Loading Contact...", links: "Loading Links & Site Text..." } as const)[additionalRouteKey] : "";
   const additionalErrorText = additionalRouteKey ? ({ introduction: "Unable to load Introduction.", experience: "Unable to load Experience.", projects: "Unable to load Projects.", skills: "Unable to load Skills.", awards: "Unable to load Awards.", contact: "Unable to load Contact.", links: "Unable to load Links & Site Text." } as const)[additionalRouteKey] : "";
-  const previewRouteByPath: Partial<Record<string, PreviewSection>> = {
-    "/profile": "profile", "/education": "education", "/introduction": "introduction",
-    "/experience": "experience", "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "links",
-  };
   const previewSection = previewRouteByPath[location.pathname];
   const isPreviewRoute = previewSection !== undefined;
   const routeDataReady = !productionMode || resume !== null || fullSnapshotState === "error"
@@ -1987,34 +2093,34 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection]);
 
   return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
-    productionMode, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
+    productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
     educationSection, educationResumeId: educationResumeId ?? resume?.resumeId ?? null, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted,
     additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, onReloadAdditional,
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
     bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll,
-    educationEditor, setEducationEditor, previewDrafts, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className="app-shell">
+    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className="app-shell">
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">
       <div className="brand"><strong>{t("Resume Editor")}</strong></div>
       <nav aria-label={t("CMS sections")}>
         {navigation.slice(0, 1).map(item => <NavLink key={item.path} ref={firstLink} to={item.path}
           className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
-          onClick={() => setMenuOpen(false)}>{t(item.label)}</NavLink>)}
+          onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         <div className="sidebar-nav-group"><span className="sidebar-nav-label">{t("Home")}</span>
           {navigation.slice(1, 3).map(item => <NavLink key={item.path} to={item.path}
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
-            onClick={() => setMenuOpen(false)}>{t(item.label)}</NavLink>)}
+            onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
         <div className="sidebar-nav-group"><span className="sidebar-nav-label">{t("Resume")}</span>
           {navigation.slice(3, 9).map(item => <NavLink key={item.path} to={item.path}
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
-            onClick={() => setMenuOpen(false)}>{t(item.label)}</NavLink>)}
+            onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
         <div className="sidebar-nav-group"><span className="sidebar-nav-label">{t("Settings")}</span>
           {navigation.slice(9).map(item => <NavLink key={item.path} to={item.path}
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
-            onClick={() => setMenuOpen(false)}>{t(item.label)}</NavLink>)}
+            onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
       </nav>
     </aside>

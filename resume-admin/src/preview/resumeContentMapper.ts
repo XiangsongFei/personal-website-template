@@ -4,6 +4,20 @@ import type { EditorSections, OrderedItem, ProjectItem, Locale } from "../model"
 /** A complete saved snapshot with current editor drafts already overlaid. */
 export type ResumePreviewSnapshot = EditorSections;
 
+export type ResumePreviewEntryIdentities = {
+  introduction: string[];
+  navigation: string[];
+  focus: string[];
+  status: string[];
+};
+
+export type CanonicalResumePreview = {
+  content: ResumeContent;
+  confirmedContent: ResumeContent;
+  identities: ResumePreviewEntryIdentities;
+  confirmedIdentities: ResumePreviewEntryIdentities;
+};
+
 function ordered<T extends OrderedItem>(items: readonly T[]): T[] {
   return items
     .map((item, index) => ({ item, index }))
@@ -92,6 +106,16 @@ function mapLocaleContent(snapshot: ResumePreviewSnapshot, locale: Locale): Resu
   };
 }
 
+/** Stable identities for public-rendered collections whose public shape is value-only. */
+export function mapResumePreviewEntryIdentities(snapshot: ResumePreviewSnapshot): ResumePreviewEntryIdentities {
+  return {
+    introduction: ordered(snapshot.introduction).map(item => publicId("introduction", item)),
+    navigation: ordered(snapshot.links.navigation).map(item => publicId("navigation", item)),
+    focus: ordered(snapshot.contact.focus).map(item => publicId("focus", item)),
+    status: ordered(snapshot.contact.status).map(item => publicId("status", item)),
+  };
+}
+
 /** Convert a complete baseline-plus-drafts snapshot into the public content model. */
 export function mapEditorSnapshotToResumeContent(snapshot: ResumePreviewSnapshot): ResumeContent {
   const { profile, links } = snapshot;
@@ -122,5 +146,18 @@ export function mapEditorSnapshotToResumeContent(snapshot: ResumePreviewSnapshot
       zh: mapLocaleContent(snapshot, "zh"),
       en: mapLocaleContent(snapshot, "en"),
     },
+  };
+}
+
+/** Build the single complete Preview document and its confirmed comparison baseline. */
+export function buildCanonicalResumePreview(
+  snapshot: ResumePreviewSnapshot,
+  confirmedSnapshot: ResumePreviewSnapshot,
+): CanonicalResumePreview {
+  return {
+    content: mapEditorSnapshotToResumeContent(snapshot),
+    confirmedContent: mapEditorSnapshotToResumeContent(confirmedSnapshot),
+    identities: mapResumePreviewEntryIdentities(snapshot),
+    confirmedIdentities: mapResumePreviewEntryIdentities(confirmedSnapshot),
   };
 }

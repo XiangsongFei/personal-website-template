@@ -91,6 +91,16 @@ test("GET /api/resume returns the shared photo URL from resume_profile", async (
   assert.equal(payload.profile.photoUrl, photoUrl);
 });
 
+test("GET /api/resume preserves cacheNonce on the stored public resume PDF href", async () => {
+  const fixture = createResumeRowsFixture();
+  const versionedHref = "https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=pdf-replacement-1";
+  fixture.resume_locale_content.find(row => row.locale === "zh")!.portfolio_href = versionedHref;
+  const response = await withFetch(fakeSupabaseFetch(fixture), () => handleResumeApi(new Request("https://example.test/api/resume"), env));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as typeof resumeContent;
+  assert.equal(payload.locales.zh.portfolioHref, versionedHref);
+});
+
 test("non-GET requests to /api/resume are rejected", async () => {
   const response = await handleResumeApi(new Request("https://example.test/api/resume", { method: "POST" }), env);
   assert.equal(response.status, 405);

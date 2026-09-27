@@ -131,7 +131,7 @@ describe("global CMS UI locale", () => {
     fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Unchanged English resume title" } });
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     expect(screen.getByRole("button", { name: "保存教育经历修改" })).toBeTruthy();
-    expect(screen.getByText("教育经历需要明确保存，中文和英文彼此独立。")).toBeTruthy();
+    expect(screen.queryByText("教育经历需要明确保存，中文和英文彼此独立。")).toBeNull();
     expect((screen.getByLabelText("英文 标题") as HTMLInputElement).value).toBe("Unchanged English resume title");
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("button", { name: "Save Education changes" })).toBeTruthy();

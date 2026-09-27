@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ResumeContent } from "../../../app/data/resume";
 import type { Locale } from "../model";
 import type { BilingualReviewReminder } from "../bilingualReview";
+import type { ResumePreviewEntryIdentities } from "./resumeContentMapper";
 import { useUiLocale } from "../uiLocale";
 import "./preview.css";
 
@@ -28,9 +29,11 @@ function PreviewLink({ href, label, icon, modified = false }: { href: string; la
   </a>;
 }
 
-export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false }: {
+export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0 }: {
   content: ResumeContent | null;
   confirmedContent?: ResumeContent | null;
+  entryIdentities?: ResumePreviewEntryIdentities;
+  confirmedEntryIdentities?: ResumePreviewEntryIdentities;
   bilingualReviews?: BilingualReviewReminder[];
   section: PreviewSection;
   locale: Locale;
@@ -38,11 +41,16 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
   onLocaleChange: (locale: Locale) => void;
   photoPreviewUrl?: string;
   preserveScroll?: boolean;
+  focusRequest?: number;
 }) {
   const { t } = useUiLocale();
   const text = content?.locales[locale];
   const confirmedText = confirmedContent?.locales[locale];
   const differs = (next: unknown, previous: unknown) => JSON.stringify(next) !== JSON.stringify(previous);
+  const differsByIdentity = (next: unknown, identity: string | undefined, confirmedIds: string[] | undefined, confirmedValues: unknown[] | undefined, index: number) => {
+    const previousIndex = identity && confirmedIds ? confirmedIds.indexOf(identity) : index;
+    return previousIndex < 0 || differs(next, confirmedValues?.[previousIndex]);
+  };
   const hasReview = (sectionKey: BilingualReviewReminder["section"], itemId: string, field: string) =>
     bilingualReviews.some(review => review.section === sectionKey && review.itemId === itemId && review.field === field && review.targetLocale === locale);
   const panelRef = useRef<HTMLElement>(null);
@@ -51,6 +59,7 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
   const educationRef = useRef<HTMLElement>(null);
   const [scale, setScale] = useState(1);
   const [canvasHeight, setCanvasHeight] = useState(0);
+  const hasContent = content !== null;
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -95,19 +104,44 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
       viewport.scrollTop += distance;
       return true;
     };
-    const frame = requestAnimationFrame(focusTarget);
-    let observer: ResizeObserver | undefined;
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => {
-        if (focusTarget()) observer?.disconnect();
+    let finished = false;
+    let frame = 0;
+    let observer: ResizeObserver | null = null;
+    const images = Array.from(viewport.querySelectorAll("img"));
+    const layoutReady = () => hasContent
+      && (!document.fonts || document.fonts.status === "loaded")
+      && images.every(image => image.complete);
+    const attemptFocus = () => {
+      if (finished || !layoutReady() || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (focusTarget()) {
+          finished = true;
+          observer?.disconnect();
+        }
       });
-      observer.observe(viewport);
-    }
-    return () => {
-      cancelAnimationFrame(frame);
-      observer?.disconnect();
     };
-  }, [section, scale, preserveScroll]);
+    const onImageReady = () => attemptFocus();
+    images.forEach(image => {
+      image.addEventListener("load", onImageReady);
+      image.addEventListener("error", onImageReady);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(attemptFocus);
+      observer.observe(viewport);
+      if (canvasRef.current) observer.observe(canvasRef.current);
+    }
+    attemptFocus();
+    if (document.fonts) void document.fonts.ready.then(attemptFocus);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      images.forEach(image => {
+        image.removeEventListener("load", onImageReady);
+        image.removeEventListener("error", onImageReady);
+      });
+    };
+  }, [section, scale, preserveScroll, focusRequest, hasContent]);
 
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
     <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
@@ -120,13 +154,14 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
                 <a className="resume-preview-nav-name" href="#preview-about">{content.profile.navAboutLabel[locale]}</a>
                 <div className="resume-preview-nav-links">
                   {text.nav.map((item, index) => {
+                    const itemId = entryIdentities?.navigation[index];
                     const id = ["experience", "projects", "skills", "awards", "contact"][index] ?? "education";
                     return <a aria-label={`${t("Resume preview")} ${item}`} href={`#preview-${id}`} key={`${item}-${index}`} onClick={event => {
                       event.preventDefault();
                       const target = viewportRef.current?.querySelector<HTMLElement>(`#preview-${id}`);
                       const viewport = viewportRef.current;
                       if (target && viewport) viewport.scrollTop += target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-                    }}><MarkedText modified={differs(item, confirmedText?.nav[index])}>{item}</MarkedText></a>;
+                    }} data-preview-item-id={itemId}><MarkedText modified={differsByIdentity(item, itemId, confirmedEntryIdentities?.navigation, confirmedText?.nav, index)}>{item}</MarkedText></a>;
                   })}
                   <button type="button" aria-label={t("Preview language")} onClick={() => onLocaleChange(locale === "zh" ? "en" : "zh")}>{locale === "zh" ? "EN" : "中文"}</button>
                 </div>
@@ -136,7 +171,10 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
               <div className="resume-preview-hero-grid">
                 <div className="resume-preview-hero-copy">
                   <h1 className={locale === "en" ? "is-english" : ""}><MarkedText modified={differs(content.profile.name[locale], confirmedContent?.profile.name[locale])} review={hasReview("profile", "profile", "name")}>{content.profile.name[locale]}</MarkedText></h1>
-                  <div className="resume-preview-intro">{text.intro.map((paragraph, index) => <p key={`${index}-${paragraph}`}><MarkedText modified={differs(paragraph, confirmedText?.intro[index])}>{paragraph}</MarkedText></p>)}</div>
+                  <div className="resume-preview-intro">{text.intro.map((paragraph, index) => {
+                    const itemId = entryIdentities?.introduction[index];
+                    return <p key={itemId ?? `${index}-${paragraph}`} data-preview-item-id={itemId}><MarkedText modified={differsByIdentity(paragraph, itemId, confirmedEntryIdentities?.introduction, confirmedText?.intro, index)}>{paragraph}</MarkedText></p>;
+                  })}</div>
                   <div className="resume-preview-actions">
                     {content.publicLinks.email && <PreviewLink href={`mailto:${content.publicLinks.email}`} label={content.profile.emailActionLabel[locale]} icon="mail" modified={differs(content.profile.emailActionLabel[locale], confirmedContent?.profile.emailActionLabel[locale]) || differs(content.publicLinks.email, confirmedContent?.publicLinks.email)}/>}
                     {text.portfolioHref && <PreviewLink href={text.portfolioHref} label={text.portfolioLabel} icon="file" modified={differs(text.portfolioHref, confirmedText?.portfolioHref) || differs(text.portfolioLabel, confirmedText?.portfolioLabel)}/>}
@@ -158,7 +196,7 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
             <section className="resume-preview-education-section" id="preview-education" ref={educationRef}>
               <div className="resume-preview-section-label"><MarkedText modified={differs(text.education, confirmedText?.education)}>{text.education}</MarkedText></div>
               <div className="resume-preview-education-list">
-                {(section === "profile" ? text.edu.slice(0, 1) : text.edu).map(entry => <article className={`resume-preview-education-entry${entry.entryType === "summerSchool" ? " is-summer-school" : ""}`} key={entry.id}>
+                {text.edu.map(entry => <article className={`resume-preview-education-entry${entry.entryType === "summerSchool" ? " is-summer-school" : ""}`} key={entry.id} data-preview-item-id={entry.id}>
                   <div className="resume-preview-education-copy">
                     <h3><MarkedText modified={differs(entry.title, confirmedText?.edu.find(value => value.id === entry.id)?.title)} review={hasReview("education", entry.id, "title")}>{entry.title}</MarkedText></h3>
                     <p className="resume-preview-program"><MarkedText modified={differs(entry.program, confirmedText?.edu.find(value => value.id === entry.id)?.program)} review={hasReview("education", entry.id, "program")}>{entry.program}</MarkedText></p>
@@ -178,7 +216,7 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
             <section className="resume-preview-content-section resume-preview-experience" id="preview-experience">
               <div className="resume-preview-section-label"><MarkedText modified={differs(text.experience, confirmedText?.experience)}>{text.experience}</MarkedText></div>
               <div className="resume-preview-timeline">
-                {text.jobs.map(job => <article key={job.id}>
+                {text.jobs.map(job => <article key={job.id} data-preview-item-id={job.id}>
                   <div>
                     <h3><MarkedText modified={differs(job.organization, confirmedText?.jobs.find(value => value.id === job.id)?.organization)} review={hasReview("experience", job.id, "organization")}>{job.organization}</MarkedText></h3>
                     <p className="resume-preview-job-title"><MarkedText modified={differs(job.title, confirmedText?.jobs.find(value => value.id === job.id)?.title)} review={hasReview("experience", job.id, "title")}>{job.title}</MarkedText></p>
@@ -194,7 +232,7 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
             <section className="resume-preview-content-section resume-preview-projects" id="preview-projects">
               <div className="resume-preview-section-label"><MarkedText modified={differs(text.projectHeading, confirmedText?.projectHeading)}>{text.projectHeading}</MarkedText></div>
               <div className="resume-preview-timeline">
-                {text.projects.map(project => <article key={project.id}>
+                {text.projects.map(project => <article key={project.id} data-preview-item-id={project.id}>
                   <div>
                     <h3><MarkedText modified={differs(project.title, confirmedText?.projects.find(value => value.id === project.id)?.title)}>{project.title}</MarkedText></h3>
                     <p className="resume-preview-project-subtitle"><MarkedText modified={differs(project.subtitle, confirmedText?.projects.find(value => value.id === project.id)?.subtitle)}>{project.subtitle}</MarkedText></p>
@@ -211,14 +249,14 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
             <section className="resume-preview-content-section resume-preview-skills" id="preview-skills">
               <div className="resume-preview-section-label"><MarkedText modified={differs(text.skills, confirmedText?.skills)}>{text.skills}</MarkedText></div>
               <div className="resume-preview-skill-list">
-                {text.skillGroups.map(group => <div key={group.id}><strong><MarkedText modified={differs(group.title, confirmedText?.skillGroups.find(value => value.id === group.id)?.title)}>{group.title}</MarkedText></strong><span><MarkedText modified={differs(group.items, confirmedText?.skillGroups.find(value => value.id === group.id)?.items)}>{group.items}</MarkedText></span></div>)}
+                {text.skillGroups.map(group => <div key={group.id} data-preview-item-id={group.id}><strong><MarkedText modified={differs(group.title, confirmedText?.skillGroups.find(value => value.id === group.id)?.title)}>{group.title}</MarkedText></strong><span><MarkedText modified={differs(group.items, confirmedText?.skillGroups.find(value => value.id === group.id)?.items)}>{group.items}</MarkedText></span></div>)}
                 {text.skillGroups.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无技能" : "No skills"}</p>}
               </div>
             </section>
             <section className="resume-preview-content-section resume-preview-awards" id="preview-awards">
               <div className="resume-preview-section-label"><MarkedText modified={differs(text.honors, confirmedText?.honors)}>{text.honors}</MarkedText></div>
               <div className="resume-preview-award-list">
-                {text.honorsList.map(award => <article key={award.id}><h3><MarkedText modified={differs(award.name, confirmedText?.honorsList.find(value => value.id === award.id)?.name)}>{award.name}</MarkedText></h3><strong><MarkedText modified={differs(award.year, confirmedText?.honorsList.find(value => value.id === award.id)?.year)}>{award.year}</MarkedText></strong></article>)}
+                {text.honorsList.map(award => <article key={award.id} data-preview-item-id={award.id}><h3><MarkedText modified={differs(award.name, confirmedText?.honorsList.find(value => value.id === award.id)?.name)}>{award.name}</MarkedText></h3><strong><MarkedText modified={differs(award.year, confirmedText?.honorsList.find(value => value.id === award.id)?.year)}>{award.year}</MarkedText></strong></article>)}
                 {text.honorsList.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无奖项" : "No awards"}</p>}
               </div>
             </section>
@@ -228,7 +266,7 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
                 <h2><MarkedText modified={differs(text.availability, confirmedText?.availability)}>{text.availability}</MarkedText></h2>
                 <div className="resume-preview-contact-links">
                   <div><span><MarkedText modified={differs(content.publicLinks.emailLabel, confirmedContent?.publicLinks.emailLabel)}>{content.publicLinks.emailLabel}</MarkedText></span><a href={`mailto:${content.publicLinks.email}`}><MarkedText modified={differs(content.publicLinks.email, confirmedContent?.publicLinks.email)}>{content.publicLinks.email}</MarkedText> <b aria-hidden="true">↗</b></a></div>
-                  <div><span><MarkedText modified={differs(text.linkedInLabel, confirmedText?.linkedInLabel)}>{text.linkedInLabel}</MarkedText></span><a aria-label={`${content.publicLinks.linkedInLabel}: ${content.publicLinks.linkedInDisplayName}`} href={text.linkedInHref} target="_blank" rel="noreferrer"><MarkedText modified={differs(content.publicLinks.linkedInDisplayName, confirmedContent?.publicLinks.linkedInDisplayName) || differs(text.linkedInHref, confirmedText?.linkedInHref)}>{content.publicLinks.linkedInDisplayName}</MarkedText> <b aria-hidden="true">↗</b></a></div>
+                  <div><span><MarkedText modified={differs(text.linkedInLabel, confirmedText?.linkedInLabel)}>{text.linkedInLabel}</MarkedText></span><a aria-label={`${text.linkedInLabel}: ${content.publicLinks.linkedInDisplayName}`} href={text.linkedInHref} target="_blank" rel="noreferrer"><MarkedText modified={differs(content.publicLinks.linkedInDisplayName, confirmedContent?.publicLinks.linkedInDisplayName) || differs(text.linkedInHref, confirmedText?.linkedInHref)}>{content.publicLinks.linkedInDisplayName}</MarkedText> <b aria-hidden="true">↗</b></a></div>
                 </div>
                 <div className="resume-preview-footer-meta"><span><MarkedText modified={differs(content.profile.footerName, confirmedContent?.profile.footerName)}>{content.profile.footerName}</MarkedText></span><span><MarkedText modified={differs(text.updatedAt, confirmedText?.updatedAt)}>{text.updatedAt}</MarkedText></span><span><MarkedText modified={differs(content.profile.copyright, confirmedContent?.profile.copyright)}>{content.profile.copyright}</MarkedText></span></div>
               </footer>
@@ -236,14 +274,28 @@ export function ResumePreviewPanel({ content, confirmedContent, bilingualReviews
                 <div>
                   <h3><MarkedText modified={differs(content.profile.contactFocusHeading[locale], confirmedContent?.profile.contactFocusHeading[locale])}>{content.profile.contactFocusHeading[locale]}</MarkedText></h3>
                   <div className="resume-preview-focus-list">
-                    {text.contactFocusItems.map(([title, detail], index) => <article key={`${index}-${title}`}><p><MarkedText modified={differs(title, confirmedText?.contactFocusItems[index]?.[0])}>{title}</MarkedText></p>{detail && <span><MarkedText modified={differs(detail, confirmedText?.contactFocusItems[index]?.[1])}>{detail}</MarkedText></span>}</article>)}
+                    {text.contactFocusItems.map(([title, detail], index) => {
+                      const itemId = entryIdentities?.focus[index];
+                      return <article key={itemId ?? `${index}-${title}`} data-preview-item-id={itemId}>
+                        <p><MarkedText modified={differsByIdentity(title, itemId, confirmedEntryIdentities?.focus, confirmedText?.contactFocusItems.map(value => value[0]), index)}>{title}</MarkedText></p>
+                        {detail && <span><MarkedText modified={differsByIdentity(detail, itemId, confirmedEntryIdentities?.focus, confirmedText?.contactFocusItems.map(value => value[1]), index)}>{detail}</MarkedText></span>}
+                      </article>;
+                    })}
                     {text.contactFocusItems.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无当前重点" : "No current focus items"}</p>}
                   </div>
                 </div>
                 <div>
                   <h3><MarkedText modified={differs(content.profile.contactStatusHeading[locale], confirmedContent?.profile.contactStatusHeading[locale])}>{content.profile.contactStatusHeading[locale]}</MarkedText></h3>
                   <div className="resume-preview-status-list">
-                    {text.contactStatusItems.map((item, index) => <article key={`${index}-${item.type}-${item.title}`} data-status-type={item.type}><span aria-hidden="true">{item.type === "study" ? "◷" : item.type === "graduation" ? "✓" : "↗"}</span><div><p><MarkedText modified={differs(item.title, confirmedText?.contactStatusItems[index]?.title)}>{item.title}</MarkedText></p>{item.detail && <small><MarkedText modified={differs(item.detail, confirmedText?.contactStatusItems[index]?.detail)}>{item.detail}</MarkedText></small>}</div></article>)}
+                    {text.contactStatusItems.map((item, index) => {
+                      const itemId = entryIdentities?.status[index];
+                      return <article key={itemId ?? `${index}-${item.type}-${item.title}`} data-status-type={item.type} data-preview-item-id={itemId}>
+                        <span aria-hidden="true">{item.type === "study" ? "◷" : item.type === "graduation" ? "✓" : "↗"}</span><div>
+                          <p><MarkedText modified={differsByIdentity(item.title, itemId, confirmedEntryIdentities?.status, confirmedText?.contactStatusItems.map(value => value.title), index)}>{item.title}</MarkedText></p>
+                          {item.detail && <small><MarkedText modified={differsByIdentity(item.detail, itemId, confirmedEntryIdentities?.status, confirmedText?.contactStatusItems.map(value => value.detail), index)}>{item.detail}</MarkedText></small>}
+                        </div>
+                      </article>;
+                    })}
                     {text.contactStatusItems.length === 0 && <p className="resume-preview-empty">{locale === "zh" ? "暂无当前状态" : "No current status items"}</p>}
                   </div>
                 </div>

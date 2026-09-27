@@ -143,6 +143,31 @@ describe("Stage 4D normalized read and mapping", () => {
     expect(education[0]).toMatchObject({ sourceKey: null, entryType: "summerSchool", translations: { zh: { title: "标题\n第二行", program: "", courseTitle: null, courseDescription: "" } } });
   });
 
+  it("maps persisted Education categories and custom bilingual labels while keeping legacy defaults safe", async () => {
+    const rows = databaseRows();
+    rows.resume_education_entries[0].education_category = "custom";
+    rows.resume_education_entries[0].entry_type = "standard";
+    rows.resume_education_translations = rows.resume_education_translations.map(row => ({
+      ...row,
+      custom_category_label: row.locale === "zh" ? "交换学习" : "Exchange Program",
+    }));
+    const education = await createResumeRepository(mockSupabase(rows).client).loadEducation(resumeId);
+    expect(education[0]).toMatchObject({
+      category: "custom", entryType: "standard",
+      translations: { zh: { customCategoryLabel: "交换学习" }, en: { customCategoryLabel: "Exchange Program" } },
+    });
+
+    const legacy = databaseRows();
+    delete legacy.resume_education_entries[0].education_category;
+    const legacyEducation = await createResumeRepository(mockSupabase(legacy).client).loadEducation(resumeId);
+    expect(legacyEducation[0].category).toBe("summerSchool");
+    expect(legacyEducation[0].entryType).toBe("summerSchool");
+
+    legacy.resume_education_entries[0].entry_type = "standard";
+    const standardLegacyEducation = await createResumeRepository(mockSupabase(legacy).client).loadEducation(resumeId);
+    expect(standardLegacyEducation[0].category).toBeNull();
+  });
+
   it("resolves exactly the target site, then reads every normalized table by returned resume ID", async () => {
     const db = mockSupabase(databaseRows());
     const loaded = await createResumeRepository(db.client).load();
@@ -224,7 +249,7 @@ describe("Stage 4D auth-gated editor", () => {
   it("does not load production content before authorization, including signed out and denied routes", async () => {
     const repository: ResumeRepository = { load: vi.fn(), updateProfileSharedDetails: vi.fn(), updateProfileTranslation: vi.fn() };
     const signedOut = render(<MemoryRouter initialEntries={["/education"]}><AuthGate client={auth(false)} resumeRepository={repository} /></MemoryRouter>);
-    await screen.findByRole("heading", { name: "Sign in" });
+    await screen.findByRole("heading", { name: "Welcome back" });
     expect(repository.load).not.toHaveBeenCalled();
     signedOut.unmount();
     render(<MemoryRouter initialEntries={["/education"]}><AuthGate client={auth(true, false)} resumeRepository={repository} /></MemoryRouter>);
@@ -285,7 +310,7 @@ describe("Stage 4D auth-gated editor", () => {
     render(<MemoryRouter initialEntries={["/links"]}><AuthGate client={auth(true)} resumeRepository={createResumeRepository(db.client)} /></MemoryRouter>);
     const title = await screen.findByLabelText("GitHub label") as HTMLInputElement;
     fireEvent.change(title, { target: { value: "Local-only label" } });
-    expect(screen.getByRole("button", { name: "Save production changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save site & link changes" })).toBeTruthy();
     expect(db.mutation).not.toHaveBeenCalled();
     expect(db.calls.every(call => call.selected === "*")).toBe(true);
   });
@@ -296,7 +321,7 @@ describe("Stage 4D auth-gated editor", () => {
     render(<MemoryRouter initialEntries={["/profile"]}><AuthGate client={client} resumeRepository={repository} /></MemoryRouter>);
     await screen.findByLabelText("English Name");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Welcome back" })).toBeTruthy());
     expect(screen.queryByLabelText("English Name")).toBeNull();
   });
 });

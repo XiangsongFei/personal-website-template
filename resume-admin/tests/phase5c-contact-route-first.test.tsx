@@ -35,6 +35,21 @@ const go = (name: string) => fireEvent.click(screen.getAllByRole("link", { name 
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Phase 5C Contact route-first loading", () => {
+  it("groups localized Contact text and Focus/Status fields under bilingual headers", async () => {
+    const repo = repository();
+    show(repo, "/contact");
+    expect(await screen.findByLabelText("English Section label")).toBeTruthy();
+    const scope = document.querySelector(".contact-editor-scope")!;
+    expect(scope.querySelectorAll(".bilingual-column-headings [lang=zh]").length).toBeGreaterThan(0);
+    expect(scope.querySelectorAll(".bilingual-column-headings [lang=en]").length).toBeGreaterThan(0);
+    expect((screen.getByLabelText("Chinese Availability") as HTMLTextAreaElement).readOnly).toBe(false);
+    expect((screen.getByLabelText("English Availability") as HTMLTextAreaElement).readOnly).toBe(false);
+    expect(screen.getByRole("button", { name: "Save contact changes" })).toBeTruthy();
+    expect(screen.queryByText("Manage public contact text, Current Focus, and Current Status.")).toBeNull();
+    expect(screen.queryByText("Not editable in the first CMS release. The public renderer uses fixed phrase styling here.")).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
   it("cold /contact reads only its six required tables and no full snapshot", async () => {
     const reads: string[] = [];
     const shared = (locale: "zh" | "en") => ({ resume_id: resumeId, locale, contact_label: `${locale} contact`, availability: `${locale} availability` });
@@ -61,7 +76,7 @@ describe("Phase 5C Contact route-first loading", () => {
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
     expect(screen.getByDisplayValue("focus-a-en")).toBeTruthy();
     expect(screen.getByDisplayValue("status-a-en")).toBeTruthy();
-    expect((screen.getByLabelText("Status type (shared)") as HTMLSelectElement).value).toBe("study");
+    expect((screen.getByLabelText("Status type") as HTMLSelectElement).value).toBe("study");
   });
 
   it("localizes loading, failure, and Contact-only retry while the shell remains mounted", async () => {
@@ -166,7 +181,7 @@ describe("Phase 5C Contact route-first loading", () => {
     expect(store.getSectionState("contact-session", resumeId, "contact").status).toBe("idle");
     expect(store.getSectionState("changed-session", resumeId, "contact").status).toBe("idle");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(store.getSectionState("contact-session", resumeId, "contact").status).toBe("idle");
   });
 });

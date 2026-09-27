@@ -148,16 +148,17 @@ describe("Stage 4E Profile editor", () => {
     expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("keeps non-Profile, non-Education sections on local-only save", () => {
+  it("keeps unavailable production writes local without exposing implementation notices on Links", () => {
     const update = vi.fn();
     const repository = mockRepository(update);
     render(<MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" resume={snapshot()}
       repository={repository} onProfileSaved={() => {}} /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("GitHub label"), { target: { value: "Local label" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save local draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
     expect(update).not.toHaveBeenCalled();
-    expect(screen.getByRole("status").textContent).toContain("Production data was not changed");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
   it("does not expose a write action before auth or for a non-admin", async () => {

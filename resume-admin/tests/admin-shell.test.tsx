@@ -48,7 +48,8 @@ describe("Stage 4B fixture shell", () => {
     ["/links", "Links & Site Text"],
   ])("renders %s as the intended section", (path, title) => {
     renderAt(path);
-    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+    if (path === "/links") expect(screen.getByRole("heading", { name: "Public links" })).toBeTruthy();
+    else expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
     const link = screen.getByRole("navigation", { name: "CMS sections" }).querySelector(`a[href="${path}"]`);
     expect(link?.getAttribute("aria-current")).toBe("page");
   });
@@ -63,10 +64,10 @@ describe("Stage 4B fixture shell", () => {
   it("adds and removes a local education item", () => {
     renderAt("/education");
     expect(document.querySelectorAll(".item-card")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Education" }));
     expect(document.querySelectorAll(".item-card")).toHaveLength(3);
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Delete New item" }));
+    fireEvent.click(document.querySelectorAll<HTMLElement>(".item-card")[2].querySelector<HTMLButtonElement>('button[aria-label="Delete Uncategorized"]')!);
     expect(document.querySelectorAll(".item-card")).toHaveLength(2);
   });
 
@@ -96,9 +97,10 @@ describe("Stage 4B fixture shell", () => {
     expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Local Name");
   });
 
-  it("shows the two read-only Chinese fields and an accessible compact menu", () => {
+  it("allows editing Chinese Availability and keeps the compact menu accessible", () => {
     renderAt("/contact");
-    expect((screen.getByLabelText("Chinese Availability") as HTMLTextAreaElement).readOnly).toBe(true);
+    expect((screen.getByLabelText("Chinese Availability") as HTMLTextAreaElement).readOnly).toBe(false);
+    expect((screen.getByLabelText("English Availability") as HTMLTextAreaElement).readOnly).toBe(false);
     const menu = screen.getByRole("button", { name: "Open menu" });
     fireEvent.click(menu);
     expect(menu.getAttribute("aria-expanded")).toBe("true");

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
 import { App } from "../src/App";
 import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
@@ -23,9 +23,9 @@ function repository() {
   const repo = {
     updateProfileSharedDetails: vi.fn(async (_id: string, shared: typeof fixtureSections.profile.shared) => ({ resumeId, updatedAt: null, shared })),
     updateProfileTranslation: vi.fn(async (_id: string, locale: "zh" | "en", translation: typeof fixtureSections.profile.translations.en) => ({ resumeId, locale, translation })),
-    updateEducationEntry: vi.fn(async (_id: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType">>) => {
+    updateEducationEntry: vi.fn(async (_id: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>) => {
       const current = rows.find(item => item.id === entryId)!;
-      return { resumeId, entryId, position: changes.position ?? current.position, entryType: changes.entryType ?? current.entryType, sourceKey: current.sourceKey };
+      return { resumeId, entryId, position: changes.position ?? current.position, entryType: changes.entryType ?? current.entryType, category: changes.category ?? current.category ?? (current.entryType === "summerSchool" ? "summerSchool" : null), sourceKey: current.sourceKey };
     }),
     updateEducationTranslation: vi.fn(async (_id: string, entryId: string, locale: "zh" | "en", translation: EducationItem["translations"]["zh"]) => ({ resumeId, entryId, locale, translation })),
     updateEditableEntryPosition: vi.fn(), insertEditableEntry: vi.fn(), updateEditableTranslation: vi.fn(),
@@ -57,6 +57,12 @@ function preview() {
 function setPreviewLocale(locale: "zh" | "en") {
   const viewport = screen.getByTestId("resume-preview");
   if (viewport.getAttribute("lang") !== locale) fireEvent.click(within(viewport).getByRole("button", { name: "Preview language" }));
+}
+
+const previewRoutes = ["/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links"] as const;
+function PreviewRouteNavigation() {
+  const navigate = useNavigate();
+  return <nav aria-label="Preview route test controls">{previewRoutes.map(path => <button key={path} type="button" onClick={() => navigate(path)}>{path}</button>)}</nav>;
 }
 
 afterEach(() => {
@@ -111,11 +117,89 @@ describe("Profile and Education live-preview prototype", () => {
     expect(viewport.querySelectorAll(".resume-preview-education-entry").length).toBe(fixtureSections.education.length);
   });
 
+  it("previews an unsaved Chinese summer-school description and Cancel restores the confirmed text", () => {
+    open("/education");
+    setPreviewLocale("zh");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Summer School" }));
+    const field = screen.getByLabelText("Chinese Course description") as HTMLTextAreaElement;
+    const updated = "这是一个完全由内容管理系统控制的课程描述。";
+
+    fireEvent.change(field, { target: { value: updated } });
+
+    const previewDescription = () => screen.getByTestId("resume-preview").querySelector(".resume-preview-course-description .resume-preview-marked-text");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(previewDescription()?.textContent).toBe(updated);
+    expect(previewDescription()?.getAttribute("data-preview-modified")).toBe("true");
+    expect(screen.getByText("Review English")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Chinese Course description") as HTMLTextAreaElement).value)
+      .toBe(fixtureSections.education[1].translations.zh.courseDescription);
+    expect(previewDescription()?.textContent).toBe(fixtureSections.education[1].translations.zh.courseDescription);
+    expect(previewDescription()?.getAttribute("data-preview-modified")).toBe("false");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(screen.queryByText("Review English")).toBeNull();
+  });
+
+  it("renders one identical complete resume document across every editor route while route focus changes independently", () => {
+    const repo = repository();
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PreviewRouteNavigation /><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" productionMode resume={structuredClone(resume)} repository={repo}
+      additionalResumeId={resumeId} onProfileSaved={() => {}} onProfileTranslationSaved={() => {}} /></MemoryRouter></UiLocaleProvider>);
+
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Canonical unsaved name" } });
+    fireEvent.click(screen.getByRole("button", { name: "/experience" }));
+    fireEvent.change(screen.getByLabelText("English Organization"), { target: { value: "Canonical unsaved organization" } });
+    const viewport = screen.getByTestId("resume-preview");
+    const pageMarkup = viewport.querySelector(".resume-preview-page")!.innerHTML;
+    const focusForRoute: Record<(typeof previewRoutes)[number], string> = {
+      "/profile": "about", "/introduction": "about", "/education": "education", "/experience": "experience",
+      "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "about",
+    };
+
+    expect(within(viewport).getByRole("heading", { level: 1, name: "Canonical unsaved name" })).toBeTruthy();
+    expect(viewport.querySelector("#preview-experience")?.textContent).toContain("Canonical unsaved organization");
+    for (const path of previewRoutes) {
+      fireEvent.click(screen.getByRole("button", { name: path }));
+      const currentViewport = screen.getByTestId("resume-preview");
+      expect(currentViewport.getAttribute("data-preview-focus"), path).toBe(focusForRoute[path]);
+      expect(currentViewport.querySelector(".resume-preview-page")!.innerHTML, path).toBe(pageMarkup);
+      expect(currentViewport.querySelectorAll(".resume-preview-education-entry")).toHaveLength(fixtureSections.education.length);
+      expect(currentViewport.querySelector(".resume-preview-hero h1 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
+      expect(currentViewport.querySelector("#preview-education")?.querySelector(".resume-preview-marked-text[data-preview-modified='true']")).toBeNull();
+    }
+    expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
+    expect(repo.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("keeps Introduction modified highlighting attached to the stable paragraph after reorder and locale switch", () => {
+    const repo = repository();
+    const sections = structuredClone(fixtureSections);
+    sections.introduction.push({ ...structuredClone(sections.introduction[0]), id: "intro-second", sourceKey: "intro-second-key", position: 2,
+      translations: { zh: { text: "第二段中文" }, en: { text: "Second introduction paragraph" } } });
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/introduction"]}><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" productionMode resume={{ ...resume, sections }} repository={repo}
+      additionalSections={{ introduction: sections.introduction }} additionalResumeId={resumeId}
+      onProfileSaved={() => {}} onProfileTranslationSaved={() => {}} /></MemoryRouter></UiLocaleProvider>);
+    const firstItemId = sections.introduction[0].sourceKey ?? sections.introduction[0].id;
+    fireEvent.change(screen.getAllByLabelText("English Paragraph")[0], { target: { value: "Modified stable paragraph" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move Introduction 1 down" }));
+
+    const intro = screen.getByTestId("resume-preview").querySelector(".resume-preview-intro")!;
+    expect(Array.from(intro.querySelectorAll("p"), node => node.textContent)).toEqual(["All content here is a local demo.", "Modified stable paragraph", "Second introduction paragraph"]);
+    expect(intro.querySelector(`[data-preview-item-id="${firstItemId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(intro.querySelector(`[data-preview-item-id="intro-second-key"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
+    setPreviewLocale("zh");
+    expect(intro.querySelector(`[data-preview-item-id="${firstItemId}"] .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
+    expect(repo.updateEditableEntryPosition).not.toHaveBeenCalled();
+  });
+
   it("updates the Profile preview immediately for an unsaved Chinese edit", () => {
     open("/profile");
     setPreviewLocale("zh");
     fireEvent.change(screen.getByLabelText("Chinese Name"), { target: { value: "新的中文姓名" } });
     expect(preview().getByRole("heading", { level: 1, name: "新的中文姓名" })).toBeTruthy();
+    expect(screen.getByTestId("resume-preview").querySelector(".resume-preview-hero h1 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
   });
 
   it("updates the Profile preview immediately for an unsaved English edit", () => {
@@ -173,8 +257,14 @@ describe("Profile and Education live-preview prototype", () => {
     open("/education", repo);
     const previewHeadings = () => Array.from(document.querySelectorAll(".resume-preview-education-entry h3"), node => node.textContent);
     expect(previewHeadings()).toEqual(["Undergraduate Education", "Academic Program"]);
-    fireEvent.click(screen.getByRole("button", { name: "Move Undergraduate Education down" }));
-    expect(previewHeadings()).toEqual(["Academic Program", "Undergraduate Education"]);
+    const changedEducationId = fixtureSections.education[0].sourceKey!;
+    const unchangedEducationId = fixtureSections.education[1].sourceKey!;
+    fireEvent.change(screen.getAllByLabelText("English Title")[0], { target: { value: "Unsaved undergraduate" } });
+    expect(document.querySelector(`[data-preview-item-id="${changedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Move Uncategorized down" }));
+    expect(previewHeadings()).toEqual(["Academic Program", "Unsaved undergraduate"]);
+    expect(document.querySelector(`[data-preview-item-id="${changedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(document.querySelector(`[data-preview-item-id="${unchangedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");
     expect(repo.updateEducationEntry).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     expect(await screen.findByText("Education changes saved to production.")).toBeTruthy();
@@ -186,10 +276,27 @@ describe("Profile and Education live-preview prototype", () => {
     open("/profile", repo);
     fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Unsaved until click" } });
     expect(preview().getByRole("heading", { level: 1, name: "Unsaved until click" })).toBeTruthy();
+    expect(screen.getByTestId("resume-preview").querySelector(".resume-preview-hero h1 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
     expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(repo.updateProfileTranslation).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("resume-preview").querySelector(".resume-preview-hero h1 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("false");
+  });
+
+  it("keeps Profile highlights locale-specific and clears them when Cancel restores the baseline", () => {
+    open("/profile");
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "English-only draft" } });
+    const name = () => screen.getByTestId("resume-preview").querySelector(".resume-preview-hero h1 .resume-preview-marked-text");
+    expect(name()?.getAttribute("data-preview-modified")).toBe("true");
+    setPreviewLocale("zh");
+    expect(name()?.textContent).toBe(fixtureSections.profile.translations.zh.name);
+    expect(name()?.getAttribute("data-preview-modified")).toBe("false");
+    setPreviewLocale("en");
+    expect(name()?.getAttribute("data-preview-modified")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(name()?.textContent).toBe(fixtureSections.profile.translations.en.name);
+    expect(name()?.getAttribute("data-preview-modified")).toBe("false");
   });
 
   it("focuses Introduction at the hero while keeping the shared preview available", () => {
@@ -228,7 +335,7 @@ describe("Profile and Education live-preview prototype", () => {
     expect(Array.from(experienceSection.querySelectorAll("h3"), node => node.textContent)).toEqual(["Renamed Company", "Second Company"]);
     fireEvent.click(screen.getByRole("button", { name: "Move Renamed Company down" }));
     expect(Array.from(experienceSection.querySelectorAll("h3"), node => node.textContent)).toEqual(["Second Company", "Renamed Company"]);
-    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add experience" }));
     const organizations = screen.getAllByLabelText("English Organization");
     fireEvent.change(organizations[organizations.length - 1], { target: { value: "New Unsaved Company" } });
     expect(within(screen.getByTestId("resume-preview")).getByRole("heading", { level: 3, name: "New Unsaved Company" })).toBeTruthy();
@@ -258,10 +365,15 @@ describe("Profile and Education live-preview prototype", () => {
     fireEvent.change(screen.getAllByLabelText("English Title")[0], { target: { value: "Renamed Project" } });
     fireEvent.change(screen.getByLabelText("English methods 1"), { target: { value: "Live Preview Method" } });
     const projectSection = screen.getByTestId("resume-preview").querySelector("#preview-projects")!;
+    const firstProjectId = sections.projects[0].sourceKey!;
     expect(within(projectSection as HTMLElement).getAllByRole("heading", { level: 3 }).map(node => node.textContent)).toEqual(["Renamed Project", "Second Project"]);
     expect(within(projectSection as HTMLElement).getByText("Live Preview Method · Metric Analysis")).toBeTruthy();
+    expect(projectSection.querySelector(`[data-preview-item-id="${firstProjectId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(projectSection.querySelector(`[data-preview-item-id="${firstProjectId}"] .resume-preview-project-methods .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Move Renamed Project down" }));
     expect(within(projectSection as HTMLElement).getAllByRole("heading", { level: 3 }).map(node => node.textContent)).toEqual(["Second Project", "Renamed Project"]);
+    expect(projectSection.querySelector(`[data-preview-item-id="${firstProjectId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(projectSection.querySelector("[data-preview-item-id='project-second'] h3 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("false");
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-focus")).toBe("projects");
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
@@ -273,10 +385,14 @@ describe("Profile and Education live-preview prototype", () => {
     fireEvent.change(screen.getAllByLabelText("English Group title")[0], { target: { value: "Languages & Tools" } });
     fireEvent.change(screen.getAllByLabelText("English Skills")[0], { target: { value: "Rust · SQL" } });
     const skillSection = screen.getByTestId("resume-preview").querySelector("#preview-skills")!;
+    const firstSkillId = fixtureSections.skills[0].sourceKey!;
     expect(within(skillSection as HTMLElement).getAllByText(/Languages & Tools|Analytics/).map(node => node.textContent)).toEqual(["Languages & Tools", "Analytics"]);
     expect(within(skillSection as HTMLElement).getByText("Rust · SQL")).toBeTruthy();
+    expect(skillSection.querySelector(`[data-preview-item-id="${firstSkillId}"] strong .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
+    expect(skillSection.querySelector(`[data-preview-item-id="${firstSkillId}"] span .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Move Languages & Tools down" }));
     expect(Array.from(skillSection.querySelectorAll(".resume-preview-skill-list strong"), node => node.textContent)).toEqual(["Analytics", "Languages & Tools"]);
+    expect(skillSection.querySelector(`[data-preview-item-id="${firstSkillId}"] strong .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-focus")).toBe("skills");
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();

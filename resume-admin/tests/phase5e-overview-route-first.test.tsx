@@ -213,7 +213,7 @@ describe("Phase 5E Overview route-first loading", () => {
     store.setSession("next-overview-session");
     expect(store.getSectionState("overview-session", resumeId, "overview").status).toBe("idle");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(store.getSectionState("next-overview-session", resumeId, "overview").status).toBe("idle");
   });
 

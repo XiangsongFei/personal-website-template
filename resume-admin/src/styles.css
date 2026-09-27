@@ -339,7 +339,144 @@ main{color:#242424}
 .profile-editor-form .profile-photo-field-controls .field-hint{flex-basis:100%}
 .profile-editor-form .profile-save-status{margin:0;padding:0 2px}
 @media(max-width:680px){.profile-editor-form .profile-editor-locale .bilingual-grid{grid-template-columns:minmax(0,1fr)}.profile-editor-form .profile-editor-locale .bilingual-column-headings{display:none}.profile-editor-form .profile-editor-locale .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:9px;padding:16px 0}.profile-editor-form .profile-editor-locale .bilingual-field-pair h3,.profile-editor-form .profile-editor-locale .bilingual-field-values{grid-column:1}.profile-editor-form .profile-editor-locale .bilingual-field-pair h3{padding-top:0}.profile-editor-form .profile-editor-locale .bilingual-field-values{grid-template-columns:minmax(0,1fr);gap:14px}.profile-editor-form .profile-editor-locale .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}}
-@media(max-width:520px){.profile-editor-form .profile-photo-field{grid-template-columns:minmax(0,1fr);gap:14px}.profile-editor-form .profile-photo-field-preview{width:88px;height:112px}}
+@media(max-width:520px){.profile-editor-form .profile-photo-field{grid-template-columns:88px minmax(0,1fr);gap:14px}.profile-editor-form .profile-photo-field-preview{width:88px;height:112px}}
+.profile-editor-form .profile-photo-field-controls>span{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.profile-editor-form .profile-photo-field-controls>.pdf-file-picker{max-width:100%;white-space:normal}
+
+/* Resume content/settings routes: paired locale editing without adding card chrome. */
+.education-editor-scope,.experience-editor-scope,.projects-editor-scope,.skills-editor-scope,.awards-editor-scope,.contact-editor-scope,.links-editor-scope{width:100%;min-width:0;container-type:inline-size}
+.education-editor-scope .repeatable-group,.education-editor-scope .item-stack,.education-editor-scope .item-card,
+.experience-editor-scope .repeatable-group,.experience-editor-scope .item-stack,.experience-editor-scope .item-card,
+.projects-editor-scope .repeatable-group,.projects-editor-scope .item-stack,.projects-editor-scope .item-card,
+.skills-editor-scope .repeatable-group,.skills-editor-scope .item-stack,.skills-editor-scope .item-card,
+.awards-editor-scope .repeatable-group,.awards-editor-scope .item-stack,.awards-editor-scope .item-card{width:100%;max-width:100%;min-width:0}
+.education-editor-scope .item-stack,.experience-editor-scope .item-stack,.projects-editor-scope .item-stack,.skills-editor-scope .item-stack,.awards-editor-scope .item-stack{gap:0}
+.education-editor-scope .item-card,.experience-editor-scope .item-card,.projects-editor-scope .item-card,.skills-editor-scope .item-card,.awards-editor-scope .item-card{border:0;overflow:visible}
+.education-editor-scope .item-card + .item-card,.experience-editor-scope .item-card + .item-card,.projects-editor-scope .item-card + .item-card,.skills-editor-scope .item-card + .item-card,.awards-editor-scope .item-card + .item-card{border-top:1px solid #eee}
+.education-editor-scope .item-card:last-child,.experience-editor-scope .item-card:last-child,.projects-editor-scope .item-card:last-child,.skills-editor-scope .item-card:last-child,.awards-editor-scope .item-card:last-child{border-bottom:0}
+.education-editor-scope .item-card-heading,.experience-editor-scope .item-card-heading,.projects-editor-scope .item-card-heading,.skills-editor-scope .item-card-heading,.awards-editor-scope .item-card-heading{min-width:0}
+.education-editor-scope .item-card-heading>div:first-child,.experience-editor-scope .item-card-heading>div:first-child,.projects-editor-scope .item-card-heading>div:first-child,.skills-editor-scope .item-card-heading>div:first-child,.awards-editor-scope .item-card-heading>div:first-child{min-width:0;flex:1 1 auto;overflow:hidden}
+.education-editor-scope .item-card-heading h3,.experience-editor-scope .item-card-heading h3,.projects-editor-scope .item-card-heading h3,.skills-editor-scope .item-card-heading h3,.awards-editor-scope .item-card-heading h3{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.education-editor-scope .item-card-body,.experience-editor-scope .item-card-body,.projects-editor-scope .item-card-body,.skills-editor-scope .item-card-body,.awards-editor-scope .item-card-body{border-top:0;padding:10px 0 22px}
+.education-editor-scope .bilingual-fields,.experience-editor-scope .bilingual-fields,.projects-editor-scope .bilingual-fields,.skills-editor-scope .bilingual-fields,.awards-editor-scope .bilingual-fields,
+.education-editor-scope .bilingual-grid,.experience-editor-scope .bilingual-grid,.projects-editor-scope .bilingual-grid,.skills-editor-scope .bilingual-grid,.awards-editor-scope .bilingual-grid,
+.education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,
+.education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values{width:100%;max-width:100%;min-width:0}
+.education-editor-scope .bilingual-grid.has-locale-headings,.experience-editor-scope .bilingual-grid.has-locale-headings,.projects-editor-scope .bilingual-grid.has-locale-headings,.skills-editor-scope .bilingual-grid.has-locale-headings,.awards-editor-scope .bilingual-grid.has-locale-headings,.contact-editor-scope .bilingual-grid.has-locale-headings,.links-editor-scope .bilingual-grid.has-locale-headings{grid-template-columns:minmax(0,1fr);gap:0}
+.education-editor-scope .bilingual-column-headings,.education-editor-scope .bilingual-field-pair,
+.experience-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-field-pair,
+.projects-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-field-pair,
+.skills-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-field-pair,
+.awards-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-field-pair,
+.contact-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-field-pair,
+.links-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-field-pair{display:grid;grid-template-columns:minmax(130px,.62fr) repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px);min-width:0}
+.education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{align-items:center;padding:0 0 8px;color:#777;font-size:13px;font-weight:500}
+.education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{align-items:start;padding:12px 0}
+.education-editor-scope .bilingual-field-pair>h3,.experience-editor-scope .bilingual-field-pair>h3,.projects-editor-scope .bilingual-field-pair>h3,.skills-editor-scope .bilingual-field-pair>h3,.awards-editor-scope .bilingual-field-pair>h3,.contact-editor-scope .bilingual-field-pair>h3,.links-editor-scope .bilingual-field-pair>h3{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600}
+.education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values,.contact-editor-scope .bilingual-field-values,.links-editor-scope .bilingual-field-values{grid-column:2/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
+.education-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.experience-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.projects-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.skills-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.awards-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.contact-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.links-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:none}
+.education-editor-scope .field,.experience-editor-scope .field,.projects-editor-scope .field,.skills-editor-scope .field,.awards-editor-scope .field,.contact-editor-scope .field,.links-editor-scope .field{width:100%;max-width:100%;min-width:0}
+.education-editor-scope .field textarea,.experience-editor-scope .field textarea,.projects-editor-scope .field textarea,.skills-editor-scope .field textarea,.awards-editor-scope .field textarea,.contact-editor-scope .field textarea,.links-editor-scope .field textarea{width:100%;max-width:100%;min-width:0}
+.projects-editor-scope .methods-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(16px,3.8cqi,30px)}
+.education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.education-editor-scope button:focus:not(:focus-visible),.experience-editor-scope button:focus:not(:focus-visible),.projects-editor-scope button:focus:not(:focus-visible),.skills-editor-scope button:focus:not(:focus-visible),.awards-editor-scope button:focus:not(:focus-visible),.contact-editor-scope button:focus:not(:focus-visible),.links-editor-scope button:focus:not(:focus-visible){outline:none}
+.contact-editor-scope .panel{min-width:0;padding:0}
+.contact-editor-scope .panel + .panel{padding-top:22px;border-top:1px solid #eee}
+.contact-editor-scope .limitation-note{margin:12px 0 0!important;padding:0;border:0;background:transparent;color:#777;font-size:13px}
+.links-editor-scope .editor-form{gap:0}
+.links-editor-scope .links-section{min-width:0}
+.links-editor-scope .links-section + .links-section{margin-top:25px;padding-top:23px;border-top:1px solid #eee}
+.links-editor-scope .links-section h2{margin:0 0 15px;color:#202020;font-size:21px;font-weight:600;line-height:1.35}
+.links-editor-scope .resume-file-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
+.links-editor-scope .pdf-upload-field{min-width:0;margin:0}
+.links-editor-scope .pdf-upload-label{margin:0 0 8px;color:#444;font-size:14px;font-weight:600}
+.links-editor-scope .save-bar{margin-top:28px;border-top:0;padding-top:0}
+.links-editor-scope .navigation-labels{gap:0}
+.links-editor-scope .navigation-column-headings{grid-template-columns:minmax(130px,.62fr) repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px);padding-top:4px}
+.links-editor-scope .navigation-label-row{display:grid;grid-template-columns:minmax(130px,.62fr) repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px);align-items:start;padding:13px 0;border-top:0}
+.links-editor-scope .navigation-label-row + .navigation-label-row{border-top:1px solid #eee}
+.links-editor-scope .navigation-label-row>strong{grid-column:1;margin:8px 0 0;color:#444;font-size:14px;font-weight:600;text-transform:none;letter-spacing:0}
+.links-editor-scope .navigation-label-row .bilingual-fields,.links-editor-scope .navigation-label-row .bilingual-grid,.links-editor-scope .navigation-label-row .bilingual-field-pair{display:contents}
+.links-editor-scope .navigation-label-row .bilingual-field-pair>h3{display:none}
+.links-editor-scope .navigation-label-row .bilingual-field-values{grid-column:2/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
+.links-editor-scope .navigation-label-row .bilingual-field-values .field label>span[aria-hidden=true]{display:none}
+@container (max-width:620px){
+  .education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{display:none}
+  .education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
+  .education-editor-scope .bilingual-field-pair>h3,.experience-editor-scope .bilingual-field-pair>h3,.projects-editor-scope .bilingual-field-pair>h3,.skills-editor-scope .bilingual-field-pair>h3,.awards-editor-scope .bilingual-field-pair>h3,.contact-editor-scope .bilingual-field-pair>h3,.links-editor-scope .bilingual-field-pair>h3{grid-column:1;padding-top:0}
+  .education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values,.contact-editor-scope .bilingual-field-values,.links-editor-scope .bilingual-field-values{grid-column:1;grid-template-columns:minmax(0,1fr);gap:15px}
+  .education-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.experience-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.projects-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.skills-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.awards-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.contact-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.links-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
+  .links-editor-scope .navigation-column-headings{display:none}
+  .links-editor-scope .navigation-label-row{grid-template-columns:minmax(0,1fr);row-gap:8px}
+  .links-editor-scope .navigation-label-row>strong{grid-column:1;margin:0}
+  .links-editor-scope .navigation-label-row .bilingual-field-values{grid-column:1;grid-template-columns:minmax(0,1fr);gap:12px}
+  .links-editor-scope .field-grid{grid-template-columns:minmax(0,1fr)}
+  .links-editor-scope .resume-file-grid{grid-template-columns:minmax(0,1fr);gap:18px}
+  .projects-editor-scope .methods-grid,.education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Education-only final spacing: one divider between entries and a quiet save area. */
+.education-editor-scope .page-heading>p:empty{display:none}
+.education-editor-scope .group-heading{justify-content:flex-end}
+.education-editor-scope .save-bar{border-top:0}
+.education-editor-scope .education-category-control{width:auto;min-width:0;max-width:220px;border:0;border-bottom:1px solid #e2e0dc;border-radius:0;background:transparent;color:#222;padding:4px 18px 4px 0;font-size:15px;font-weight:600;box-shadow:none}
+.education-editor-scope .education-category-control:focus{outline:none;border-color:#666;box-shadow:none}
+
+/* Experience-only: keep the add action quiet and use separators only between entries. */
+.experience-editor-scope .page-heading>p:empty{display:none}
+.experience-editor-scope .group-heading{justify-content:flex-end}
+.experience-editor-scope .save-bar{border-top:0}
+
+/* Projects-only: keep the editor quiet and make methods easy to compare by locale. */
+.projects-editor-scope .page-heading>p:empty{display:none}
+.projects-editor-scope .repeatable-group>.group-heading{justify-content:flex-end}
+.projects-editor-scope .save-bar{border-top:0}
+.projects-editor-scope .project-shared-field{min-width:0;padding:12px 0}
+.projects-editor-scope .project-shared-field .field{display:grid;grid-template-columns:minmax(130px,.62fr) repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px);align-items:start;min-width:0}
+.projects-editor-scope .project-shared-field .field>label{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600}
+.projects-editor-scope .project-shared-field .field>input{grid-column:2/-1}
+.projects-editor-scope .project-shared-field .field>.field-edit-status{grid-column:2/-1}
+.projects-editor-scope .projects-methods-heading{margin:20px 0 10px}
+.projects-editor-scope .projects-methods-heading h3{margin:0;color:#444;font-size:15px;font-weight:600}
+.projects-editor-scope .methods-grid{margin-top:0}
+
+/* Awards-only: keep the list title-led with a quiet save area. */
+.awards-editor-scope .page-heading>p:empty{display:none}
+.awards-editor-scope .repeatable-group>.group-heading{justify-content:flex-end}
+.awards-editor-scope .save-bar{border-top:0}
+
+/* Skills-only: keep the list title-led with one divider between adjacent groups. */
+.skills-editor-scope .page-heading>p:empty{display:none}
+.skills-editor-scope .repeatable-group>.group-heading{justify-content:flex-end}
+.skills-editor-scope .save-bar{border-top:0}
+.contact-editor-scope .page-heading>p:empty{display:none}
+.contact-editor-scope .save-bar{border-top:0}
+.contact-editor-scope .repeatable-group,.contact-editor-scope .item-stack,.contact-editor-scope .item-card{width:100%;max-width:100%;min-width:0}
+.contact-editor-scope .repeatable-group{gap:9px}
+.contact-editor-scope .item-stack{gap:0}
+.contact-editor-scope .item-card{border:0;overflow:visible}
+.contact-editor-scope .item-card + .item-card{border-top:1px solid #eee}
+.contact-editor-scope .item-card:last-child{border-bottom:0}
+.contact-editor-scope .item-card-heading{min-width:0}
+.contact-editor-scope .item-card-heading>div:first-child{min-width:0;flex:1 1 auto;overflow:hidden}
+.contact-editor-scope .item-card-heading h3{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contact-editor-scope .item-card-body{border-top:0;padding:10px 0 22px}
+.contact-editor-scope .shared-select{max-width:280px}
+.contact-editor-scope button:focus-visible{outline:2px solid #77766f;outline-offset:2px}
+.projects-editor-scope .method-group{background:transparent;border:0;border-radius:0;padding:0;gap:10px}
+.projects-editor-scope .method-group h4{color:#777;font-size:13px;font-weight:500}
+.projects-editor-scope .method-row .field{display:grid;grid-template-columns:30px minmax(0,1fr);grid-template-rows:minmax(18px,auto) auto;align-items:center;column-gap:8px}
+.projects-editor-scope .method-row .field>label{grid-column:1;grid-row:1/3;display:flex;align-items:center;margin:0;color:#888;font-size:12px;font-weight:500}
+.projects-editor-scope .method-row .field>input,.projects-editor-scope .method-row .field>.field-edit-status{grid-column:2}
+.projects-editor-scope .method-row .field>input{grid-row:1}
+.projects-editor-scope .method-row .field>.field-edit-status{grid-row:2;margin-top:4px}
+.projects-editor-scope .method-actions{padding:0;align-self:center}
+@container (max-width:620px){
+  .projects-editor-scope .project-shared-field .field{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
+  .projects-editor-scope .project-shared-field .field>label,.projects-editor-scope .project-shared-field .field>input,.projects-editor-scope .project-shared-field .field>.field-edit-status{grid-column:1}
+  .projects-editor-scope .project-shared-field .field>label{padding-top:0}
+}
+
 /* Login-only editorial treatment; authentication structure and behavior stay unchanged. */
 .auth-login-screen{box-sizing:border-box;min-height:100vh;min-height:100svh;min-height:100dvh;overflow-y:auto;padding:calc(max(24px,env(safe-area-inset-top)) + 11vh) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#fff}
 .auth-login-content{box-sizing:border-box;width:min(100%,380px);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
