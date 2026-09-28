@@ -195,8 +195,8 @@ describe("Batch 6A production repeatable CRUD", () => {
   it.each([
     { path: "/contact", locale: "en" as const, field: "English Section label", clean: "No unsaved changes" },
     { path: "/contact", locale: "zh" as const, field: "英文 部分标签", clean: "没有未保存修改" },
-    { path: "/links", locale: "en" as const, field: "GitHub URL", clean: "No unsaved changes" },
-    { path: "/links", locale: "zh" as const, field: "GitHub URL", clean: "没有未保存修改" },
+    { path: "/links", locale: "en" as const, field: "URL", clean: "No unsaved changes" },
+    { path: "/links", locale: "zh" as const, field: "链接地址", clean: "没有未保存修改" },
   ])("$path Cancel restores the draft silently in $locale UI", async ({ path, locale, field: fieldName, clean }) => {
     window.localStorage.setItem(UI_LOCALE_KEY, locale);
     const { repository, methods } = makeRepository("skills");
@@ -1405,18 +1405,28 @@ describe("Batch 6A production repeatable CRUD", () => {
     cleanup();
     const links = makeRepository("skills");
     open({ path: "/links" }, links.repository);
-    fireEvent.change(await screen.findByLabelText("GitHub URL"), { target: { value: "https://github.example.test/changed" } });
+    fireEvent.change(await screen.findByLabelText("URL"), { target: { value: "https://github.example.test/changed" } });
+    const linkGroups = document.querySelectorAll(".links-object-group");
+    fireEvent.change(within(linkGroups[0] as HTMLElement).getByLabelText("Contact label"), { target: { value: "Email contact" } });
+    fireEvent.change(within(linkGroups[2] as HTMLElement).getByLabelText("Display name"), { target: { value: "LinkedIn name" } });
+    fireEvent.change(within(linkGroups[2] as HTMLElement).getAllByLabelText("Hero button label")[0], { target: { value: "LinkedIn hero" } });
+    fireEvent.change(screen.getByLabelText("English Contact label"), { target: { value: "LinkedIn contact" } });
+    fireEvent.change(screen.getByLabelText("English URL"), { target: { value: "https://linkedin.example.test/profile" } });
     save();
     await screen.findByText("No unsaved changes");
-    expect(links.methods.updatePublicLinks).toHaveBeenCalledWith(resumeId, { github: "https://github.example.test/changed" });
+    expect(links.methods.updatePublicLinks).toHaveBeenCalledWith(resumeId, {
+      emailLabel: "Email contact", github: "https://github.example.test/changed", linkedInDisplayName: "LinkedIn name", linkedInLabel: "LinkedIn hero",
+    });
+    expect(links.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { linkedInLabel: "LinkedIn contact", linkedInHref: "https://linkedin.example.test/profile" });
     cleanup();
     const siteText = makeRepository("skills");
     open({ path: "/links" }, siteText.repository);
-    fireEvent.change(await screen.findByLabelText("English Education heading"), { target: { value: "Learning" } });
-    fireEvent.change(screen.getAllByLabelText("Chinese Navigation label")[0], { target: { value: "经历（更新）" } });
+    fireEvent.change(await screen.findByLabelText("English Education section title"), { target: { value: "Learning" } });
+    fireEvent.change(screen.getByLabelText("English Public button label"), { target: { value: "Download CV" } });
+    fireEvent.change(screen.getByLabelText("Chinese Experience"), { target: { value: "经历（更新）" } });
     save();
     await screen.findByText("No unsaved changes");
-    expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { educationLabel: "Learning" });
+    expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { educationLabel: "Learning", portfolioLabel: "Download CV" });
     expect(siteText.methods.updateNavigationLabel).toHaveBeenCalledWith(resumeId, expect.any(String), "zh", "经历（更新）");
   });
 
@@ -1613,7 +1623,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   it("preserves existing PDF hrefs and saves unrelated Links fields without uploading", async () => {
     const { repository, methods } = makeRepository("skills");
     open({ path: "/links" }, repository);
-    fireEvent.change(await screen.findByLabelText("GitHub URL"), { target: { value: "https://github.example.test/updated" } });
+    fireEvent.change(await screen.findByLabelText("URL"), { target: { value: "https://github.example.test/updated" } });
     save();
     await screen.findByText("No unsaved changes");
     expect(methods.uploadResumePdf).not.toHaveBeenCalled();

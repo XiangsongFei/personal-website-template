@@ -254,7 +254,9 @@ describe("unified Profile save", () => {
     expect(update).not.toHaveBeenCalled();
     view.unmount();
     render(<MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={snapshot()} repository={repository} onProfileSaved={() => {}} onProfileTranslationSaved={() => {}} /></MemoryRouter>);
-    fireEvent.change(screen.getByLabelText("GitHub label"), { target: { value: "Local label" } });
+    await screen.findByLabelText("URL");
+    const githubGroup = document.querySelectorAll(".links-object-group")[1] as HTMLElement;
+    fireEvent.change(within(githubGroup).getByLabelText("Hero button label"), { target: { value: "Local label" } });
     fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
     expect(update).not.toHaveBeenCalled();
   });

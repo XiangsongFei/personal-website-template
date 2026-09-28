@@ -209,13 +209,13 @@ function useLocalDraft<T>(section: SectionKey, initial: T) {
 
 type FieldSpec<T> = { key: keyof T & string; label: string; multiline?: boolean; type?: "text" | "email" | "url"; readOnlyZh?: boolean };
 
-function InputField({ id, label, value, onChange, multiline = false, type = "text", readOnly = false, hint, compactLabel, modified, reviewLabel, onReviewConfirm }: {
+function InputField({ id, label, value, onChange, multiline = false, type = "text", readOnly = false, hint, compactLabel, modified, reviewLabel, onReviewConfirm, inline = false }: {
   id: string; label: string; value: string; onChange: (value: string) => void;
   multiline?: boolean; type?: "text" | "email" | "url"; readOnly?: boolean; hint?: string; compactLabel?: string;
-  modified?: boolean; reviewLabel?: string; onReviewConfirm?: () => void;
+  modified?: boolean; reviewLabel?: string; onReviewConfirm?: () => void; inline?: boolean;
 }) {
   const { t } = useUiLocale();
-  return <div className="field">
+  return <div className={`field${inline ? " links-inline-field" : ""}`}>
     <label htmlFor={id}>{compactLabel ? <><span aria-hidden="true">{compactLabel}</span><span className="visually-hidden">{t(label)}</span></> : t(label)}</label>
     {multiline
       ? <textarea id={id} value={value} onChange={event => onChange(event.target.value)} readOnly={readOnly} rows={4} aria-label={compactLabel ? t(label) : undefined} aria-describedby={hint ? `${id}-hint` : undefined} />
@@ -228,28 +228,31 @@ function InputField({ id, label, value, onChange, multiline = false, type = "tex
   </div>;
 }
 
-function SharedFields<T extends object>({ value, fields, onChange, idPrefix, readOnly = false }: {
-  value: T; fields: FieldSpec<T>[]; onChange: (value: T) => void; idPrefix: string; readOnly?: boolean;
+function SharedFields<T extends object>({ value, fields, onChange, idPrefix, readOnly = false, inline = false }: {
+  value: T; fields: FieldSpec<T>[]; onChange: (value: T) => void; idPrefix: string; readOnly?: boolean; inline?: boolean;
 }) {
-  return <div className="field-grid">{fields.map(field =>
+  return <div className={`field-grid${inline ? " links-inline-row" : ""}`}>{fields.map(field =>
     <InputField key={field.key} id={`${idPrefix}-${field.key}`} label={field.label} value={String(value[field.key] ?? "")}
       type={field.type} multiline={field.multiline} readOnly={readOnly}
+      inline={inline}
       onChange={next => onChange({ ...value, [field.key]: next })} />
   )}</div>;
 }
 
-function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false }: {
+function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true }: {
   value: Bilingual<T>; fields: FieldSpec<T>[]; onChange: (value: Bilingual<T>, locale: Locale) => void; idPrefix: string;
   readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode;
-  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean;
+  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
   const locales = shownLocales ?? ["zh", "en"];
-  return <div className="bilingual-fields">
-    <div className={`bilingual-grid${showLocaleHeaders ? " has-locale-headings" : ""}`}>
-      {showLocaleHeaders && <div className="bilingual-column-headings" aria-hidden="true"><span />
-        <span lang="zh">{t("Chinese")}</span><span lang="en">English</span>
+  return <div className={`bilingual-fields${matrixLayout ? " links-translation-matrix" : ""}${inlineLocaleIndicators ? " links-inline-locale-fields" : ""}`}>
+    <div className={`bilingual-grid${showLocaleHeaders || matrixLayout ? " has-locale-headings" : ""}`}>
+      {(showLocaleHeaders || (matrixLayout && matrixHeader && !inlineLocaleIndicators)) && <div className="bilingual-column-headings" aria-hidden="true">
+        {matrixLayout
+          ? <><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>
+          : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
       </div>}
       {fields.map(field =>
       <section className="bilingual-field-pair" key={field.key}>
@@ -265,7 +268,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           const review = identity ? context.bilingualReviews[key] : undefined;
           const reviewLabel = review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined;
           return <InputField key={locale} id={`${idPrefix}-${locale}-${field.key}`}
-            label={`${localeName} ${t(field.label)}`} compactLabel={locale === "zh" ? "中文" : "EN"}
+            label={`${localeName} ${t(field.label)}`} compactLabel={inlineLocaleIndicators ? localeName : locale === "zh" ? "中文" : "EN"}
             value={String(value[locale][field.key] ?? "")} type={field.type} multiline={field.multiline}
             readOnly={readOnly}
             modified={modified} reviewLabel={reviewLabel}
@@ -1856,26 +1859,41 @@ function Links() {
   };
   const clearPdfDrafts = () => { setPdfFiles({}); setPdfErrors({}); };
   const linksResumeId = context.additionalResumeId ?? context.resume?.resumeId ?? null;
+  const navigationRowLabels: Record<LinksSection["navigation"][number]["sectionId"], string> = {
+    experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact",
+  };
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
     productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange, confirmed) => <>
-      <section className="links-section"><h2>{t("Public links")}</h2><SharedFields idPrefix="links-shared" value={links.shared}
-        onChange={shared => onChange({ ...links, shared })}
-        fields={[{ key: "email", label: "Email address", type: "email" }, { key: "github", label: "GitHub URL", type: "url" }, { key: "githubLabel", label: "GitHub label" }, { key: "linkedInDisplayName", label: "LinkedIn display name" }, { key: "emailLabel", label: "Email label" }, { key: "linkedInLabel", label: "LinkedIn action label" }]} /></section>
-      <section className="links-section"><h2>{t("Localized links & text")}</h2><BilingualFields showLocaleHeaders idPrefix="links-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
-        onChange={translations => onChange({ ...links, translations })}
-        fields={[{ key: "portfolioLabel", label: "Resume PDF label" }, { key: "linkedInHref", label: "LinkedIn URL", type: "url" }, { key: "linkedInLabel", label: "LinkedIn text" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated date label" }, { key: "educationLabel", label: "Education heading" }, { key: "experienceLabel", label: "Experience heading" }, { key: "projectHeading", label: "Projects heading" }, { key: "skillsLabel", label: "Skills heading" }, { key: "honorsLabel", label: "Awards heading" }]} /></section>
+      <section className="links-section"><h2>{t("Public links")}</h2>
+        <div className="links-object-group"><h3>{t("Email")}</h3><SharedFields inline idPrefix="links-email" value={links.shared}
+          onChange={shared => onChange({ ...links, shared })}
+          fields={[{ key: "email", label: "Email address", type: "email" }, { key: "emailLabel", label: "Contact label" }]} /></div>
+        <div className="links-object-group"><h3>GitHub</h3><SharedFields inline idPrefix="links-github" value={links.shared}
+          onChange={shared => onChange({ ...links, shared })}
+          fields={[{ key: "github", label: "URL", type: "url" }, { key: "githubLabel", label: "Hero button label" }]} /></div>
+        <div className="links-object-group"><h3>LinkedIn</h3><SharedFields inline idPrefix="links-linkedin" value={links.shared}
+          onChange={shared => onChange({ ...links, shared })}
+          fields={[{ key: "linkedInDisplayName", label: "Display name" }, { key: "linkedInLabel", label: "Hero button label" }]} />
+          <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+            onChange={translations => onChange({ ...links, translations })}
+            fields={[{ key: "linkedInLabel", label: "Contact label" }, { key: "linkedInHref", label: "URL", type: "url" }]} /></div>
+        </div>
+      </section>
       <section className="links-section links-resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">
         {(["zh", "en"] as const).map(locale => <ResumePdfUpload key={locale} locale={locale} href={links.translations[locale].portfolioHref} filename={links.resumePdfFilenames?.[locale]} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />)}
-      </div></section>
+      </div><div className="links-localized-fields"><BilingualFields matrixLayout idPrefix="links-files" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+        onChange={translations => onChange({ ...links, translations })}
+        fields={[{ key: "portfolioLabel", label: "Public button label" }]} /></div></section>
       <section className="links-section"><h2>{t("Navigation labels")}</h2>
-        <div className="navigation-labels"><div className="bilingual-column-headings navigation-column-headings" aria-hidden="true"><span />
-          <span lang="zh">{t("Chinese")}</span><span lang="en">{t("English")}</span></div>{links.navigation.map(item => <div className="navigation-label-row" key={item.id}><strong>{item.sectionId}</strong>
-          <BilingualFields idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: "Navigation label" }]}
+        <div className="navigation-labels">{links.navigation.map((item, index) => <BilingualFields key={item.id} matrixLayout matrixHeader={index === 0} idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: navigationRowLabels[item.sectionId] }]}
             onChange={translations => onChange({ ...links, navigation: links.navigation.map(current => current.id === item.id ? { ...current, translations } : current) })} />
-        </div>)}</div>
+        )}</div>
       </section>
+      <section className="links-section"><h2>{t("Site Text")}</h2><BilingualFields matrixLayout idPrefix="links-site-text" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+        onChange={translations => onChange({ ...links, translations })}
+        fields={[{ key: "educationLabel", label: "Education section title" }, { key: "experienceLabel", label: "Experience section title" }, { key: "projectHeading", label: "Projects section title" }, { key: "skillsLabel", label: "Skills section title" }, { key: "honorsLabel", label: "Awards section title" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated-at label" }]} /></section>
     </>}
   </SectionForm></div>;
 }

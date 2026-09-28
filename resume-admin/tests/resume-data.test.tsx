@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { App } from "../src/App";
@@ -308,7 +308,9 @@ describe("Stage 4D auth-gated editor", () => {
   it("exposes explicit production save for Links and performs no write before Save", async () => {
     const db = mockSupabase(databaseRows());
     render(<MemoryRouter initialEntries={["/links"]}><AuthGate client={auth(true)} resumeRepository={createResumeRepository(db.client)} /></MemoryRouter>);
-    const title = await screen.findByLabelText("GitHub label") as HTMLInputElement;
+    await screen.findByLabelText("URL");
+    const githubGroup = document.querySelectorAll(".links-object-group")[1] as HTMLElement;
+    const title = within(githubGroup).getByLabelText("Hero button label") as HTMLInputElement;
     fireEvent.change(title, { target: { value: "Local-only label" } });
     expect(screen.getByRole("button", { name: "Save site & link changes" })).toBeTruthy();
     expect(db.mutation).not.toHaveBeenCalled();

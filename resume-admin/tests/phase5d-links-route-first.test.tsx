@@ -50,25 +50,29 @@ const go = (label: string) => fireEvent.click(screen.getAllByRole("link", { name
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Phase 5D Links route-first loading", () => {
-  it("uses one shared locale heading row for the editable navigation labels", async () => {
+  it("uses one compact bilingual matrix header for the navigation label rows", async () => {
     const repo = repository();
     show(repo);
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(await screen.findByLabelText("URL")).toBeTruthy();
     const scope = document.querySelector(".links-editor-scope")!;
-    expect(scope.querySelectorAll(".navigation-column-headings")).toHaveLength(1);
-    expect(scope.querySelectorAll(".navigation-label-row")).toHaveLength(5);
-    expect(scope.querySelectorAll(".navigation-label-row .bilingual-column-headings")).toHaveLength(0);
+    expect(scope.querySelectorAll(".navigation-labels .bilingual-field-pair")).toHaveLength(5);
+    expect(scope.querySelectorAll(".navigation-labels .bilingual-column-headings")).toHaveLength(1);
+    expect(scope.querySelectorAll(".navigation-labels .bilingual-column-headings > span")).toHaveLength(2);
+    expect(scope.querySelectorAll(".navigation-labels .links-translation-matrix")).toHaveLength(5);
+    expect(Array.from(scope.querySelectorAll(".navigation-labels .bilingual-field-pair > h3"), node => node.textContent)).toEqual([
+      "Experience", "Projects", "Skills", "Awards", "Contact",
+    ]);
     expect(screen.getByLabelText("Email address")).toBeTruthy();
-    expect(screen.getByLabelText("English Resume PDF label")).toBeTruthy();
+    expect(screen.getByLabelText("English Public button label")).toBeTruthy();
   });
 
   it("starts directly with the four restrained Links sections", async () => {
     const repo = repository();
     show(repo);
-    await screen.findByLabelText("GitHub URL");
+    await screen.findByLabelText("URL");
     const scope = document.querySelector(".links-editor-scope")!;
     expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
-      "Public links", "Localized links & text", "Resume files", "Navigation labels",
+      "Public links", "Resume files", "Navigation labels", "Site Text",
     ]);
     expect(scope.querySelectorAll(".page-heading")).toHaveLength(0);
     expect(scope.querySelectorAll(".panel")).toHaveLength(0);
@@ -77,15 +81,64 @@ describe("Phase 5D Links route-first loading", () => {
     expect(screen.getByRole("button", { name: "Save site & link changes" }).hasAttribute("disabled")).toBe(true);
   });
 
+  it("presents every Links field with human-readable labels and fixed navigation descriptors", async () => {
+    show(repository());
+    await screen.findByLabelText("URL");
+    expect(screen.getByLabelText("Email address")).toBeTruthy();
+    expect(screen.getByLabelText("Contact label")).toBeTruthy();
+    expect(screen.getByLabelText("Display name")).toBeTruthy();
+    expect(screen.getAllByLabelText("Hero button label")).toHaveLength(2);
+    expect(screen.getByLabelText("Chinese Contact label")).toBeTruthy();
+    expect(screen.getByLabelText("English Contact label")).toBeTruthy();
+    expect(screen.getByLabelText("Chinese URL")).toBeTruthy();
+    expect(screen.getByLabelText("English URL")).toBeTruthy();
+    expect(screen.getByLabelText("Chinese Public button label")).toBeTruthy();
+    expect(screen.getByLabelText("English Public button label")).toBeTruthy();
+    expect(screen.queryByLabelText(/portfolio_href/i)).toBeNull();
+    const navigationRows = Array.from(document.querySelectorAll(".navigation-labels .links-translation-matrix"));
+    expect(navigationRows).toHaveLength(5);
+    expect(navigationRows.map(group => group.querySelector(".bilingual-field-pair > h3")?.textContent)).toEqual([
+      "Experience", "Projects", "Skills", "Awards", "Contact",
+    ]);
+    expect(navigationRows.filter(group => group.querySelector(".bilingual-column-headings")).length).toBe(1);
+    const linkedinLocalized = document.querySelector(".links-object-group:last-child .links-localized-fields .links-translation-matrix")!;
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair > h3"), node => node.textContent)).toEqual(["Contact label", "URL"]);
+    expect(linkedinLocalized.querySelectorAll(".bilingual-field-pair .bilingual-field-values")).toHaveLength(2);
+    expect(linkedinLocalized.querySelectorAll(".bilingual-column-headings")).toHaveLength(0);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair"), row => row.firstElementChild?.nextElementSibling?.classList.contains("bilingual-field-values"))).toEqual([true, true]);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["Chinese", "English", "Chinese", "English"]);
+    const siteTextSection = Array.from(document.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "Site Text")!;
+    expect(Array.from(siteTextSection.querySelectorAll(".bilingual-field-pair > h3"), node => node.textContent)).toEqual([
+      "Education section title", "Experience section title", "Projects section title", "Skills section title", "Awards section title", "Project link label", "Updated-at label",
+    ]);
+    expect(document.querySelector(".links-editor-scope")?.textContent).not.toMatch(/\bexperience\b|\bprojects\b|\bskills\b|\bawards\b|\bcontact\b/);
+    for (const label of ["Education section title", "Experience section title", "Projects section title", "Skills section title", "Awards section title", "Project link label", "Updated-at label"]) {
+      expect(screen.getByLabelText(`English ${label}`)).toBeTruthy();
+      expect(screen.getByLabelText(`Chinese ${label}`)).toBeTruthy();
+    }
+    expect(siteTextSection.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
+    const resumeLabelMatrix = document.querySelector(".links-resume-files .links-translation-matrix")!;
+    expect(resumeLabelMatrix.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
+    expect(resumeLabelMatrix.querySelectorAll(".bilingual-column-headings > span")).toHaveLength(2);
+    expect(resumeLabelMatrix.querySelector(".bilingual-field-pair > h3")?.textContent).toBe("Public button label");
+    expect(resumeLabelMatrix.querySelector(".bilingual-field-pair > h3")?.nextElementSibling?.classList.contains("bilingual-field-values")).toBe(true);
+    expect(document.querySelectorAll(".links-inline-row")).toHaveLength(3);
+  });
+
   it("localizes the Links section hierarchy and save action in Chinese", async () => {
     const repo = repository();
     show(repo);
-    await screen.findByLabelText("GitHub URL");
+    await screen.findByLabelText("URL");
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     const scope = document.querySelector(".links-editor-scope")!;
     expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
-      "公开链接", "本地化链接与文本", "简历文件", "导航标签",
+      "公开链接", "简历文件", "导航标签", "网站文本",
     ]);
+    expect(Array.from(scope.querySelectorAll(".navigation-labels .bilingual-field-pair > h3"), node => node.textContent)).toEqual([
+      "工作经历", "项目经历", "技能", "荣誉奖项", "联系方式",
+    ]);
+    expect(screen.getByLabelText("联系区标签")).toBeTruthy();
+    expect(screen.getByLabelText("英文 公开按钮文案")).toBeTruthy();
     expect(screen.getByRole("button", { name: "保存网站与链接修改" })).toBeTruthy();
   });
 
@@ -121,7 +174,7 @@ describe("Phase 5D Links route-first loading", () => {
     const repo = createResumeRepository({ from, storage: { from: vi.fn(() => ({ info: storageInfo })) } } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/links", new ResumeSectionStore(), true);
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(await screen.findByLabelText("URL")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Current PDF: 费湘淞_中文简历.pdf" }).getAttribute("href"))
       .toBe("https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=zh-version");
     expect(screen.getByRole("link", { name: "Current PDF: resume_en.pdf" }).getAttribute("href"))
@@ -161,7 +214,7 @@ describe("Phase 5D Links route-first loading", () => {
       first.reject(new Error("Links dependency failed"));
       expect((await screen.findByRole("alert")).textContent).toContain(locale === "en" ? "Unable to load Links & Site Text." : "无法加载链接与网站文本。");
       fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Retry" : "重试" }));
-      expect(await screen.findByLabelText(locale === "en" ? "GitHub URL" : "GitHub URL")).toBeTruthy();
+      expect(await screen.findByLabelText(locale === "en" ? "URL" : "链接地址")).toBeTruthy();
       expect(repo.loadLinks).toHaveBeenCalledTimes(2); expect(repo.load).not.toHaveBeenCalled(); expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
       for (const other of ["loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact"] as const) expect(repo[other]).not.toHaveBeenCalled();
     }
@@ -175,18 +228,18 @@ describe("Phase 5D Links route-first loading", () => {
     expect(store.getSectionState("links-session", resumeId, "contact").status).toBe("loaded");
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("idle");
     go("Site & Links");
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(await screen.findByLabelText("URL")).toBeTruthy();
     expect(repo.loadLinks).toHaveBeenCalledOnce();
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     expect(repo.load).not.toHaveBeenCalled();
     expect(store.getSectionState("links-session", resumeId, "contact").status).toBe("loaded");
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByLabelText("GitHub URL")).toBeTruthy();
+    expect(screen.getByLabelText("链接地址")).toBeTruthy();
     fireEvent.click(document.querySelector('a[href="/contact"]')!);
     expect(await screen.findByLabelText("英文 部分标签")).toBeTruthy();
     fireEvent.click(document.querySelector('a[href="/links"]')!);
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(await screen.findByLabelText("链接地址")).toBeTruthy();
     expect(repo.loadContact).toHaveBeenCalledOnce();
     expect(repo.loadLinks).toHaveBeenCalledOnce();
     expect(repo.load).not.toHaveBeenCalled();
@@ -194,15 +247,15 @@ describe("Phase 5D Links route-first loading", () => {
 
   it("preserves Links and Contact drafts through each other and route-first Overview", async () => {
     const repo = repository(); show(repo);
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("GitHub URL"), { target: { value: "https://saved-local.example.test" } });
+    expect(await screen.findByLabelText("URL")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://saved-local.example.test" } });
     expect(repo.loadLinks).toHaveBeenCalledOnce();
-    fireEvent.change(screen.getByLabelText("GitHub URL"), { target: { value: "https://draft.example.test" } });
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://draft.example.test" } });
     go("Contact");
     expect(await screen.findByLabelText("English Section label")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Section label"), { target: { value: "Dirty Contact draft" } });
     go("Site & Links");
-    expect((screen.getByLabelText("GitHub URL") as HTMLInputElement).value).toBe("https://draft.example.test");
+    expect((screen.getByLabelText("URL") as HTMLInputElement).value).toBe("https://draft.example.test");
     go("Contact");
     expect((screen.getByLabelText("English Section label") as HTMLInputElement).value).toBe("Dirty Contact draft");
     go("Site & Links");
@@ -211,7 +264,7 @@ describe("Phase 5D Links route-first loading", () => {
     await waitFor(() => expect(repo.loadOverview).toHaveBeenCalledOnce());
     expect(repo.load).not.toHaveBeenCalled();
     go("Site & Links");
-    expect((screen.getByLabelText("GitHub URL") as HTMLInputElement).value).toBe("https://draft.example.test");
+    expect((screen.getByLabelText("URL") as HTMLInputElement).value).toBe("https://draft.example.test");
     go("Contact");
     expect((screen.getByLabelText("English Section label") as HTMLInputElement).value).toBe("Dirty Contact draft");
     expect(repo.loadLinks).toHaveBeenCalledOnce();
@@ -255,7 +308,7 @@ describe("Phase 5D Links route-first loading", () => {
       expect(store.getSectionState("links-session", resumeId, "contact").status).toBe("loaded");
       expect(store.getSectionState("links-session", resumeId, "links").status).toBe("error");
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-      expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+      expect(await screen.findByLabelText("URL")).toBeTruthy();
       expect(reads.filter(table => table === failedTable)).toHaveLength(2);
       expect(reads).not.toContain("resume_contact_focus_items");
       expect(reads).not.toContain("resume_contact_status_items");
@@ -266,7 +319,7 @@ describe("Phase 5D Links route-first loading", () => {
 
   it("invalidates Links on sign-out and never gives Overview the Links route-first loader", async () => {
     const store = new ResumeSectionStore(); const repo = repository(); show(repo, "/links", store);
-    expect(await screen.findByLabelText("GitHub URL")).toBeTruthy();
+    expect(await screen.findByLabelText("URL")).toBeTruthy();
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("loaded");
     store.setSession("different-links-session");
     expect(store.getSectionState("links-session", resumeId, "links").status).toBe("idle");
