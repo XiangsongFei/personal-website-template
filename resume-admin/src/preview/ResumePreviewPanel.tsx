@@ -19,7 +19,9 @@ function scrollPreviewTarget(viewport: HTMLElement, target: HTMLElement) {
     const stickyHeight = stickyNav?.getBoundingClientRect().height ?? 0;
     owner.scrollTop += target.getBoundingClientRect().top - stickyTop - stickyHeight;
   } else {
-    viewport.scrollTop += distance;
+    const stickyNav = viewport.querySelector<HTMLElement>(".resume-preview-sticky-nav");
+    const stickyHeight = stickyNav?.getBoundingClientRect().height ?? 0;
+    viewport.scrollTop += distance - stickyHeight;
   }
 }
 
@@ -48,7 +50,7 @@ function PreviewLink({ href, label, icon, modified = false }: { href: string; la
   </a>;
 }
 
-export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true }: {
+export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true, independentScroll = false }: {
   content: ResumeContent | null;
   confirmedContent?: ResumeContent | null;
   entryIdentities?: ResumePreviewEntryIdentities;
@@ -62,6 +64,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   preserveScroll?: boolean;
   focusRequest?: number;
   focusDocumentScroll?: boolean;
+  independentScroll?: boolean;
 }) {
   const { t } = useUiLocale();
   const text = content?.locales[locale];
@@ -83,7 +86,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   const [navRenderedHeight, setNavRenderedHeight] = useState(0);
   const [workspaceTabsHeight, setWorkspaceTabsHeight] = useState(0);
   const hasContent = content !== null;
-  const stickyTop = typeof window === "undefined"
+  const stickyTop = independentScroll ? 0 : typeof window === "undefined"
     ? 68
     : (Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--shell-header-height")) || 68) + workspaceTabsHeight;
 
@@ -154,7 +157,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   }, [content, locale, scale]);
 
   useLayoutEffect(() => {
-    if (preserveScroll || (!focusDocumentScroll && viewportRef.current?.dataset.previewScrollMode === "document")) return;
+    if (preserveScroll || !focusDocumentScroll) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     const targetId = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" || section === "contact"
@@ -205,7 +208,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   }, [section, scale, preserveScroll, focusRequest, hasContent, focusDocumentScroll]);
 
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
-    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode="document" data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
+    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode={independentScroll ? "element" : "document"} data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
       {content && text && <div className="resume-preview-stage" style={{ height: `${navRenderedHeight + canvasRenderedHeight}px` }}>
         <div className="resume-preview-sticky-nav" style={{ top: `${stickyTop}px`, height: `${navRenderedHeight}px` }}>

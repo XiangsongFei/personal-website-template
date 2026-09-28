@@ -777,12 +777,13 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       <button type="button" aria-pressed={view === "editor"} onClick={() => changeView("editor")}>{t("Editor")}</button>
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
     </div>
-    <div className="editor-preview-pane">{children}</div>
+    <div className="editor-preview-pane" data-editor-scroll-owner data-editor-scroll-mode={wideDesktop ? "element" : "document"}>{children}</div>
     <ResumePreviewPanel content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
       bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
       focusRequest={focusRequest}
       focusDocumentScroll={view === "preview" && !wideDesktop}
+      independentScroll={wideDesktop}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
   </div>;
@@ -1949,6 +1950,15 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const { t } = useUiLocale();
   const location = useLocation();
   const navigationType = useNavigationType();
+  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1440px)").matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(min-width: 1440px)");
+    const update = () => setWideDesktop(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
   const [previewModes, setPreviewModes] = useState<Record<PreviewSection, "editor" | "preview">>(readPreviewModes);
   const [previewFocusRequests, setPreviewFocusRequests] = useState<Record<PreviewSection, number>>(() => Object.fromEntries(previewSections.map(section => [section, 0])) as Record<PreviewSection, number>);
   const onPreviewModeChange = useCallback((section: PreviewSection, view: "editor" | "preview") => {
@@ -2104,6 +2114,159 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const pathname = location.pathname;
     const documentOwner = getDocumentScrollOwner();
     if (!documentOwner) return;
+
+    if (wideDesktop && isPreviewRoute) {
+      let editorOwner = document.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+      let previewOwner = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+      if (!editorOwner || !previewOwner) return;
+      const modes = ["editor", "preview"] as const;
+      const initialRefresh = isDocumentReload && pathname === initialPathname.current && navigationType === "POP";
+      const identity = `${pathname}:desktop-panes`;
+      const pending = new Map<(typeof modes)[number], { target: number; geometry: string; stableFrames: number }>();
+      const positions = () => ({ editor: editorOwner?.scrollTop ?? 0, preview: previewOwner?.scrollTop ?? 0 });
+      const freezeCurrentPositions = () => {
+        const current = positions();
+        for (const mode of modes) freezeScrollSnapshot(pathname, mode, current[mode]);
+      };
+      const freezeExistingPositions = () => { for (const mode of modes) freezeExistingScrollSnapshot(pathname, mode); };
+      const onRefreshIntent = (event: KeyboardEvent) => {
+        const refreshKey = ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r")
+          || event.key === "F5" || event.key === "BrowserRefresh";
+        if (refreshKey) freezeCurrentPositions();
+      };
+      const onBfcachePageShow = (event: PageTransitionEvent) => {
+        if (event.persisted) for (const mode of modes) resumeScrollSnapshotAfterBfcache(pathname, mode);
+      };
+      const persist = (mode: (typeof modes)[number], position: number) => {
+        if (isScrollSnapshotFrozen(pathname, mode)) return;
+        pending.delete(mode);
+        writeStoredScrollPosition(pathname, mode, position);
+      };
+      const stopEditorSaving = observeUserScroll(editorOwner, position => persist("editor", position));
+      let stopPreviewSaving = observeUserScroll(previewOwner, position => persist("preview", position));
+      window.addEventListener("keydown", onRefreshIntent, true);
+      window.addEventListener("beforeunload", freezeExistingPositions);
+      window.addEventListener("pagehide", freezeExistingPositions);
+      window.addEventListener("pageshow", onBfcachePageShow);
+
+      let documentLoaded = document.readyState === "complete";
+      let pageShown = documentLoaded;
+      let fontsLoaded = !document.fonts || document.fonts.status === "loaded";
+      let assetsLoaded = false;
+      let restoreFrame = 0;
+      let resizeObserver: ResizeObserver | null = null;
+      let mutationObserver: MutationObserver | null = null;
+      const observedElements = new Set<Element>();
+      let observedStage: HTMLElement | null = null;
+      const observeElement = (element: Element | null) => {
+        if (!element || observedElements.has(element)) return;
+        observedElements.add(element);
+        resizeObserver?.observe(element);
+      };
+      const unobserveElement = (element: Element | null) => {
+        if (!element || !observedElements.delete(element)) return;
+        resizeObserver?.unobserve(element);
+      };
+      const stageFor = (owner: HTMLElement | null) => owner?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
+      const hasLoadedImages = () => Array.from(previewOwner?.querySelectorAll("img") ?? []).every(image => (image as HTMLImageElement).complete);
+      const layoutReady = () => routeDataReady && documentLoaded && pageShown && fontsLoaded && assetsLoaded && hasLoadedImages();
+      const finishRestore = () => {
+        pending.clear();
+        restoredScrollIdentity.current = identity;
+        resizeObserver?.disconnect(); resizeObserver = null;
+        mutationObserver?.disconnect(); mutationObserver = null;
+        observedElements.clear(); observedStage = null;
+        if (restoreFrame) window.cancelAnimationFrame(restoreFrame);
+        restoreFrame = 0;
+      };
+      const attemptRestore = () => {
+        if (!pending.size || !layoutReady()) return;
+        let waiting = false;
+        for (const mode of modes) {
+          const item = pending.get(mode);
+          const owner = mode === "editor" ? editorOwner : previewOwner;
+          if (!item || !owner) continue;
+          const maximum = Math.max(0, owner.scrollHeight - owner.clientHeight);
+          if (maximum + 2 < item.target) { item.geometry = ""; item.stableFrames = 0; waiting = true; continue; }
+          owner.scrollTop = item.target;
+          const actual = owner.scrollTop;
+          if (Math.abs(actual - item.target) > 2) { item.geometry = ""; item.stableFrames = 0; waiting = true; continue; }
+          const geometry = `${owner.scrollHeight}:${owner.clientHeight}:${actual}`;
+          item.stableFrames = geometry === item.geometry ? item.stableFrames + 1 : 1;
+          item.geometry = geometry;
+          if (item.stableFrames >= 2) pending.delete(mode);
+          else waiting = true;
+        }
+        if (!pending.size) { finishRestore(); return; }
+        if (waiting) restoreFrame = window.requestAnimationFrame(attemptRestore);
+      };
+      if (initialRefresh && routeDataReady && restoredScrollIdentity.current !== identity) {
+        for (const mode of modes) {
+          const target = readStoredScrollPosition(pathname, mode);
+          if (target !== null) pending.set(mode, { target, geometry: "", stableFrames: 0 });
+        }
+        if (!pending.size) restoredScrollIdentity.current = identity;
+      }
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(() => {
+          for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
+          attemptRestore();
+        });
+        observeElement(documentOwner); observeElement(document.documentElement); observeElement(document.body);
+        observeElement(document.getElementById("main-content")); observeElement(editorOwner); observeElement(previewOwner);
+        observedStage = stageFor(previewOwner); observeElement(observedStage);
+      }
+      const syncOwners = () => {
+        const nextEditor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+        const nextPreview = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+        const nextStage = stageFor(nextPreview);
+        if (nextEditor && nextEditor !== editorOwner) { unobserveElement(editorOwner); editorOwner = nextEditor; observeElement(editorOwner); }
+        if (nextPreview !== previewOwner) {
+          unobserveElement(previewOwner); stopPreviewSaving(); previewOwner = nextPreview;
+          if (previewOwner) { stopPreviewSaving = observeUserScroll(previewOwner, position => persist("preview", position)); observeElement(previewOwner); }
+        }
+        if (nextStage !== observedStage) { unobserveElement(observedStage); observedStage = nextStage; observeElement(observedStage); }
+        for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
+        attemptRestore();
+      };
+      const main = document.getElementById("main-content") ?? document.documentElement;
+      if (typeof MutationObserver !== "undefined") {
+        mutationObserver = new MutationObserver(() => {
+          syncOwners(); assetsLoaded = hasLoadedImages();
+          for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
+          attemptRestore();
+        });
+        mutationObserver.observe(main, { childList: true, subtree: true });
+      }
+      const onLoad = () => { documentLoaded = true; assetsLoaded = hasLoadedImages(); attemptRestore(); };
+      const onPageShow = () => { pageShown = true; attemptRestore(); };
+      const onAssetsChange = () => {
+        assetsLoaded = hasLoadedImages();
+        for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
+        attemptRestore();
+      };
+      const onFontsReady = () => { fontsLoaded = true; attemptRestore(); };
+      const onResize = () => {
+        for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
+        attemptRestore();
+      };
+      window.addEventListener("resize", onResize, { passive: true });
+      if (!documentLoaded) window.addEventListener("load", onLoad, { once: true });
+      if (!pageShown) window.addEventListener("pageshow", onPageShow, { once: true });
+      document.addEventListener("load", onAssetsChange, true); document.addEventListener("error", onAssetsChange, true);
+      if (document.fonts && !fontsLoaded) void document.fonts.ready.then(onFontsReady);
+      assetsLoaded = hasLoadedImages();
+      if (pending.size) restoreFrame = window.requestAnimationFrame(attemptRestore);
+      return () => {
+        if (restoreFrame) window.cancelAnimationFrame(restoreFrame);
+        resizeObserver?.disconnect(); mutationObserver?.disconnect();
+        window.removeEventListener("keydown", onRefreshIntent, true);
+        window.removeEventListener("beforeunload", freezeExistingPositions); window.removeEventListener("pagehide", freezeExistingPositions);
+        window.removeEventListener("pageshow", onBfcachePageShow); window.removeEventListener("load", onLoad); window.removeEventListener("pageshow", onPageShow);
+        window.removeEventListener("resize", onResize); document.removeEventListener("load", onAssetsChange, true); document.removeEventListener("error", onAssetsChange, true);
+        stopEditorSaving(); stopPreviewSaving();
+      };
+    }
 
     const isInitialRefreshRoute = isDocumentReload && pathname === initialPathname.current && navigationType === "POP";
     let previewOwner = previewSection
@@ -2320,7 +2483,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       stopDocumentSaving();
       stopPreviewSaving();
     };
-  }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection]);
+  }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection, isPreviewRoute, wideDesktop]);
 
   return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
     productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
@@ -2329,7 +2492,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
     bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll,
-    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className="app-shell">
+    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}`}>
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">
       <div className="brand"><strong>{t("Resume Editor")}</strong></div>
@@ -2355,7 +2518,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       </nav>
     </aside>
     {menuOpen && <button className="drawer-backdrop" type="button" aria-label={t("Close navigation menu")} onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }} />}
-    <div className="app-main">
+    <div className={`app-main${isPreviewRoute ? " has-preview-workspace" : ""}`}>
       <header className="topbar"><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button></div>
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}

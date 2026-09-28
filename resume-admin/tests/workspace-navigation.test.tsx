@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { App } from "../src/App";
@@ -12,11 +13,16 @@ const resume: LoadedResume = {
   sections: structuredClone(fixtureSections),
 };
 const destinations = [
-  ["/profile", "Profile", "about"], ["/introduction", "Introduction", "about"], ["/education", "Education", "education"],
-  ["/experience", "Experience", "experience"], ["/projects", "Projects", "projects"], ["/skills", "Skills", "skills"],
-  ["/awards", "Awards", "awards"], ["/contact", "Contact", "contact"], ["/links", "Site & Links", "about"],
+  ["/profile", "Profile", "about", "Profile"], ["/introduction", "Introduction", "about", "Introduction"], ["/education", "Education", "education", "Education"],
+  ["/experience", "Experience", "experience", "Experience"], ["/projects", "Projects", "projects", "Projects"], ["/skills", "Skills", "skills", "Skills"],
+  ["/awards", "Awards", "awards", "Awards"], ["/contact", "Contact", "contact", "Contact"], ["/links", "Site & Links", "about", "Public links"],
 ] as const;
 const modeKey = (section: PreviewSection) => `example-cv-cms:ui:preview-mode:${section}`;
+const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:ui:scroll:${path}:${mode}`;
+const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
+function useWideDesktop() {
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1440px)", addEventListener() {}, removeEventListener() {} }) });
+}
 
 function LocationProbe() { const location = useLocation(); return <output data-testid="current-route">{location.pathname}</output>; }
 function RouteButtons() {
@@ -30,9 +36,22 @@ function renderApp(path: string, historyControls = false, initialEntries = [path
     identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter></UiLocaleProvider>);
 }
 
-afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); });
 
 describe("sidebar navigation and canonical preview workspace", () => {
+  it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const desktopRules = css.match(/@media\(min-width:1440px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const routeMainRule = desktopRules.match(/\.app-main\.has-preview-workspace>\.preview-route-main\{([^}]*)\}/)?.[1] ?? "";
+    const workspaceRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(routeMainRule).toContain("width:100%");
+    expect(routeMainRule).toContain("min-width:0");
+    expect(workspaceRule).toContain("width:100%");
+    expect(workspaceRule).toContain("min-width:0");
+    expect(workspaceRule).toContain("grid-template-columns:minmax(0,1fr) clamp(500px,calc(50vw - 155px),650px)");
+  });
+
   it.each([
     ["/experience", "/projects", "Projects"],
     ["/education", "/education", "Education"],
@@ -60,6 +79,88 @@ describe("sidebar navigation and canonical preview workspace", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Editor" }).getAttribute("aria-pressed")).toBe("true"));
     expect(screen.getByTestId("current-route").textContent).toBe("/experience");
     expect(window.sessionStorage.getItem(modeKey("experience"))).toBe("editor");
+  });
+
+  it("uses independent desktop Editor and Preview scroll owners and can reach the Preview bottom", () => {
+    useWideDesktop();
+    renderApp("/education");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    expect(editor.dataset.editorScrollMode).toBe("element");
+    expect(preview.dataset.previewScrollMode).toBe("element");
+    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 2100 });
+    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 600 });
+
+    fireEvent.wheel(editor, { deltaY: 100 });
+    editor.scrollTop = 240;
+    fireEvent.scroll(editor);
+    expect(window.sessionStorage.getItem(scrollKey("/education", "editor"))).toBe("240");
+    expect(window.sessionStorage.getItem(scrollKey("/education", "preview"))).toBeNull();
+
+    fireEvent.wheel(preview, { deltaY: 100 });
+    preview.scrollTop = 1500;
+    fireEvent.scroll(preview);
+    expect(preview.scrollTop).toBe(preview.scrollHeight - preview.clientHeight);
+    expect(window.sessionStorage.getItem(scrollKey("/education", "preview"))).toBe("1500");
+    expect(editor.scrollTop).toBe(240);
+    expect((document.scrollingElement ?? document.documentElement).scrollTop).toBe(0);
+  });
+
+  it("keeps the responsive stacked workspace on document scrolling", () => {
+    renderApp("/education");
+    expect(document.querySelector<HTMLElement>("[data-editor-scroll-owner]")?.dataset.editorScrollMode).toBe("document");
+    expect((screen.getByTestId("resume-preview") as HTMLElement).dataset.previewScrollMode).toBe("document");
+  });
+
+  it("keeps desktop pane ownership after changing Admin routes", async () => {
+    useWideDesktop();
+    renderApp("/education");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "CMS sections" })).getByRole("link", { name: "Experience" }));
+    await waitFor(() => expect(screen.getByTestId("current-route").textContent).toBe("/experience"));
+    expect(document.querySelector<HTMLElement>("[data-editor-scroll-owner]")?.dataset.editorScrollMode).toBe("element");
+    expect((screen.getByTestId("resume-preview") as HTMLElement).dataset.previewScrollMode).toBe("element");
+  });
+
+  it.each(destinations)("renders %s inside the shared desktop Editor pane beside an independent Preview pane", (path, _title, _section, heading) => {
+    useWideDesktop();
+    window.sessionStorage.setItem(modeKey(path.slice(1) as PreviewSection), "preview");
+    renderApp(path);
+
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    const editor = layout.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const routeContent = within(editor).getAllByRole("heading", { name: heading })[0];
+
+    expect(editor.dataset.editorScrollMode).toBe("element");
+    expect(preview.dataset.previewScrollMode).toBe("element");
+    expect(editor.contains(routeContent)).toBe(true);
+    expect(editor).not.toBe(preview);
+    expect(editor.parentElement).toBe(layout);
+    expect(preview.closest(".resume-preview-panel")?.parentElement).toBe(layout);
+    expect(layout.querySelectorAll("[data-editor-scroll-owner]")).toHaveLength(1);
+    expect(layout.querySelectorAll("[data-preview-scroll-owner]")).toHaveLength(1);
+  });
+
+  it("desktop Preview section navigation scrolls only the Preview pane with its sticky-row offset", () => {
+    useWideDesktop();
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const target = viewport.querySelector("#preview-experience") as HTMLElement;
+    const stickyNav = viewport.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 500 } as DOMRect);
+    vi.spyOn(stickyNav, "getBoundingClientRect").mockReturnValue({ top: 100, height: 50 } as DOMRect);
+    editor.scrollTop = 220;
+    documentScrollOwner.scrollTop = 80;
+
+    fireEvent.click(viewport.querySelector<HTMLAnchorElement>('a[href="#preview-experience"]')!);
+
+    expect(viewport.scrollTop).toBe(350);
+    expect(editor.scrollTop).toBe(220);
+    expect(documentScrollOwner.scrollTop).toBe(80);
+    expect(stickyNav.style.top).toBe("0px");
   });
 
   it("starts every explicit sidebar destination in Editor mode", async () => {

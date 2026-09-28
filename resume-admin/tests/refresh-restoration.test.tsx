@@ -16,6 +16,9 @@ const resume = {
   sections: structuredClone(fixtureSections),
 };
 const uiKey = "example-cv-cms:ui:";
+const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
+const originalElementScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+const originalElementClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 const scrollOwner = () => (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
 const scrollKey = (pathname: string, mode: "editor" | "preview" = "editor") => `${uiKey}scroll:${pathname}:${mode}`;
 
@@ -23,6 +26,10 @@ function mockDocumentReload() {
   // Each simulated reload creates a fresh JS document/module lifecycle.
   resetScrollSnapshotFreezesForTests();
   vi.spyOn(window.performance, "getEntriesByType").mockReturnValue([{ type: "reload" } as PerformanceNavigationTiming] as unknown as PerformanceEntryList);
+}
+
+function useWideDesktop() {
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1440px)", addEventListener() {}, removeEventListener() {} }) });
 }
 
 function open(path: string, props: Partial<ComponentProps<typeof App>> = {}, reload = false) {
@@ -51,6 +58,9 @@ afterEach(() => {
   scrollOwner().scrollTop = 0;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia");
+  if (originalElementScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalElementScrollHeight); else Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+  if (originalElementClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalElementClientHeight); else Reflect.deleteProperty(HTMLElement.prototype, "clientHeight");
 });
 
 describe("route-scoped refresh restoration", () => {
@@ -242,6 +252,28 @@ describe("route-scoped refresh restoration", () => {
     open("/profile");
     expect(screen.getByRole("button", { name: "Editor" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Preview" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("restores both desktop pane positions to their own route-scoped scroll owners", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, value: 2400 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 600 });
+    window.sessionStorage.setItem(scrollKey("/profile", "editor"), "360");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "520");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+
+    open("/profile", { resume }, true);
+
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    await waitFor(() => {
+      expect(editor.scrollTop).toBe(360);
+      expect(preview.scrollTop).toBe(520);
+    });
+    expect(editor.dataset.editorScrollMode).toBe("element");
+    expect(preview.dataset.previewScrollMode).toBe("element");
+    expect(scrollOwner().scrollTop).toBe(0);
   });
 
   it.each(["/experience", "/skills"])("restores document scrolling on %s after route data and layout are ready", async path => {
