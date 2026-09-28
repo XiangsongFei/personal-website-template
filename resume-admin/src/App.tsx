@@ -1557,14 +1557,113 @@ function Skills() {
       fields={[{ key: "title", label: locale === "zh" ? "Skill group name" : "Name" }, { key: "items", label: locale === "zh" ? "Skills content" : "Skills" }]} />} />;
 }
 
+function canonicalAwardYear(translations: AwardItem["translations"]): string {
+  const chineseYear = translations.zh.year;
+  return chineseYear.trim() ? chineseYear : translations.en.year;
+}
+
+function AwardNameField({ id, label, localeLabel, value, modified, reviewLabel, onReviewConfirm, onChange }: {
+  id: string; label: string; localeLabel: string; value: string; modified: boolean;
+  reviewLabel?: string; onReviewConfirm?: () => void; onChange: (value: string) => void;
+}) {
+  const { t } = useUiLocale();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const resizeToContent = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 40)}px`;
+  }, []);
+
+  useLayoutEffect(() => { resizeToContent(); }, [resizeToContent, value]);
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const field = textarea?.parentElement;
+    if (!field || typeof ResizeObserver === "undefined") return;
+    let observedWidth = field.getBoundingClientRect().width;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width;
+      if (width === undefined || width === observedWidth) return;
+      observedWidth = width;
+      resizeToContent();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, [resizeToContent]);
+
+  return <div className="field awards-name-field">
+    <label htmlFor={id}><span aria-hidden="true">{localeLabel}</span><span className="visually-hidden">{t(label)}</span></label>
+    <textarea ref={textareaRef} id={id} aria-label={t(label)} rows={1} value={value}
+      onChange={event => onChange(event.target.value)} />
+    {(modified || reviewLabel) && <div className="field-edit-status">
+      {modified && <span>{t("Modified")}</span>}
+      {reviewLabel && onReviewConfirm && <><span className="field-review-warning">{t(reviewLabel)}</span><button className="field-review-dismiss" type="button" onClick={onReviewConfirm}>{t("No change needed")}</button></>}
+    </div>}
+  </div>;
+}
+
+function AwardYearField({ item, confirmed, onChange }: {
+  item: AwardItem; confirmed?: AwardItem; onChange: (item: AwardItem) => void;
+}) {
+  const { t } = useUiLocale();
+  const year = canonicalAwardYear(item.translations);
+  const confirmedYear = confirmed ? canonicalAwardYear(confirmed.translations) : "";
+  const id = `award-${item.id}-year`;
+  return <div className="field awards-year-field">
+    <label htmlFor={id} className="awards-year-mobile-label">{t("Year")}</label>
+    <input id={id} type="text" aria-label={t("Year")} value={year}
+      onChange={event => {
+        const nextYear = event.target.value;
+        onChange({ ...item, translations: {
+          zh: { ...item.translations.zh, year: nextYear },
+          en: { ...item.translations.en, year: nextYear },
+        } });
+      }} />
+    {year !== confirmedYear && <div className="field-edit-status"><span>{t("Modified")}</span></div>}
+  </div>;
+}
+
+function AwardFields({ item, confirmed, onChange }: {
+  item: AwardItem; confirmed?: AwardItem; onChange: (item: AwardItem) => void;
+}) {
+  const { t } = useUiLocale();
+  const context = useContext(EditorContext);
+  const itemId = confirmed?.sourceKey ?? item.sourceKey ?? item.id;
+  return <div className="bilingual-fields">
+    <div className="bilingual-grid has-locale-headings awards-fields-grid">
+      <div className="bilingual-column-headings" aria-hidden="true"><span />
+        <span lang="zh">{t("Chinese")}</span><span lang="en">English</span><span>{t("Year")}</span>
+      </div>
+      <section className="bilingual-field-pair awards-name-year-pair">
+        <h3>{t("Award name")}</h3>
+        {(["zh", "en"] as const).map(locale => {
+          const localeName = locale === "zh" ? t("Chinese") : t("English");
+          const identity = { section: "awards" as const, itemId, field: "name" };
+          const key = bilingualFieldKey(identity, locale);
+          const value = item.translations[locale].name;
+          const baseValue = confirmed?.translations[locale].name ?? "";
+          const review = context.bilingualReviews[key];
+          return <AwardNameField key={locale} id={`${item.id}-${locale}-name`} label={`${localeName} ${t("Award name")}`}
+            localeLabel={locale === "zh" ? "中文" : "EN"} value={value} modified={value !== baseValue}
+            reviewLabel={review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined}
+            onReviewConfirm={() => context.onBilingualReviewConfirm(identity, locale)}
+            onChange={next => {
+              context.onBilingualFieldEdit(identity, locale, next !== baseValue);
+              onChange({ ...item, translations: { ...item.translations, [locale]: { ...item.translations[locale], name: next } } });
+            }} />;
+        })}
+        <AwardYearField item={item} confirmed={confirmed} onChange={onChange} />
+      </section>
+    </div>
+  </div>;
+}
+
 function Awards() {
   const { t, locale } = useUiLocale();
   return <RepeatableSection<AwardItem> section="awards" title="Awards" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { name: "", year: "" }, en: { name: "", year: "" } } })}
     label={(item, index) => item.translations[locale].name || item.translations[locale === "zh" ? "en" : "zh"].name || `${locale === "zh" ? "荣誉奖项" : t("Award")} ${index + 1}`}
-    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="awards" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
-      onChange={translations => onChange({ ...item, translations })}
-      fields={[{ key: "name", label: "Award name" }, { key: "year", label: "Year" }]} />} />;
+    render={(item, onChange, confirmed) => <AwardFields item={item} confirmed={confirmed} onChange={onChange} />} />;
 }
 
 const contactCreateRecovery = new Map<string, { entryId?: string; confirmed: Locale[]; blocked?: boolean }>();

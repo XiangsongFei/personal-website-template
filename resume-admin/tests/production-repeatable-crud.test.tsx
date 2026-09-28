@@ -561,21 +561,123 @@ describe("Batch 6A production repeatable CRUD", () => {
     ]);
     const body = scope.querySelector(".item-card-body")!;
     expect(body.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
-    expect(Array.from(body.querySelectorAll<HTMLElement>(".bilingual-field-pair h3"), field => field.textContent)).toEqual(locale === "zh" ? ["荣誉名称", "年份"] : ["Award name", "Year"]);
+    expect(Array.from(body.querySelector<HTMLElement>(".bilingual-column-headings")!.children, heading => heading.textContent)).toEqual([
+      "", locale === "zh" ? "中文" : "Chinese", "English", locale === "zh" ? "年份" : "Year",
+    ]);
+    expect(Array.from(body.querySelectorAll<HTMLElement>(".bilingual-field-pair h3"), field => field.textContent)).toEqual([locale === "zh" ? "荣誉名称" : "Award name"]);
+    const yearInput = body.querySelector<HTMLInputElement>(".awards-year-field input")!;
+    expect(yearInput.closest(".awards-name-year-pair")).toBe(body.querySelector(".bilingual-field-pair"));
     expect(screen.getByRole("button", { name: locale === "zh" ? "保存荣誉奖项修改" : "Save award changes" })).toBeTruthy();
     expect(scope.textContent).not.toMatch(/Save production changes|保存到生产环境|Changes saved to production|修改已保存到生产环境/);
   });
 
-  it("keeps Awards Year locale-specific through the existing translation persistence contract", async () => {
+  it("auto-grows bilingual Awards names while preserving complete draft, Preview, Cancel, and Save values", async () => {
     const { repository, methods } = makeRepository("awards");
-    open({ path: "/awards" }, repository);
-    const chineseYear = await screen.findByLabelText("Chinese Year");
-    fireEvent.change(chineseYear, { target: { value: "2026" } });
+    const view = open({ path: "/awards" }, repository);
+    const year = await screen.findByRole("textbox", { name: "Year" });
+    expect((year as HTMLInputElement).value).toBe("2024");
+    expect(screen.getAllByRole("textbox", { name: "Year" })).toHaveLength(1);
+    expect(screen.queryByRole("textbox", { name: "Chinese Year" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "English Year" })).toBeNull();
+    const chineseName = screen.getByLabelText("Chinese Award name") as HTMLTextAreaElement;
+    const englishName = screen.getByLabelText("English Award name") as HTMLTextAreaElement;
+    expect(chineseName.tagName).toBe("TEXTAREA");
+    expect(englishName.tagName).toBe("TEXTAREA");
+    expect(chineseName.rows).toBe(1);
+    expect(englishName.rows).toBe(1);
+    expect(chineseName.value).toBe("示例项目成果");
+    expect(englishName.value).toBe("Example Project Outcome");
+
+    const longChinese = "面向国际本科生创新实践与跨学科研究的年度优秀项目成果奖";
+    const longEnglish = "InternationalUndergraduateInnovationCompetitionAwardForCrossDisciplinaryResearch";
+    for (const textarea of [chineseName, englishName]) {
+      Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => textarea.value.length > 20 ? 82 : 40 });
+    }
+    fireEvent.change(chineseName, { target: { value: longChinese } });
+    fireEvent.change(englishName, { target: { value: longEnglish } });
+    expect(chineseName.value).toBe(longChinese);
+    expect(englishName.value).toBe(longEnglish);
+    expect(chineseName.style.height).toBe("82px");
+    expect(englishName.style.height).toBe("82px");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    fireEvent.change(year, { target: { value: "2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => {
+      const preview = document.querySelector(".resume-preview-award-list")?.textContent ?? "";
+      expect(preview).toContain(longEnglish);
+      expect(preview).toContain("2026");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview language" }));
+    await waitFor(() => expect(document.querySelector(".resume-preview-award-list")?.textContent).toContain(longChinese));
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2024");
+    expect((screen.getByLabelText("Chinese Award name") as HTMLTextAreaElement).value).toBe("示例项目成果");
+    expect((screen.getByLabelText("English Award name") as HTMLTextAreaElement).value).toBe("Example Project Outcome");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".resume-preview-award-list")?.textContent).toContain("示例项目成果"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview language" }));
+    await waitFor(() => expect(document.querySelector(".resume-preview-award-list")?.textContent).toContain("Example Project Outcome"));
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+
+    fireEvent.change(screen.getByLabelText("Chinese Award name"), { target: { value: longChinese } });
+    fireEvent.change(screen.getByLabelText("English Award name"), { target: { value: longEnglish } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Year" }), { target: { value: "2026" } });
     save();
     await screen.findByText("Award changes saved.");
     expect(methods.updateEditableTranslation).toHaveBeenCalledWith("awards", resumeId, "award-1", "zh",
-      expect.objectContaining({ year: "2026" }));
-    expect(methods.updateEditableTranslation).not.toHaveBeenCalledWith("awards", resumeId, "award-1", "en", expect.anything());
+      expect.objectContaining({ name: longChinese, year: "2026" }));
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("awards", resumeId, "award-1", "en",
+      expect.objectContaining({ name: longEnglish, year: "2026" }));
+    expect((screen.getByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2026");
+
+    view.unmount();
+    open({ path: "/awards" }, repository);
+    expect((await screen.findByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2026");
+    expect((screen.getByLabelText("Chinese Award name") as HTMLTextAreaElement).value).toBe(longChinese);
+    expect((screen.getByLabelText("English Award name") as HTMLTextAreaElement).value).toBe(longEnglish);
+  });
+
+  it("keeps Award name textarea styling scoped, compact, and single-underline", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toContain(".awards-editor-scope .awards-name-field textarea{");
+    expect(css).toContain("resize:none;overflow-x:hidden;overflow-y:hidden;overflow-wrap:anywhere;white-space:pre-wrap");
+    expect(css).toContain("border:0;border-bottom:1px solid #e2e0dc");
+    expect(css).toContain(".awards-editor-scope .awards-year-field input{text-align:left}");
+  });
+
+  it("keeps the shared Awards Year value and single control when the Admin language changes", async () => {
+    const { repository } = makeRepository("awards");
+    open({ path: "/awards" }, repository);
+    expect((await screen.findByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2024");
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect((await screen.findByRole("textbox", { name: "年份" }) as HTMLInputElement).value).toBe("2024");
+    expect(screen.getAllByRole("textbox", { name: "年份" })).toHaveLength(1);
+    expect(screen.getByLabelText("中文 荣誉名称")).toBeTruthy();
+    expect(screen.getByLabelText("英文 荣誉名称")).toBeTruthy();
+  });
+
+  it("uses a stable Chinese-first Awards Year for legacy differences without rewriting them on load", async () => {
+    const { repository, methods, items } = makeRepository("awards");
+    const awards = items as AwardItem[];
+    awards[0].translations.zh.year = "2024";
+    awards[0].translations.en.year = "2025";
+    open({ path: "/awards" }, repository);
+    expect((await screen.findByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2024");
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(awards[0].translations.zh.year).toBe("2024");
+    expect(awards[0].translations.en.year).toBe("2025");
+
+    cleanup();
+    const fallback = makeRepository("awards");
+    (fallback.items as AwardItem[])[0].translations.zh.year = "";
+    (fallback.items as AwardItem[])[0].translations.en.year = "2025";
+    open({ path: "/awards" }, fallback.repository);
+    expect((await screen.findByRole("textbox", { name: "Year" }) as HTMLInputElement).value).toBe("2025");
+    expect(fallback.methods.updateEditableTranslation).not.toHaveBeenCalled();
   });
 
   it("keeps Awards multi-expand close state independent and focus styles accessible", async () => {
@@ -617,7 +719,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: spec.section === "experience" ? "Add experience" : spec.section === "projects" ? "Add project" : spec.section === "skills" ? "Add skill group" : spec.section === "awards" ? "Add award" : "Add item" }));
     expect(document.querySelectorAll(`.${spec.section}-editor-scope .item-card-body`)).toHaveLength(3);
     const cardToDelete = Array.from(document.querySelectorAll<HTMLElement>(`.${spec.section}-editor-scope .item-card`))
-      .find(card => card.querySelector<HTMLInputElement | HTMLTextAreaElement>(`input[id^="${items[0].id}-"]`));
+      .find(card => card.querySelector<HTMLInputElement | HTMLTextAreaElement>(`input[id^="${items[0].id}-"], textarea[id^="${items[0].id}-"]`));
     fireEvent.click(cardToDelete!.querySelector<HTMLButtonElement>(".danger-text")!);
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
     expect(document.querySelectorAll(`.${spec.section}-editor-scope .item-card-body`)).toHaveLength(2);
