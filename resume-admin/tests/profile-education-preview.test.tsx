@@ -92,6 +92,16 @@ describe("Profile and Education live-preview prototype", () => {
     expect(panel.querySelector(".resume-preview-languages")).toBeNull();
     expect(panel.querySelector(".resume-preview-nav-links button[aria-label='Preview language']")).toBeTruthy();
     expect(css).toContain(".resume-preview-viewport{min-height:320px;margin-top:0");
+    expect(css).toContain(".resume-preview-panel{position:static;min-width:0;display:flex;flex-direction:column");
+    expect(css).toContain(".resume-preview-viewport{min-height:320px;margin-top:0;overflow:visible");
+    expect(css).toContain(".resume-preview-stage{position:relative;width:100%;overflow:visible;container-type:inline-size;container-name:preview-stage}");
+    expect(css).not.toMatch(/\.resume-preview-(?:panel|viewport|stage)[^}]*max-height/);
+    expect(css).toContain("@container preview-stage (min-width:500px){.resume-preview-hero{padding-right:32px;padding-left:32px}.resume-preview-hero-grid{grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:16px}}");
+    expect(css).not.toContain("@media(min-width:1440px){.resume-preview-hero");
+    expect(css).toContain(".resume-preview-sticky-nav{position:sticky;top:var(--shell-header-height,68px)");
+    expect(css).toContain("max-width:1360px");
+    expect(css).toContain("clamp(500px,calc(50vw - 155px),650px)");
+    expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
 
     fireEvent.click(editorTab);
     expect(editorTab.getAttribute("aria-pressed")).toBe("true");

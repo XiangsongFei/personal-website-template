@@ -80,7 +80,7 @@ describe("route-scoped refresh restoration", () => {
     third.unmount();
   });
 
-  it.each(resumePaths)("keeps the Preview mode and scroll owner isolated over two reloads for %s", path => {
+  it.each(resumePaths)("keeps the Preview mode and document scroll position isolated over two reloads for %s", path => {
     const section = path.slice(1);
     const key = scrollKey(path, "preview");
     window.sessionStorage.setItem(`${uiKey}preview-mode:${section}`, "preview");
@@ -89,24 +89,22 @@ describe("route-scoped refresh restoration", () => {
     for (let reload = 0; reload < 3; reload += 1) {
       const view = open(path, { resume }, true);
       const preview = screen.getByTestId("resume-preview") as HTMLElement;
-      Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 900 });
-      Object.defineProperty(preview, "clientHeight", { configurable: true, value: 500 });
       MockResizeObserver.notify();
       expect(screen.getByRole("button", { name: "Preview" }).getAttribute("aria-pressed")).toBe("true");
-      expect(preview.scrollTop).toBe(reload === 0 ? 180 : reload === 1 ? 320 : 0);
-      expect(scrollOwner().scrollTop).toBe(0);
+      expect(preview.scrollTop).toBe(0);
+      expect(scrollOwner().scrollTop).toBe(reload === 0 ? 180 : reload === 1 ? 320 : 0);
       if (reload === 0) {
         act(() => {
-          preview.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-          preview.scrollTop = 320;
-          preview.dispatchEvent(new Event("scroll"));
+          window.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+          scrollOwner().scrollTop = 320;
+          window.dispatchEvent(new Event("scroll"));
         });
         expect(window.sessionStorage.getItem(key)).toBe("320");
       } else if (reload === 1) {
         act(() => {
-          preview.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-          preview.scrollTop = 0;
-          preview.dispatchEvent(new Event("scroll"));
+          window.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+          scrollOwner().scrollTop = 0;
+          window.dispatchEvent(new Event("scroll"));
         });
         expect(window.sessionStorage.getItem(key)).toBe("0");
       }
@@ -368,36 +366,31 @@ describe("route-scoped refresh restoration", () => {
     expect(window.sessionStorage.getItem(key)).toBe("860");
   });
 
-  it("freezes and restores the Preview owner's coordinate independently from document scroll", () => {
+  it("freezes and restores Preview's document coordinate independently from Editor's saved position", () => {
     const key = scrollKey("/skills", "preview");
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     const first = open("/skills", { resume });
-    const preview = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 600 });
     act(() => {
-      preview.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-      preview.scrollTop = 500;
-      preview.dispatchEvent(new Event("scroll"));
+      window.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+      scrollOwner().scrollTop = 500;
+      window.dispatchEvent(new Event("scroll"));
     });
     expect(window.sessionStorage.getItem(key)).toBe("500");
 
     fireEvent.keyDown(window, { key: "r", metaKey: true });
     expect(isScrollSnapshotFrozen("/skills", "preview")).toBe(true);
-    preview.scrollTop = 720;
-    preview.dispatchEvent(new Event("scroll"));
+    scrollOwner().scrollTop = 720;
+    window.dispatchEvent(new Event("scroll"));
     writeStoredScrollPosition("/skills", "preview", 720);
     expect(window.sessionStorage.getItem(key)).toBe("500");
-    expect(scrollOwner().scrollTop).toBe(0);
+    expect(scrollOwner().scrollTop).toBe(720);
     first.unmount();
 
     const next = open("/skills", { resume }, true);
     const restoredPreview = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(restoredPreview, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(restoredPreview, "clientHeight", { configurable: true, value: 600 });
     MockResizeObserver.notify();
-    expect(restoredPreview.scrollTop).toBe(500);
-    expect(scrollOwner().scrollTop).toBe(0);
+    expect(restoredPreview.scrollTop).toBe(0);
+    expect(scrollOwner().scrollTop).toBe(500);
     next.unmount();
   });
 
@@ -406,8 +399,6 @@ describe("route-scoped refresh restoration", () => {
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     const view = open("/skills", { resume });
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 600 });
 
     // A programmatic move by itself must not be recorded as user scrolling.
     act(() => {
@@ -418,30 +409,30 @@ describe("route-scoped refresh restoration", () => {
 
     // Model the browser ordering: wheel event, microtask checkpoint while the
     // viewport is still at 0, then the compositor-applied scroll event.
-    act(() => fireEvent.wheel(preview));
+    act(() => fireEvent.wheel(window));
     await act(async () => { await Promise.resolve(); });
     act(() => {
-      preview.scrollTop = 690.5;
-      fireEvent.scroll(preview);
+      scrollOwner().scrollTop = 690.5;
+      fireEvent.scroll(window);
     });
     expect(window.sessionStorage.getItem(key)).toBe("690.5");
 
     // A second wheel event renews intent across a burst even if the first
     // event's quiet-period timer would otherwise have elapsed.
     await new Promise(resolve => window.setTimeout(resolve, 200));
-    act(() => fireEvent.wheel(preview));
+    act(() => fireEvent.wheel(window));
     await act(async () => { await Promise.resolve(); });
     await new Promise(resolve => window.setTimeout(resolve, 100));
     act(() => {
-      preview.scrollTop = 735.5;
-      fireEvent.scroll(preview);
+      scrollOwner().scrollTop = 735.5;
+      fireEvent.scroll(window);
     });
     expect(window.sessionStorage.getItem(key)).toBe("735.5");
 
     await new Promise(resolve => window.setTimeout(resolve, 275));
     act(() => {
-      preview.scrollTop = 810;
-      fireEvent.scroll(preview);
+      scrollOwner().scrollTop = 810;
+      fireEvent.scroll(window);
     });
     expect(window.sessionStorage.getItem(key)).toBe("735.5");
     view.unmount();
@@ -505,28 +496,23 @@ describe("route-scoped refresh restoration", () => {
     Reflect.deleteProperty(document, "fonts");
   });
 
-  it("restores Preview mode and its own scroll container without changing document scroll", async () => {
+  it("restores Preview mode through the document scroll container", async () => {
     const key = scrollKey("/skills", "preview");
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     window.sessionStorage.setItem(key, "420");
     const view = open("/skills", { resume }, true);
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 300 });
-    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 100 });
     expect(screen.getByRole("button", { name: "Preview" }).getAttribute("aria-pressed")).toBe("true");
     expect(preview.scrollTop).toBe(0);
-    expect(scrollOwner().scrollTop).toBe(0);
-
-    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 520 });
     MockResizeObserver.notify();
-    await waitFor(() => expect(preview.scrollTop).toBe(420));
-    expect(scrollOwner().scrollTop).toBe(0);
+    await waitFor(() => expect(scrollOwner().scrollTop).toBe(420));
+    expect(preview.scrollTop).toBe(0);
     expect(window.sessionStorage.getItem(key)).toBe("420");
     expect(window.sessionStorage.getItem(scrollKey("/skills", "editor"))).toBeNull();
     view.unmount();
   });
 
-  it("reattaches Preview restoration to the actual scroll owner if it remounts during bootstrap", async () => {
+  it("keeps natural document scrolling when the Preview content remounts", async () => {
     const key = scrollKey("/skills", "preview");
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     window.sessionStorage.setItem(key, "240");
@@ -540,8 +526,8 @@ describe("route-scoped refresh restoration", () => {
     act(() => { oldPreview.replaceWith(replacement); });
     MockResizeObserver.notify();
 
-    await waitFor(() => expect(replacement.scrollTop).toBe(240));
-    expect(scrollOwner().scrollTop).toBe(0);
+    await waitFor(() => expect(scrollOwner().scrollTop).toBe(240));
+    expect(replacement.scrollTop).toBe(0);
     expect(window.sessionStorage.getItem(key)).toBe("240");
   });
 
@@ -549,6 +535,7 @@ describe("route-scoped refresh restoration", () => {
     const key = scrollKey("/skills", "preview");
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     window.sessionStorage.setItem(key, "1492");
+    Object.defineProperty(scrollOwner(), "scrollHeight", { configurable: true, value: 600 });
     mockDocumentReload();
 
     const canonical = {
@@ -585,9 +572,7 @@ describe("route-scoped refresh restoration", () => {
 
     expect(await screen.findByRole("heading", { name: "Skills", level: 1 })).toBeTruthy();
     const viewport = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 700 });
-    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
-    expect(viewport.scrollTop).toBe(0);
+    expect(scrollOwner().scrollTop).toBe(0);
     expect(window.sessionStorage.getItem(key)).toBe("1492");
     await waitFor(() => expect(reads.loadProfile).toHaveBeenCalledOnce());
 
@@ -610,7 +595,7 @@ describe("route-scoped refresh restoration", () => {
       expect(MockResizeObserver.isObserved(current!)).toBe(true);
       return current!;
     });
-    expect(viewport.scrollTop).toBe(0);
+    expect(scrollOwner().scrollTop).toBe(0);
 
     // Model the preview canvas sizing after insertion. The stage's own resize
     // is the wake-up that must retry the still-pending, previously unreachable
@@ -620,10 +605,10 @@ describe("route-scoped refresh restoration", () => {
     Object.defineProperty(canvas, "offsetHeight", { configurable: true, value: 2200 });
     act(() => MockResizeObserver.notify(canvas!));
     await waitFor(() => expect(stage.style.height).toBe("2200px"));
-    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 2300 });
-    act(() => MockResizeObserver.notify(stage));
+    Object.defineProperty(scrollOwner(), "scrollHeight", { configurable: true, value: 2300 });
+    act(() => MockResizeObserver.notify(scrollOwner()));
 
-    await waitFor(() => expect(viewport.scrollTop).toBe(1492));
+    await waitFor(() => expect(scrollOwner().scrollTop).toBe(1492));
     expect(viewport).toBe(screen.getByTestId("resume-preview"));
     expect(window.sessionStorage.getItem(key)).toBe("1492");
     expect(MockResizeObserver.isObserved(stage)).toBe(false);
@@ -636,16 +621,14 @@ describe("route-scoped refresh restoration", () => {
     window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
     open("/skills", { resume }, true);
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
-    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 1200 });
-    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 600 });
     MockResizeObserver.notify();
-    expect(preview.scrollTop).toBe(510);
-    expect(scrollOwner().scrollTop).toBe(0);
-    preview.dispatchEvent(new Event("scroll"));
+    expect(preview.scrollTop).toBe(0);
+    expect(scrollOwner().scrollTop).toBe(510);
+    window.dispatchEvent(new Event("scroll"));
 
-    fireEvent.wheel(preview);
-    preview.scrollTop = 0;
-    preview.dispatchEvent(new Event("scroll"));
+    fireEvent.wheel(window);
+    scrollOwner().scrollTop = 0;
+    window.dispatchEvent(new Event("scroll"));
     expect(window.sessionStorage.getItem(scrollKey("/skills", "preview"))).toBe("0");
     expect(window.sessionStorage.getItem(scrollKey("/skills", "editor"))).toBe("220");
     expect(window.sessionStorage.getItem(scrollKey("/experience", "editor"))).toBe("900");

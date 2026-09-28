@@ -10,6 +10,16 @@ export type PreviewSection = "profile" | "education" | "introduction" | "experie
 
 const PUBLIC_PAGE_WIDTH = 980;
 
+function scrollPreviewTarget(viewport: HTMLElement, target: HTMLElement) {
+  const distance = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+  if (viewport.dataset.previewScrollMode === "document") {
+    const owner = document.scrollingElement ?? document.documentElement;
+    owner.scrollTop += distance;
+  } else {
+    viewport.scrollTop += distance;
+  }
+}
+
 function MarkedText({ children, modified, review = false }: { children: ReactNode; modified: boolean; review?: boolean }) {
   return <span className="resume-preview-marked-text" data-preview-modified={modified} data-preview-review={review}>{children}</span>;
 }
@@ -29,7 +39,7 @@ function PreviewLink({ href, label, icon, modified = false }: { href: string; la
   </a>;
 }
 
-export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0 }: {
+export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true }: {
   content: ResumeContent | null;
   confirmedContent?: ResumeContent | null;
   entryIdentities?: ResumePreviewEntryIdentities;
@@ -42,6 +52,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   photoPreviewUrl?: string;
   preserveScroll?: boolean;
   focusRequest?: number;
+  focusDocumentScroll?: boolean;
 }) {
   const { t } = useUiLocale();
   const text = content?.locales[locale];
@@ -92,7 +103,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   }, [content, locale, section]);
 
   useLayoutEffect(() => {
-    if (preserveScroll) return;
+    if (preserveScroll || (!focusDocumentScroll && viewportRef.current?.dataset.previewScrollMode === "document")) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     const targetId = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" || section === "contact"
@@ -100,8 +111,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
     const focusTarget = () => {
       const target = viewport.querySelector<HTMLElement>(`#${targetId}`);
       if (!target || panelRef.current?.getBoundingClientRect().width === 0) return false;
-      const distance = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-      viewport.scrollTop += distance;
+      scrollPreviewTarget(viewport, target);
       return true;
     };
     let finished = false;
@@ -141,10 +151,10 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
         image.removeEventListener("error", onImageReady);
       });
     };
-  }, [section, scale, preserveScroll, focusRequest, hasContent]);
+  }, [section, scale, preserveScroll, focusRequest, hasContent, focusDocumentScroll]);
 
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
-    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
+    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode="document" data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
       {content && text && <div className="resume-preview-stage" style={{ height: `${canvasHeight * scale}px` }}>
         <div className="resume-preview-canvas" ref={canvasRef} style={{ transform: `scale(${scale})` }}>
@@ -160,7 +170,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
                       event.preventDefault();
                       const target = viewportRef.current?.querySelector<HTMLElement>(`#preview-${id}`);
                       const viewport = viewportRef.current;
-                      if (target && viewport) viewport.scrollTop += target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+                      if (target && viewport) scrollPreviewTarget(viewport, target);
                     }} data-preview-item-id={itemId}><MarkedText modified={differsByIdentity(item, itemId, confirmedEntryIdentities?.navigation, confirmedText?.nav, index)}>{item}</MarkedText></a>;
                   })}
                   <button type="button" aria-label={t("Preview language")} onClick={() => onLocaleChange(locale === "zh" ? "en" : "zh")}>{locale === "zh" ? "EN" : "中文"}</button>

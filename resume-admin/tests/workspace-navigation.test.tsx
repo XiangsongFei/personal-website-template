@@ -99,14 +99,15 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const viewport = screen.getByTestId("resume-preview") as HTMLElement;
     const panel = viewport.closest(".resume-preview-panel") as HTMLElement;
     const target = viewport.querySelector("#preview-education") as HTMLElement;
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
     vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ width: 500 } as DOMRect);
     vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 420 } as DOMRect);
-    viewport.scrollTop = 760;
+    documentScrollOwner.scrollTop = 760;
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    await waitFor(() => expect(viewport.scrollTop).toBe(1080));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(1080));
   });
 
   it("uses modified highlighting only for changed Education values, not because Education is focused", () => {

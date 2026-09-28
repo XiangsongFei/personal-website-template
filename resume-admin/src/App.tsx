@@ -782,6 +782,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
       bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
       focusRequest={focusRequest}
+      focusDocumentScroll={view === "preview" && !wideDesktop}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
   </div>;
@@ -2108,9 +2109,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     let previewOwner = previewSection
       ? document.querySelector<HTMLElement>("[data-preview-scroll-owner]")
       : null;
+    const mode = previewSection ? readPreviewMode(previewSection) : "editor";
+    const previewUsesDocumentScroll = (owner = previewOwner) => owner?.dataset.previewScrollMode === "document";
+    const getModeOwner = (ownerMode: "editor" | "preview") => ownerMode === "preview" && !previewUsesDocumentScroll()
+      ? previewOwner : documentOwner;
     let cancelPendingRestoration: (() => void) | null = null;
     const currentMode = () => previewSection ? readPreviewMode(previewSection) : "editor";
-    const currentOwnerPosition = (mode: "editor" | "preview") => mode === "preview"
+    const currentOwnerPosition = (ownerMode: "editor" | "preview") => ownerMode === "preview" && !previewUsesDocumentScroll()
       ? (document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0)
       : Math.max(window.scrollY, documentOwner.scrollTop);
     const currentGeometry = () => ({
@@ -2159,13 +2164,14 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       diagnoseRefreshScroll("authorized-user-scroll-write", { pathname, mode, position, frozen });
       writeStoredScrollPosition(pathname, mode, position);
     };
-    const stopDocumentSaving = observeUserScroll(window, position => persistUserPosition("editor", position), {
-      ignoreIntent: event => Boolean(previewOwner && event.target instanceof Node && previewOwner.contains(event.target)),
+    const stopDocumentSaving = observeUserScroll(window, position => persistUserPosition(currentMode(), position), {
+      ignoreIntent: event => currentMode() === "preview" && !previewUsesDocumentScroll()
+        && Boolean(previewOwner && event.target instanceof Node && previewOwner.contains(event.target)),
       onScrollEvent: (position, authorizedByInput) => diagnoseRefreshScroll("document-scroll-event", {
         pathname, mode: currentMode(), position, authorizedByInput, frozen: isScrollSnapshotFrozen(pathname, currentMode()), ...currentGeometry(),
       }),
     });
-    let stopPreviewSaving = previewOwner
+    let stopPreviewSaving = previewOwner && !previewUsesDocumentScroll()
       ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position), {
         onScrollEvent: (position, authorizedByInput) => diagnoseRefreshScroll("preview-scroll-event", {
           pathname, mode: "preview", position, authorizedByInput, frozen: isScrollSnapshotFrozen(pathname, "preview"), ...currentGeometry(),
@@ -2173,7 +2179,6 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       })
       : () => {};
 
-    const mode = previewSection ? readPreviewMode(previewSection) : "editor";
     const identity = `${pathname}:${mode}`;
     const target = isInitialRefreshRoute ? readStoredScrollPosition(pathname, mode) : null;
     if (isInitialRefreshRoute) diagnoseRefreshScroll("restoration-target-read", {
@@ -2204,8 +2209,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const observedElements = new Set<Element>();
     let observedPreviewStage: HTMLElement | null = null;
     const maximumAllowedDifference = 2;
-    const getOwner = () => mode === "preview" ? previewOwner : documentOwner;
-    const currentPosition = () => mode === "preview" ? (previewOwner?.scrollTop ?? 0) : Math.max(documentOwner.scrollTop, window.scrollY);
+    const getOwner = () => getModeOwner(mode);
+    const currentPosition = () => mode === "preview" && !previewUsesDocumentScroll()
+      ? (previewOwner?.scrollTop ?? 0) : Math.max(documentOwner.scrollTop, window.scrollY);
     const observeElement = (element: Element | null) => {
       if (!element || observedElements.has(element)) return;
       observedElements.add(element);
@@ -2218,7 +2224,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     };
     const stageForOwner = (owner: HTMLElement | null) => owner?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
     const hasLoadedImages = () => {
-      const owner = getOwner();
+      const owner = mode === "preview" && previewOwner ? previewOwner : getOwner();
       if (!owner) return false;
       return Array.from(owner.querySelectorAll("img")).every(image => (image as HTMLImageElement).complete);
     };
@@ -2247,7 +2253,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       // reachable by this route/mode's own scroll container before completion.
       if (maximum + maximumAllowedDifference < target) { stableFrames = 0; previousGeometry = ""; return; }
       owner.scrollTop = target;
-      if (mode === "editor" && Math.abs(currentPosition() - target) > maximumAllowedDifference) window.scrollTo(0, target);
+      if ((mode === "editor" || previewUsesDocumentScroll()) && Math.abs(currentPosition() - target) > maximumAllowedDifference) window.scrollTo(0, target);
       const actual = currentPosition();
       diagnoseRefreshScroll("restoration-applied", { pathname, mode, target, actual, ...currentGeometry() });
       if (Math.abs(actual - target) > maximumAllowedDifference) { stableFrames = 0; previousGeometry = ""; return; }
@@ -2284,7 +2290,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         unobserveElement(previewOwner);
         stopPreviewSaving();
         previewOwner = nextOwner;
-        stopPreviewSaving = previewOwner
+        stopPreviewSaving = previewOwner && !previewUsesDocumentScroll()
           ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position))
           : () => {};
         observeElement(previewOwner);
