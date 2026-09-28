@@ -108,6 +108,8 @@ export function observeUserScroll(
   let scrollEndObserved = false;
   let pointerActive = false;
   let touchActive = false;
+  let wheelIntentActive = false;
+  let wheelIntentTimer: number | null = null;
   const pressedScrollKeys = new Set<string>();
   let idleTimer: number | null = null;
   const scrollEndTarget: HTMLElement | Document | Window = typeof window !== "undefined" && owner === window ? document : owner;
@@ -117,9 +119,26 @@ export function observeUserScroll(
     if (idleTimer !== null) window.clearTimeout(idleTimer);
     idleTimer = null;
   };
+  const clearWheelIntentTimer = () => {
+    if (wheelIntentTimer !== null) window.clearTimeout(wheelIntentTimer);
+    wheelIntentTimer = null;
+  };
+  const renewWheelIntent = () => {
+    wheelIntentActive = true;
+    clearWheelIntentTimer();
+    wheelIntentTimer = window.setTimeout(() => {
+      wheelIntentActive = false;
+      wheelIntentTimer = null;
+      if (!hasActiveGesture()) {
+        userIntentActive = false;
+        scrollSinceIntent = false;
+      }
+    }, 250);
+  };
   const hasActiveGesture = () => pointerActive || touchActive || pressedScrollKeys.size > 0;
   const finishGestureIfIdle = () => {
     if (hasActiveGesture()) return;
+    if (wheelIntentActive) return;
     if (!scrollSinceIntent || scrollEndObserved) userIntentActive = false;
     else if (!scrollEndSupported) {
       clearIdleTimer();
@@ -141,14 +160,17 @@ export function observeUserScroll(
         scrollEndObserved = false;
         pointerActive = false;
         touchActive = false;
+        wheelIntentActive = false;
         pressedScrollKeys.clear();
         clearIdleTimer();
+        clearWheelIntentTimer();
         return;
       }
       if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"].includes(keyEvent.key)) return;
       pressedScrollKeys.add(keyEvent.key);
     }
     if (event.type === "wheel" && (event as WheelEvent).ctrlKey) return;
+    if (event.type === "wheel") renewWheelIntent();
     if (event.type === "pointerdown") pointerActive = true;
     if (event.type === "touchstart") touchActive = true;
     if (!userIntentActive) { scrollSinceIntent = false; scrollEndObserved = false; }
@@ -162,9 +184,14 @@ export function observeUserScroll(
     // Rebase at each actual gesture so the next user delta, including a move
     // to zero, is compared against the real pre-gesture position.
     lastPosition = positionAtInput;
-    queueMicrotask(() => {
-      if (!scrollSinceIntent && !hasActiveGesture() && getPosition(owner) === positionAtInput) userIntentActive = false;
-    });
+    // Wheel scrolling may be applied by the browser after this event's
+    // microtask checkpoint. Keep that intent alive through the resulting
+    // asynchronous scroll event instead of clearing it on an unchanged read.
+    if (event.type !== "wheel") {
+      queueMicrotask(() => {
+        if (!scrollSinceIntent && !hasActiveGesture() && !wheelIntentActive && getPosition(owner) === positionAtInput) userIntentActive = false;
+      });
+    }
   };
   const endPointer = () => { pointerActive = false; finishGestureIfIdle(); };
   const endTouch = () => { touchActive = false; finishGestureIfIdle(); };
@@ -177,18 +204,21 @@ export function observeUserScroll(
     scrollEndObserved = true;
     if (hasActiveGesture()) return;
     userIntentActive = false;
+    wheelIntentActive = false;
     scrollSinceIntent = false;
     clearIdleTimer();
+    clearWheelIntentTimer();
   };
   const onScroll = () => {
     const position = getPosition(owner);
     if (position === lastPosition) return;
     lastPosition = position;
-    const authorizedByInput = userIntentActive || hasActiveGesture();
+    const authorizedByInput = userIntentActive || wheelIntentActive || hasActiveGesture();
     options.onScrollEvent?.(position, authorizedByInput);
     if (!authorizedByInput) return;
     scrollSinceIntent = true;
     onUserScroll(position);
+    if (wheelIntentActive) renewWheelIntent();
     if (!scrollEndSupported && !hasActiveGesture()) {
       clearIdleTimer();
       idleTimer = window.setTimeout(() => { userIntentActive = false; idleTimer = null; }, 250);
@@ -205,6 +235,7 @@ export function observeUserScroll(
   scrollEndTarget.addEventListener("scrollend", onScrollEnd as EventListener);
   return () => {
     clearIdleTimer();
+    clearWheelIntentTimer();
     for (const eventName of intentEvents) owner.removeEventListener(eventName, arm as EventListener, true);
     owner.removeEventListener("pointerup", endPointer, true);
     owner.removeEventListener("pointercancel", endPointer, true);

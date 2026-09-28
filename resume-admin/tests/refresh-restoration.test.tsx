@@ -401,6 +401,52 @@ describe("route-scoped refresh restoration", () => {
     next.unmount();
   });
 
+  it("captures delayed wheel scrolling after the intent microtask and expires wheel intent", async () => {
+    const key = scrollKey("/skills", "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
+    const view = open("/skills", { resume });
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    Object.defineProperty(preview, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(preview, "clientHeight", { configurable: true, value: 600 });
+
+    // A programmatic move by itself must not be recorded as user scrolling.
+    act(() => {
+      preview.scrollTop = 120;
+      fireEvent.scroll(preview);
+    });
+    expect(window.sessionStorage.getItem(key)).toBeNull();
+
+    // Model the browser ordering: wheel event, microtask checkpoint while the
+    // viewport is still at 0, then the compositor-applied scroll event.
+    act(() => fireEvent.wheel(preview));
+    await act(async () => { await Promise.resolve(); });
+    act(() => {
+      preview.scrollTop = 690.5;
+      fireEvent.scroll(preview);
+    });
+    expect(window.sessionStorage.getItem(key)).toBe("690.5");
+
+    // A second wheel event renews intent across a burst even if the first
+    // event's quiet-period timer would otherwise have elapsed.
+    await new Promise(resolve => window.setTimeout(resolve, 200));
+    act(() => fireEvent.wheel(preview));
+    await act(async () => { await Promise.resolve(); });
+    await new Promise(resolve => window.setTimeout(resolve, 100));
+    act(() => {
+      preview.scrollTop = 735.5;
+      fireEvent.scroll(preview);
+    });
+    expect(window.sessionStorage.getItem(key)).toBe("735.5");
+
+    await new Promise(resolve => window.setTimeout(resolve, 275));
+    act(() => {
+      preview.scrollTop = 810;
+      fireEvent.scroll(preview);
+    });
+    expect(window.sessionStorage.getItem(key)).toBe("735.5");
+    view.unmount();
+  });
+
   it("allows a new exact snapshot after the prior frozen document has reloaded", () => {
     const key = scrollKey("/skills", "editor");
     const first = open("/skills", { resume });
