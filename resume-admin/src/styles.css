@@ -306,6 +306,7 @@ main{color:#242424}
 .overview-summary>div:last-child{border-right:0}
 .overview-summary>div>span{display:block;color:#888;font-size:13px;font-weight:400}
 .overview-summary strong{display:block;margin-top:9px;color:#242424;font-size:16px;font-weight:550;line-height:1.4;overflow-wrap:anywhere}
+.overview-summary .overview-summary-timezone{color:#888;font-size:.875em;font-weight:400}
 .overview-management>h2{margin:0;color:#202020;font-size:22px;font-weight:600}
 .overview-management>p{margin:7px 0 18px;color:#71706b;font-size:16px;line-height:1.6}
 .overview-management-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:28px}

@@ -74,7 +74,7 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(screen.getByText("Current resume")).toBeTruthy();
     expect(screen.getByText("Content languages")).toBeTruthy();
     expect(screen.getByText("Last updated")).toBeTruthy();
-    expect(screen.getByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     expect(within(screen.getByLabelText("Resume summary")).queryByText(/\d{2}:\d{2}:\d{2}/)).toBeNull();
     expect(screen.getByText("Chinese · English")).toBeTruthy();
     expect(screen.queryByText("Unpublished")).toBeNull();
@@ -106,7 +106,7 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(screen.getByText("管理并维护你的中英文简历内容。")).toBeTruthy();
     expect(screen.getByText("中文界面动态姓名")).toBeTruthy();
     expect(screen.getByText("中文 · English")).toBeTruthy();
-    expect(screen.getByText("2026-09-25 08:00 · 北京时间")).toBeTruthy();
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · 北京时间");
     expect(within(screen.getByLabelText("简历摘要")).queryByText(/\d{2}:\d{2}:\d{2}/)).toBeNull();
     const sidebar = screen.getByRole("navigation", { name: "CMS 模块" });
     expect(within(sidebar).getByText("首页")).toBeTruthy();
@@ -203,7 +203,8 @@ describe("Phase 5E Overview route-first loading", () => {
       updateProfileSharedDetails: vi.fn(async (_id, shared) => ({ resumeId, shared, updatedAt: freshTimestamp })),
     });
     show(repo);
-    expect(await screen.findByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    await screen.findByText("Last updated");
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     navigate("/profile");
     const graduationValue = await screen.findByLabelText("Graduation value");
     fireEvent.change(graduationValue, { target: { value: "2031" } });
@@ -212,15 +213,15 @@ describe("Phase 5E Overview route-first loading", () => {
     await waitFor(() => expect(repo.loadSiteMetadata).toHaveBeenCalledTimes(2));
 
     navigate("/overview");
-    expect(await screen.findByText("2026-09-27 11:04 · Beijing Time")).toBeTruthy();
-    expect(screen.queryByText("2026-09-25 08:00 · Beijing Time")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-27 11:04 · Beijing Time"));
     expect(repo.updateProfileSharedDetails).toHaveBeenCalledOnce();
   });
 
   it("does not refresh the Overview timestamp for unsaved edits or Cancel", async () => {
     const repo = repository();
     show(repo);
-    expect(await screen.findByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    await screen.findByText("Last updated");
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     navigate("/profile");
     fireEvent.change(await screen.findByLabelText("Graduation value"), { target: { value: "2031" } });
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
@@ -228,7 +229,8 @@ describe("Phase 5E Overview route-first loading", () => {
     expect((screen.getByLabelText("Graduation value") as HTMLInputElement).value).toBe(fixtureSections.profile.shared.graduationValue);
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     navigate("/overview");
-    expect(await screen.findByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    await screen.findByText("Last updated");
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     expect(repo.updateProfileSharedDetails).not.toHaveBeenCalled();
   });
@@ -236,14 +238,16 @@ describe("Phase 5E Overview route-first loading", () => {
   it("does not advance Overview metadata when a persisted save fails", async () => {
     const repo = repository({ updateProfileSharedDetails: vi.fn().mockRejectedValue(new Error("write failed")) });
     show(repo);
-    expect(await screen.findByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    await screen.findByText("Last updated");
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     navigate("/profile");
     fireEvent.change(await screen.findByLabelText("Graduation value"), { target: { value: "2031" } });
     fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     navigate("/overview");
-    expect(await screen.findByText("2026-09-25 08:00 · Beijing Time")).toBeTruthy();
+    await screen.findByText("Last updated");
+    expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
   });
 

@@ -706,7 +706,7 @@ function Overview() {
     <div className="overview-summary" aria-label={t("Resume summary")}>
       <div><span>{t("Current resume")}</span><strong>{profileName}</strong></div>
       <div><span>{t("Content languages")}</span><strong>{t("Chinese · English")}</strong></div>
-      <div><span>{t("Last updated")}</span><strong>{formatBeijingTimestamp(updatedAt)} · {t("Beijing Time")}</strong></div>
+      <div><span>{t("Last updated")}</span><strong>{formatBeijingTimestamp(updatedAt)}<span className="overview-summary-timezone"> · {t("Beijing Time")}</span></strong></div>
     </div>
     <div className="overview-management">
       <h2>{t("Content management")}</h2>
