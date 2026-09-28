@@ -1966,6 +1966,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     let previousGeometry = "";
     let stableFrames = 0;
     const observedElements = new Set<Element>();
+    let observedPreviewStage: HTMLElement | null = null;
     const maximumAllowedDifference = 2;
     const getOwner = () => mode === "preview" ? previewOwner : documentOwner;
     const currentPosition = () => mode === "preview" ? (previewOwner?.scrollTop ?? 0) : Math.max(documentOwner.scrollTop, window.scrollY);
@@ -1979,7 +1980,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       observedElements.delete(element);
       resizeObserver?.unobserve(element);
     };
-    const currentStage = () => previewOwner?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
+    const stageForOwner = (owner: HTMLElement | null) => owner?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
     const hasLoadedImages = () => {
       const owner = getOwner();
       if (!owner) return false;
@@ -1996,6 +1997,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       mutationObserver?.disconnect();
       mutationObserver = null;
       observedElements.clear();
+      observedPreviewStage = null;
       if (restoreFrame) window.cancelAnimationFrame(restoreFrame);
       stopRestorationSignals();
     };
@@ -2032,23 +2034,30 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       const main = document.getElementById("main-content");
       observeElement(main);
       observeElement(previewOwner);
-      observeElement(currentStage());
+      observedPreviewStage = stageForOwner(previewOwner);
+      observeElement(observedPreviewStage);
     }
     const syncPreviewOwner = () => {
       if (mode !== "preview") return;
       const nextOwner = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
-      if (nextOwner === previewOwner) return;
-      const oldOwner = previewOwner;
-      const oldStage = currentStage();
-      unobserveElement(oldOwner);
-      unobserveElement(oldStage);
-      stopPreviewSaving();
-      previewOwner = nextOwner;
-      stopPreviewSaving = previewOwner
-        ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position))
-        : () => {};
-      observeElement(previewOwner);
-      observeElement(currentStage());
+      const nextStage = stageForOwner(nextOwner);
+      const ownerChanged = nextOwner !== previewOwner;
+      const stageChanged = nextStage !== observedPreviewStage;
+      if (!ownerChanged && !stageChanged) return;
+      if (ownerChanged) {
+        unobserveElement(previewOwner);
+        stopPreviewSaving();
+        previewOwner = nextOwner;
+        stopPreviewSaving = previewOwner
+          ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position))
+          : () => {};
+        observeElement(previewOwner);
+      }
+      if (stageChanged) {
+        unobserveElement(observedPreviewStage);
+        observedPreviewStage = nextStage;
+        observeElement(observedPreviewStage);
+      }
       stableFrames = 0;
       previousGeometry = "";
       attemptRestore();

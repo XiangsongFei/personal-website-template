@@ -545,6 +545,90 @@ describe("route-scoped refresh restoration", () => {
     expect(window.sessionStorage.getItem(key)).toBe("240");
   });
 
+  it("wakes Preview refresh restoration when route-first canonical content resizes the same viewport stage", async () => {
+    const key = scrollKey("/skills", "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:skills`, "preview");
+    window.sessionStorage.setItem(key, "1492");
+    mockDocumentReload();
+
+    const canonical = {
+      profile: deferred<typeof fixtureSections.profile>(),
+      introduction: deferred<typeof fixtureSections.introduction>(),
+      education: deferred<typeof fixtureSections.education>(),
+      experience: deferred<typeof fixtureSections.experience>(),
+      projects: deferred<typeof fixtureSections.projects>(),
+      awards: deferred<typeof fixtureSections.awards>(),
+      contact: deferred<typeof fixtureSections.contact>(),
+      links: deferred<typeof fixtureSections.links>(),
+    };
+    const reads = {
+      loadProfile: vi.fn(() => canonical.profile.promise),
+      loadIntroduction: vi.fn(() => canonical.introduction.promise),
+      loadEducation: vi.fn(() => canonical.education.promise),
+      loadExperience: vi.fn(() => canonical.experience.promise),
+      loadProjects: vi.fn(() => canonical.projects.promise),
+      loadSkills: vi.fn().mockResolvedValue(fixtureSections.skills),
+      loadAwards: vi.fn(() => canonical.awards.promise),
+      loadContact: vi.fn(() => canonical.contact.promise),
+      loadLinks: vi.fn(() => canonical.links.promise),
+    };
+    const repository = {
+      load: vi.fn(),
+      loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId: "refresh-resume", siteKey: "example-cv", isPublished: true, updatedAt: null }),
+      ...reads,
+    } as unknown as ResumeRepository;
+    const store = new ResumeSectionStore();
+    store.setSession("verified-admin-session");
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/skills"]}><ResumeLoader repository={repository}
+      sectionStore={store} sessionKey="verified-admin-session" identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" /></MemoryRouter></UiLocaleProvider>);
+
+    expect(await screen.findByRole("heading", { name: "Skills", level: 1 })).toBeTruthy();
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 700 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
+    expect(viewport.scrollTop).toBe(0);
+    expect(window.sessionStorage.getItem(key)).toBe("1492");
+    await waitFor(() => expect(reads.loadProfile).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      canonical.profile.resolve(fixtureSections.profile);
+      canonical.introduction.resolve(fixtureSections.introduction);
+      canonical.education.resolve(fixtureSections.education);
+      canonical.experience.resolve(fixtureSections.experience);
+      canonical.projects.resolve(fixtureSections.projects);
+      canonical.awards.resolve(fixtureSections.awards);
+      canonical.contact.resolve(fixtureSections.contact);
+      canonical.links.resolve(fixtureSections.links);
+      await Promise.resolve();
+    });
+
+    const stage = await waitFor(() => {
+      const current = viewport.querySelector<HTMLElement>(".resume-preview-stage");
+      expect(current).not.toBeNull();
+      expect(viewport).toBe(screen.getByTestId("resume-preview"));
+      expect(MockResizeObserver.isObserved(current!)).toBe(true);
+      return current!;
+    });
+    expect(viewport.scrollTop).toBe(0);
+
+    // Model the preview canvas sizing after insertion. The stage's own resize
+    // is the wake-up that must retry the still-pending, previously unreachable
+    // coordinate without navigation or user input.
+    const canvas = stage.querySelector<HTMLElement>(".resume-preview-canvas");
+    expect(canvas).not.toBeNull();
+    Object.defineProperty(canvas, "offsetHeight", { configurable: true, value: 2200 });
+    act(() => MockResizeObserver.notify(canvas!));
+    await waitFor(() => expect(stage.style.height).toBe("2200px"));
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 2300 });
+    act(() => MockResizeObserver.notify(stage));
+
+    await waitFor(() => expect(viewport.scrollTop).toBe(1492));
+    expect(viewport).toBe(screen.getByTestId("resume-preview"));
+    expect(window.sessionStorage.getItem(key)).toBe("1492");
+    expect(MockResizeObserver.isObserved(stage)).toBe(false);
+  });
+
   it("keeps route and mode positions isolated and saves a genuine user scroll back to zero", () => {
     window.sessionStorage.setItem(scrollKey("/skills", "editor"), "220");
     window.sessionStorage.setItem(scrollKey("/skills", "preview"), "510");
@@ -627,16 +711,22 @@ function deferred<T>() {
 }
 
 class MockResizeObserver {
-  private static callbacks = new Set<() => void>();
-  private readonly notifyCallback: () => void;
+  private static observers = new Set<MockResizeObserver>();
+  private readonly observed = new Set<Element>();
+  private readonly notifyCallback: (target?: Element) => void;
   constructor(callback: ResizeObserverCallback) {
-    this.notifyCallback = () => callback([], this);
-    MockResizeObserver.callbacks.add(this.notifyCallback);
+    this.notifyCallback = target => callback(target ? [{ target } as ResizeObserverEntry] : [], this);
+    MockResizeObserver.observers.add(this);
   }
-  observe() {}
-  unobserve() {}
-  disconnect() { MockResizeObserver.callbacks.delete(this.notifyCallback); }
-  static notify() { for (const callback of [...MockResizeObserver.callbacks]) callback(); }
-  static reset() { MockResizeObserver.callbacks.clear(); }
-  static count() { return MockResizeObserver.callbacks.size; }
+  observe(target: Element) { this.observed.add(target); }
+  unobserve(target: Element) { this.observed.delete(target); }
+  disconnect() { MockResizeObserver.observers.delete(this); this.observed.clear(); }
+  static notify(target?: Element) {
+    for (const observer of [...MockResizeObserver.observers]) {
+      if (!target || observer.observed.has(target)) observer.notifyCallback(target);
+    }
+  }
+  static reset() { MockResizeObserver.observers.clear(); }
+  static count() { return MockResizeObserver.observers.size; }
+  static isObserved(target: Element) { return [...MockResizeObserver.observers].some(observer => observer.observed.has(target)); }
 }
