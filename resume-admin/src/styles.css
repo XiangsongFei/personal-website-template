@@ -301,12 +301,11 @@ main{color:#242424}
 .overview-page{margin-top:-12px}
 .overview-page .page-heading{margin-bottom:30px}
 .overview-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:40px;border-top:1px solid #e9e9e9;border-bottom:1px solid #e9e9e9}
-.overview-summary>div{min-width:0;padding:17px 20px 18px;border-right:1px solid #eee}
+.overview-summary>div{min-width:0;padding:15px 20px;border-right:1px solid #eee}
 .overview-summary>div:first-child{padding-left:0}
 .overview-summary>div:last-child{border-right:0}
-.overview-summary>div>span,.overview-summary small{display:block;color:#888;font-size:13px;font-weight:400}
+.overview-summary>div>span{display:block;color:#888;font-size:13px;font-weight:400}
 .overview-summary strong{display:block;margin-top:9px;color:#242424;font-size:16px;font-weight:550;line-height:1.4;overflow-wrap:anywhere}
-.overview-summary small{margin-top:3px;font-size:12px}
 .overview-management>h2{margin:0;color:#202020;font-size:22px;font-weight:600}
 .overview-management>p{margin:7px 0 18px;color:#71706b;font-size:16px;line-height:1.6}
 .overview-management-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:28px}

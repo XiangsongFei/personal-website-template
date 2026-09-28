@@ -11,7 +11,6 @@ export function formatBeijingTimestamp(value: string | null | undefined): string
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-      second: "2-digit",
       hourCycle: "h23",
     }).formatToParts(date);
     const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value;
@@ -20,9 +19,8 @@ export function formatBeijingTimestamp(value: string | null | undefined): string
     const day = part("day");
     const hour = part("hour");
     const minute = part("minute");
-    const second = part("second");
-    return year && month && day && hour && minute && second
-      ? `${year}-${month}-${day} ${hour}:${minute}:${second}`
+    return year && month && day && hour && minute
+      ? `${year}-${month}-${day} ${hour}:${minute}`
       : "—";
   } catch {
     return "—";
