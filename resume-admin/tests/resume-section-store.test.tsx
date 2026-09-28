@@ -134,6 +134,21 @@ describe("authenticated resume section store", () => {
     expect(store.getSiteMetadataState(sessionA)).toEqual({ status: "loaded", value: metadata });
   });
 
+  it("force-reloads site metadata after a confirmed save and rejects a superseded response", async () => {
+    const store = activatedStore();
+    const firstMetadata: ResumeSiteMetadata = { resumeId: site, siteKey: "example-cv", isPublished: true, updatedAt: "2026-09-25T00:00:00Z" };
+    const secondMetadata: ResumeSiteMetadata = { ...firstMetadata, updatedAt: "2026-09-27T03:04:05Z" };
+    await store.loadSiteMetadata(sessionA, async () => firstMetadata);
+    const stale = deferred<ResumeSiteMetadata>();
+    const oldRequest = store.reloadSiteMetadata(sessionA, () => stale.promise);
+    const freshRequest = store.reloadSiteMetadata(sessionA, async () => secondMetadata);
+    await expect(freshRequest).resolves.toEqual(secondMetadata);
+    stale.resolve({ ...firstMetadata, updatedAt: "2026-09-26T00:00:00Z" });
+    await expect(oldRequest).rejects.toBeInstanceOf(StaleResumeSectionRequestError);
+    await expect(store.loadSiteMetadata(sessionA, async () => firstMetadata)).resolves.toEqual(secondMetadata);
+    expect(store.getSiteMetadataState(sessionA)).toEqual({ status: "loaded", value: secondMetadata });
+  });
+
   it("uses no UI-locale dimension and writes no resume data to browser storage", async () => {
     const store = activatedStore();
     const localSet = vi.spyOn(window.localStorage.__proto__, "setItem");

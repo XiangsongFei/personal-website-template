@@ -309,6 +309,26 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     return value;
   }
 
+  async function refreshSiteMetadataAfterSave(resumeId: string): Promise<void> {
+    if (!repository || !supportsOverviewReads(repository)) return;
+    try {
+      const metadata = await sectionStore.reloadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
+      if (metadata.resumeId !== resumeId) return;
+      failedOverviewAttempt.current = null;
+      setOverviewState(current => current.kind === "loaded" && current.metadata.resumeId === resumeId
+        ? { ...current, metadata } : current.kind === "error" ? { kind: "idle" } : current);
+      setResume(current => current?.resumeId === resumeId ? { ...current, updatedAt: metadata.updatedAt } : current);
+    } catch {
+      if (sectionStore.getSiteMetadataState(sessionKey).status !== "error") return;
+      // Keep the save confirmed, but allow Overview to retry its persisted metadata read.
+      failedOverviewAttempt.current = null;
+      setOverviewState(current => {
+        if (current.kind === "loaded" && current.metadata.resumeId === resumeId) return { kind: "idle" };
+        return current.kind === "error" ? { kind: "idle" } : current;
+      });
+    }
+  }
+
   function patchAdditional(key: AdditionalRouteKey, resumeId: string, value: AdditionalRouteValue) {
     sectionStore.patchSection(sessionKey, resumeId, key, () => value as never);
     setResume(current => current?.resumeId === resumeId ? { ...current, sections: { ...current.sections, [key]: value } } : current);
@@ -317,6 +337,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       return existing?.kind === "loaded" && existing.resumeId === resumeId
         ? { ...current, [key]: { ...existing, value } } : current;
     });
+    void refreshSiteMetadataAfterSave(resumeId);
   }
 
   function retryAdditional(key: AdditionalRouteKey) {
@@ -329,6 +350,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     sectionStore.patchSection(sessionKey, resumeId, "education", () => education);
     setEducationState(current => current.kind === "loaded" && current.resumeId === resumeId ? { ...current, education } : current);
     setResume(current => current?.resumeId === resumeId ? { ...current, sections: { ...current.sections, education } } : current);
+    void refreshSiteMetadataAfterSave(resumeId);
   }
 
   function removeEducation(resumeId: string, entryId: string) {
@@ -337,6 +359,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       ? { ...current, education: current.education.filter(item => item.id !== entryId) } : current);
     setResume(current => current?.resumeId === resumeId
       ? { ...current, sections: { ...current.sections, education: current.sections.education.filter(item => item.id !== entryId) } } : current);
+    void refreshSiteMetadataAfterSave(resumeId);
   }
 
   async function reloadEducation(): Promise<EducationItem[]> {
@@ -353,6 +376,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     setResume(current => current?.resumeId === row.resumeId ? {
       ...current, sections: { ...current.sections, profile: { ...current.sections.profile, shared: row.shared } },
     } : current);
+    void refreshSiteMetadataAfterSave(row.resumeId);
   }
 
   function profileTranslationSaved(row: UpdatedProfileTranslationRow) {
@@ -365,6 +389,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
         translations: { ...current.sections.profile.translations, [row.locale]: row.translation },
       } },
     } : current);
+    void refreshSiteMetadataAfterSave(row.resumeId);
   }
 
   const profile = profileState.kind === "loaded" ? profileState.profile : resume?.sections.profile ?? null;

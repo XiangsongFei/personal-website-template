@@ -23,7 +23,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function repository(overrides: Partial<ResumeSectionRepository> = {}) {
+function repository(overrides: Partial<ResumeRepository & ResumeSectionRepository> = {}) {
   return {
     load: vi.fn().mockResolvedValue({ resumeId, siteKey: "example-cv" as const, isPublished: true, updatedAt: "2026-09-25T00:00:00Z", sections: structuredClone(fixtureSections) }),
     loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId, siteKey: "example-cv" as const, isPublished: true, updatedAt: "2026-09-25T00:00:00Z" }),
@@ -183,6 +183,62 @@ describe("Phase 5E Overview route-first loading", () => {
     for (const method of ["loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks"] as const) {
       expect(repo[method]).not.toHaveBeenCalled();
     }
+  });
+
+  it("shows freshly persisted site metadata on Overview after a successful save in the same session", async () => {
+    const oldTimestamp = "2026-09-25T00:00:00Z";
+    const freshTimestamp = "2026-09-27T03:04:05Z";
+    let metadataRead = 0;
+    const repo = repository({
+      loadSiteMetadata: vi.fn(async () => ({
+        resumeId, siteKey: "example-cv" as const, isPublished: true,
+        updatedAt: metadataRead++ === 0 ? oldTimestamp : freshTimestamp,
+      })),
+      updateProfileSharedDetails: vi.fn(async (_id, shared) => ({ resumeId, shared, updatedAt: freshTimestamp })),
+    });
+    show(repo);
+    expect(await screen.findByText("2026-09-25 08:00:00")).toBeTruthy();
+    navigate("/profile");
+    const graduationValue = await screen.findByLabelText("Graduation value");
+    fireEvent.change(graduationValue, { target: { value: "2031" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    await waitFor(() => expect(repo.loadSiteMetadata).toHaveBeenCalledTimes(2));
+
+    navigate("/overview");
+    expect(await screen.findByText("2026-09-27 11:04:05")).toBeTruthy();
+    expect(screen.queryByText("2026-09-25 08:00:00")).toBeNull();
+    expect(repo.updateProfileSharedDetails).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh the Overview timestamp for unsaved edits or Cancel", async () => {
+    const repo = repository();
+    show(repo);
+    expect(await screen.findByText("2026-09-25 08:00:00")).toBeTruthy();
+    navigate("/profile");
+    fireEvent.change(await screen.findByLabelText("Graduation value"), { target: { value: "2031" } });
+    expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Graduation value") as HTMLInputElement).value).toBe(fixtureSections.profile.shared.graduationValue);
+    expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
+    navigate("/overview");
+    expect(await screen.findByText("2026-09-25 08:00:00")).toBeTruthy();
+    expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
+    expect(repo.updateProfileSharedDetails).not.toHaveBeenCalled();
+  });
+
+  it("does not advance Overview metadata when a persisted save fails", async () => {
+    const repo = repository({ updateProfileSharedDetails: vi.fn().mockRejectedValue(new Error("write failed")) });
+    show(repo);
+    expect(await screen.findByText("2026-09-25 08:00:00")).toBeTruthy();
+    navigate("/profile");
+    fireEvent.change(await screen.findByLabelText("Graduation value"), { target: { value: "2031" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
+    navigate("/overview");
+    expect(await screen.findByText("2026-09-25 08:00:00")).toBeTruthy();
+    expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
   });
 
   it("isolates Overview failure and retry from already loaded Profile and Education caches", async () => {

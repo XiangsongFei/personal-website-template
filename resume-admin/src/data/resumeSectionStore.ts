@@ -126,6 +126,18 @@ export class ResumeSectionStore {
     return this.startLoad(this.sites, key, sessionKey, loader);
   }
 
+  /** Force a fresh site metadata read after a confirmed persisted resume mutation. */
+  reloadSiteMetadata(
+    sessionKey: string,
+    loader: () => Promise<ResumeSiteMetadata>,
+    siteKey = "example-cv",
+  ): Promise<ResumeSiteMetadata> {
+    this.assertActiveSession(sessionKey);
+    const key = this.siteCacheKey(sessionKey, siteKey);
+    this.sites.delete(key);
+    return this.startLoad(this.sites, key, sessionKey, loader);
+  }
+
   private startLoad<T>(
     cache: Map<string, CacheEntry<T>>,
     key: string,
