@@ -76,7 +76,7 @@ describe("Phase 5C Contact route-first loading", () => {
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
     expect(screen.getByDisplayValue("focus-a-en")).toBeTruthy();
     expect(screen.getByDisplayValue("status-a-en")).toBeTruthy();
-    expect((screen.getByLabelText("Status type") as HTMLSelectElement).value).toBe("study");
+    expect(screen.getByRole("combobox", { name: "Status type" }).textContent).toBe("Study");
   });
 
   it("localizes loading, failure, and Contact-only retry while the shell remains mounted", async () => {

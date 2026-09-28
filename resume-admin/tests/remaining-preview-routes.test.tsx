@@ -39,6 +39,10 @@ function open(path: string, productionRepeatable = false) {
 
 function preview() { return within(screen.getByTestId("resume-preview")); }
 function previewNode() { return screen.getByTestId("resume-preview"); }
+function chooseStatusType(index: number, optionName: string) {
+  fireEvent.click(screen.getAllByRole("combobox", { name: "Status type" })[index]);
+  fireEvent.click(within(screen.getByRole("listbox", { name: "Status type" })).getByRole("option", { name: optionName }));
+}
 function setPreviewLocale(locale: "Chinese" | "English") {
   const expected = locale === "Chinese" ? "zh" : "en";
   if (previewNode().getAttribute("lang") !== expected) fireEvent.click(preview().getByRole("button", { name: "Preview language" }));
@@ -128,7 +132,7 @@ describe("Awards, Contact, and Links live preview", () => {
     const statusTitles = screen.getAllByLabelText("English Status title");
     fireEvent.change(statusTitles[statusTitles.length - 1], { target: { value: "Added status" } });
     expect(within(contact).getByText("Added status")).toBeTruthy();
-    fireEvent.change(screen.getAllByLabelText("Status type")[screen.getAllByLabelText("Status type").length - 1], { target: { value: "graduation" } });
+    chooseStatusType(screen.getAllByRole("combobox", { name: "Status type" }).length - 1, "Graduation");
     expect(contact.querySelector('[data-status-type="graduation"]')).toBeTruthy();
     fireEvent.click(within(status).getByRole("button", { name: "Delete Added status" }));
     fireEvent.click(within(status).getByRole("button", { name: "Confirm delete" }));

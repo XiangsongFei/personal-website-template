@@ -93,6 +93,10 @@ function open(spec: { path: string }, repository: ResumeRepository, store = new 
   return { ...render(strict ? <StrictMode>{tree}</StrictMode> : tree), store };
 }
 function save() { fireEvent.click(document.querySelector(".save-bar .button.primary") as HTMLButtonElement); }
+function chooseStatusType(index: number, optionName: string) {
+  fireEvent.click(screen.getAllByRole("combobox", { name: "Status type" })[index]);
+  fireEvent.click(within(screen.getByRole("listbox", { name: "Status type" })).getByRole("option", { name: optionName }));
+}
 function NavigateToLinks() {
   const navigate = useNavigate();
   return <button type="button" onClick={() => navigate("/links")}>Open Links</button>;
@@ -798,7 +802,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByRole("button", { name: locale === "en" ? "Add status" : "添加状态" })).toBeTruthy();
     expect(screen.getByRole("button", { name: locale === "en" ? "Save contact changes" : "保存联系方式修改" })).toBeTruthy();
     expect(screen.getByText(locale === "en" ? "No unsaved changes" : "没有未保存修改")).toBeTruthy();
-    expect(screen.getByLabelText(locale === "en" ? "Status type" : "状态类型")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Add focus" : "添加关注" }));
     expect(Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Focus"] .item-card-heading h3')).at(-1)?.textContent)
@@ -969,7 +973,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     save();
     await screen.findByText("No unsaved changes");
     expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", "en", { title: "Analytics focus", detail: "" });
-    fireEvent.change(screen.getByLabelText("Status type"), { target: { value: "graduation" } });
+    chooseStatusType(0, "Graduation");
     save();
     await screen.findByText("No unsaved changes");
     expect(contact.methods.updateStatusType).toHaveBeenCalledWith(resumeId, "status-1", "graduation");

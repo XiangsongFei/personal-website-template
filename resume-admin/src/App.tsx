@@ -13,6 +13,7 @@ import { ResumePreviewPanel, type PreviewSection } from "./preview/ResumePreview
 import { validateProfilePhoto } from "./data/profilePhoto";
 import { bilingualFieldKey, collectChangedBilingualFieldKeys, type BilingualFieldIdentity, type BilingualReviewReminder } from "./bilingualReview";
 import { UiLocaleSwitch, useUiLocale } from "./uiLocale";
+import { AdminDropdown } from "./AdminDropdown";
 import { diagnoseRefreshScroll, freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
 
@@ -1041,21 +1042,45 @@ function educationCategoryLabel(item: EducationItem, locale: Locale, t: (text: s
 function educationCategorySelect(item: EducationItem, index: number, locale: Locale, t: (text: string) => string,
   onChange: (category: EducationCategory) => void, disabled = false) {
   const category = educationCategoryFor(item);
+  const label = `${t("Education category")} ${String(index + 1).padStart(2, "0")}`;
   return <><span className="item-number">{String(index + 1).padStart(2, "0")}</span>
-    <select className="education-category-control" aria-label={`${t("Education category")} ${String(index + 1).padStart(2, "0")}`}
-      value={category ?? ""} disabled={disabled} onChange={event => onChange(event.target.value as EducationCategory)}>
-      {!category && <option value="" disabled>{t("Uncategorized")}</option>}
-      <option value="undergraduate">{t("Undergraduate")}</option>
-      <option value="graduate">{t("Graduate")}</option>
-      <option value="doctoral">{t("Doctoral")}</option>
-      <option value="summerSchool">{t("Summer School")}</option>
-      <option value="custom">{item.translations[locale].customCategoryLabel || t("Custom")}</option>
-    </select>
+    <AdminDropdown
+      id={`education-category-${item.id}-${index + 1}`}
+      ariaLabel={label}
+      value={category}
+      options={[
+        ...(category === null ? [{ value: null, label: t("Uncategorized"), disabled: true }] : []),
+        { value: "undergraduate", label: t("Undergraduate") },
+        { value: "graduate", label: t("Graduate") },
+        { value: "doctoral", label: t("Doctoral") },
+        { value: "summerSchool", label: t("Summer School") },
+        { value: "custom", label: item.translations[locale].customCategoryLabel || t("Custom") },
+      ]}
+      onChange={onChange}
+      disabled={disabled}
+    />
   </>;
 }
 
+const educationPresetTitles: Record<Exclude<EducationCategory, "custom">, Record<Locale, string>> = {
+  undergraduate: { zh: "本科教育", en: "Undergraduate Education" },
+  graduate: { zh: "研究生教育", en: "Graduate Education" },
+  doctoral: { zh: "博士教育", en: "Doctoral Education" },
+  summerSchool: { zh: "暑期学校", en: "Summer School" },
+};
+
 function educationCategoryChanged(item: EducationItem, category: EducationCategory): EducationItem {
-  return { ...item, category, entryType: category === "summerSchool" ? "summerSchool" : "standard" };
+  const translations = category === "custom" ? item.translations : {
+    zh: { ...item.translations.zh, title: synchronizedEducationTitle(item.translations.zh.title, "zh", category) },
+    en: { ...item.translations.en, title: synchronizedEducationTitle(item.translations.en.title, "en", category) },
+  };
+  return { ...item, category, entryType: category === "summerSchool" ? "summerSchool" : "standard", translations };
+}
+
+function synchronizedEducationTitle(title: string, locale: Locale, category: Exclude<EducationCategory, "custom">): string {
+  const isBlank = title.trim().length === 0;
+  const isPresetTitle = Object.values(educationPresetTitles).some(titles => titles[locale] === title);
+  return isBlank || isPresetTitle ? educationPresetTitles[category][locale] : title;
 }
 
 function Education() {
@@ -1605,10 +1630,11 @@ function Contact() {
         create={(id, position): StatusItem => ({ id, position, statusType: "open", translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
         label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${locale === "zh" ? "状态" : "Status"} ${index + 1}`}
         render={(item, change, base) => <>
-          <div className="shared-select"><label htmlFor={`${item.id}-status-type`}>{t("Status type")}</label><select id={`${item.id}-status-type`} value={item.statusType}
-            onChange={event => change({ ...item, statusType: event.target.value as StatusItem["statusType"] })}>
-            <option value="study">{t("Study")}</option><option value="graduation">{t("Graduation")}</option><option value="open">{t("Open")}</option>
-          </select></div>
+          <div className="shared-select"><label htmlFor={`${item.id}-status-type`}>{t("Status type")}</label>
+            <AdminDropdown id={`${item.id}-status-type`} ariaLabel={t("Status type")} value={item.statusType}
+              options={[{ value: "study", label: t("Study") }, { value: "graduation", label: t("Graduation") }, { value: "open", label: t("Open") }]}
+              onChange={statusType => change({ ...item, statusType })} />
+          </div>
           <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
             fields={[{ key: "title", label: "Status title" }, { key: "detail", label: "Detail" }]} />
         </>} /></div>

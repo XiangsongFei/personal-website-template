@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
@@ -78,6 +78,18 @@ function openEducation(repository: ResumeRepository, path = "/education", resume
   return render(withLocaleProvider ? <UiLocaleProvider>{app}</UiLocaleProvider> : app);
 }
 
+const categoryOptionLabels = {
+  en: { undergraduate: "Undergraduate", graduate: "Graduate", doctoral: "Doctoral", summerSchool: "Summer School", custom: "Custom" },
+  zh: { undergraduate: "本科", graduate: "研究生", doctoral: "博士", summerSchool: "暑期学校", custom: "自定义" },
+} as const;
+function categoryCombobox(index = 1, locale: "zh" | "en" = "en") {
+  return screen.getByRole("combobox", { name: `${locale === "zh" ? "教育分类" : "Education category"} ${String(index).padStart(2, "0")}` }) as HTMLButtonElement;
+}
+function chooseCategory(index: number, category: keyof typeof categoryOptionLabels.en, locale: "zh" | "en" = "en", optionLabel?: string) {
+  fireEvent.click(categoryCombobox(index, locale));
+  fireEvent.click(screen.getByRole("option", { name: optionLabel ?? categoryOptionLabels[locale][category] }));
+}
+
 function adminAuth(): AdminAuthClient {
   return { getIdentity: vi.fn().mockResolvedValue({ id: "admin-id", email: "admin@example.test", sessionKey: "session" }),
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn().mockReturnValue(() => {}) };
@@ -102,53 +114,230 @@ describe("Stage 4G Education production CRUD", () => {
     expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
     const cards = Array.from(document.querySelectorAll<HTMLElement>(".education-editor-scope .item-card"));
     expect(cards.map(card => Array.from(card.querySelector(".item-card-heading")!.children[0].children).map(child => child.className))).toEqual([
-      ["item-number", "education-category-control"], ["item-number", "education-category-control"],
+      ["item-number", "admin-dropdown-control"], ["item-number", "admin-dropdown-control"],
     ]);
-    const typeSelect = screen.getByLabelText("Education category 01") as HTMLSelectElement;
-    expect(typeSelect.value).toBe("summerSchool");
-    expect(Array.from(typeSelect.options, option => option.textContent)).toEqual(["Undergraduate", "Graduate", "Doctoral", "Summer School", "Custom"]);
-    expect((screen.getByLabelText("Education category 02") as HTMLSelectElement).value).toBe("");
+    const typeSelect = categoryCombobox();
+    expect(typeSelect.textContent).toBe("Summer School");
+    fireEvent.click(typeSelect);
+    expect(within(screen.getByRole("listbox", { name: "Education category 01" })).getAllByRole("option").map(option => option.textContent))
+      .toEqual(["Undergraduate", "Graduate", "Doctoral", "Summer School", "Custom"]);
+    expect(categoryCombobox(2).textContent).toBe("Uncategorized");
+    fireEvent.click(categoryCombobox(2));
+    const legacyListbox = screen.getByRole("listbox", { name: "Education category 02" });
+    expect(within(legacyListbox).getByRole("option", { name: "Uncategorized" }).getAttribute("aria-disabled")).toBe("true");
+    expect(within(legacyListbox).getByRole("option", { name: "Uncategorized" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByDisplayValue("English Education")).toBeTruthy();
     expect(screen.queryByText("Education type")).toBeNull();
+  });
+
+  it.each([
+    { category: "undergraduate", zh: "本科教育", en: "Undergraduate Education" },
+    { category: "graduate", zh: "研究生教育", en: "Graduate Education" },
+    { category: "doctoral", zh: "博士教育", en: "Doctoral Education" },
+    { category: "summerSchool", zh: "暑期学校", en: "Summer School" },
+  ])("synchronizes default bilingual titles when the user selects $category", ({ category, zh, en }) => {
+    openEducation(makeRepository());
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "本科教育" } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Undergraduate Education" } });
+    if (category === "summerSchool") chooseCategory(1, "graduate");
+    chooseCategory(1, category as keyof typeof categoryOptionLabels.en);
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe(zh);
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe(en);
+    expect(categoryCombobox().getAttribute("aria-label")).toBe("Education category 01");
+  });
+
+  it("fills blank titles with the selected preset defaults", () => {
+    openEducation(makeRepository());
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "   " } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "" } });
+    chooseCategory(1, "doctoral");
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("博士教育");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Doctoral Education");
+  });
+
+  it("preserves customized titles independently while synchronizing preset titles", () => {
+    openEducation(makeRepository());
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "金融工程硕士" } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Undergraduate Education" } });
+    chooseCategory(1, "graduate");
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("金融工程硕士");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Graduate Education");
+
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "本科教育" } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "MSc Financial Engineering" } });
+    chooseCategory(1, "doctoral");
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("博士教育");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("MSc Financial Engineering");
+  });
+
+  it("does not rewrite mismatched titles on initial load and does not synchronize when selecting Custom", () => {
+    const loaded = snapshot();
+    loaded.sections.education[0] = { ...loaded.sections.education[0], category: "graduate",
+      translations: { zh: { ...loaded.sections.education[0].translations.zh, title: "本科教育" },
+        en: { ...loaded.sections.education[0].translations.en, title: "Undergraduate Education" } } };
+    openEducation(makeRepository(), "/education", loaded);
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("本科教育");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Undergraduate Education");
+    chooseCategory(1, "custom");
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("本科教育");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Undergraduate Education");
+  });
+
+  it("marks synchronized titles dirty, previews them, restores on Cancel, and saves both translations", async () => {
+    const repo = makeRepository();
+    openEducation(repo);
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "本科教育" } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Undergraduate Education" } });
+    chooseCategory(1, "graduate");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(within(screen.getByTestId("resume-preview")).getByRole("heading", { level: 3, name: "Graduate Education" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("中文教育");
+    expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("English Education");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "本科教育" } });
+    fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Undergraduate Education" } });
+    chooseCategory(1, "graduate");
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await screen.findByText("Education changes saved to production.");
+    expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "zh", expect.objectContaining({ title: "研究生教育" }));
+    expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "en", expect.objectContaining({ title: "Graduate Education" }));
   });
 
   it("localizes the category selector in the Chinese admin UI", async () => {
     window.localStorage.setItem("cms-ui-locale", "en");
     openEducation(makeRepository(), "/education", snapshot(true), undefined, true);
     fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
-    const categorySelect = screen.getByLabelText("教育分类 01") as HTMLSelectElement;
-    expect(categorySelect.value).toBe("summerSchool");
-    expect(Array.from(categorySelect.options, option => option.textContent)).toEqual(["本科", "研究生", "博士", "暑期学校", "自定义"]);
+    const categorySelect = categoryCombobox(1, "zh");
+    expect(categorySelect.textContent).toBe("暑期学校");
+    fireEvent.click(categorySelect);
+    expect(within(screen.getByRole("listbox", { name: "教育分类 01" })).getAllByRole("option").map(option => option.textContent))
+      .toEqual(["本科", "研究生", "博士", "暑期学校", "自定义"]);
     expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "添加教育经历" })).toBeTruthy();
     window.localStorage.removeItem("cms-ui-locale");
   });
 
+  it("exposes a localized combobox and selects an option through the listbox", () => {
+    openEducation(makeRepository());
+    const trigger = categoryCombobox();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("aria-controls")).toBeTruthy();
+    expect(trigger.textContent).toBe("Summer School");
+    fireEvent.click(trigger);
+    const listbox = screen.getByRole("listbox", { name: "Education category 01" });
+    expect(within(listbox).getByRole("option", { name: "Summer School" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(listbox).getByRole("option", { name: "Graduate" }));
+    expect(categoryCombobox().textContent).toBe("Graduate");
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("opens with Enter and Space, navigates with arrows, and confirms with Enter", () => {
+    openEducation(makeRepository());
+    const trigger = categoryCombobox();
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(screen.getByRole("listbox", { name: "Education category 01" })).toBeTruthy();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    fireEvent.keyDown(trigger, { key: " " });
+    expect(screen.getByRole("listbox", { name: "Education category 01" })).toBeTruthy();
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Custom" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: " " });
+    expect(categoryCombobox().textContent).toBe("Custom");
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.keyDown(trigger, { key: "ArrowUp" });
+    fireEvent.keyDown(trigger, { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: "Summer School" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: "ArrowUp" });
+    expect(screen.getByRole("option", { name: "Doctoral" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(categoryCombobox().textContent).toBe("Doctoral");
+  });
+
+  it("Escape closes without changing the category, and outside pointer closes the popup", () => {
+    openEducation(makeRepository());
+    const trigger = categoryCombobox();
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Custom" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(categoryCombobox().textContent).toBe("Summer School");
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(screen.getByRole("listbox", { name: "Education category 01" })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(categoryCombobox().textContent).toBe("Summer School");
+
+    fireEvent.click(trigger);
+    expect(fireEvent.keyDown(trigger, { key: "Tab" })).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById(trigger.getAttribute("aria-controls")!)?.hidden).toBe(true);
+  });
+
+  it("supports Home and End to move the active option to the first and last categories", () => {
+    openEducation(makeRepository());
+    const trigger = categoryCombobox();
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "End" });
+    expect(screen.getByRole("option", { name: "Custom" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: "Home" });
+    expect(screen.getByRole("option", { name: "Undergraduate" }).getAttribute("data-active")).toBe("true");
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(categoryCombobox().textContent).toBe("Summer School");
+  });
+
+  it("does not open the category dropdown while Education is saving", async () => {
+    let finishUpdate!: () => void;
+    const updateEducationEntry = vi.fn(async (_resume: string, entryId: string) => {
+      await new Promise<void>(resolve => { finishUpdate = resolve; });
+      return { resumeId, entryId, position: 0, entryType: "standard" as const, category: "graduate" as const, sourceKey: "education-source" };
+    });
+    const repo = makeRepository({ updateEducationEntry });
+    openEducation(repo);
+    chooseCategory(1, "graduate");
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await waitFor(() => expect(categoryCombobox().disabled).toBe(true));
+    fireEvent.click(categoryCombobox());
+    fireEvent.keyDown(categoryCombobox(), { key: "ArrowDown" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    finishUpdate();
+    await screen.findByText("Education changes saved to production.");
+  });
+
   it("marks a category edit dirty, Cancel restores it, and Save persists classification without changing titles", async () => {
     const repo = makeRepository(); openEducation(repo);
-    const category = screen.getByLabelText("Education category 01") as HTMLSelectElement;
-    expect(category.value).toBe("summerSchool");
-    fireEvent.change(category, { target: { value: "graduate" } });
+    expect(categoryCombobox().textContent).toBe("Summer School");
+    chooseCategory(1, "graduate");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
-    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("summerSchool");
+    expect(categoryCombobox().textContent).toBe("Summer School");
     expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
     expect(repo.updateEducationEntry).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "graduate" } });
+    chooseCategory(1, "graduate");
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "graduate" });
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
-    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("graduate");
+    expect(categoryCombobox().textContent).toBe("Graduate");
   });
 
   it("persists custom category labels bilingually without replacing resume titles", async () => {
     window.localStorage.setItem("cms-ui-locale", "en");
     const repo = makeRepository(); openEducation(repo, "/education", snapshot(), undefined, true);
-    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "custom" } });
+    chooseCategory(1, "custom");
     fireEvent.change(screen.getByLabelText("Chinese Custom category name"), { target: { value: "交换学习" } });
     fireEvent.change(screen.getByLabelText("English Custom category name"), { target: { value: "Exchange Program" } });
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
@@ -158,24 +347,24 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.updateEducationTranslation).toHaveBeenCalledTimes(2);
     expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "zh", expect.objectContaining({ customCategoryLabel: "交换学习", title: "中文教育" }));
     expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "en", expect.objectContaining({ customCategoryLabel: "Exchange Program", title: "English Education" }));
-    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).selectedOptions[0].textContent).toBe("Exchange Program");
+    expect(categoryCombobox().textContent).toBe("Exchange Program");
     expect(screen.getByDisplayValue("中文教育")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("group", { name: "CMS interface language" })).getByRole("button", { name: "中文" }));
-    expect((screen.getByLabelText("教育分类 01") as HTMLSelectElement).selectedOptions[0].textContent).toBe("交换学习");
+    expect(categoryCombobox(1, "zh").textContent).toBe("交换学习");
     window.localStorage.removeItem("cms-ui-locale");
   });
 
   it("keeps category identity and independent expansion when entries are reordered", async () => {
     const repo = makeRepository({}, true); openEducation(repo, "/education", snapshot(true));
-    fireEvent.change(screen.getByLabelText("Education category 02"), { target: { value: "doctoral" } });
+    chooseCategory(2, "doctoral");
     fireEvent.click(screen.getByRole("button", { name: "Edit Doctoral" }));
     fireEvent.click(screen.getByRole("button", { name: "Move Doctoral up" }));
     expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "second-id", { entryType: "standard", category: "doctoral" });
-    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("doctoral");
-    expect((screen.getByLabelText("Education category 02") as HTMLSelectElement).value).toBe("summerSchool");
+    expect(categoryCombobox(1).textContent).toBe("Doctoral");
+    expect(categoryCombobox(2).textContent).toBe("Summer School");
     expect(document.querySelectorAll(".education-editor-scope .item-card-body")).toHaveLength(2);
   });
 
@@ -205,7 +394,7 @@ describe("Stage 4G Education production CRUD", () => {
 
   it("updates a shared entry field against its real UUID and retains that UUID", async () => {
     const repo = makeRepository(); openEducation(repo);
-    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "undergraduate" } });
+    chooseCategory(1, "undergraduate");
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "undergraduate" });
@@ -374,8 +563,8 @@ describe("Stage 4G Education production CRUD", () => {
 
   it("retains the standard and summerSchool type distinction", async () => {
     const repo = makeRepository(); openEducation(repo);
-    expect((screen.getByLabelText("Education category 01") as HTMLSelectElement).value).toBe("summerSchool");
-    fireEvent.change(screen.getByLabelText("Education category 01"), { target: { value: "undergraduate" } });
+    expect(categoryCombobox().textContent).toBe("Summer School");
+    chooseCategory(1, "undergraduate");
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
     expect(repo.updateEducationEntry).toHaveBeenCalledWith(resumeId, "education-id", { entryType: "standard", category: "undergraduate" });
