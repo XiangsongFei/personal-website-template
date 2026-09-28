@@ -38,8 +38,11 @@ a{color:inherit}
 .menu-button{display:none;border:0;background:transparent;color:#23324a;font-size:20px;padding:5px 7px}
 main{max-width:1260px;margin:0 auto;padding:clamp(24px,3.6vw,48px) clamp(20px,3vw,46px) 72px}
 .page-heading{margin-bottom:26px}
+.page-heading-title-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 16px;margin-bottom:9px}
+.page-heading-title-row>.button{flex:0 0 auto;margin-left:auto;white-space:nowrap}
 .eyebrow{margin:0 0 10px;color:#468778;text-transform:uppercase;letter-spacing:.14em;font-size:11px;font-weight:800}
 .page-heading h1{font-size:clamp(28px,3vw,38px);letter-spacing:-.035em;line-height:1.18;margin:0 0 9px;color:#15243b}
+.page-heading-title-row h1{margin:0;min-width:0}
 .page-heading p{font-size:14px;line-height:1.6;margin:0;color:#617085;max-width:700px}
 .mode-banner{padding:16px 20px;background:#e9f7f0;border:1px solid #bfe5d2;border-radius:12px;display:flex;align-items:center;gap:14px;margin-bottom:24px;color:#225445;font-size:13px}
 .mode-banner strong{white-space:nowrap}

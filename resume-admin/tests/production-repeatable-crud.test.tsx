@@ -108,6 +108,21 @@ async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextArea
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Batch 6A production repeatable CRUD", () => {
+  it.each([
+    { section: "experience", path: "/experience", title: "Experience", add: "Add experience" },
+    { section: "projects", path: "/projects", title: "Projects", add: "Add project" },
+    { section: "skills", path: "/skills", title: "Skills", add: "Add skill group" },
+    { section: "awards", path: "/awards", title: "Awards", add: "Add award" },
+  ] as const)("places the $section Add action on the main title row", async ({ section, path, title, add }) => {
+    const { repository } = makeRepository(section);
+    open({ path }, repository);
+    const addButton = await screen.findByRole("button", { name: add });
+    const titleRow = addButton.closest(".page-heading-title-row");
+    expect(titleRow?.querySelector("h1")?.textContent).toBe(title);
+    expect(titleRow?.parentElement?.classList.contains("page-heading")).toBe(true);
+    expect(document.querySelector(".repeatable-group>.group-heading")).toBeNull();
+  });
+
   it.each(["en", "zh"] as const)("Experience uses localized organization identity and concise copy in %s UI", async locale => {
     window.localStorage.setItem(UI_LOCALE_KEY, locale);
     const { repository, items } = makeRepository("experience", { twoItems: true });

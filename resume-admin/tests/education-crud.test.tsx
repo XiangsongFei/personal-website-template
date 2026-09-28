@@ -105,7 +105,9 @@ describe("Stage 4G Education production CRUD", () => {
     expect(page.querySelector(".production-save-helper")).toBeNull();
     expect(page.querySelector(".save-bar")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Education items" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Add Education" })).toBeTruthy();
+    const addButton = screen.getByRole("button", { name: "Add Education" });
+    expect(addButton.closest(".page-heading-title-row")?.querySelector("h1")?.textContent).toBe("Education");
+    expect(page.querySelector(".repeatable-group>.group-heading")).toBeNull();
     expect(page.classList.contains("production-save-tail")).toBe(false);
   });
 

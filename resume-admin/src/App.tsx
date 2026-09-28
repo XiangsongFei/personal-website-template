@@ -350,11 +350,21 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   </section>;
 }
 
-function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity }: {
+function PageHeadingWithAction({ title, description, action }: { title: string; description: string; action: ReactNode }) {
+  const { t } = useUiLocale();
+  return <div className="page-heading">
+    <p className="eyebrow">{t("Resume content")}</p>
+    <div className="page-heading-title-row"><h1>{t(title)}</h1>{action}</div>
+    <p>{t(description)}</p>
+  </div>;
+}
+
+function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading }: {
   items: T[]; onChange: (items: T[]) => void; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode; groupLabel: string; addLabel?: string; allowMultipleOpen?: boolean; confirmedItems?: T[];
   onConfirmedDelete?: (id: string) => void; deleteDisabled?: (id: string) => boolean;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
+  sectionHeading?: { title: string; description: string };
 }) {
   const { t } = useUiLocale();
   const [openId, setOpenId] = useState<string | null>(items[0]?.id ?? null);
@@ -384,8 +394,10 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
     if (allowMultipleOpen) setOpenIds(current => new Set(current).add(newItem.id));
     else setOpenId(newItem.id);
   };
+  const addButton = <button type="button" className="button secondary" onClick={add}>{t(addLabel)}</button>;
   return <div className="repeatable-group" aria-label={groupLabel || undefined}>
-    <div className="group-heading">{groupLabel && <h2>{t(groupLabel)}</h2>}<button type="button" className="button secondary" onClick={add}>{t(addLabel)}</button></div>
+    {sectionHeading ? <PageHeadingWithAction title={sectionHeading.title} description={sectionHeading.description} action={addButton} />
+      : <div className="group-heading">{groupLabel && <h2>{t(groupLabel)}</h2>}{addButton}</div>}
     {items.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
     <div className="item-stack">{items.map((item, index) => {
       const itemLabel = label(item, index) || t("New item");
@@ -429,8 +441,9 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
   }
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
-  return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} />}
+  const useActionHeading = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards";
+  return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading}>
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} sectionHeading={useActionHeading ? { title, description } : undefined} />}
   </SectionForm></div>;
 }
 
@@ -670,10 +683,12 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   };
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
+  const useActionHeading = section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <section className="page-section" aria-busy={editor.saving}>
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>
+    {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
     <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"}
-      onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)} />
+      onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
+      sectionHeading={useActionHeading ? { title, description } : undefined} />
     {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
     <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
       <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
@@ -1332,9 +1347,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   };
 
   return <section className="page-section education-editor-scope">
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1></div>
+    <PageHeadingWithAction title="Education" description="" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
     <div className="repeatable-group" aria-label={t("Education")}>
-      <div className="group-heading"><button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button></div>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
       <div className="item-stack">{editor.draft.map((item, index) => {
         const label = educationCategoryLabel(item, locale, t);
