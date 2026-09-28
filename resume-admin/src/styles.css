@@ -148,14 +148,14 @@ main{max-width:1260px;margin:0 auto;padding:clamp(24px,3.6vw,48px) clamp(20px,3v
 .sidebar{background:#fff;color:#242424;border-right:1px solid #eee;padding:0 14px 16px}
 .brand{height:var(--shell-header-height);min-height:var(--shell-header-height);flex:none;gap:0;padding:0 10px;border-bottom-color:#eee}
 .brand-mark{display:none}
-.brand strong{color:#191919;font-size:17px;font-weight:600;letter-spacing:0}
+.brand strong{color:#191919;font-size:20px;font-weight:600;letter-spacing:0}
 .brand small{color:#777;margin-top:4px}
 .sidebar nav{gap:2px;padding-top:14px}
 .sidebar-nav-group{display:grid;gap:2px;margin-top:16px}
-.sidebar-nav-label{position:relative;padding:0 11px 2px;color:#444;font-size:14px;font-weight:600;letter-spacing:.08em}
+.sidebar-nav-label{position:relative;padding:0 11px 2px;color:#444;font-size:17px;font-weight:600;letter-spacing:.08em}
 .sidebar-nav-label::before{position:absolute;top:2px;left:5px;width:2px;height:10px;background:#777;content:""}
-.sidebar-link{padding:6px 11px;border-radius:0;color:#666;font-size:15px;line-height:1.3;font-weight:400}
-.sidebar-nav-group .sidebar-link{font-size:12px}
+.sidebar-link{padding:6px 11px;border-radius:0;color:#666;font-size:18px;line-height:1.3;font-weight:400}
+.sidebar-nav-group .sidebar-link{font-size:15px}
 .sidebar-link:hover{background:transparent;color:#111}
 .sidebar-link.is-active{background:transparent;color:#111;font-weight:600}
 .sidebar-foot{border-top-color:#eee;color:#666;padding:13px 10px 0;font-size:11px}
