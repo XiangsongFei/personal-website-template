@@ -309,7 +309,12 @@ function SectionForm<T>({ section, title, description, initial, children, produc
     onPreviewDraftChanged(section as PreviewSection, editor.draft as PreviewDraftValue);
   }, [onPreviewDraftChanged, editor.draft, section]);
   const submit = async () => {
-    if (editor.production && productionSave) {
+    if (editor.production) {
+      if (!productionSave) {
+        setSaveError(true);
+        editor.setMessage("Production writes are unavailable for this section.");
+        return;
+      }
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
       try { const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); editor.setMessage(section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
@@ -1632,9 +1637,10 @@ function Links() {
     setPdfErrors(current => ({ ...current, [locale]: undefined }));
   };
   const clearPdfDrafts = () => { setPdfFiles({}); setPdfErrors({}); };
+  const linksResumeId = context.additionalResumeId ?? context.resume?.resumeId ?? null;
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
-    productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveLinksProduction(context.repository!, context.additionalResumeId!, draft, baseline, pdfFiles) : undefined}>
+    productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange, confirmed) => <>
       <section className="links-section"><h2>{t("Public links")}</h2><SharedFields idPrefix="links-shared" value={links.shared}
         onChange={shared => onChange({ ...links, shared })}

@@ -148,17 +148,20 @@ describe("Stage 4E Profile editor", () => {
     expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("keeps unavailable production writes local without exposing implementation notices on Links", () => {
-    const update = vi.fn();
-    const repository = mockRepository(update);
+  it("does not fall back to a local-only save when a production Links handler is unavailable", async () => {
     render(<MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" resume={snapshot()}
-      repository={repository} onProfileSaved={() => {}} /></MemoryRouter>);
-    fireEvent.change(screen.getByLabelText("GitHub label"), { target: { value: "Local label" } });
+    /></MemoryRouter>);
+    const file = new File(["%PDF test"], "pending-resume.pdf", { type: "application/pdf" });
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+    expect(screen.getByRole("button", { name: "Save site & link changes" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
-    expect(update).not.toHaveBeenCalled();
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Production writes are unavailable for this section.");
+    expect(screen.getByText("Selected: pending-resume.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
   it("does not expose a write action before auth or for a non-admin", async () => {

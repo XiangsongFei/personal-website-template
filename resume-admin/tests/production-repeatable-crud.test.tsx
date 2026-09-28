@@ -2,10 +2,12 @@ import { StrictMode } from "react";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useNavigate } from "react-router-dom";
+import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient } from "../src/auth/supabase";
 import { fixtureSections } from "../src/fixtures";
+import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import type { ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
 import type { ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, Locale, StatusItem } from "../src/model";
@@ -91,6 +93,10 @@ function open(spec: { path: string }, repository: ResumeRepository, store = new 
   return { ...render(strict ? <StrictMode>{tree}</StrictMode> : tree), store };
 }
 function save() { fireEvent.click(document.querySelector(".save-bar .button.primary") as HTMLButtonElement); }
+function NavigateToLinks() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate("/links")}>Open Links</button>;
+}
 async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextAreaElement> {
   await waitFor(() => expect(document.getElementById(id)).toBeTruthy());
   return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
@@ -1002,6 +1008,43 @@ describe("Batch 6A production repeatable CRUD", () => {
     await screen.findByText("No unsaved changes");
     expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { educationLabel: "Learning" });
     expect(siteText.methods.updateNavigationLabel).toHaveBeenCalledWith(resumeId, expect.any(String), "zh", "经历（更新）");
+  });
+
+  it("saves a PDF after SPA navigation with only the canonical resume ID available", async () => {
+    const { repository, methods } = makeRepository("skills");
+    const savedPdfUrl = "https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=spa-fallback";
+    methods.uploadResumePdf.mockResolvedValueOnce(savedPdfUrl);
+    const canonicalResume: LoadedResume = {
+      resumeId,
+      siteKey: "example-cv",
+      isPublished: true,
+      updatedAt: null,
+      sections: structuredClone(fixtureSections),
+    };
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/overview"]}>
+      <NavigateToLinks />
+      <App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError=""
+        resume={canonicalResume} repository={repository} />
+    </MemoryRouter></UiLocaleProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Links" }));
+    const file = new File(["%PDF-1.7 test"], "spa-resume-zh.pdf", { type: "application/pdf" });
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+
+    expect(screen.getByText("Selected: spa-resume-zh.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save site & link changes" }).hasAttribute("disabled")).toBe(false);
+    expect(methods.uploadResumePdf).not.toHaveBeenCalled();
+
+    save();
+
+    await screen.findByText("Site & link changes saved.");
+    expect(methods.uploadResumePdf).toHaveBeenCalledTimes(1);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith("zh", file);
+    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { portfolioHref: savedPdfUrl });
+    expect(screen.getByRole("link", { name: "Current PDF: spa-resume-zh.pdf" }).getAttribute("href")).toBe(savedPdfUrl);
+    expect(screen.queryByText("Selected: spa-resume-zh.pdf")).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
   it.each([
