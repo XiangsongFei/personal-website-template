@@ -359,9 +359,10 @@ function PageHeadingWithAction({ title, description, action }: { title: string; 
   </div>;
 }
 
-function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading }: {
+function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, hideLabelWhenExpanded = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading }: {
   items: T[]; onChange: (items: T[]) => void; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode; groupLabel: string; addLabel?: string; allowMultipleOpen?: boolean; confirmedItems?: T[];
+  hideLabelWhenExpanded?: boolean;
   onConfirmedDelete?: (id: string) => void; deleteDisabled?: (id: string) => boolean;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
   sectionHeading?: { title: string; description: string };
@@ -403,7 +404,7 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
       const itemLabel = label(item, index) || t("New item");
       const isOpen = allowMultipleOpen ? openIds.has(item.id) : openId === item.id;
       return <article className="item-card" key={item.id}>
-        <div className="item-card-heading"><div>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3>{itemLabel}</h3></>}</div>
+        <div className="item-card-heading"><div>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3 className={hideLabelWhenExpanded && isOpen ? "visually-hidden" : undefined}>{itemLabel}</h3></>}</div>
           <div className="item-actions">
             <button type="button" onClick={() => toggleOpen(item.id, isOpen)} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${itemLabel}`}>{isOpen ? t("Close") : t("Edit")}</button>
             <button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`${t("Move")} ${itemLabel} ${t("up")}`}>↑</button>
@@ -1805,7 +1806,7 @@ function Contact() {
         onChange={translations => onChange({ ...contact, translations })}
         fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true }]} />
       </div>
-      <div className="panel"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen items={contact.focus} confirmedItems={confirmed.focus}
+      <div className="panel"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen hideLabelWhenExpanded items={contact.focus} confirmedItems={confirmed.focus}
         onChange={focus => onChange({ ...contact, focus })}
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
@@ -1813,7 +1814,7 @@ function Contact() {
         render={(item, change, base) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
-      <div className="panel"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen items={contact.status} confirmedItems={confirmed.status}
+      <div className="panel"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded items={contact.status} confirmedItems={confirmed.status}
         onChange={status => onChange({ ...contact, status })}
         onConfirmedDelete={id => onChange({ ...contact, status: renumber(contact.status.filter(item => item.id !== id)) })}
         create={(id, position): StatusItem => ({ id, position, statusType: "open", translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}

@@ -1088,6 +1088,10 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(within(statusCards()[1]).getByRole("button", { name: "Edit Open to Discussions" }));
     expect(focus.querySelectorAll(".item-card-body")).toHaveLength(2);
     expect(status.querySelectorAll(".item-card-body")).toHaveLength(2);
+    expect(Array.from(focus.querySelectorAll(".item-card-heading h3")).every(heading => heading.classList.contains("visually-hidden"))).toBe(true);
+    expect(Array.from(status.querySelectorAll(".item-card-heading h3")).every(heading => heading.classList.contains("visually-hidden"))).toBe(true);
+    expect(within(focusCards()[1]).getByRole("button", { name: "Close editor for Projects & Practice" })).toBeTruthy();
+    expect(within(statusCards()[1]).getByRole("button", { name: "Close editor for Open to Discussions" })).toBeTruthy();
 
     fireEvent.click(within(focusCards()[1]).getByRole("button", { name: "Move Projects & Practice up" }));
     expect(focusCards().map(card => Boolean(card.querySelector(".item-card-body")))).toEqual([true, true]);
@@ -1097,6 +1101,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(within(focusCards()[0]).getByRole("button", { name: "Close editor for Projects & Practice" }));
     expect(focus.querySelectorAll(".item-card-body")).toHaveLength(1);
     expect(status.querySelectorAll(".item-card-body")).toHaveLength(2);
+    expect(focusCards()[0].querySelector(".item-card-heading h3")?.textContent).toBe("Projects & Practice");
 
     fireEvent.click(within(focusCards()[1]).getByRole("button", { name: "Delete Data & Analysis" }));
     fireEvent.click(within(focusCards()[1]).getByRole("button", { name: "Confirm delete" }));
@@ -1119,11 +1124,22 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Add focus" : "添加关注" }));
-    expect(Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Focus"] .item-card-heading h3')).at(-1)?.textContent)
-      .toBe(locale === "en" ? "Focus 3" : "关注 3");
+    expect(screen.getByRole("button", { name: locale === "en" ? "Close editor for Focus 3" : "关闭编辑器： 关注 3" })).toBeTruthy();
+    const newFocus = Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Focus"] .item-card')).at(-1)!;
+    expect(newFocus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(within(newFocus).getByLabelText(locale === "en" ? "Chinese Focus title" : "中文 关注标题")).toBeTruthy();
+    expect(within(newFocus).getByLabelText(locale === "en" ? "English Focus title" : "英文 关注标题")).toBeTruthy();
+    fireEvent.click(within(newFocus).getByRole("button", { name: locale === "en" ? "Close editor for Focus 3" : "关闭编辑器： 关注 3" }));
+    expect(newFocus.querySelector(".item-card-heading h3")?.textContent).toBe(locale === "en" ? "Focus 3" : "关注 3");
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Add status" : "添加状态" }));
-    expect(Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Status"] .item-card-heading h3')).at(-1)?.textContent)
-      .toBe(locale === "en" ? "Status 3" : "状态 3");
+    expect(screen.getByRole("button", { name: locale === "en" ? "Close editor for Status 3" : "关闭编辑器： 状态 3" })).toBeTruthy();
+    const newStatus = Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Status"] .item-card')).at(-1)!;
+    expect(newStatus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(within(newStatus).getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" })).toBeTruthy();
+    expect(within(newStatus).getByLabelText(locale === "en" ? "Chinese Status title" : "中文 状态标题")).toBeTruthy();
+    expect(within(newStatus).getByLabelText(locale === "en" ? "English Status title" : "英文 状态标题")).toBeTruthy();
+    fireEvent.click(within(newStatus).getByRole("button", { name: locale === "en" ? "Close editor for Status 3" : "关闭编辑器： 状态 3" }));
+    expect(newStatus.querySelector(".item-card-heading h3")?.textContent).toBe(locale === "en" ? "Status 3" : "状态 3");
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Cancel changes" : "取消修改" }));
     expect(screen.getByText(locale === "en" ? "No unsaved changes" : "没有未保存修改")).toBeTruthy();
     expect(scope.querySelectorAll('[aria-label="Current Focus"] .item-card')).toHaveLength(2);
@@ -1138,6 +1154,68 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(css).toContain(".contact-editor-scope .save-bar{border-top:0}");
     expect(css).toContain(".contact-editor-scope button:focus:not(:focus-visible)");
     expect(css).toContain(".contact-editor-scope button:focus-visible{outline:2px solid #77766f;outline-offset:2px}");
+  });
+
+  it("hides expanded Contact summaries but keeps editable titles, cancel, and save behavior", async () => {
+    const contact = makeRepository("skills");
+    open({ path: "/contact" }, contact.repository);
+    await screen.findByLabelText("English Section label");
+
+    const focus = document.querySelector('[aria-label="Current Focus"]') as HTMLElement;
+    const focusCard = focus.querySelector<HTMLElement>(".item-card")!;
+    expect(focusCard.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(within(focusCard).getByLabelText("Chinese Focus title")).toBeTruthy();
+    expect(within(focusCard).getByLabelText("English Focus title")).toBeTruthy();
+    expect(within(focusCard).getByRole("button", { name: "Close editor for Data & Analysis" })).toBeTruthy();
+
+    fireEvent.change(within(focusCard).getByLabelText("Chinese Focus title"), { target: { value: "临时标题" } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((within(focusCard).getByLabelText("Chinese Focus title") as HTMLInputElement).value).toBe("数据与分析");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+
+    fireEvent.change(within(focusCard).getByLabelText("Chinese Focus title"), { target: { value: "已保存标题" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", "zh", { title: "已保存标题", detail: "" });
+  });
+
+  it("hides the expanded Status summary while retaining type and bilingual controls", async () => {
+    const contact = makeRepository("skills");
+    open({ path: "/contact" }, contact.repository);
+    await screen.findByLabelText("English Section label");
+
+    const status = document.querySelector('[aria-label="Current Status"]') as HTMLElement;
+    const statusCard = status.querySelector<HTMLElement>(".item-card")!;
+    expect(statusCard.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(within(statusCard).getByRole("combobox", { name: "Status type" })).toBeTruthy();
+    expect(within(statusCard).getByLabelText("Chinese Status title")).toBeTruthy();
+    expect(within(statusCard).getByLabelText("English Status title")).toBeTruthy();
+    expect(within(statusCard).getByRole("button", { name: "Close editor for Example Template" })).toBeTruthy();
+
+    const type = within(statusCard).getByRole("combobox", { name: "Status type" });
+    fireEvent.click(type);
+    const listbox = screen.getByRole("listbox", { name: "Status type" });
+    expect(within(listbox).getByRole("option", { name: "Study" })).toBeTruthy();
+    expect(within(listbox).getByRole("option", { name: "Graduation" })).toBeTruthy();
+    expect(within(listbox).getByRole("option", { name: "Open" })).toBeTruthy();
+    fireEvent.click(within(listbox).getByRole("option", { name: "Graduation" }));
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(within(statusCard).getByRole("combobox", { name: "Status type" }).textContent).toBe("Study");
+    expect(contact.methods.updateStatusType).not.toHaveBeenCalled();
+
+    fireEvent.click(within(statusCard).getByRole("button", { name: "Close editor for Example Template" }));
+    expect(statusCard.querySelector(".item-card-heading h3")?.textContent).toBe("Example Template");
+  });
+
+  it("keeps expanded summary headings for repeatable editors outside Contact", async () => {
+    const experience = makeRepository("experience");
+    open({ path: "/experience" }, experience.repository);
+    await screen.findByLabelText("English Organization");
+    const card = document.querySelector(".experience-editor-scope .item-card") as HTMLElement;
+    expect(card.querySelector(".item-card-body")).toBeTruthy();
+    expect(card.querySelector(".item-card-heading h3")?.textContent).toBe("Example Technology Company");
   });
 
   it("creates Focus, then deletes the production UUID in the same mounted session", async () => {
