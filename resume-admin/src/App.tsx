@@ -420,11 +420,12 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
   </div>;
 }
 
-function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render, headerIdentity }: {
+function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false }: {
   section: "introduction" | "education" | "experience" | "projects" | "skills" | "awards";
   title: string; description: string; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
+  hideLabelWhenExpanded?: boolean;
 }) {
   const context = useContext(EditorContext);
   const { locale } = useUiLocale();
@@ -439,13 +440,13 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
       items={items as unknown as EditableSectionItem[]} repository={context.repository} drafts={context.drafts} onChanged={context.onAdditionalChanged}
       onReload={context.onReloadAdditional} title={title} description={description} create={create as unknown as (id: string, position: number) => EditableSectionItem}
       label={label as unknown as (item: EditableSectionItem, index: number) => string} render={render as unknown as (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void) => ReactNode}
-      headerIdentity={headerIdentity as unknown as ProductionRepeatableProps["headerIdentity"]} /></div>;
+      headerIdentity={headerIdentity as unknown as ProductionRepeatableProps["headerIdentity"]} hideLabelWhenExpanded={hideLabelWhenExpanded} /></div>;
   }
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} sectionHeading={useActionHeading ? { title, description } : undefined} />}
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description } : undefined} />}
   </SectionForm></div>;
 }
 
@@ -457,10 +458,11 @@ type ProductionRepeatableProps = {
   title: string; description: string; create: (id: string, position: number) => EditableSectionItem;
   label: (item: EditableSectionItem, index: number) => string; render: (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void, confirmed?: EditableSectionItem) => ReactNode;
   headerIdentity?: (item: EditableSectionItem, index: number, itemLabel: string, onChange: (item: EditableSectionItem) => void) => ReactNode;
+  hideLabelWhenExpanded?: boolean;
 };
 
 function ProductionRepeatableSection({ section, resumeId, items, repository, drafts, onChanged, onReload,
-  title, description, create, label, render, headerIdentity }: ProductionRepeatableProps) {
+  title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false }: ProductionRepeatableProps) {
   const { t, locale } = useUiLocale();
   const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave } = useContext(EditorContext);
   const stored = drafts.get(section) as ProductionListState | undefined;
@@ -689,7 +691,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const useActionHeading = section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <section className="page-section" aria-busy={editor.saving}>
     {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-    <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"}
+    <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
       onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
       headerIdentity={headerIdentity}
       sectionHeading={useActionHeading ? { title, description } : undefined} />
@@ -1661,7 +1663,7 @@ function AwardFields({ item, confirmed, onChange }: {
 
 function Awards() {
   const { t, locale } = useUiLocale();
-  return <RepeatableSection<AwardItem> section="awards" title="Awards" description=""
+  return <RepeatableSection<AwardItem> section="awards" title="Awards" description="" hideLabelWhenExpanded
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { name: "", year: "" }, en: { name: "", year: "" } } })}
     label={(item, index) => item.translations[locale].name || item.translations[locale === "zh" ? "en" : "zh"].name || `${locale === "zh" ? "荣誉奖项" : t("Award")} ${index + 1}`}
     render={(item, onChange, confirmed) => <AwardFields item={item} confirmed={confirmed} onChange={onChange} />} />;

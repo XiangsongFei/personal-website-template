@@ -559,7 +559,18 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(Array.from(scope.querySelectorAll<HTMLElement>(".item-card-heading h3"), heading => heading.textContent)).toEqual([
       "Other locale award", locale === "zh" ? "荣誉奖项 2" : "Award 2", locale === "zh" ? "荣誉奖项 3" : "Award 3",
     ]);
-    const body = scope.querySelector(".item-card-body")!;
+    const [expandedCard, ...collapsedCards] = Array.from(scope.querySelectorAll<HTMLElement>(".item-card"));
+    const expandedTitle = expandedCard.querySelector<HTMLElement>(".item-card-heading h3")!;
+    expect(expandedTitle.classList.contains("visually-hidden")).toBe(true);
+    expect(within(expandedCard).getByRole("button", { name: /(Close editor for|关闭编辑器：)\s*Other locale award/ })).toBeTruthy();
+    expect(within(expandedCard).getByLabelText(locale === "zh" ? "中文 荣誉名称" : "Chinese Award name")).toBeTruthy();
+    expect(within(expandedCard).getByLabelText(locale === "zh" ? "英文 荣誉名称" : "English Award name")).toBeTruthy();
+    expect(expandedCard.querySelectorAll(".awards-year-field input")).toHaveLength(1);
+    expect(collapsedCards.every(card => !card.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden"))).toBe(true);
+    expect(collapsedCards.map(card => card.querySelector(".item-card-heading h3")?.textContent)).toEqual([
+      locale === "zh" ? "荣誉奖项 2" : "Award 2", locale === "zh" ? "荣誉奖项 3" : "Award 3",
+    ]);
+    const body = expandedCard.querySelector(".item-card-body")!;
     expect(body.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     expect(Array.from(body.querySelector<HTMLElement>(".bilingual-column-headings")!.children, heading => heading.textContent)).toEqual([
       "", locale === "zh" ? "中文" : "Chinese", "English", locale === "zh" ? "年份" : "Year",
@@ -567,6 +578,9 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(Array.from(body.querySelectorAll<HTMLElement>(".bilingual-field-pair h3"), field => field.textContent)).toEqual([locale === "zh" ? "荣誉名称" : "Award name"]);
     const yearInput = body.querySelector<HTMLInputElement>(".awards-year-field input")!;
     expect(yearInput.closest(".awards-name-year-pair")).toBe(body.querySelector(".bilingual-field-pair"));
+    fireEvent.click(within(expandedCard).getByRole("button", { name: /(Close editor for|关闭编辑器：)\s*Other locale award/ }));
+    expect(expandedTitle.classList.contains("visually-hidden")).toBe(false);
+    expect(expandedTitle.textContent).toBe("Other locale award");
     expect(screen.getByRole("button", { name: locale === "zh" ? "保存荣誉奖项修改" : "Save award changes" })).toBeTruthy();
     expect(scope.textContent).not.toMatch(/Save production changes|保存到生产环境|Changes saved to production|修改已保存到生产环境/);
   });
