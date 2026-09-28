@@ -9,7 +9,7 @@ import { ResumeLoader } from "../src/data/ResumeLoader";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import type { ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
-import { freezeExistingScrollSnapshot, isScrollSnapshotFrozen, resetScrollSnapshotFreezesForTests, writeStoredScrollPosition } from "../src/refreshState";
+import { freezeExistingScrollSnapshot, isScrollSnapshotFrozen, observeUserScroll, resetScrollSnapshotFreezesForTests, writeStoredScrollPosition } from "../src/refreshState";
 
 const resume = {
   resumeId: "refresh-resume", siteKey: "example-cv" as const, isPublished: true, updatedAt: null,
@@ -56,6 +56,76 @@ afterEach(() => {
 describe("route-scoped refresh restoration", () => {
   const resumePaths = ["/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links"];
 
+  it("consumes a wheel authorization after its resulting scroll instead of allowing a later reset to zero", () => {
+    const key = scrollKey("/profile", "editor");
+    window.sessionStorage.setItem(key, "300");
+    const stopObserving = observeUserScroll(window, position => writeStoredScrollPosition("/profile", "editor", position));
+
+    fireEvent.wheel(window);
+    scrollOwner().scrollTop = 300;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+
+    // A later event with no new input (as with Safari's settling/layout scroll)
+    // cannot reuse the first wheel event's permission.
+    scrollOwner().scrollTop = 0;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+    stopObserving();
+  });
+
+  it("does not persist Safari negative overscroll or the following zero without fresh input", () => {
+    const key = scrollKey("/introduction", "editor");
+    window.sessionStorage.setItem(key, "300");
+    scrollOwner().scrollTop = 300;
+    const stopObserving = observeUserScroll(window, position => writeStoredScrollPosition("/introduction", "editor", position));
+
+    fireEvent.wheel(window);
+    scrollOwner().scrollTop = -2;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+    expect(window.sessionStorage.getItem(key)).not.toBe("-2");
+
+    scrollOwner().scrollTop = 0;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+    stopObserving();
+  });
+
+  it("does not freeze a negative Safari viewport overscroll as a zero refresh snapshot", () => {
+    const key = scrollKey("/profile", "editor");
+    window.sessionStorage.setItem(key, "300");
+    open("/profile", { resume });
+
+    scrollOwner().scrollTop = -2;
+    fireEvent.keyDown(window, { key: "r", metaKey: true });
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+  });
+
+  it("allows fresh genuine user intent to save an exact zero position", () => {
+    const key = scrollKey("/experience", "editor");
+    window.sessionStorage.setItem(key, "300");
+    scrollOwner().scrollTop = 300;
+    const stopObserving = observeUserScroll(window, position => writeStoredScrollPosition("/experience", "editor", position));
+
+    fireEvent.wheel(window);
+    scrollOwner().scrollTop = 0;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("0");
+    stopObserving();
+  });
+
+  it("does not persist programmatic scroll changes without user input", () => {
+    const key = scrollKey("/projects", "editor");
+    window.sessionStorage.setItem(key, "300");
+    const stopObserving = observeUserScroll(window, position => writeStoredScrollPosition("/projects", "editor", position));
+
+    scrollOwner().scrollTop = 420;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("300");
+    stopObserving();
+  });
+
   it.each(resumePaths)("keeps the Editor scroll owner isolated over two reloads for %s", path => {
     const key = scrollKey(path, "editor");
     window.sessionStorage.setItem(key, "240");
@@ -78,6 +148,38 @@ describe("route-scoped refresh restoration", () => {
     const third = open(path, { resume }, true);
     expect(scrollOwner().scrollTop).toBe(0);
     third.unmount();
+  });
+
+  it.each(["/profile", "/introduction", "/experience"])("captures Document-targeted viewport scroll and restores %s without a later route-focus jump", async path => {
+    const key = scrollKey(path, "editor");
+    const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+      if (this.classList.contains("resume-preview-panel")) return { width: 500, top: 0 } as DOMRect;
+      if (this.classList.contains("resume-preview-viewport")) return { width: 500, top: 0 } as DOMRect;
+      if (this.id.startsWith("preview-")) return { width: 300, top: 200 } as DOMRect;
+      return nativeRect.call(this);
+    });
+
+    const first = open(path, { resume });
+    fireEvent.wheel(window);
+    scrollOwner().scrollTop = 620;
+    document.dispatchEvent(new Event("scroll"));
+    expect(window.sessionStorage.getItem(key)).toBe("620");
+    first.unmount();
+
+    scrollOwner().scrollTop = 0;
+    const restored = open(path, { resume }, true);
+    await waitFor(() => expect(scrollOwner().scrollTop).toBe(620));
+    expect(screen.getByRole("button", { name: "Editor" }).getAttribute("aria-pressed")).toBe("true");
+
+    // Preview layout/focus observers may run after the saved position has
+    // been restored. Editor refresh must not treat that as route entry.
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      MockResizeObserver.notify();
+    });
+    expect(scrollOwner().scrollTop).toBe(620);
+    restored.unmount();
   });
 
   it.each(resumePaths)("keeps the Preview mode and document scroll position isolated over two reloads for %s", path => {
@@ -338,7 +440,7 @@ describe("route-scoped refresh restoration", () => {
     window.dispatchEvent(new Event("beforeunload"));
     expect(isScrollSnapshotFrozen("/skills", "editor")).toBe(true);
     expect(window.sessionStorage.getItem(key)).toBe("700");
-    freezeExistingScrollSnapshot("/skills", "editor", "beforeunload");
+    freezeExistingScrollSnapshot("/skills", "editor");
     writeStoredScrollPosition("/skills", "editor", 920);
     expect(window.sessionStorage.getItem(key)).toBe("700");
   });

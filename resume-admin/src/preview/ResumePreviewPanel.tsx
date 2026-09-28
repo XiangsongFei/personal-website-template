@@ -14,10 +14,19 @@ function scrollPreviewTarget(viewport: HTMLElement, target: HTMLElement) {
   const distance = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
   if (viewport.dataset.previewScrollMode === "document") {
     const owner = document.scrollingElement ?? document.documentElement;
-    owner.scrollTop += distance;
+    const stickyNav = viewport.querySelector<HTMLElement>(".resume-preview-sticky-nav");
+    const stickyTop = Number.parseFloat(stickyNav ? getComputedStyle(stickyNav).top : "") || 0;
+    const stickyHeight = stickyNav?.getBoundingClientRect().height ?? 0;
+    owner.scrollTop += target.getBoundingClientRect().top - stickyTop - stickyHeight;
   } else {
     viewport.scrollTop += distance;
   }
+}
+
+function renderedPaintHeight(element: HTMLElement) {
+  const height = element.getBoundingClientRect().height || element.offsetHeight || element.scrollHeight;
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  return Math.ceil(height * devicePixelRatio) / devicePixelRatio;
 }
 
 function MarkedText({ children, modified, review = false }: { children: ReactNode; modified: boolean; review?: boolean }) {
@@ -67,10 +76,30 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const navCanvasRef = useRef<HTMLDivElement>(null);
   const educationRef = useRef<HTMLElement>(null);
   const [scale, setScale] = useState(1);
-  const [canvasHeight, setCanvasHeight] = useState(0);
+  const [canvasRenderedHeight, setCanvasRenderedHeight] = useState(0);
+  const [navRenderedHeight, setNavRenderedHeight] = useState(0);
+  const [workspaceTabsHeight, setWorkspaceTabsHeight] = useState(0);
   const hasContent = content !== null;
+  const stickyTop = typeof window === "undefined"
+    ? 68
+    : (Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--shell-header-height")) || 68) + workspaceTabsHeight;
+
+  useLayoutEffect(() => {
+    const tabs = panelRef.current?.parentElement?.querySelector<HTMLElement>(".editor-preview-toggle");
+    if (!tabs) return;
+    const updateHeight = () => setWorkspaceTabsHeight(tabs.getBoundingClientRect().height);
+    updateHeight();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateHeight) : null;
+    observer?.observe(tabs);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -91,16 +120,38 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const updateHeight = () => setCanvasHeight(canvas.offsetHeight || canvas.scrollHeight);
+    const updateHeight = () => setCanvasRenderedHeight(renderedPaintHeight(canvas));
     updateHeight();
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(updateHeight);
       observer.observe(canvas);
-      return () => observer.disconnect();
+      window.addEventListener("resize", updateHeight);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("resize", updateHeight);
+      };
     }
     window.addEventListener("resize", updateHeight);
     return () => window.removeEventListener("resize", updateHeight);
-  }, [content, locale, section]);
+  }, [content, locale, section, scale]);
+
+  useLayoutEffect(() => {
+    const navCanvas = navCanvasRef.current;
+    if (!navCanvas) return;
+    const updateHeight = () => setNavRenderedHeight(renderedPaintHeight(navCanvas));
+    updateHeight();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(updateHeight);
+      observer.observe(navCanvas);
+      window.addEventListener("resize", updateHeight);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("resize", updateHeight);
+      };
+    }
+    window.addEventListener("resize", updateHeight);
+    return () => window.removeEventListener("resize", updateHeight);
+  }, [content, locale, scale]);
 
   useLayoutEffect(() => {
     if (preserveScroll || (!focusDocumentScroll && viewportRef.current?.dataset.previewScrollMode === "document")) return;
@@ -156,27 +207,35 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
     <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode="document" data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
-      {content && text && <div className="resume-preview-stage" style={{ height: `${canvasHeight * scale}px` }}>
-        <div className="resume-preview-canvas" ref={canvasRef} style={{ transform: `scale(${scale})` }}>
-          <div className="resume-preview-page">
-            <div className="resume-preview-sticky-nav">
-              <nav aria-label="Public resume navigation">
-                <a className="resume-preview-nav-name" href="#preview-about">{content.profile.navAboutLabel[locale]}</a>
-                <div className="resume-preview-nav-links">
-                  {text.nav.map((item, index) => {
-                    const itemId = entryIdentities?.navigation[index];
-                    const id = ["experience", "projects", "skills", "awards", "contact"][index] ?? "education";
-                    return <a aria-label={`${t("Resume preview")} ${item}`} href={`#preview-${id}`} key={`${item}-${index}`} onClick={event => {
-                      event.preventDefault();
-                      const target = viewportRef.current?.querySelector<HTMLElement>(`#preview-${id}`);
-                      const viewport = viewportRef.current;
-                      if (target && viewport) scrollPreviewTarget(viewport, target);
-                    }} data-preview-item-id={itemId}><MarkedText modified={differsByIdentity(item, itemId, confirmedEntryIdentities?.navigation, confirmedText?.nav, index)}>{item}</MarkedText></a>;
-                  })}
-                  <button type="button" aria-label={t("Preview language")} onClick={() => onLocaleChange(locale === "zh" ? "en" : "zh")}>{locale === "zh" ? "EN" : "中文"}</button>
-                </div>
-              </nav>
-            </div>
+      {content && text && <div className="resume-preview-stage" style={{ height: `${navRenderedHeight + canvasRenderedHeight}px` }}>
+        <div className="resume-preview-sticky-nav" style={{ top: `${stickyTop}px`, height: `${navRenderedHeight}px` }}>
+          <div className="resume-preview-nav-canvas" ref={navCanvasRef} style={{ transform: `scale(${scale})` }}>
+            <nav aria-label="Public resume navigation">
+              <a className="resume-preview-nav-name" href="#preview-about" onClick={event => {
+                event.preventDefault();
+                const target = viewportRef.current?.querySelector<HTMLElement>("#preview-about");
+                const viewport = viewportRef.current;
+                if (target && viewport) scrollPreviewTarget(viewport, target);
+              }}>{content.profile.navAboutLabel[locale]}</a>
+              <div className="resume-preview-nav-links">
+                {text.nav.map((item, index) => {
+                  const itemId = entryIdentities?.navigation[index];
+                  const id = ["experience", "projects", "skills", "awards", "contact"][index] ?? "education";
+                  return <a aria-label={`${t("Resume preview")} ${item}`} href={`#preview-${id}`} key={`${item}-${index}`} onClick={event => {
+                    event.preventDefault();
+                    const target = viewportRef.current?.querySelector<HTMLElement>(`#preview-${id}`);
+                    const viewport = viewportRef.current;
+                    if (target && viewport) scrollPreviewTarget(viewport, target);
+                  }} data-preview-item-id={itemId}><MarkedText modified={differsByIdentity(item, itemId, confirmedEntryIdentities?.navigation, confirmedText?.nav, index)}>{item}</MarkedText></a>;
+                })}
+                <button type="button" aria-label={t("Preview language")} onClick={() => onLocaleChange(locale === "zh" ? "en" : "zh")}>{locale === "zh" ? "EN" : "中文"}</button>
+              </div>
+            </nav>
+          </div>
+        </div>
+        <div className="resume-preview-content-clip" style={{ height: `${canvasRenderedHeight}px` }}>
+          <div className="resume-preview-canvas" ref={canvasRef} style={{ transform: `scale(${scale})` }}>
+            <div className="resume-preview-page">
             <section className="resume-preview-hero" id="preview-about">
               <div className="resume-preview-hero-grid">
                 <div className="resume-preview-hero-copy">
@@ -310,6 +369,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
                   </div>
                 </div>
               </section>
+            </div>
             </div>
           </div>
         </div>

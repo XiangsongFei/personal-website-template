@@ -98,13 +98,50 @@ describe("Profile and Education live-preview prototype", () => {
     expect(css).not.toMatch(/\.resume-preview-(?:panel|viewport|stage)[^}]*max-height/);
     expect(css).toContain("@container preview-stage (min-width:500px){.resume-preview-hero{padding-right:32px;padding-left:32px}.resume-preview-hero-grid{grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:16px}}");
     expect(css).not.toContain("@media(min-width:1440px){.resume-preview-hero");
-    expect(css).toContain(".resume-preview-sticky-nav{position:sticky;top:var(--shell-header-height,68px)");
+    expect(css).toContain(".resume-preview-sticky-nav{position:sticky;top:var(--shell-header-height,68px);z-index:3;width:100%;background:#fff}");
+    expect(css).toContain(".resume-preview-nav-canvas{position:absolute;top:0;left:0;width:980px;padding:16px 49px;transform-origin:top left}");
+    const previewStage = panel.querySelector(".resume-preview-stage") as HTMLElement;
+    const stickyNav = panel.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const contentClip = panel.querySelector(".resume-preview-content-clip") as HTMLElement;
+    const previewCanvas = panel.querySelector(".resume-preview-canvas") as HTMLElement;
+    expect(stickyNav.parentElement).toBe(previewStage);
+    expect(stickyNav.nextElementSibling).toBe(contentClip);
+    expect(contentClip.parentElement).toBe(previewStage);
+    expect(contentClip.firstElementChild).toBe(previewCanvas);
+    expect(stickyNav.querySelector("nav[aria-label='Public resume navigation']")).toBeTruthy();
+    expect(previewCanvas.querySelector(".resume-preview-sticky-nav")).toBeNull();
+    expect(css).toContain(".resume-preview-content-clip{position:relative;z-index:0;width:100%;overflow:clip;isolation:isolate}");
+    expect(css).not.toMatch(/\.resume-preview-content-clip[^}]*overflow:(?:auto|scroll)/);
+    expect((stickyNav.querySelector(".resume-preview-nav-canvas") as HTMLElement).style.transform).toBe("scale(1)");
+    expect(stickyNav.style.top).toBe("68px");
     expect(css).toContain("max-width:1360px");
     expect(css).toContain("clamp(500px,calc(50vw - 155px),650px)");
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
 
     fireEvent.click(editorTab);
     expect(editorTab.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("rounds the sticky and clipped canvas bounds up to a device pixel", () => {
+    const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+      if (this.classList.contains("resume-preview-nav-canvas")) return { height: 40.25 } as DOMRect;
+      if (this.classList.contains("resume-preview-canvas")) return { height: 210.25 } as DOMRect;
+      return nativeRect.call(this);
+    });
+
+    open("/profile");
+
+    const viewport = screen.getByTestId("resume-preview");
+    const stickyNav = viewport.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const contentClip = viewport.querySelector(".resume-preview-content-clip") as HTMLElement;
+    const stage = viewport.querySelector(".resume-preview-stage") as HTMLElement;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    const expectedNavCoverage = Math.ceil(40.25 * devicePixelRatio) / devicePixelRatio;
+    const expectedCanvasCoverage = Math.ceil(210.25 * devicePixelRatio) / devicePixelRatio;
+    expect(Number.parseFloat(stickyNav.style.height)).toBe(expectedNavCoverage);
+    expect(Number.parseFloat(contentClip.style.height)).toBe(expectedCanvasCoverage);
+    expect(Number.parseFloat(stage.style.height)).toBe(expectedNavCoverage + expectedCanvasCoverage);
   });
 
   it("renders Profile as a public-style hero followed by the beginning of Education", () => {

@@ -13,47 +13,39 @@ export type WorkspaceScrollMode = "editor" | "preview";
 const UI_RESTORE_STORAGE_PREFIX = "example-cv-cms:ui:";
 const frozenScrollSnapshots = new Set<string>();
 
-function isRefreshDiagnosticsEnabled(): boolean {
-  if (!import.meta.env.DEV || typeof window === "undefined") return false;
-  try { return window.sessionStorage.getItem(`${UI_RESTORE_STORAGE_PREFIX}debug-scroll`) === "1"; } catch { return false; }
-}
-
-/** Opt-in development-only lifecycle trace. Enable with sessionStorage key `example-cv-cms:ui:debug-scroll=1`. */
-export function diagnoseRefreshScroll(stage: string, details: Record<string, unknown>): void {
-  if (isRefreshDiagnosticsEnabled()) console.debug("[resume-scroll]", stage, details);
-}
-
 export function scrollPositionStorageKey(pathname: string, mode: WorkspaceScrollMode): string {
   return `${UI_RESTORE_STORAGE_PREFIX}scroll:${pathname}:${mode}`;
 }
 
+/** Return null instead of treating a Safari negative rubber-band position as a real top coordinate. */
+export function readDocumentScrollPosition(): number | null {
+  const { position, negativeOverscroll } = getScrollPosition(window);
+  return negativeOverscroll ? null : position;
+}
+
 /** Freeze and persist the exact current coordinate for the remainder of this document. Zero is valid. */
-export function freezeScrollSnapshot(pathname: string, mode: WorkspaceScrollMode, position: number, reason: string): number | null {
+export function freezeScrollSnapshot(pathname: string, mode: WorkspaceScrollMode, position: number): number | null {
   if (!Number.isFinite(position) || position < 0) return null;
   const key = scrollPositionStorageKey(pathname, mode);
   const alreadyFrozen = frozenScrollSnapshots.has(key);
   const previous = readStoredScrollPosition(pathname, mode);
   if (alreadyFrozen) {
-    diagnoseRefreshScroll("snapshot-already-frozen", { pathname, mode, key, previous, position, reason });
     return previous;
   }
   // Freeze before touching storage so callbacks dispatched immediately after this event cannot win.
   frozenScrollSnapshots.add(key);
   try { window.sessionStorage.setItem(key, String(position)); } catch { /* Scroll restoration is optional. */ }
-  diagnoseRefreshScroll("snapshot-frozen", { pathname, mode, key, previous, position, reason });
   return position;
 }
 
 /** Freeze an already-saved latest user position for non-keyboard reloads; never recalculate at unload. */
-export function freezeExistingScrollSnapshot(pathname: string, mode: WorkspaceScrollMode, reason: string): number | null {
+export function freezeExistingScrollSnapshot(pathname: string, mode: WorkspaceScrollMode): number | null {
   const key = scrollPositionStorageKey(pathname, mode);
   const existing = readStoredScrollPosition(pathname, mode);
   if (existing === null) return null;
-  const alreadyFrozen = frozenScrollSnapshots.has(key);
   frozenScrollSnapshots.add(key);
   // Migrate the old editor-only key only by copying its existing value, never by sampling geometry.
   try { window.sessionStorage.setItem(key, String(existing)); } catch { /* Scroll restoration is optional. */ }
-  diagnoseRefreshScroll(alreadyFrozen ? "unload-snapshot-preserved" : "unload-snapshot-frozen", { pathname, mode, key, existing, reason });
   return existing;
 }
 
@@ -63,9 +55,7 @@ export function isScrollSnapshotFrozen(pathname: string, mode: WorkspaceScrollMo
 
 /** A bfcache-restored document is active again and may accept new user scrolls. */
 export function resumeScrollSnapshotAfterBfcache(pathname: string, mode: WorkspaceScrollMode): void {
-  const key = scrollPositionStorageKey(pathname, mode);
-  if (!frozenScrollSnapshots.delete(key)) return;
-  diagnoseRefreshScroll("snapshot-unfrozen-after-bfcache", { pathname, mode, key });
+  frozenScrollSnapshots.delete(scrollPositionStorageKey(pathname, mode));
 }
 
 /** Simulates a fresh browser document in tests; real reloads reset this module state naturally. */
@@ -90,7 +80,6 @@ export function writeStoredScrollPosition(pathname: string, mode: WorkspaceScrol
   if (!Number.isFinite(position) || position < 0) return;
   const key = scrollPositionStorageKey(pathname, mode);
   if (frozenScrollSnapshots.has(key)) {
-    diagnoseRefreshScroll("write-blocked-frozen", { pathname, mode, key, attemptedPosition: position });
     return;
   }
   try { window.sessionStorage.setItem(key, String(position)); } catch { /* Scroll restoration is optional. */ }
@@ -100,12 +89,13 @@ export function writeStoredScrollPosition(pathname: string, mode: WorkspaceScrol
 export function observeUserScroll(
   owner: HTMLElement | Window,
   onUserScroll: (position: number) => void,
-  options: { ignoreIntent?: (event: Event) => boolean; onScrollEvent?: (position: number, authorizedByInput: boolean) => void } = {},
+  options: { ignoreIntent?: (event: Event) => boolean } = {},
 ): () => void {
   let lastPosition = getPosition(owner);
   let userIntentActive = false;
   let scrollSinceIntent = false;
   let scrollEndObserved = false;
+  let intentInvalidatedByOverscroll = false;
   let pointerActive = false;
   let touchActive = false;
   let wheelIntentActive = false;
@@ -113,7 +103,6 @@ export function observeUserScroll(
   const pressedScrollKeys = new Set<string>();
   let idleTimer: number | null = null;
   const scrollEndTarget: HTMLElement | Document | Window = typeof window !== "undefined" && owner === window ? document : owner;
-  const scrollEndSupported = "onscrollend" in scrollEndTarget;
 
   const clearIdleTimer = () => {
     if (idleTimer !== null) window.clearTimeout(idleTimer);
@@ -140,10 +129,11 @@ export function observeUserScroll(
     if (hasActiveGesture()) return;
     if (wheelIntentActive) return;
     if (!scrollSinceIntent || scrollEndObserved) userIntentActive = false;
-    else if (!scrollEndSupported) {
+    else {
       clearIdleTimer();
-      // Older engines without scrollend still need a finite end to the input
-      // session. This is only a gesture-idle fallback, never a restore delay.
+      // Gesture authorization must expire from user input/gesture end. Scroll
+      // events themselves must not extend it over later layout or rubber-band
+      // events. scrollend can revoke it sooner when the browser provides it.
       idleTimer = window.setTimeout(() => { userIntentActive = false; idleTimer = null; }, 250);
     }
   };
@@ -170,11 +160,21 @@ export function observeUserScroll(
       pressedScrollKeys.add(keyEvent.key);
     }
     if (event.type === "wheel" && (event as WheelEvent).ctrlKey) return;
-    if (event.type === "wheel") renewWheelIntent();
+    if (event.type === "wheel") {
+      renewWheelIntent();
+      if (!hasActiveGesture()) {
+        userIntentActive = false;
+        scrollSinceIntent = false;
+        scrollEndObserved = false;
+      }
+    }
     if (event.type === "pointerdown") pointerActive = true;
     if (event.type === "touchstart") touchActive = true;
-    if (!userIntentActive) { scrollSinceIntent = false; scrollEndObserved = false; }
-    userIntentActive = true;
+    if (!userIntentActive && !wheelIntentActive) { scrollSinceIntent = false; scrollEndObserved = false; }
+    // A fresh user input starts a new authorization window after any prior
+    // Safari rubber-band overscroll sequence.
+    intentInvalidatedByOverscroll = false;
+    if (event.type !== "wheel") userIntentActive = true;
     clearIdleTimer();
     // A key such as Cmd+R never arms this state. Inputs that do not produce a
     // scroll also cannot leave stale permission for a later layout scroll.
@@ -210,18 +210,25 @@ export function observeUserScroll(
     clearWheelIntentTimer();
   };
   const onScroll = () => {
-    const position = getPosition(owner);
+    const { position, negativeOverscroll } = getScrollPosition(owner);
+    if (negativeOverscroll) intentInvalidatedByOverscroll = true;
     if (position === lastPosition) return;
     lastPosition = position;
-    const authorizedByInput = userIntentActive || wheelIntentActive || hasActiveGesture();
-    options.onScrollEvent?.(position, authorizedByInput);
-    if (!authorizedByInput) return;
-    scrollSinceIntent = true;
-    onUserScroll(position);
-    if (wheelIntentActive) renewWheelIntent();
-    if (!scrollEndSupported && !hasActiveGesture()) {
-      clearIdleTimer();
-      idleTimer = window.setTimeout(() => { userIntentActive = false; idleTimer = null; }, 250);
+    const authorizedByInput = !intentInvalidatedByOverscroll && (userIntentActive || wheelIntentActive || hasActiveGesture());
+    if (authorizedByInput) {
+      scrollSinceIntent = true;
+      onUserScroll(position);
+    }
+    // A wheel event authorizes the scroll response to that input once. Do not
+    // let its timer authorize later unrelated scrolls; subsequent trackpad or
+    // wheel movement has its own wheel event and arms a new one-shot intent.
+    if (wheelIntentActive) {
+      wheelIntentActive = false;
+      clearWheelIntentTimer();
+      if (!hasActiveGesture()) {
+        userIntentActive = false;
+        scrollSinceIntent = false;
+      }
     }
   };
   const intentEvents: Array<keyof WindowEventMap> = ["wheel", "touchstart", "pointerdown", "keydown"];
@@ -231,6 +238,12 @@ export function observeUserScroll(
   owner.addEventListener("touchend", endTouch, true);
   owner.addEventListener("touchcancel", endTouch, true);
   owner.addEventListener("keyup", endKey, true);
+  // Viewport scroll events can be dispatched on Document/the root scrolling
+  // element without bubbling to Window (notably in Safari). Observe that path
+  // in capture phase as well; lastPosition de-duplicates any Window event.
+  if (typeof window !== "undefined" && owner === window) {
+    document.addEventListener("scroll", onScroll as EventListener, { passive: true, capture: true });
+  }
   owner.addEventListener("scroll", onScroll as EventListener, { passive: true });
   scrollEndTarget.addEventListener("scrollend", onScrollEnd as EventListener);
   return () => {
@@ -243,14 +256,27 @@ export function observeUserScroll(
     owner.removeEventListener("touchcancel", endTouch, true);
     owner.removeEventListener("keyup", endKey, true);
     owner.removeEventListener("scroll", onScroll as EventListener);
+    if (typeof window !== "undefined" && owner === window) document.removeEventListener("scroll", onScroll as EventListener, true);
     scrollEndTarget.removeEventListener("scrollend", onScrollEnd as EventListener);
   };
 }
 
 function getPosition(owner: HTMLElement | Window): number {
+  return getScrollPosition(owner).position;
+}
+
+function getScrollPosition(owner: HTMLElement | Window): { position: number; negativeOverscroll: boolean } {
   if (typeof window !== "undefined" && owner === window) {
     const documentOwner = (document.scrollingElement as HTMLElement | null) ?? document.documentElement ?? document.body;
-    return Math.max(window.scrollY, documentOwner?.scrollTop ?? 0);
+    const candidates = [window.scrollY, documentOwner?.scrollTop ?? 0];
+    const maximum = Math.max(...candidates);
+    return {
+      position: Math.max(0, maximum),
+      // Safari may report the root position below zero while bouncing at the
+      // top. Treat a negative-only viewport state as overscroll, not a real 0.
+      negativeOverscroll: maximum <= 0 && candidates.some(value => value < 0),
+    };
   }
-  return (owner as HTMLElement).scrollTop;
+  const rawPosition = (owner as HTMLElement).scrollTop;
+  return { position: Math.max(0, rawPosition), negativeOverscroll: rawPosition < 0 };
 }

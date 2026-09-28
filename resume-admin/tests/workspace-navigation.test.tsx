@@ -99,15 +99,44 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const viewport = screen.getByTestId("resume-preview") as HTMLElement;
     const panel = viewport.closest(".resume-preview-panel") as HTMLElement;
     const target = viewport.querySelector("#preview-education") as HTMLElement;
+    const stickyNav = viewport.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const tabs = viewport.closest(".editor-preview-layout")?.querySelector(".editor-preview-toggle") as HTMLElement;
     const documentScrollOwner = document.scrollingElement ?? document.documentElement;
     vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ width: 500 } as DOMRect);
     vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 420 } as DOMRect);
+    vi.spyOn(tabs, "getBoundingClientRect").mockReturnValue({ height: 38 } as DOMRect);
+    vi.spyOn(stickyNav, "getBoundingClientRect").mockReturnValue({ top: 110, height: 50 } as DOMRect);
+    fireEvent.resize(window);
     documentScrollOwner.scrollTop = 760;
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(1080));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(1024));
+    expect(stickyNav.style.top).toBe("106px");
+  });
+
+  it.each(["about", "experience", "projects", "skills", "awards", "contact"])("keeps the clicked Preview %s section below the sticky navigation row", section => {
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const panel = viewport.closest(".resume-preview-panel") as HTMLElement;
+    const target = viewport.querySelector(`#preview-${section}`) as HTMLElement;
+    const stickyNav = viewport.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const tabs = viewport.closest(".editor-preview-layout")?.querySelector(".editor-preview-toggle") as HTMLElement;
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({ width: 500 } as DOMRect);
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 520 } as DOMRect);
+    vi.spyOn(tabs, "getBoundingClientRect").mockReturnValue({ height: 38 } as DOMRect);
+    vi.spyOn(stickyNav, "getBoundingClientRect").mockReturnValue({ top: 110, height: 50 } as DOMRect);
+    fireEvent.resize(window);
+    documentScrollOwner.scrollTop = 300;
+
+    const sectionLink = viewport.querySelector<HTMLAnchorElement>(`a[href="#preview-${section}"]`);
+    expect(sectionLink).toBeTruthy();
+    fireEvent.click(sectionLink!);
+
+    expect(documentScrollOwner.scrollTop).toBe(664);
+    expect(stickyNav.style.top).toBe("106px");
   });
 
   it("uses modified highlighting only for changed Education values, not because Education is focused", () => {

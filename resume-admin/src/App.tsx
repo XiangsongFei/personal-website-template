@@ -14,7 +14,7 @@ import { validateProfilePhoto } from "./data/profilePhoto";
 import { bilingualFieldKey, collectChangedBilingualFieldKeys, type BilingualFieldIdentity, type BilingualReviewReminder } from "./bilingualReview";
 import { UiLocaleSwitch, useUiLocale } from "./uiLocale";
 import { AdminDropdown } from "./AdminDropdown";
-import { diagnoseRefreshScroll, freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
+import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readDocumentScrollPosition, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
 
 const navigation = [
@@ -2117,32 +2117,18 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const currentMode = () => previewSection ? readPreviewMode(previewSection) : "editor";
     const currentOwnerPosition = (ownerMode: "editor" | "preview") => ownerMode === "preview" && !previewUsesDocumentScroll()
       ? (document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0)
-      : Math.max(window.scrollY, documentOwner.scrollTop);
-    const currentGeometry = () => ({
-      documentScrollTop: Math.max(window.scrollY, documentOwner.scrollTop),
-      documentScrollHeight: documentOwner.scrollHeight,
-      documentClientHeight: documentOwner.clientHeight,
-      previewScrollTop: document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? null,
-      previewScrollHeight: document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollHeight ?? null,
-      previewClientHeight: document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.clientHeight ?? null,
-    });
+      : readDocumentScrollPosition();
     const onRefreshIntent = (event: KeyboardEvent) => {
       const refreshKey = ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r")
         || event.key === "F5" || event.key === "BrowserRefresh";
       if (!refreshKey) return;
       const mode = currentMode();
       const position = currentOwnerPosition(mode);
-      const storedBeforeShortcut = readStoredScrollPosition(pathname, mode);
-      const frozenPosition = freezeScrollSnapshot(pathname, mode, position, `keyboard:${event.key}`);
-      diagnoseRefreshScroll("refresh-shortcut", {
-        pathname, mode, key: event.key, positionBeforeRefresh: position,
-        storedBeforeShortcut, frozenPosition, ...currentGeometry(),
-      });
+      if (position !== null) freezeScrollSnapshot(pathname, mode, position);
     };
-    const onNonKeyboardReload = (event: Event) => {
+    const onNonKeyboardReload = () => {
       const mode = currentMode();
-      const stored = freezeExistingScrollSnapshot(pathname, mode, event.type);
-      diagnoseRefreshScroll("non-keyboard-reload", { pathname, mode, event: event.type, stored, ...currentGeometry() });
+      freezeExistingScrollSnapshot(pathname, mode);
     };
     const onBfcachePageShow = (event: PageTransitionEvent) => {
       if (event.persisted) resumeScrollSnapshotAfterBfcache(pathname, currentMode());
@@ -2153,37 +2139,23 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     window.addEventListener("pageshow", onBfcachePageShow);
     const persistUserPosition = (mode: "editor" | "preview", position: number) => {
       const frozen = isScrollSnapshotFrozen(pathname, mode);
-      if (frozen) {
-        diagnoseRefreshScroll("user-scroll-write-blocked", { pathname, mode, position, frozen: true });
-        return;
-      }
+      if (frozen) return;
       // Once the user starts a genuine scroll gesture, that newer position owns
       // the route/mode. Do not let a still-unreachable bootstrap target apply
       // later over the user's movement.
       cancelPendingRestoration?.();
-      diagnoseRefreshScroll("authorized-user-scroll-write", { pathname, mode, position, frozen });
       writeStoredScrollPosition(pathname, mode, position);
     };
     const stopDocumentSaving = observeUserScroll(window, position => persistUserPosition(currentMode(), position), {
       ignoreIntent: event => currentMode() === "preview" && !previewUsesDocumentScroll()
         && Boolean(previewOwner && event.target instanceof Node && previewOwner.contains(event.target)),
-      onScrollEvent: (position, authorizedByInput) => diagnoseRefreshScroll("document-scroll-event", {
-        pathname, mode: currentMode(), position, authorizedByInput, frozen: isScrollSnapshotFrozen(pathname, currentMode()), ...currentGeometry(),
-      }),
     });
     let stopPreviewSaving = previewOwner && !previewUsesDocumentScroll()
-      ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position), {
-        onScrollEvent: (position, authorizedByInput) => diagnoseRefreshScroll("preview-scroll-event", {
-          pathname, mode: "preview", position, authorizedByInput, frozen: isScrollSnapshotFrozen(pathname, "preview"), ...currentGeometry(),
-        }),
-      })
+      ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position))
       : () => {};
 
     const identity = `${pathname}:${mode}`;
     const target = isInitialRefreshRoute ? readStoredScrollPosition(pathname, mode) : null;
-    if (isInitialRefreshRoute) diagnoseRefreshScroll("restoration-target-read", {
-      pathname, mode, target, key: `${UI_RESTORE_STORAGE_PREFIX}scroll:${pathname}:${mode}`, ...currentGeometry(),
-    });
     if (!isInitialRefreshRoute || target === null || !routeDataReady || restoredScrollIdentity.current === identity) {
       return () => {
         window.removeEventListener("keydown", onRefreshIntent, true);
@@ -2251,11 +2223,12 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       const maximum = Math.max(0, owner.scrollHeight - owner.clientHeight);
       // Never clamp to a bootstrap layout. The saved offset must be physically
       // reachable by this route/mode's own scroll container before completion.
-      if (maximum + maximumAllowedDifference < target) { stableFrames = 0; previousGeometry = ""; return; }
+      if (maximum + maximumAllowedDifference < target) {
+        stableFrames = 0; previousGeometry = ""; return;
+      }
       owner.scrollTop = target;
       if ((mode === "editor" || previewUsesDocumentScroll()) && Math.abs(currentPosition() - target) > maximumAllowedDifference) window.scrollTo(0, target);
       const actual = currentPosition();
-      diagnoseRefreshScroll("restoration-applied", { pathname, mode, target, actual, ...currentGeometry() });
       if (Math.abs(actual - target) > maximumAllowedDifference) { stableFrames = 0; previousGeometry = ""; return; }
 
       // Keep observing through a pair of stable rendered frames. Resize, font,
