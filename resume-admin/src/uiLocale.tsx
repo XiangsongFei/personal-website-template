@@ -25,6 +25,17 @@ const dictionary: Record<string, string> = {
   "Profile, Education, Introduction, Experience, Projects, Skills, Awards, Contact, and Links & Site Text save to production.": "个人资料、教育经历、个人简介、工作经历、项目、技能、荣誉奖项、联系信息、链接与网站文本均保存到生产环境。", "Chinese profile translation saves to production separately.": "中文个人资料将单独保存到生产环境。", "English profile translation saves to production separately.": "英文个人资料将单独保存到生产环境。", "Save Education changes": "保存教育经历修改", "Production data": "生产数据", "Fixture mode": "演示模式", "Authenticated admin": "已认证管理员", "CMS sections": "CMS 模块", "Close menu": "关闭菜单", "Open menu": "打开菜单", "Close navigation menu": "关闭导航菜单", "Section not found": "未找到模块", "Choose a CMS section from the navigation.": "请从导航中选择一个 CMS 模块。", "Return to Overview": "返回概览",
 };
 
+Object.assign(dictionary, {
+  "Skill category": "技能分类",
+  "Programming": "编程",
+  "Data & Systems": "数据与系统",
+  "Analytics": "分析",
+  "Tools": "工具",
+  "Languages": "语言",
+  "Skill group name": "名称",
+  "Skills content": "技能内容",
+});
+
 const dynamicMessagePrefixes = [
   "Reorder was only partially applied and production order could not be refreshed. Retry after checking the current order.",
   "Reorder was only partially applied; the displayed order was refreshed from production.",

@@ -46,6 +46,19 @@ describe("AdminDropdown", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("calls the opt-in same-value selection handler without changing other dropdown behavior", () => {
+    const onChange = vi.fn();
+    const onSameValueSelect = vi.fn();
+    render(<AdminDropdown id="same-value" ariaLabel="Status type" value="study" options={englishOptions}
+      onChange={onChange} onSameValueSelect={onSameValueSelect} />);
+    const trigger = screen.getByRole("combobox", { name: "Status type" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "Study" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onSameValueSelect).toHaveBeenCalledWith("study");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("supports Arrow Up/Down, Home/End, and Enter selection", () => {
     render(<Harness />);
     const trigger = screen.getByRole("combobox", { name: "Status type" });

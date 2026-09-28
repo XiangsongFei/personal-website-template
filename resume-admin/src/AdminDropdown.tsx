@@ -12,6 +12,7 @@ export function AdminDropdown<T extends string>({
   value,
   options,
   onChange,
+  onSameValueSelect,
   placeholder,
   disabled = false,
 }: {
@@ -20,6 +21,7 @@ export function AdminDropdown<T extends string>({
   value: T | null;
   options: readonly AdminDropdownOption<T>[];
   onChange: (value: T) => void;
+  onSameValueSelect?: (value: T) => void;
   placeholder?: string;
   disabled?: boolean;
 }) {
@@ -63,6 +65,7 @@ export function AdminDropdown<T extends string>({
   };
   const choose = (next: T) => {
     if (next !== value) onChange(next);
+    else onSameValueSelect?.(next);
     setOpen(false);
     triggerRef.current?.focus();
   };

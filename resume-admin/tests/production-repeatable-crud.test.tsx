@@ -17,7 +17,7 @@ const resumeId = "batch6a-resume-id";
 const cases = [
   { section: "introduction", path: "/introduction", title: "Introduction", input: "Chinese Paragraph", english: "English Paragraph", first: "这是一个双语个人网站模板。", changed: "已修改的中文段落", tableCount: 2 },
   { section: "experience", path: "/experience", title: "Experience", input: "Chinese Organization", english: "English Organization", first: "示例科技公司", changed: "已修改的中文组织", tableCount: 1 },
-  { section: "skills", path: "/skills", title: "Skills", input: "Chinese Group title", english: "English Group title", first: "编程", changed: "已修改的中文分组", tableCount: 2 },
+  { section: "skills", path: "/skills", title: "Skills", input: "Chinese Name", english: "English Name", first: "编程", changed: "已修改的中文分组", tableCount: 2 },
   { section: "awards", path: "/awards", title: "Awards", input: "Chinese Award name", english: "English Award name", first: "示例项目成果", changed: "已修改的中文荣誉", tableCount: 2 },
 ] as const;
 type Case = typeof cases[number];
@@ -97,6 +97,10 @@ function chooseStatusType(index: number, optionName: string) {
   fireEvent.click(screen.getAllByRole("combobox", { name: "Status type" })[index]);
   fireEvent.click(within(screen.getByRole("listbox", { name: "Status type" })).getByRole("option", { name: optionName }));
 }
+function chooseSkillCategory(index: number, optionName: string) {
+  fireEvent.click(screen.getAllByRole("combobox").filter(control => control.getAttribute("aria-label")?.startsWith("Skill category"))[index]);
+  fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: optionName }));
+}
 function NavigateToLinks() {
   const navigate = useNavigate();
   return <button type="button" onClick={() => navigate("/links")}>Open Links</button>;
@@ -169,7 +173,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   it.each([
     { section: "experience", path: "/experience", field: "Chinese Organization" },
     { section: "projects", path: "/projects", field: "Chinese Title" },
-    { section: "skills", path: "/skills", field: "Chinese Group title" },
+    { section: "skills", path: "/skills", field: "Chinese Name" },
     { section: "awards", path: "/awards", field: "Chinese Award name" },
   ] as const)("$section Cancel restores confirmed values without a success notice", async ({ section, path, field: fieldName }) => {
     const { repository, methods } = makeRepository(section as TestSection);
@@ -269,25 +273,218 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(scope.querySelector(".page-heading h1")?.textContent).toBe(locale === "zh" ? "技能" : "Skills");
     expect(scope.querySelector(".group-heading h2")).toBeNull();
     expect(scope.textContent).not.toMatch(/Organize bilingual skill groups|按显示顺序整理双语技能分组|Skills items/);
-    expect(Array.from(scope.querySelectorAll<HTMLElement>(".item-card-heading h3"), heading => heading.textContent)).toEqual([
-      "Other locale title", locale === "zh" ? "技能组 2" : "Skill group 2", locale === "zh" ? "技能组 3" : "Skill group 3",
+    expect(Array.from(scope.querySelectorAll<HTMLElement>(".admin-dropdown-value"), value => value.textContent)).toEqual([
+      locale === "zh" ? "自定义" : "Custom", locale === "zh" ? "自定义" : "Custom", locale === "zh" ? "自定义" : "Custom",
     ]);
+    expect(scope.querySelectorAll(".item-card-heading h3")).toHaveLength(0);
     const firstBody = scope.querySelector(".item-card-body")!;
     expect(firstBody.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     expect(firstBody.querySelectorAll(".bilingual-field-pair")).toHaveLength(2);
+    expect(firstBody.textContent).toContain(locale === "zh" ? "名称" : "Name");
+    expect(firstBody.textContent).toContain(locale === "zh" ? "技能内容" : "Skills");
+    expect(firstBody.textContent).not.toContain(locale === "zh" ? "分组标题" : "Group title");
     expect(screen.getByRole("button", { name: locale === "zh" ? "保存技能修改" : "Save skill changes" })).toBeTruthy();
+  });
+
+  it.each(["en", "zh"] as const)("Skills derives all preset dropdown values from bilingual titles in %s UI", async locale => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
+    const { repository, items } = makeRepository("skills");
+    const presets = [
+      { zh: "编程", en: "Programming" },
+      { zh: "数据与系统", en: "Data & Systems" },
+      { zh: "分析", en: "Analytics" },
+      { zh: "工具", en: "Tools" },
+      { zh: "语言", en: "Languages" },
+    ];
+    const groups = items as SkillItem[];
+    groups.splice(0, groups.length, ...presets.map((titles, index) => ({
+      ...structuredClone(groups[index % Math.max(groups.length, 1)] ?? fixtureSections.skills[0]),
+      id: `skill-preset-${index}`, sourceKey: `skill-preset-${index}`, position: index,
+      translations: { zh: { title: titles.zh, items: "技能内容" }, en: { title: titles.en, items: "Skill content" } },
+    })));
+    open({ path: "/skills" }, repository);
+    await screen.findByRole("button", { name: locale === "zh" ? "添加技能组" : "Add skill group" });
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".skills-editor-scope .admin-dropdown-value"), value => value.textContent))
+      .toEqual(presets.map(titles => titles[locale]));
+
+    const first = screen.getAllByRole("combobox")[0];
+    expect(first.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(first);
+    expect(first.getAttribute("aria-expanded")).toBe("true");
+    const listbox = screen.getByRole("listbox", { name: locale === "zh" ? "技能分类 01" : "Skill category 01" });
+    expect(within(listbox).getByRole("option", { name: presets[0][locale] }).getAttribute("aria-selected")).toBe("true");
+    expect(first.getAttribute("aria-activedescendant")).toBeTruthy();
+    fireEvent.keyDown(first, { key: "Escape" });
+    expect(first.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it.each(["en", "zh"] as const)("unknown Skills titles derive Custom without rewriting data in %s UI", async locale => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "技术能力";
+    group.translations.en.title = "Core Capabilities";
+    const original = structuredClone(group.translations);
+    open({ path: "/skills" }, repository);
+    await screen.findByRole("combobox", { name: locale === "zh" ? "技能分类 01" : "Skill category 01" });
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe(locale === "zh" ? "自定义" : "Custom");
+    expect((screen.getByLabelText(locale === "zh" ? "中文 名称" : "Chinese Name") as HTMLInputElement).value).toBe("技术能力");
+    expect((screen.getByLabelText(locale === "zh" ? "英文 名称" : "English Name") as HTMLInputElement).value).toBe("Core Capabilities");
+    expect(group.translations).toEqual(original);
+  });
+
+  it("changing a preset updates blank/default bilingual titles, marks dirty, and Cancel restores the baseline", async () => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Analytics");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("分析");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Analytics");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it.each([
+    { customized: "zh" as const, expectedCustom: "技术能力" },
+    { customized: "en" as const, expectedCustom: "Core Capabilities" },
+  ])("preset changes preserve a manually customized $customized title independently", async ({ customized, expectedCustom }) => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations[customized].title = expectedCustom;
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Data & Systems");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value)
+      .toBe(customized === "zh" ? expectedCustom : "数据与系统");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value)
+      .toBe(customized === "en" ? expectedCustom : "Data & Systems");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("selecting Custom clears preset titles and Cancel restores the Languages preset", async () => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "语言";
+    group.translations.en.title = "Languages";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Custom");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("语言");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Languages");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Languages");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it("keeps Custom after entering bilingual names, saves them, and derives Custom again after reload", async () => {
+    const { repository, items, methods } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "语言";
+    group.translations.en.title = "Languages";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Custom");
+    fireEvent.change(screen.getByLabelText("Chinese Name"), { target: { value: "人工智能" } });
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Artificial Intelligence" } });
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    save();
+    await screen.findByText("Skill changes saved.");
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("skills", resumeId, expect.any(String), "zh", expect.objectContaining({ title: "人工智能" }));
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("skills", resumeId, expect.any(String), "en", expect.objectContaining({ title: "Artificial Intelligence" }));
+
+    cleanup();
+    open({ path: "/skills" }, repository);
+    const reloadedCombo = await screen.findByRole("combobox", { name: "Skill category 01" });
+    expect(reloadedCombo.querySelector(".admin-dropdown-value")?.textContent).toBe("Custom");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("人工智能");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Artificial Intelligence");
+  });
+
+  it("preserves bilingual user-customized titles when Custom is selected", async () => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "技术能力";
+    group.translations.en.title = "Technical Skills";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Custom");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("技术能力");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Technical Skills");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it("clears only the preset side for mixed custom and preset titles", async () => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "技术能力";
+    group.translations.en.title = "Programming";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    chooseSkillCategory(0, "Custom");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("技术能力");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("opens and selects the Skills category without toggling the row, and keeps Save/Cancel behavior", async () => {
+    const { repository, methods } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    const combo = await screen.findByRole("combobox", { name: "Skill category 01" });
+    const scope = document.querySelector(".skills-editor-scope")!;
+    expect(scope.querySelector(".item-card-body")).toBeTruthy();
+    fireEvent.click(combo);
+    expect(combo.getAttribute("aria-expanded")).toBe("true");
+    const listbox = screen.getByRole("listbox", { name: "Skill category 01" });
+    expect(within(listbox).getAllByRole("option").map(option => option.textContent)).toEqual([
+      "Programming", "Data & Systems", "Analytics", "Tools", "Languages", "Custom",
+    ]);
+    fireEvent.click(within(listbox).getByRole("option", { name: "Analytics" }));
+    expect(combo.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Analytics");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("分析");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Analytics");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(scope.querySelector(".item-card-body")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Programming");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("编程");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+
+    const restoredCombo = screen.getByRole("combobox", { name: "Skill category 01" });
+    fireEvent.click(restoredCombo);
+    fireEvent.click(within(screen.getByRole("listbox", { name: "Skill category 01" })).getByRole("option", { name: "Tools" }));
+    save();
+    await screen.findByText("Skill changes saved.");
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("skills", resumeId, expect.any(String), "zh", expect.objectContaining({ title: "工具" }));
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("skills", resumeId, expect.any(String), "en", expect.objectContaining({ title: "Tools" }));
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
   it("keeps Skills expansion attached to stable item IDs through close, reorder, add, cancel, and delete", async () => {
     const { repository, methods } = makeRepository("skills", { twoItems: true });
     open({ path: "/skills" }, repository);
-    await screen.findByLabelText("Chinese Group title");
+    await screen.findByLabelText("Chinese Name");
     const scope = document.querySelector(".skills-editor-scope")!;
     const cards = () => Array.from(scope.querySelectorAll<HTMLElement>(".item-card"));
     const expanded = () => scope.querySelectorAll(".item-card-body").length;
     const initial = cards();
-    const firstTitle = initial[0].querySelector("h3")!.textContent!;
-    const secondTitle = initial[1].querySelector("h3")!.textContent!;
+    const firstTitle = "Programming";
+    const secondTitle = "Analytics";
     fireEvent.click(screen.getByRole("button", { name: `Edit ${secondTitle}` }));
     expect(expanded()).toBe(2);
     const firstInputId = initial[0].querySelector<HTMLInputElement>("input")!.id;
@@ -307,8 +504,8 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect(expanded()).toBe(2);
     expect(cards()).toHaveLength(initial.length);
-    expect(cards()[0].querySelector("h3")?.textContent).toBe(firstTitle);
-    expect(cards()[1].querySelector("h3")?.textContent).toBe(secondTitle);
+    expect(cards()[0].querySelector(".admin-dropdown-value")?.textContent).toBe(firstTitle);
+    expect(cards()[1].querySelector(".admin-dropdown-value")?.textContent).toBe(secondTitle);
 
     fireEvent.click(cards()[0].querySelector<HTMLButtonElement>(".danger-text")!);
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
@@ -324,7 +521,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     window.localStorage.setItem(UI_LOCALE_KEY, "zh");
     const { repository, methods } = makeRepository("skills");
     open({ path: "/skills" }, repository);
-    const field = await screen.findByLabelText("中文 分组标题");
+    const field = await screen.findByLabelText("中文 名称");
     fireEvent.change(field, { target: { value: "已更新技能" } });
     expect(screen.getByRole("button", { name: "保存技能修改" })).toBeTruthy();
     save();
@@ -401,7 +598,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   it.each([
     { section: "experience", path: "/experience", input: "Chinese Organization" },
     { section: "projects", path: "/projects", input: "Chinese Title" },
-    { section: "skills", path: "/skills", input: "Chinese Group title" },
+    { section: "skills", path: "/skills", input: "Chinese Name" },
     { section: "awards", path: "/awards", input: "Chinese Award name" },
   ] as const)("keeps $section expansion attached to item identity through reorder, add, and delete", async spec => {
     const { repository, items } = makeRepository(spec.section, { twoItems: true });

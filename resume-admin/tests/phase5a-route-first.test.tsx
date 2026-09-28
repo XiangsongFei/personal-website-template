@@ -14,7 +14,7 @@ const resumeId = "phase5a-resume-id";
 const specs = {
   introduction: { path: "/introduction", title: "Introduction", loader: "loadIntroduction", parents: "resume_intro_paragraphs", translations: "resume_intro_paragraph_translations", fk: "paragraph_id", input: "Chinese Paragraph", value: "Dirty introduction draft" },
   experience: { path: "/experience", title: "Experience", loader: "loadExperience", parents: "resume_experience_entries", translations: "resume_experience_translations", fk: "experience_entry_id", input: "Chinese Organization", value: "Dirty experience draft" },
-  skills: { path: "/skills", title: "Skills", loader: "loadSkills", parents: "resume_skill_groups", translations: "resume_skill_group_translations", fk: "skill_group_id", input: "Chinese Group title", value: "Dirty skills draft" },
+  skills: { path: "/skills", title: "Skills", loader: "loadSkills", parents: "resume_skill_groups", translations: "resume_skill_group_translations", fk: "skill_group_id", input: "Chinese Name", value: "Dirty skills draft" },
   awards: { path: "/awards", title: "Awards", loader: "loadAwards", parents: "resume_award_entries", translations: "resume_award_translations", fk: "award_entry_id", input: "Chinese Award name", value: "Dirty awards draft" },
 } as const;
 type Key = keyof typeof specs;
@@ -111,7 +111,7 @@ describe("Phase 5A route-first section loading", () => {
       pending.reject(new Error("offline"));
       expect((await screen.findByRole("alert")).textContent).toContain(locale === "en" ? `Unable to load ${spec.title}.` : ({ introduction: "无法加载个人简介。", experience: "无法加载工作经历。", skills: "无法加载技能。", awards: "无法加载荣誉奖项。" } as const)[key]);
       fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Retry" : "重试" }));
-      expect(await screen.findByLabelText(locale === "en" ? spec.input : ({ introduction: "中文 Paragraph", experience: "中文 组织", skills: "中文 分组标题", awards: "中文 荣誉名称" } as const)[key])).toBeTruthy();
+      expect(await screen.findByLabelText(locale === "en" ? spec.input : ({ introduction: "中文 Paragraph", experience: "中文 组织", skills: "中文 名称", awards: "中文 荣誉名称" } as const)[key])).toBeTruthy();
       expect(repo.load).not.toHaveBeenCalled();
       expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
       for (const other of Object.keys(specs) as Key[]) if (other !== key) expect(repo[specs[other].loader]).not.toHaveBeenCalled();
@@ -123,11 +123,11 @@ describe("Phase 5A route-first section loading", () => {
     show(repo, "/introduction", new ResumeSectionStore());
     expect(await screen.findByLabelText("Chinese Paragraph")).toBeTruthy();
     navigate("Experience"); expect(await screen.findByLabelText("Chinese Organization")).toBeTruthy();
-    navigate("Skills"); expect(await screen.findByLabelText("Chinese Group title")).toBeTruthy();
+    navigate("Skills"); expect(await screen.findByLabelText("Chinese Name")).toBeTruthy();
     navigate("Awards"); expect(await screen.findByLabelText("Chinese Award name")).toBeTruthy();
-    navigate("Skills"); expect(await screen.findByLabelText("Chinese Group title")).toBeTruthy();
+    navigate("Skills"); expect(await screen.findByLabelText("Chinese Name")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
-    expect(screen.getByLabelText("中文 分组标题")).toBeTruthy();
+    expect(screen.getByLabelText("中文 名称")).toBeTruthy();
     expect(repo.load).not.toHaveBeenCalled();
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
     expect(repo.loadIntroduction).toHaveBeenCalledOnce();
@@ -166,7 +166,7 @@ describe("Phase 5A route-first section loading", () => {
     const store = new ResumeSectionStore();
     const repo = repository();
     show(repo, "/skills", store);
-    expect(await screen.findByLabelText("Chinese Group title")).toBeTruthy();
+    expect(await screen.findByLabelText("Chinese Name")).toBeTruthy();
     expect(store.getSectionState("phase5a-session", resumeId, "skills").status).toBe("loaded");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();

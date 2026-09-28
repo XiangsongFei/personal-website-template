@@ -437,7 +437,8 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
     if (context.additionalResumeId && context.repository) return <div className={scopeClass}><ProductionRepeatableSection section={key} resumeId={context.additionalResumeId}
       items={items as unknown as EditableSectionItem[]} repository={context.repository} drafts={context.drafts} onChanged={context.onAdditionalChanged}
       onReload={context.onReloadAdditional} title={title} description={description} create={create as unknown as (id: string, position: number) => EditableSectionItem}
-      label={label as unknown as (item: EditableSectionItem, index: number) => string} render={render as unknown as (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void) => ReactNode} /></div>;
+      label={label as unknown as (item: EditableSectionItem, index: number) => string} render={render as unknown as (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void) => ReactNode}
+      headerIdentity={headerIdentity as unknown as ProductionRepeatableProps["headerIdentity"]} /></div>;
   }
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
@@ -454,10 +455,11 @@ type ProductionRepeatableProps = {
   onReload: ((section: EditableRepeatableSection) => Promise<EditableSectionItem[]>) | null;
   title: string; description: string; create: (id: string, position: number) => EditableSectionItem;
   label: (item: EditableSectionItem, index: number) => string; render: (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void, confirmed?: EditableSectionItem) => ReactNode;
+  headerIdentity?: (item: EditableSectionItem, index: number, itemLabel: string, onChange: (item: EditableSectionItem) => void) => ReactNode;
 };
 
 function ProductionRepeatableSection({ section, resumeId, items, repository, drafts, onChanged, onReload,
-  title, description, create, label, render }: ProductionRepeatableProps) {
+  title, description, create, label, render, headerIdentity }: ProductionRepeatableProps) {
   const { t, locale } = useUiLocale();
   const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave } = useContext(EditorContext);
   const stored = drafts.get(section) as ProductionListState | undefined;
@@ -688,6 +690,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
     <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"}
       onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
+      headerIdentity={headerIdentity}
       sectionHeading={useActionHeading ? { title, description } : undefined} />
     {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
     <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
@@ -1098,6 +1101,78 @@ function synchronizedEducationTitle(title: string, locale: Locale, category: Exc
   return isBlank || isPresetTitle ? educationPresetTitles[category][locale] : title;
 }
 
+type SkillCategory = "programming" | "dataSystems" | "analytics" | "tools" | "languages" | "custom";
+const skillPresetTitles: Record<Exclude<SkillCategory, "custom">, Record<Locale, string>> = {
+  programming: { zh: "编程", en: "Programming" },
+  dataSystems: { zh: "数据与系统", en: "Data & Systems" },
+  analytics: { zh: "分析", en: "Analytics" },
+  tools: { zh: "工具", en: "Tools" },
+  languages: { zh: "语言", en: "Languages" },
+};
+
+function skillCategoryFor(item: SkillItem): SkillCategory {
+  let category: Exclude<SkillCategory, "custom"> | null = null;
+  for (const locale of ["zh", "en"] as const) {
+    const title = item.translations[locale].title;
+    if (!title.trim()) continue;
+    const match = (Object.entries(skillPresetTitles) as [Exclude<SkillCategory, "custom">, Record<Locale, string>][])
+      .find(([, titles]) => titles[locale] === title);
+    if (!match || (category !== null && category !== match[0])) return "custom";
+    category = match[0];
+  }
+  return category ?? "custom";
+}
+
+function synchronizedSkillTitle(title: string, locale: Locale, category: Exclude<SkillCategory, "custom">): string {
+  const isBlank = title.trim().length === 0;
+  const isPresetTitle = Object.values(skillPresetTitles).some(titles => titles[locale] === title);
+  return isBlank || isPresetTitle ? skillPresetTitles[category][locale] : title;
+}
+
+function customSkillTitle(title: string, locale: Locale): string {
+  const isPresetTitle = Object.values(skillPresetTitles).some(titles => titles[locale] === title);
+  return title.trim().length === 0 ? title : isPresetTitle ? "" : title;
+}
+
+function skillCategoryChanged(item: SkillItem, category: SkillCategory): SkillItem {
+  if (category === "custom") {
+    const zhTitle = customSkillTitle(item.translations.zh.title, "zh");
+    const enTitle = customSkillTitle(item.translations.en.title, "en");
+    if (zhTitle === item.translations.zh.title && enTitle === item.translations.en.title) return item;
+    return { ...item, translations: {
+      zh: { ...item.translations.zh, title: zhTitle },
+      en: { ...item.translations.en, title: enTitle },
+    } };
+  }
+  return { ...item, translations: {
+    zh: { ...item.translations.zh, title: synchronizedSkillTitle(item.translations.zh.title, "zh", category) },
+    en: { ...item.translations.en, title: synchronizedSkillTitle(item.translations.en.title, "en", category) },
+  } };
+}
+
+function skillCategorySelect(item: SkillItem, index: number, t: (text: string) => string,
+  onChange: (category: SkillCategory) => void) {
+  const value = skillCategoryFor(item);
+  const label = `${t("Skill category")} ${String(index + 1).padStart(2, "0")}`;
+  return <><span className="item-number">{String(index + 1).padStart(2, "0")}</span>
+    <AdminDropdown
+      id={`skill-category-${item.id}-${index + 1}`}
+      ariaLabel={label}
+      value={value}
+      options={[
+        { value: "programming", label: t("Programming") },
+        { value: "dataSystems", label: t("Data & Systems") },
+        { value: "analytics", label: t("Analytics") },
+        { value: "tools", label: t("Tools") },
+        { value: "languages", label: t("Languages") },
+        { value: "custom", label: t("Custom") },
+      ]}
+      onChange={onChange}
+      onSameValueSelect={category => { if (category === "custom") onChange(category); }}
+    />
+  </>;
+}
+
 function Education() {
   const { resume, repository, productionMode, educationResumeId, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted, educationEditor, setEducationEditor } = useContext(EditorContext);
   const { t, locale } = useUiLocale();
@@ -1476,9 +1551,10 @@ function Skills() {
   return <RepeatableSection<SkillItem> section="skills" title="Skills" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { title: "", items: "" }, en: { title: "", items: "" } } })}
     label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${t("Skill group")} ${index + 1}`}
+    headerIdentity={(item, index, _itemLabel, onChange) => skillCategorySelect(item, index, t, category => onChange(skillCategoryChanged(item, category)))}
     render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
-      fields={[{ key: "title", label: "Group title" }, { key: "items", label: "Skills" }]} />} />;
+      fields={[{ key: "title", label: locale === "zh" ? "Skill group name" : "Name" }, { key: "items", label: locale === "zh" ? "Skills content" : "Skills" }]} />} />;
 }
 
 function Awards() {

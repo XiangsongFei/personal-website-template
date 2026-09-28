@@ -421,6 +421,7 @@ main{color:#242424}
 .education-editor-scope .group-heading{justify-content:flex-end}
 .education-editor-scope .save-bar{border-top:0}
 .education-editor-scope .item-card-heading>div:first-child{overflow:visible}
+.skills-editor-scope .item-card-heading>div:first-child{overflow:visible}
 .admin-dropdown-control{position:relative;display:inline-block;z-index:1;width:auto;min-width:0;max-width:220px;vertical-align:middle}
 .admin-dropdown-control.is-open{z-index:40}
 .admin-dropdown-control>button{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-width:112px;max-width:220px;border:0;border-bottom:1px solid #e2e0dc;border-radius:0;background:transparent;color:#222;padding:4px 18px 4px 0;font:inherit;font-size:15px;font-weight:400;line-height:1.4;text-align:left;box-shadow:none;cursor:pointer}

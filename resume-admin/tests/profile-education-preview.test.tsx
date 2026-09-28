@@ -382,7 +382,7 @@ describe("Profile and Education live-preview prototype", () => {
   it("reflects unsaved Skills edits and reordering immediately without repository mutations", () => {
     const repo = repository();
     open("/skills", repo);
-    fireEvent.change(screen.getAllByLabelText("English Group title")[0], { target: { value: "Languages & Tools" } });
+    fireEvent.change(screen.getAllByLabelText("English Name")[0], { target: { value: "Languages & Tools" } });
     fireEvent.change(screen.getAllByLabelText("English Skills")[0], { target: { value: "Rust · SQL" } });
     const skillSection = screen.getByTestId("resume-preview").querySelector("#preview-skills")!;
     const firstSkillId = fixtureSections.skills[0].sourceKey!;

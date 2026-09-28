@@ -123,7 +123,7 @@ describe("Phase 5B Projects route-first loading", () => {
     expect(store.getSectionState("projects-session", resumeId, "projects").status).toBe("loaded");
     fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Dirty after local save" } });
     fireEvent.change(screen.getByLabelText("English Title"), { target: { value: "Unsaved project title" } });
-    go("Skills"); expect(await screen.findByLabelText("English Group title")).toBeTruthy();
+    go("Skills"); expect(await screen.findByLabelText("English Name")).toBeTruthy();
     expect(repo.load).not.toHaveBeenCalled();
     go("Projects"); expect((screen.getByLabelText("English Title") as HTMLInputElement).value).toBe("Unsaved project title");
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
@@ -143,7 +143,7 @@ describe("Phase 5B Projects route-first loading", () => {
   it("reuses site metadata from another migrated route without prefetching other content", async () => {
     const repo = repository();
     show(repo, "/skills");
-    expect(await screen.findByLabelText("English Group title")).toBeTruthy();
+    expect(await screen.findByLabelText("English Name")).toBeTruthy();
     go("Projects");
     expect(await screen.findByLabelText("English Title")).toBeTruthy();
     expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
