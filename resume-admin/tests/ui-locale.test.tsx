@@ -44,7 +44,7 @@ describe("global CMS UI locale", () => {
     expect(within(navigation).getByText("Resume")).toBeTruthy();
     expect(within(navigation).getByText("Settings")).toBeTruthy();
     expect(within(navigation).getAllByRole("link").map(link => link.getAttribute("href"))).toEqual([
-      "/overview", "/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links",
+      "/overview", "/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links", "https://example-cv.com",
     ]);
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     expect(within(navigation).getByText("首页")).toBeTruthy();

@@ -1,14 +1,17 @@
 import type { Ref } from "react";
+import { getAvatarAltText } from "../shared/avatarAlt";
 
-export function HeroPortrait({ photoUrl, avatarLabel, avatarInitials, portraitRef }: {
+export function HeroPortrait({ photoUrl, name, locale, avatarInitials, portraitRef }: {
   photoUrl: string | null;
-  avatarLabel: string;
+  name: string | null | undefined;
+  locale: "zh" | "en";
   avatarInitials: string;
   portraitRef: Ref<HTMLElement>;
 }) {
-  return <aside className="portrait-wrap" ref={portraitRef} aria-label={avatarLabel}>
+  const alt = getAvatarAltText(locale, name);
+  return <aside className="portrait-wrap" ref={portraitRef}>
     {photoUrl
-      ? <img src={photoUrl} alt="" aria-hidden="true" />
-      : <div className="portrait-placeholder" aria-hidden="true">{avatarInitials}</div>}
+      ? <img src={photoUrl} alt={alt} />
+      : <div className="portrait-placeholder" role="img" aria-label={alt}>{avatarInitials}</div>}
   </aside>;
 }

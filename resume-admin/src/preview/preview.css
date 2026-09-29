@@ -67,6 +67,7 @@
   .topbar.has-workspace-view-switcher .topbar-left{flex:0 0 auto;gap:20px}
   .topbar.has-workspace-view-switcher .account-placeholder{flex:0 0 auto;white-space:nowrap}
   .topbar-workspace-slot{display:flex;min-width:0;align-items:center}
+  .topbar.has-workspace-view-switcher .topbar-public-site-link{margin-left:8px}
   .preview-workspace-switcher{display:flex;align-items:center;gap:22px}
   .preview-workspace-switcher button{position:relative;min-height:18px;padding:0 0 2px;border:0;border-bottom:1px solid transparent;border-radius:0;background:transparent;color:#858585;font:inherit;font-size:13px;font-weight:450;line-height:15px;cursor:pointer}
   .preview-workspace-switcher button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:550}
@@ -96,6 +97,7 @@
   .topbar.has-workspace-view-switcher .topbar-left{flex:0 0 auto;gap:20px}
   .topbar.has-workspace-view-switcher .account-placeholder{flex:0 0 auto;white-space:nowrap}
   .topbar-workspace-slot{display:flex;min-width:0;align-items:center}
+  .topbar.has-workspace-view-switcher .topbar-public-site-link{margin-left:8px}
   .preview-workspace-switcher{display:flex;align-items:center;gap:22px}
   .preview-workspace-switcher button{position:relative;min-height:18px;padding:0 0 2px;border:0;border-bottom:1px solid transparent;border-radius:0;background:transparent;color:#858585;font:inherit;font-size:13px;font-weight:450;line-height:15px;cursor:pointer}
   .preview-workspace-switcher button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:550}

@@ -3,6 +3,7 @@ import type { ResumeContent } from "../../../app/data/resume";
 import type { Locale } from "../model";
 import type { BilingualReviewReminder } from "../bilingualReview";
 import type { ResumePreviewEntryIdentities } from "./resumeContentMapper";
+import { getAvatarAltText } from "../../../shared/avatarAlt";
 import { useUiLocale } from "../uiLocale";
 import "./preview.css";
 
@@ -267,10 +268,10 @@ export function ResumePreviewPanel({ hidden = false, content, confirmedContent, 
                     <strong><MarkedText modified={differs(content.profile.graduationValue, confirmedContent?.profile.graduationValue)}>{content.profile.graduationValue}</MarkedText></strong>
                   </div>
                 </div>
-                <aside className="resume-preview-portrait" data-preview-modified={differs(content.profile.photoUrl, confirmedContent?.profile.photoUrl)} aria-label={content.profile.avatarLabel[locale]}>
+                <aside className="resume-preview-portrait" data-preview-modified={differs(content.profile.photoUrl, confirmedContent?.profile.photoUrl)}>
                   {photoPreviewUrl || content.profile.photoUrl
-                    ? <img src={photoPreviewUrl || content.profile.photoUrl || undefined} alt="" aria-hidden="true" />
-                    : <div>{content.profile.avatarInitials}</div>}
+                    ? <img src={photoPreviewUrl || content.profile.photoUrl || undefined} alt={getAvatarAltText(locale, content.profile.name[locale])} />
+                    : <div role="img" aria-label={getAvatarAltText(locale, content.profile.name[locale])}>{content.profile.avatarInitials}</div>}
                 </aside>
               </div>
             </section>

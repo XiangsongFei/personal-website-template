@@ -650,6 +650,68 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(within(switcher).getByRole("button", { name: "预览" })).toBeTruthy();
   });
 
+  it("places the localized public-site action after the desktop workspace switcher, outside account controls", () => {
+    setViewport(1280);
+    renderApp("/education");
+
+    const header = document.querySelector<HTMLElement>(".topbar")!;
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const siteLink = header.querySelector<HTMLAnchorElement>(".topbar-public-site-link")!;
+    const sidebarLink = document.querySelector<HTMLAnchorElement>(".sidebar-public-site-link")!;
+    expect(siteLink.getAttribute("href")).toBe("https://example-cv.com");
+    expect(siteLink.getAttribute("target")).toBe("_blank");
+    expect(siteLink.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(siteLink.textContent).toBe("View site ↗");
+    expect(siteLink.parentElement).toBe(document.querySelector(".topbar-left"));
+    expect(document.querySelector(".topbar-workspace-slot")?.nextElementSibling).toBe(siteLink);
+    expect(document.querySelector(".account-placeholder .public-site-link")).toBeNull();
+    expect(sidebarLink.getAttribute("href")).toBe(siteLink.getAttribute("href"));
+    expect(sidebarLink.getAttribute("target")).toBe(siteLink.getAttribute("target"));
+    expect(sidebarLink.getAttribute("rel")).toBe(siteLink.getAttribute("rel"));
+    expect(within(switcher).getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "Split" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "Preview" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Sign Out" })).toBeTruthy();
+    expect(within(header).getByText("admin@example.test")).toBeTruthy();
+    expect(document.querySelector('[role="group"][aria-label="CMS interface language"]')).not.toBeNull();
+    expect(document.querySelector('[data-workspace-view="split"]')).not.toBeNull();
+
+    fireEvent.click(within(header).getByRole("button", { name: "中文" }));
+    expect(siteLink.textContent).toBe("查看网站 ↗");
+    expect(sidebarLink.textContent).toBe("查看网站 ↗");
+    expect(screen.getByRole("group", { name: "工作区视图" })).toBeTruthy();
+    expect(screen.getByTestId("current-route").textContent).toBe("/education");
+  });
+
+  it("keeps the site action beside the 861px fine-pointer Header two-state switcher", () => {
+    setViewport(861, true);
+    renderApp("/education");
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const headerLink = document.querySelector(".topbar-left .topbar-public-site-link");
+
+    expect(headerLink?.previousElementSibling?.classList.contains("topbar-workspace-slot")).toBe(true);
+    expect(within(switcher).getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "Preview" })).toBeTruthy();
+    expect(within(switcher).queryByRole("button", { name: "Split" })).toBeNull();
+  });
+
+  it.each([860, 640, 390])("keeps the localized site action in the existing mobile sidebar navigation at %ipx", width => {
+    setViewport(width);
+    window.localStorage.setItem("cms-ui-locale", "zh");
+    renderApp("/education");
+    const mobileLink = document.querySelector<HTMLAnchorElement>(".sidebar .sidebar-public-site-link")!;
+    const desktopLink = document.querySelector<HTMLAnchorElement>(".topbar-public-site-link")!;
+    const styles = readFileSync("src/styles.css", "utf8");
+
+    expect(mobileLink.textContent).toBe("查看网站 ↗");
+    expect(mobileLink.getAttribute("href")).toBe("https://example-cv.com");
+    expect(mobileLink.getAttribute("target")).toBe("_blank");
+    expect(mobileLink.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(styles).toContain("@media(max-width:860px){.topbar-public-site-link{display:none}.sidebar-public-site-link{display:block");
+    expect(styles).not.toMatch(/@media\(max-width:640px\)[^}]*\.public-site-link\{display:none/);
+    expect(desktopLink.parentElement?.classList.contains("topbar-left")).toBe(true);
+  });
+
   it("keeps Split sizing and fixed Preview rendering unchanged while Edit/Preview use single-pane tracks", () => {
     const css = readFileSync("src/preview/preview.css", "utf8");
     const shellCss = readFileSync("src/styles.css", "utf8");

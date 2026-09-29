@@ -1285,6 +1285,11 @@ function ReviewLocaleSwitch() {
   return <UiLocaleSwitch reviewLocales={reviewLocales} />;
 }
 
+function PublicSiteLink({ className }: { className: string }) {
+  const { t } = useUiLocale();
+  return <a className={className} href="https://example-cv.com" target="_blank" rel="noopener noreferrer">{t("View site ↗")}</a>;
+}
+
 function Profile() {
   const { sections, resume, productionMode, profileResumeId, profileLoadState, onRetryProfile, repository, onProfileSaved, onProfileTranslationSaved, profileEditor, setProfileEditor, profileRequests, profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged } = useContext(EditorContext);
   const { t } = useUiLocale();
@@ -1307,7 +1312,7 @@ function Profile() {
       </div>
       <div className="panel" data-editor-anchor="profile:translations"><h2>{t("Chinese and English profile")}</h2><BilingualFields idPrefix="profile" section="profile" itemId="profile" confirmed={confirmed.translations} value={profile.translations}
         onChange={translations => onChange({ ...profile, translations })}
-        fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "avatarLabel", label: "Avatar accessibility label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]} />
+        fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]} />
       </div>
     </>}
   </SectionForm>;
@@ -1490,7 +1495,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
               translationNotices: { ...current.translationNotices, [locale]: null },
             } : current);
           }}
-          fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "avatarLabel", label: "Avatar accessibility label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]}
+          fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]}
           />
       </section>
       </EditorContentScroll>
@@ -3101,12 +3106,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
             onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
+        <PublicSiteLink className="sidebar-link sidebar-public-site-link" />
       </nav>
     </aside>
     {menuOpen && <button className="drawer-backdrop" type="button" aria-label={t("Close navigation menu")} onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }} />}
     <div className={`app-main${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
       <header className={`topbar${headerWorkspaceSwitcher ? " has-workspace-view-switcher" : ""}`}><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button>
-          {headerWorkspaceSwitcher && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}</div>
+          {headerWorkspaceSwitcher && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}<PublicSiteLink className="topbar-public-site-link" /></div>
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}
       <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1}>{showOverviewRouteState

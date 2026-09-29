@@ -86,7 +86,7 @@ describe("Stage 4F repository translation boundary", () => {
     expect(within(content).getByText("English", { selector: ".bilingual-column-headings span[lang='en']" })).toBeTruthy();
     const rows = Array.from(content.querySelectorAll<HTMLElement>(".bilingual-field-pair"));
     expect(rows.map(row => row.querySelector("h3")?.textContent)).toEqual([
-      "Name", "About navigation label", "Email action label", "Graduation label", "Avatar accessibility label", "Current Focus heading", "Current Status heading",
+      "Name", "About navigation label", "Email action label", "Graduation label", "Current Focus heading", "Current Status heading",
     ]);
     for (const row of rows) {
       const fields = Array.from(row.querySelectorAll<HTMLElement>(".bilingual-field-values .field"));
@@ -95,6 +95,8 @@ describe("Stage 4F repository translation boundary", () => {
     }
     expect(within(rows[0]).getByLabelText("Chinese Name")).toBeTruthy();
     expect(within(rows[0]).getByLabelText("English Name")).toBeTruthy();
+    expect(screen.queryByLabelText("English Avatar accessibility label")).toBeNull();
+    expect(screen.queryByLabelText("Chinese Avatar accessibility label")).toBeNull();
     expect((within(rows[0]).getByLabelText("Chinese Name") as HTMLInputElement).value).toBe(fixtureSections.profile.translations.zh.name);
     expect((within(rows[0]).getByLabelText("English Name") as HTMLInputElement).value).toBe(fixtureSections.profile.translations.en.name);
     expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);

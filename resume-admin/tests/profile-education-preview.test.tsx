@@ -244,15 +244,19 @@ describe("Profile and Education live-preview prototype", () => {
   it("updates the Profile preview immediately for an unsaved Chinese edit", () => {
     open("/profile");
     setPreviewLocale("zh");
+    expect(preview().getByRole("img", { name: "示例用户的个人头像" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Chinese Name"), { target: { value: "新的中文姓名" } });
     expect(preview().getByRole("heading", { level: 1, name: "新的中文姓名" })).toBeTruthy();
+    expect(preview().getByRole("img", { name: "新的中文姓名的个人头像" })).toBeTruthy();
     expect(screen.getByTestId("resume-preview").querySelector(".resume-preview-hero h1 .resume-preview-marked-text")?.getAttribute("data-preview-modified")).toBe("true");
   });
 
   it("updates the Profile preview immediately for an unsaved English edit", () => {
     open("/profile");
+    expect(preview().getByRole("img", { name: "Portrait of Demo User" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "New English Name" } });
     expect(preview().getByRole("heading", { level: 1, name: "New English Name" })).toBeTruthy();
+    expect(preview().getByRole("img", { name: "Portrait of New English Name" })).toBeTruthy();
   });
 
   it("updates public shared Profile values in the preview before saving", () => {

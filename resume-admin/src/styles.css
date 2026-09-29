@@ -160,6 +160,7 @@ main{max-width:1260px;margin:0 auto;padding:clamp(24px,3.6vw,48px) clamp(20px,3v
 .sidebar-nav-label::before{position:absolute;top:2px;left:5px;width:2px;height:10px;background:#777;content:""}
 .sidebar-link{padding:6px 11px;border-radius:0;color:#666;font-size:18px;line-height:1.3;font-weight:400}
 .sidebar-nav-group .sidebar-link{font-size:15px}
+.sidebar-public-site-link{display:none}
 .sidebar-link:hover{background:transparent;color:#111}
 .sidebar-link.is-active{background:transparent;color:#111;font-weight:600}
 .sidebar-foot{border-top-color:#eee;color:#666;padding:13px 10px 0;font-size:11px}
@@ -177,6 +178,8 @@ main{max-width:1260px;margin:0 auto;padding:clamp(24px,3.6vw,48px) clamp(20px,3v
 .field-review-warning::before{width:5px;height:5px;border-radius:50%;background:currentColor;content:""}
 .field-edit-status .field-review-dismiss{padding:2px 5px;border:1px solid #d7b79f;border-radius:3px;background:#fff;color:#8d4b1c;font:inherit;cursor:pointer}
 .account-placeholder{color:#666;font-size:15px;gap:10px}
+.topbar-public-site-link{color:#666;font:inherit;text-decoration:none;white-space:nowrap}
+.topbar-public-site-link:hover{color:#111;text-decoration:underline}
 .account-placeholder button{border:0;border-radius:0;color:#666;padding:5px 2px;font-size:15px}
 .account-placeholder button:hover:not(:disabled){color:#111;text-decoration:underline}
 .account-avatar{display:none}
@@ -272,6 +275,7 @@ main{color:#242424}
 @media(max-width:860px){.sidebar{box-shadow:4px 0 12px #1111}}
 @media(max-width:860px){.page-section{max-width:760px}}
 @media(max-width:640px){.topbar{height:var(--shell-header-height);min-height:var(--shell-header-height)}.page-section{max-width:none}.page-heading{margin-bottom:30px}.bilingual-field-values,.bilingual-footer-grid{grid-template-columns:1fr;gap:16px}.bilingual-field-pair{padding:0}.bilingual-footer-panel{padding:0}.item-card-heading{flex-direction:column;align-items:flex-start}.item-actions{border-top:0;padding-top:0}}
+@media(max-width:860px){.topbar-public-site-link{display:none}.sidebar-public-site-link{display:block;margin-top:12px;color:#666;text-decoration:none}.sidebar-public-site-link:hover{background:transparent;color:#111;text-decoration:underline}}
 
 /* Introduction editor: constrain its repeatable rows and adapt paired textareas to the editor column. */
 .introduction-editor-scope{width:100%;min-width:0;container-type:inline-size}
