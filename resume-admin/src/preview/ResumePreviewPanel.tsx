@@ -50,7 +50,7 @@ function PreviewLink({ href, label, icon, modified = false }: { href: string; la
   </a>;
 }
 
-export function ResumePreviewPanel({ hidden = false, content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true, independentScroll = false }: {
+export function ResumePreviewPanel({ hidden = false, content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true, independentScroll = false, workspaceTabsVisible = true }: {
   hidden?: boolean;
   content: ResumeContent | null;
   confirmedContent?: ResumeContent | null;
@@ -66,6 +66,7 @@ export function ResumePreviewPanel({ hidden = false, content, confirmedContent, 
   focusRequest?: number;
   focusDocumentScroll?: boolean;
   independentScroll?: boolean;
+  workspaceTabsVisible?: boolean;
 }) {
   const { t } = useUiLocale();
   const text = content?.locales[locale];
@@ -92,8 +93,15 @@ export function ResumePreviewPanel({ hidden = false, content, confirmedContent, 
     : (Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--shell-header-height")) || 68) + workspaceTabsHeight;
 
   useLayoutEffect(() => {
+    if (!workspaceTabsVisible) {
+      setWorkspaceTabsHeight(0);
+      return;
+    }
     const tabs = panelRef.current?.parentElement?.querySelector<HTMLElement>(".editor-preview-toggle");
-    if (!tabs) return;
+    if (!tabs) {
+      setWorkspaceTabsHeight(0);
+      return;
+    }
     const updateHeight = () => setWorkspaceTabsHeight(tabs.getBoundingClientRect().height);
     updateHeight();
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateHeight) : null;
@@ -103,7 +111,7 @@ export function ResumePreviewPanel({ hidden = false, content, confirmedContent, 
       observer?.disconnect();
       window.removeEventListener("resize", updateHeight);
     };
-  }, []);
+  }, [workspaceTabsVisible]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;

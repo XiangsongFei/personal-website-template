@@ -75,6 +75,22 @@ function getDocumentScrollOwner(): HTMLElement | null {
   return (document.scrollingElement as HTMLElement | null) ?? document.documentElement ?? document.body;
 }
 
+function getScrollProgress(owner: HTMLElement): { position: number; progress: number } {
+  const documentOwner = owner === getDocumentScrollOwner();
+  const position = documentOwner ? Math.max(owner.scrollTop, window.scrollY) : owner.scrollTop;
+  const viewportHeight = documentOwner ? window.innerHeight : owner.clientHeight;
+  const maximum = Math.max(0, owner.scrollHeight - (owner.clientHeight || viewportHeight));
+  return { position, progress: maximum > 0 ? Math.min(1, Math.max(0, position / maximum)) : position > 0 ? 1 : 0 };
+}
+
+function getWorkspaceScrollOwner(layout: HTMLElement | null, mode: "editor" | "preview", wideDesktop: boolean, desktopEditorOnlyViewport: boolean): HTMLElement | null {
+  if (wideDesktop || (mode === "editor" && desktopEditorOnlyViewport)) {
+    const selector = mode === "editor" ? ".editor-content-scroll[data-editor-scroll-owner]" : "[data-preview-scroll-owner]";
+    return layout?.querySelector<HTMLElement>(selector) ?? null;
+  }
+  return getDocumentScrollOwner();
+}
+
 type EditableSectionItem = IntroItem | ExperienceItem | ProjectItem | SkillItem | AwardItem;
 type PreviewDrafts = Partial<Pick<EditorSections, PreviewSection>>;
 type PreviewDraftValue = EditorSections[PreviewSection];
@@ -884,6 +900,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const context = useContext(EditorContext);
   const { locale: uiLocale, t } = useUiLocale();
   const view = context.previewModes[section];
+  const onPreviewModeChange = context.onPreviewModeChange;
   const focusRequest = context.previewFocusRequests[section];
   const wideDesktop = useMediaQuery("(min-width: 1280px)");
   const desktopEditorOnlyViewport = useMediaQuery(DESKTOP_EDITOR_ONLY_QUERY);
@@ -893,6 +910,8 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const pendingWorkspaceScrollRestore = useRef<{ editor: number; preview: number } | null>(null);
   const modeScrollPositions = useRef<{ section: PreviewSection; editor: number | null; preview: number | null }>({ section, editor: null, preview: null });
   const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: number } | null>(null);
+  const pendingResponsiveScrollRestore = useRef<{ section: PreviewSection; mode: "editor" | "preview"; progress: number; wideDesktop: boolean; desktopEditorOnlyViewport: boolean } | null>(null);
+  const observedBreakpoints = useRef({ wideDesktop, desktopEditorOnlyViewport });
   const [restorePreviewPosition, setRestorePreviewPosition] = useState(false);
   const requestCanonicalPreview = context.onRequestCanonicalPreview;
   const changeView = (next: "editor" | "preview") => {
@@ -923,6 +942,58 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       : getDocumentScrollOwner();
     if (owner) owner.scrollTop = pending.position;
     pendingModeRestore.current = null;
+  }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
+  useLayoutEffect(() => {
+    observedBreakpoints.current = { wideDesktop, desktopEditorOnlyViewport };
+    const onResize = () => {
+      if (typeof window.matchMedia !== "function") return;
+      const next = {
+        wideDesktop: window.matchMedia("(min-width: 1280px)").matches,
+        desktopEditorOnlyViewport: window.matchMedia(DESKTOP_EDITOR_ONLY_QUERY).matches,
+      };
+      const previous = observedBreakpoints.current;
+      if (next.wideDesktop === previous.wideDesktop && next.desktopEditorOnlyViewport === previous.desktopEditorOnlyViewport) return;
+
+      const activeMode = previous.wideDesktop
+        ? workspaceView === "edit" ? "editor" : workspaceView === "preview" ? "preview" : view
+        : view;
+      const outgoing = getWorkspaceScrollOwner(workspaceLayoutRef.current, activeMode, previous.wideDesktop, previous.desktopEditorOnlyViewport);
+      if (outgoing) {
+        const { position, progress } = getScrollProgress(outgoing);
+        pendingResponsiveScrollRestore.current = { section, mode: activeMode, progress, wideDesktop: next.wideDesktop, desktopEditorOnlyViewport: next.desktopEditorOnlyViewport };
+        if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
+        modeScrollPositions.current[activeMode] = position;
+      }
+
+      if (previous.wideDesktop && !next.wideDesktop) {
+        const nextMode = workspaceView === "edit" ? "editor" : workspaceView === "preview" ? "preview" : view;
+        setRestorePreviewPosition(nextMode === "preview");
+        if (nextMode !== view) onPreviewModeChange(section, nextMode);
+      }
+      observedBreakpoints.current = next;
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    const mediaQueries = typeof window.matchMedia === "function"
+      ? [window.matchMedia("(min-width: 1280px)"), window.matchMedia(DESKTOP_EDITOR_ONLY_QUERY)]
+      : [];
+    mediaQueries.forEach(media => media.addEventListener?.("change", onResize));
+    return () => {
+      window.removeEventListener("resize", onResize);
+      mediaQueries.forEach(media => media.removeEventListener?.("change", onResize));
+    };
+  }, [section, view, workspaceView, wideDesktop, desktopEditorOnlyViewport, onPreviewModeChange]);
+  useLayoutEffect(() => {
+    const pending = pendingResponsiveScrollRestore.current;
+    if (!pending || pending.section !== section
+      || pending.wideDesktop !== wideDesktop
+      || pending.desktopEditorOnlyViewport !== desktopEditorOnlyViewport
+      || pending.mode !== view) return;
+    const owner = getWorkspaceScrollOwner(workspaceLayoutRef.current, pending.mode, wideDesktop, desktopEditorOnlyViewport);
+    if (!owner) return;
+    const viewportHeight = owner === getDocumentScrollOwner() ? window.innerHeight : owner.clientHeight;
+    const maximum = Math.max(0, owner.scrollHeight - (owner.clientHeight || viewportHeight));
+    owner.scrollTop = Math.round(maximum * pending.progress);
+    pendingResponsiveScrollRestore.current = null;
   }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
   useEffect(() => {
     if (view === "preview" || wideDesktop) requestCanonicalPreview();
@@ -955,15 +1026,18 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
     : t("Loading complete resume preview…");
 
   return <>
-    {wideDesktop && context.workspaceSwitcherHost && createPortal(<div className="preview-workspace-switcher" role="group" aria-label={t("Workspace view")}>
-      {(["edit", "split", "preview"] as const).map(option => <button key={option} type="button" aria-pressed={workspaceView === option}
-        onClick={() => changeWorkspaceView(option)}>{t(option === "edit" ? "Edit" : option === "split" ? "Split" : "Preview")}</button>)}
+    {(wideDesktop || desktopEditorOnlyViewport) && context.workspaceSwitcherHost && createPortal(<div className="preview-workspace-switcher" role="group" aria-label={t("Workspace view")}>
+      {wideDesktop
+        ? (["edit", "split", "preview"] as const).map(option => <button key={option} type="button" aria-pressed={workspaceView === option}
+          onClick={() => changeWorkspaceView(option)}>{t(option === "edit" ? "Edit" : option === "split" ? "Split" : "Preview")}</button>)
+        : (["edit", "preview"] as const).map(option => <button key={option} type="button" aria-pressed={view === (option === "edit" ? "editor" : "preview")}
+          onClick={() => changeView(option === "edit" ? "editor" : "preview")}>{t(option === "edit" ? "Edit" : "Preview")}</button>)}
     </div>, context.workspaceSwitcherHost)}
     <div ref={workspaceLayoutRef} className="editor-preview-layout" data-preview-view={view} data-workspace-view={wideDesktop ? workspaceView : undefined}>
-    <div className="editor-preview-toggle" role="group" aria-label={t("Editor or preview view")}>
+    {!desktopEditorOnlyViewport && <div className="editor-preview-toggle" role="group" aria-label={t("Editor or preview view")}>
       <button type="button" aria-pressed={view === "editor"} onClick={() => changeView("editor")}>{t("Editor")}</button>
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
-    </div>
+    </div>}
     <div className="editor-preview-pane" hidden={wideDesktop && workspaceView === "preview"} data-editor-scroll-owner={!wideDesktop && !desktopEditorOnlyViewport ? "" : undefined} data-editor-scroll-mode={!wideDesktop && !desktopEditorOnlyViewport ? "document" : undefined}>
       <EditorElementScrollContext.Provider value={editorElementScroll}>{children}</EditorElementScrollContext.Provider>
     </div>
@@ -973,6 +1047,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       focusRequest={focusRequest}
       focusDocumentScroll={view === "preview" && !wideDesktop && !restorePreviewPosition}
       independentScroll={wideDesktop}
+      workspaceTabsVisible={!desktopEditorOnlyViewport}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
     </div>
@@ -2337,6 +2412,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const additionalErrorText = additionalRouteKey ? ({ introduction: "Unable to load Introduction.", experience: "Unable to load Experience.", projects: "Unable to load Projects.", skills: "Unable to load Skills.", awards: "Unable to load Awards.", contact: "Unable to load Contact.", links: "Unable to load Links & Site Text." } as const)[additionalRouteKey] : "";
   const previewSection = previewRouteByPath[location.pathname];
   const isPreviewRoute = previewSection !== undefined;
+  const headerWorkspaceSwitcher = isPreviewRoute && (wideDesktop || desktopEditorOnlyViewport);
   const editorOnlyDesktop = Boolean(!wideDesktop && desktopEditorOnlyViewport && previewSection && previewModes[previewSection] === "editor");
   const routeDataReady = !productionMode || resume !== null || fullSnapshotState === "error"
     || (isOverviewRoute && (overviewData !== null || overviewLoadState === "error"))
@@ -2804,8 +2880,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     </aside>
     {menuOpen && <button className="drawer-backdrop" type="button" aria-label={t("Close navigation menu")} onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }} />}
     <div className={`app-main${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
-      <header className={`topbar${isPreviewRoute && wideDesktop ? " has-workspace-view-switcher" : ""}`}><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button>
-          {isPreviewRoute && wideDesktop && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}</div>
+      <header className={`topbar${headerWorkspaceSwitcher ? " has-workspace-view-switcher" : ""}`}><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button>
+          {headerWorkspaceSwitcher && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}</div>
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}
       <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1}>{showOverviewRouteState

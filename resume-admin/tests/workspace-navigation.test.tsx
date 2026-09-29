@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { App } from "../src/App";
 import { fixtureSections } from "../src/fixtures";
@@ -22,9 +22,43 @@ const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:
 const desktopEditorOnlyMedia = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
-function setViewport(width: number, finePointer = false) {
+let mockViewportWidth = window.innerWidth;
+let mockFinePointer = false;
+const mediaListeners = new Map<string, Set<(event: MediaQueryListEvent) => void>>();
+const restoreGeometry: Array<() => void> = [];
+function mockScrollGeometry(element: HTMLElement, scrollHeight: number, clientHeight: number) {
+  const oldScrollHeight = Object.getOwnPropertyDescriptor(element, "scrollHeight");
+  const oldClientHeight = Object.getOwnPropertyDescriptor(element, "clientHeight");
+  Object.defineProperties(element, { scrollHeight: { configurable: true, value: scrollHeight }, clientHeight: { configurable: true, value: clientHeight } });
+  restoreGeometry.push(() => {
+    if (oldScrollHeight) Object.defineProperty(element, "scrollHeight", oldScrollHeight); else Reflect.deleteProperty(element, "scrollHeight");
+    if (oldClientHeight) Object.defineProperty(element, "clientHeight", oldClientHeight); else Reflect.deleteProperty(element, "clientHeight");
+  });
+}
+function matchesMedia(media: string) {
+  return media === "(min-width: 1280px)" && mockViewportWidth >= 1280
+    || media === desktopEditorOnlyMedia && mockFinePointer && mockViewportWidth >= 861 && mockViewportWidth <= 1279;
+}
+function setViewport(width: number, finePointer = false, dispatchTransition = false) {
+  const previous = new Map([...mediaListeners.keys()].map(media => [media, matchesMedia(media)]));
+  mockViewportWidth = width;
+  mockFinePointer = finePointer;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: (media: string) => ({ matches: media === "(min-width: 1280px)" && width >= 1280 || media === desktopEditorOnlyMedia && finePointer && width >= 861 && width <= 1279, media, addEventListener() {}, removeEventListener() {} }) });
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: (media: string) => ({
+    get matches() { return matchesMedia(media); }, media, onchange: null,
+    addEventListener(_type: string, listener: (event: MediaQueryListEvent) => void) { const listeners = mediaListeners.get(media) ?? new Set(); listeners.add(listener); mediaListeners.set(media, listeners); },
+    removeEventListener(_type: string, listener: (event: MediaQueryListEvent) => void) { mediaListeners.get(media)?.delete(listener); },
+  }) });
+  if (dispatchTransition) {
+    fireEvent.resize(window);
+    act(() => {
+      for (const [media, listeners] of mediaListeners) {
+        if (previous.get(media) === matchesMedia(media)) continue;
+        const event = Object.assign(new Event("change"), { media, matches: matchesMedia(media) }) as MediaQueryListEvent;
+        listeners.forEach(listener => listener(event));
+      }
+    });
+  }
 }
 function useWideDesktop() { setViewport(1280); }
 
@@ -40,7 +74,7 @@ function renderApp(path: string, historyControls = false, initialEntries = [path
     identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter></UiLocaleProvider>);
 }
 
-afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); });
+afterEach(() => { cleanup(); restoreGeometry.splice(0).forEach(restore => restore()); mediaListeners.clear(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); });
 
 describe("sidebar navigation and canonical preview workspace", () => {
   it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
@@ -128,10 +162,11 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(editor.scrollTop).toBe(240);
     expect((document.scrollingElement ?? document.documentElement).scrollTop).toBe(0);
 
-    fireEvent.click(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button")[1]);
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     expect(editor.scrollTop).toBe(240);
     expect(preview.scrollTop).toBe(1500);
-    fireEvent.click(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button")[0]);
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
     expect(editor.scrollTop).toBe(240);
     expect(preview.scrollTop).toBe(1500);
   });
@@ -276,6 +311,230 @@ describe("sidebar navigation and canonical preview workspace", () => {
       expect(document.querySelector(".editor-preview-layout[data-workspace-view]")).toBeNull();
       expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
     }
+  });
+
+  it.each([861, 1279])("hosts only Edit and Preview in the Header at %ipx fine-pointer desktop", width => {
+    setViewport(width, true);
+    renderApp("/education");
+
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const layout = document.querySelector<HTMLElement>('.editor-preview-layout[data-preview-view="editor"]')!;
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const fineDesktopRules = css.match(/@media\(min-width:861px\) and \(max-width:1279px\) and \(pointer:fine\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const editorLayoutRule = fineDesktopRules.match(/\.app-main\.has-preview-workspace\.is-editor-only-desktop \.editor-preview-layout\[data-preview-view=editor\]\{([^}]*)\}/)?.[1] ?? "";
+    const editorPaneRule = fineDesktopRules.match(/\.app-main\.has-preview-workspace\.is-editor-only-desktop \.editor-preview-layout\[data-preview-view=editor\] \.editor-preview-pane\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(document.querySelector(".topbar")?.classList.contains("has-workspace-view-switcher")).toBe(true);
+    expect(document.querySelector(".topbar-left .topbar-workspace-slot")?.firstElementChild).toBe(switcher);
+    expect(within(switcher).getAllByRole("button").map(button => button.textContent)).toEqual(["Edit", "Preview"]);
+    expect(within(switcher).queryByRole("button", { name: "Split" })).toBeNull();
+    expect(layout.querySelector(".editor-preview-toggle")).toBeNull();
+    expect(layout.dataset.previewView).toBe("editor");
+    expect(editorLayoutRule).toContain("grid-template-rows:minmax(0,1fr)");
+    expect(editorLayoutRule).not.toContain("grid-template-rows:auto");
+    expect(editorPaneRule).toContain("grid-row:1");
+  });
+
+  it("keeps all three Header workspace states at exactly 1280px", () => {
+    setViewport(1280, true);
+    renderApp("/education");
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+
+    expect(document.querySelector(".topbar-left .topbar-workspace-slot")?.firstElementChild).toBe(switcher);
+    expect(within(switcher).getAllByRole("button").map(button => button.textContent)).toEqual(["Edit", "Split", "Preview"]);
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split");
+  });
+
+  it("keeps the existing mobile/touch workspace control inside the workspace at 860px", () => {
+    setViewport(860, false);
+    renderApp("/education");
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    const legacyToggle = layout.querySelector<HTMLElement>(".editor-preview-toggle");
+
+    expect(document.querySelector(".topbar-workspace-slot")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Workspace view" })).toBeNull();
+    expect(legacyToggle).not.toBeNull();
+    expect(legacyToggle?.parentElement).toBe(layout);
+    expect(layout.querySelector("[data-workspace-view]")).toBeNull();
+  });
+
+  it("switches the intermediate desktop Header control without losing drafts, dirty state, or Editor scroll", async () => {
+    setViewport(1024, true);
+    renderApp("/profile");
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    const name = screen.getByLabelText("English Name") as HTMLInputElement;
+
+    fireEvent.change(name, { target: { value: "Intermediate desktop draft" } });
+    editor.scrollTop = 240;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    expect(name.value).toBe("Intermediate desktop draft");
+    expect(document.querySelector(".editor-action-footer .state-pill")?.textContent).toBe("Unsaved changes");
+
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    expect(editor.scrollTop).toBe(240);
+    expect(name.value).toBe("Intermediate desktop draft");
+    expect(document.querySelector(".editor-action-footer .state-pill")?.textContent).toBe("Unsaved changes");
+  });
+
+  it("preserves document Preview scroll when switching modes in the intermediate desktop Header", async () => {
+    setViewport(1024, true);
+    renderApp("/education");
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    documentScrollOwner.scrollTop = 410;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+
+    expect(documentScrollOwner.scrollTop).toBe(410);
+    expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
+  });
+
+  it("uses the localized Edit label for the intermediate desktop Header control", () => {
+    setViewport(1024, true);
+    window.localStorage.setItem("cms-ui-locale", "zh");
+    renderApp("/education");
+    const switcher = screen.getByRole("group", { name: "工作区视图" });
+
+    expect(within(switcher).getByRole("button", { name: "编辑" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "预览" })).toBeTruthy();
+    expect(within(switcher).queryByRole("button", { name: "编辑器" })).toBeNull();
+  });
+
+  it.each([
+    ["edit", "editor", "editor"],
+    ["preview", "preview", "preview"],
+  ] as const)("hands wide %s mode to the matching two-state mode at 1279px", async (wideMode, expectedMode, expectedPressed) => {
+    setViewport(1280, true);
+    renderApp("/education");
+    const wideSwitcher = screen.getByRole("group", { name: "Workspace view" });
+    fireEvent.click(within(wideSwitcher).getByRole("button", { name: wideMode === "edit" ? "Edit" : "Preview" }));
+    setViewport(1279, true, true);
+
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe(expectedMode));
+    const narrowSwitcher = screen.getByRole("group", { name: "Workspace view" });
+    expect(within(narrowSwitcher).getAllByRole("button").map(button => button.textContent)).toEqual(["Edit", "Preview"]);
+    expect(within(narrowSwitcher).getByRole("button", { name: expectedPressed === "editor" ? "Edit" : "Preview" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(narrowSwitcher).queryByRole("button", { name: "Split" })).toBeNull();
+    expect(within(narrowSwitcher).getAllByRole("button").filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+  });
+
+  it("uses the saved two-state mode when wide Split collapses, and returns to wide Split", async () => {
+    window.sessionStorage.setItem(modeKey("education"), "preview");
+    setViewport(1280, true);
+    renderApp("/education");
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split");
+    setViewport(1279, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    setViewport(1280, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    expect(within(switcher).getAllByRole("button").map(button => button.textContent)).toEqual(["Edit", "Split", "Preview"]);
+    expect(within(switcher).getAllByRole("button").filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+  });
+
+  it("uses Editor as the deterministic fallback when Split collapses without a saved two-state mode", async () => {
+    setViewport(1280, true);
+    renderApp("/education");
+    setViewport(1279, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    expect(within(switcher).getAllByRole("button").filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(within(switcher).getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("preserves dirty drafts while handing the workspace across 1280/1279 and back", async () => {
+    setViewport(1280, true);
+    renderApp("/profile");
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Breakpoint draft" } });
+    setViewport(1279, true, true);
+    await waitFor(() => expect(within(screen.getByRole("group", { name: "Workspace view" })).getAllByRole("button")).toHaveLength(2));
+    setViewport(1280, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Breakpoint draft");
+    expect(document.querySelector(".editor-action-footer .state-pill")?.textContent).toBe("Unsaved changes");
+    expect(screen.getByRole("button", { name: "Cancel changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Save/ })).toBeTruthy();
+  });
+
+  it("hands Preview position proportionally between its pane and document across 1280/1279", async () => {
+    setViewport(1280, true);
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+    mockScrollGeometry(viewport, 1600, 600);
+    mockScrollGeometry(documentOwner, 3000, 720);
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Preview" }));
+    viewport.scrollTop = 250;
+
+    setViewport(1279, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    expect(documentOwner.scrollTop).toBe(570);
+    setViewport(1280, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    expect(viewport.scrollTop).toBe(250);
+  });
+
+  it("hands Editor position proportionally between its pane and document across 861/860", async () => {
+    setViewport(861, true);
+    renderApp("/profile");
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+    mockScrollGeometry(editor, 1500, 500);
+    mockScrollGeometry(documentOwner, 2720, 720);
+    editor.scrollTop = 400;
+
+    setViewport(860, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-pane")?.getAttribute("data-editor-scroll-mode")).toBe("document"));
+    expect(documentOwner.scrollTop).toBe(800);
+    setViewport(861, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-content-scroll[data-editor-scroll-owner]")).not.toBeNull());
+    expect(editor.scrollTop).toBe(400);
+  });
+
+  it("preserves a dirty draft across 861/860 and back without duplicate controls", async () => {
+    setViewport(861, true);
+    renderApp("/profile");
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Narrow breakpoint draft" } });
+    setViewport(860, true, true);
+    await waitFor(() => expect(screen.getByRole("group", { name: "Editor or preview view" })).toBeTruthy());
+    expect(screen.queryByRole("group", { name: "Workspace view" })).toBeNull();
+    setViewport(861, true, true);
+    await waitFor(() => expect(screen.getByRole("group", { name: "Workspace view" })).toBeTruthy());
+    expect(screen.queryByRole("group", { name: "Editor or preview view" })).toBeNull();
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Narrow breakpoint draft");
+    expect(document.querySelector(".editor-action-footer .state-pill")?.textContent).toBe("Unsaved changes");
+    expect(screen.getByRole("button", { name: "Cancel changes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Save/ })).toBeTruthy();
+  });
+
+  it("moves the legacy workspace toggle into and out of the Preview sticky offset at 860/861", async () => {
+    setViewport(860, true);
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const stickyNav = viewport.querySelector(".resume-preview-sticky-nav") as HTMLElement;
+    const toggle = document.querySelector<HTMLElement>(".editor-preview-toggle")!;
+    vi.spyOn(toggle, "getBoundingClientRect").mockReturnValue({ height: 38 } as DOMRect);
+    fireEvent.resize(window);
+    expect(stickyNav.style.top).toBe("106px");
+
+    setViewport(861, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-toggle")).toBeNull());
+    expect(stickyNav.style.top).toBe("68px");
+
+    setViewport(860, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-toggle")).not.toBeNull());
+    const reinsertedToggle = document.querySelector<HTMLElement>(".editor-preview-toggle")!;
+    vi.spyOn(reinsertedToggle, "getBoundingClientRect").mockReturnValue({ height: 38 } as DOMRect);
+    fireEvent.resize(window);
+    expect(stickyNav.style.top).toBe("106px");
   });
 
   it("keeps the responsive stacked workspace on document scrolling", () => {
@@ -477,10 +736,10 @@ describe("sidebar navigation and canonical preview workspace", () => {
     renderApp("/education");
     const content = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     content.scrollTop = 240;
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button"));
-    fireEvent.click(buttons[1]);
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
-    fireEvent.click(buttons[0]);
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(content.scrollTop).toBe(240));
   });
 
