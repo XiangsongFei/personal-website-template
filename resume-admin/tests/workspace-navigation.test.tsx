@@ -374,27 +374,111 @@ describe("sidebar navigation and canonical preview workspace", () => {
 
     fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
-    expect(editor.scrollTop).toBe(240);
+    await waitFor(() => expect(editor.scrollTop).toBe(240));
     expect(name.value).toBe("Intermediate desktop draft");
     expect(document.querySelector(".editor-action-footer .state-pill")?.textContent).toBe("Unsaved changes");
   });
 
-  it("preserves document Preview scroll when switching modes in the intermediate desktop Header", async () => {
-    setViewport(1024, true);
+  it("preserves independent Editor and Preview positions through repeated 1279px mode switches", async () => {
+    setViewport(1279, true);
     renderApp("/education");
     const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     const documentScrollOwner = document.scrollingElement ?? document.documentElement;
 
+    editor.scrollTop = 240;
     fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
     documentScrollOwner.scrollTop = 410;
     fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    await waitFor(() => expect(editor.scrollTop).toBe(240));
     fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(410));
+    expect(editor.scrollTop).toBe(240);
 
-    expect(documentScrollOwner.scrollTop).toBe(410);
+    editor.scrollTop = 520;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    await waitFor(() => expect(editor.scrollTop).toBe(520));
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(410));
+    documentScrollOwner.scrollTop = 690;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    await waitFor(() => expect(editor.scrollTop).toBe(520));
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(690));
+
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
+  });
+
+  it("retries a mode restore when the first scroll write is temporarily clamped", async () => {
+    setViewport(1279, true);
+    renderApp("/education");
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    editor.scrollTop = 240;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    documentScrollOwner.scrollTop = 410;
+
+    let position = 240;
+    let maximum = 100;
+    let writes = 0;
+    const previousScrollTop = Object.getOwnPropertyDescriptor(editor, "scrollTop");
+    const previousScrollHeight = Object.getOwnPropertyDescriptor(editor, "scrollHeight");
+    const previousClientHeight = Object.getOwnPropertyDescriptor(editor, "clientHeight");
+    Object.defineProperties(editor, {
+      scrollTop: { configurable: true, get: () => position, set: (value: number) => { writes += 1; position = Math.min(value, maximum); if (writes === 1) maximum = 500; } },
+      scrollHeight: { configurable: true, get: () => maximum + 500 },
+      clientHeight: { configurable: true, value: 500 },
+    });
+    restoreGeometry.push(() => {
+      if (previousScrollTop) Object.defineProperty(editor, "scrollTop", previousScrollTop); else Reflect.deleteProperty(editor, "scrollTop");
+      if (previousScrollHeight) Object.defineProperty(editor, "scrollHeight", previousScrollHeight); else Reflect.deleteProperty(editor, "scrollHeight");
+      if (previousClientHeight) Object.defineProperty(editor, "clientHeight", previousClientHeight); else Reflect.deleteProperty(editor, "clientHeight");
+    });
+
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(writes).toBeGreaterThanOrEqual(2));
+    expect(position).toBe(240);
+  });
+
+  it("settles at the maximum reachable position when a saved mode position is beyond the current content range", async () => {
+    setViewport(1279, true);
+    renderApp("/education");
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    editor.scrollTop = 240;
+    fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    documentScrollOwner.scrollTop = 410;
+
+    let position = 240;
+    let writes = 0;
+    const previousScrollTop = Object.getOwnPropertyDescriptor(editor, "scrollTop");
+    const previousScrollHeight = Object.getOwnPropertyDescriptor(editor, "scrollHeight");
+    const previousClientHeight = Object.getOwnPropertyDescriptor(editor, "clientHeight");
+    Object.defineProperties(editor, {
+      scrollTop: { configurable: true, get: () => position, set: (value: number) => { writes += 1; position = Math.min(value, 100); } },
+      scrollHeight: { configurable: true, value: 600 },
+      clientHeight: { configurable: true, value: 500 },
+    });
+    restoreGeometry.push(() => {
+      if (previousScrollTop) Object.defineProperty(editor, "scrollTop", previousScrollTop); else Reflect.deleteProperty(editor, "scrollTop");
+      if (previousScrollHeight) Object.defineProperty(editor, "scrollHeight", previousScrollHeight); else Reflect.deleteProperty(editor, "scrollHeight");
+      if (previousClientHeight) Object.defineProperty(editor, "clientHeight", previousClientHeight); else Reflect.deleteProperty(editor, "clientHeight");
+    });
+
+    fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(writes).toBe(4));
+    expect(position).toBe(100);
   });
 
   it("uses the localized Edit label for the intermediate desktop Header control", () => {
@@ -543,7 +627,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect((screen.getByTestId("resume-preview") as HTMLElement).dataset.previewScrollMode).toBe("document");
   });
 
-  it("restores independent Editor and Preview document positions when switching modes on one route", () => {
+  it("restores independent Editor and Preview document positions when switching modes on one route", async () => {
     renderApp("/experience");
     const documentScrollOwner = document.scrollingElement ?? document.documentElement;
     documentScrollOwner.scrollTop = 420;
@@ -551,12 +635,12 @@ describe("sidebar navigation and canonical preview workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     documentScrollOwner.scrollTop = 910;
     fireEvent.click(screen.getByRole("button", { name: "Editor" }));
-    expect(documentScrollOwner.scrollTop).toBe(420);
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(420));
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(documentScrollOwner.scrollTop).toBe(910);
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(910));
     fireEvent.click(screen.getByRole("button", { name: "Editor" }));
-    expect(documentScrollOwner.scrollTop).toBe(420);
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(420));
   });
 
   it("starts a newly entered and revisited sidebar Editor route at the top without carrying the old route position", async () => {
@@ -569,6 +653,17 @@ describe("sidebar navigation and canonical preview workspace", () => {
     await waitFor(() => expect(screen.getByTestId("current-route").textContent).toBe("/projects"));
     expect(screen.getByRole("button", { name: "Editor" }).getAttribute("aria-pressed")).toBe("true");
     expect(documentScrollOwner.scrollTop).toBe(0);
+
+    documentScrollOwner.scrollTop = 280;
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    documentScrollOwner.scrollTop = 360;
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor"));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(280));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    await waitFor(() => expect(documentScrollOwner.scrollTop).toBe(360));
 
     documentScrollOwner.scrollTop = 760;
     fireEvent.click(nav.getByRole("link", { name: "Experience" }));

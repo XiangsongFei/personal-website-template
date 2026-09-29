@@ -937,11 +937,39 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
     if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
     const pending = pendingModeRestore.current;
     if (!pending || pending.section !== section || pending.view !== view || wideDesktop) return;
-    const owner = pending.view === "editor" && desktopEditorOnlyViewport
-      ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
-      : getDocumentScrollOwner();
-    if (owner) owner.scrollTop = pending.position;
-    pendingModeRestore.current = null;
+    let frame = 0;
+    let attempts = 0;
+    let lastGeometry = "";
+    let stableGeometryFrames = 0;
+    const restoreAfterLayout = () => {
+      if (pendingModeRestore.current !== pending) return;
+      attempts += 1;
+      const owner = pending.view === "editor" && desktopEditorOnlyViewport
+        ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
+        : getDocumentScrollOwner();
+      if (owner) {
+        owner.scrollTop = pending.position;
+        if (Math.abs(owner.scrollTop - pending.position) <= 1) {
+          pendingModeRestore.current = null;
+          return;
+        }
+
+        const geometry = `${owner.scrollHeight}:${owner.clientHeight}`;
+        stableGeometryFrames = geometry === lastGeometry ? stableGeometryFrames + 1 : 0;
+        lastGeometry = geometry;
+        if (attempts >= 4 || stableGeometryFrames >= 2) {
+          owner.scrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
+          pendingModeRestore.current = null;
+          return;
+        }
+      } else if (attempts >= 4) {
+        pendingModeRestore.current = null;
+        return;
+      }
+      frame = window.requestAnimationFrame(restoreAfterLayout);
+    };
+    frame = window.requestAnimationFrame(restoreAfterLayout);
+    return () => window.cancelAnimationFrame(frame);
   }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
   useLayoutEffect(() => {
     observedBreakpoints.current = { wideDesktop, desktopEditorOnlyViewport };
