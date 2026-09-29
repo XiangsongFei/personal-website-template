@@ -83,12 +83,165 @@ function getScrollProgress(owner: HTMLElement): { position: number; progress: nu
   return { position, progress: maximum > 0 ? Math.min(1, Math.max(0, position / maximum)) : position > 0 ? 1 : 0 };
 }
 
+type EditorPosition = { anchorId: string | null; anchorOffset: number | null; raw: number; progress: number; range: number };
+type PreviewPosition = { raw: number; coordinate: number; scale: number };
+type WorkspacePosition = EditorPosition | PreviewPosition;
+type WorkspacePositions = { section: PreviewSection; editor: EditorPosition | null; preview: PreviewPosition | null };
+const emptyEditorPosition = (): EditorPosition => ({ anchorId: null, anchorOffset: null, raw: 0, progress: 0, range: 0 });
+const PREVIEW_CANVAS_WIDTH = 980;
+
+function previewScale(viewport: HTMLElement | null): number {
+  const reported = Number(viewport?.dataset.previewScale);
+  if (Number.isFinite(reported) && reported > 0) return reported;
+  const canvas = viewport?.querySelector<HTMLElement>(".resume-preview-canvas");
+  const transform = canvas?.style.transform.match(/scale\(([^)]+)\)/)?.[1];
+  const parsed = Number(transform);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function captureWorkspacePosition(layout: HTMLElement | null, mode: "editor" | "preview", owner: HTMLElement): WorkspacePosition {
+  if (mode === "editor") {
+    const { position, progress } = getScrollProgress(owner);
+    const editor = layout?.querySelector<HTMLElement>(".editor-content-scroll");
+    const viewportTop = getScrollViewportTop(owner);
+    const viewportBottom = viewportTop + (owner === getDocumentScrollOwner() ? window.innerHeight : owner.clientHeight);
+    const candidates = Array.from(editor?.querySelectorAll<HTMLElement>("[data-editor-anchor]") ?? [])
+      .filter(element => !element.closest("[hidden]"))
+      .map(element => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(candidate => candidate.rect.height > 0 && candidate.rect.bottom > viewportTop && candidate.rect.top < viewportBottom)
+      .sort((left, right) => Math.abs(left.rect.top - viewportTop) - Math.abs(right.rect.top - viewportTop));
+    const anchor = candidates[0];
+    return {
+      anchorId: anchor?.element.dataset.editorAnchor ?? null,
+      anchorOffset: anchor ? anchor.rect.top - viewportTop : null,
+      raw: position,
+      progress,
+      range: Math.max(0, owner.scrollHeight - (owner.clientHeight || window.innerHeight)),
+    };
+  }
+
+  const viewport = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]") ?? null;
+  const scale = previewScale(viewport);
+  const stage = viewport?.querySelector<HTMLElement>(".resume-preview-stage");
+  const previewRect = viewport?.getBoundingClientRect();
+  const hasPreviewGeometry = Boolean(previewRect && (previewRect.width > 0 || previewRect.height > 0));
+  const raw = owner === getDocumentScrollOwner()
+    ? hasPreviewGeometry
+      ? Math.max(0, Math.min(stage?.getBoundingClientRect().height || viewport?.scrollHeight || Number.POSITIVE_INFINITY, -(previewRect?.top ?? 0)))
+      : getScrollProgress(owner).position
+    : Math.max(0, owner.scrollTop);
+  return { raw: owner === getDocumentScrollOwner() ? getScrollProgress(owner).position : raw, coordinate: raw / scale, scale };
+}
+
+function getScrollViewportTop(owner: HTMLElement): number {
+  return owner === getDocumentScrollOwner() ? 0 : owner.getBoundingClientRect().top + owner.clientTop;
+}
+
+function findEditorAnchor(layout: HTMLElement | null, anchorId: string | null): HTMLElement | null {
+  if (!layout || !anchorId) return null;
+  const editor = layout.querySelector<HTMLElement>(".editor-content-scroll");
+  return Array.from(editor?.querySelectorAll<HTMLElement>("[data-editor-anchor]") ?? [])
+    .find(element => element.dataset.editorAnchor === anchorId && !element.closest("[hidden]")) ?? null;
+}
+
+function editorAnchorMatches(layout: HTMLElement | null, owner: HTMLElement, position: EditorPosition): boolean {
+  if (!position.anchorId || !Number.isFinite(position.anchorOffset)) return true;
+  const anchor = findEditorAnchor(layout, position.anchorId);
+  if (!anchor) return true;
+  return Math.abs(anchor.getBoundingClientRect().top - getScrollViewportTop(owner) - position.anchorOffset!) <= 3;
+}
+
+function storeWorkspacePosition(positions: WorkspacePositions, mode: "editor" | "preview", position: WorkspacePosition) {
+  if (mode === "editor") positions.editor = position as EditorPosition;
+  else positions.preview = position as PreviewPosition;
+}
+
+function workspacePositionTop(layout: HTMLElement | null, mode: "editor" | "preview", owner: HTMLElement, position: WorkspacePosition, allowEditorAnchor = true): number {
+  if (mode === "editor") {
+    const editor = position as EditorPosition;
+    const range = Math.max(0, owner.scrollHeight - (owner.clientHeight || window.innerHeight));
+    const anchor = allowEditorAnchor ? findEditorAnchor(layout, editor.anchorId) : null;
+    if (anchor && Number.isFinite(editor.anchorOffset)) {
+      const delta = anchor.getBoundingClientRect().top - getScrollViewportTop(owner) - editor.anchorOffset!;
+      return Math.min(range, Math.max(0, getScrollProgress(owner).position + delta));
+    }
+    const hasScrollGeometry = owner.scrollHeight > 0 || owner.clientHeight > 0;
+    if (!hasScrollGeometry) return Number.isFinite(editor.raw) ? Math.max(0, editor.raw) : 0;
+    const logical = Number.isFinite(editor.progress) ? editor.progress * range : Number.isFinite(editor.raw) ? editor.raw : 0;
+    return Math.min(range, Math.max(0, logical));
+  }
+
+  const preview = position as PreviewPosition;
+  const viewport = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]") ?? null;
+  const scale = previewScale(viewport);
+  if (owner === getDocumentScrollOwner()) {
+    const viewportRect = viewport?.getBoundingClientRect();
+    if (!viewportRect || (viewportRect.width === 0 && viewportRect.height === 0)) {
+      return Math.max(0, preview.coordinate * scale);
+    }
+    const documentTop = getScrollProgress(owner).position + (viewport?.getBoundingClientRect().top ?? 0);
+    const maximum = Math.max(0, owner.scrollHeight - (owner.clientHeight || window.innerHeight));
+    return Math.min(maximum, Math.max(0, documentTop + preview.coordinate * scale));
+  }
+  const range = Math.max(0, owner.scrollHeight - (owner.clientHeight || window.innerHeight));
+  return Math.min(range, Math.max(0, preview.coordinate * scale));
+}
+
+function workspaceGeometry(layout: HTMLElement | null, mode: "editor" | "preview", owner: HTMLElement): { signature: string; ready: boolean } {
+  const preview = mode === "preview" ? layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]") ?? null : null;
+  const stage = preview?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
+  const scale = previewScale(preview);
+  const width = preview?.clientWidth ?? 0;
+  const expectedScale = width > 0 ? Math.min(1, width / PREVIEW_CANVAS_WIDTH) : scale;
+  const stageHeight = stage?.getBoundingClientRect().height ?? 0;
+  const signature = `${owner.scrollHeight}:${owner.clientHeight}:${width}:${scale}:${stage?.style.height ?? ""}:${stageHeight}`;
+  const ready = mode === "editor" || (Boolean(stage) && stageHeight > 0 && Math.abs(scale - expectedScale) < 0.005);
+  return { signature, ready };
+}
+
 function getWorkspaceScrollOwner(layout: HTMLElement | null, mode: "editor" | "preview", wideDesktop: boolean, desktopEditorOnlyViewport: boolean): HTMLElement | null {
   if (wideDesktop || (mode === "editor" && desktopEditorOnlyViewport)) {
     const selector = mode === "editor" ? ".editor-content-scroll[data-editor-scroll-owner]" : "[data-preview-scroll-owner]";
     return layout?.querySelector<HTMLElement>(selector) ?? null;
   }
   return getDocumentScrollOwner();
+}
+
+function restoreWorkspacePositionsAfterLayout(targets: Array<{ layout: HTMLElement | null; mode: "editor" | "preview"; owner: HTMLElement | null; position: WorkspacePosition }>, onComplete: () => void): () => void {
+  const pending = targets.map(target => ({ ...target, attempts: 0, geometry: "", stableFrames: 0, complete: false }));
+  if (!pending.length) { onComplete(); return () => {}; }
+  let frame = 0;
+  let cancelled = false;
+  const restore = () => {
+    if (cancelled) return;
+    let waiting = false;
+    for (const target of pending) {
+      if (target.complete) continue;
+      target.attempts += 1;
+      const { owner, layout, mode, position } = target;
+      if (!owner) {
+        if (target.attempts >= 8) target.complete = true;
+        else waiting = true;
+        continue;
+      }
+      if (owner.closest("[hidden]")) { target.complete = true; continue; }
+      const { signature: geometry, ready } = workspaceGeometry(layout, mode, owner);
+      target.stableFrames = geometry === target.geometry ? target.stableFrames + 1 : 0;
+      target.geometry = geometry;
+      if ((ready && target.stableFrames >= 2) || target.attempts >= 8) {
+        owner.scrollTop = workspacePositionTop(layout, mode, owner, position, target.attempts < 8);
+        if (mode === "editor" && target.attempts < 8 && !editorAnchorMatches(layout, owner, position as EditorPosition)) {
+          target.geometry = "";
+          target.stableFrames = 0;
+          waiting = true;
+        } else target.complete = true;
+      } else waiting = true;
+    }
+    if (pending.every(target => target.complete)) { onComplete(); return; }
+    if (waiting) frame = window.requestAnimationFrame(restore);
+  };
+  frame = window.requestAnimationFrame(restore);
+  return () => { cancelled = true; if (frame) window.cancelAnimationFrame(frame); };
 }
 
 type EditableSectionItem = IntroItem | ExperienceItem | ProjectItem | SkillItem | AwardItem;
@@ -256,13 +409,14 @@ function useLocalDraft<T>(section: SectionKey, initial: T) {
 
 type FieldSpec<T> = { key: keyof T & string; label: string; multiline?: boolean; type?: "text" | "email" | "url"; readOnlyZh?: boolean };
 
-function InputField({ id, label, value, onChange, multiline = false, type = "text", readOnly = false, hint, compactLabel, modified, reviewLabel, onReviewConfirm, inline = false }: {
+function InputField({ id, label, value, onChange, multiline = false, type = "text", readOnly = false, hint, compactLabel, modified, reviewLabel, onReviewConfirm, inline = false, editorAnchor }: {
   id: string; label: string; value: string; onChange: (value: string) => void;
   multiline?: boolean; type?: "text" | "email" | "url"; readOnly?: boolean; hint?: string; compactLabel?: string;
   modified?: boolean; reviewLabel?: string; onReviewConfirm?: () => void; inline?: boolean;
+  editorAnchor?: string;
 }) {
   const { t } = useUiLocale();
-  return <div className={`field${inline ? " links-inline-field" : ""}`}>
+  return <div className={`field${inline ? " links-inline-field" : ""}`} data-editor-anchor={editorAnchor}>
     <label htmlFor={id} className={compactLabel ? "visually-hidden-containing-block" : undefined}>{compactLabel ? <><span aria-hidden="true">{compactLabel}</span><span className="visually-hidden">{t(label)}</span></> : t(label)}</label>
     {multiline
       ? <textarea id={id} value={value} onChange={event => onChange(event.target.value)} readOnly={readOnly} rows={4} aria-label={compactLabel ? t(label) : undefined} aria-describedby={hint ? `${id}-hint` : undefined} />
@@ -290,7 +444,7 @@ function SharedFields<T extends object>({ value, fields, onChange, idPrefix, rea
   value: T; fields: FieldSpec<T>[]; onChange: (value: T) => void; idPrefix: string; readOnly?: boolean; inline?: boolean;
 }) {
   return <div className={`field-grid${inline ? " links-inline-row" : ""}`}>{fields.map(field =>
-    <InputField key={field.key} id={`${idPrefix}-${field.key}`} label={field.label} value={String(value[field.key] ?? "")}
+    <InputField key={field.key} id={`${idPrefix}-${field.key}`} editorAnchor={`field:${idPrefix}:${field.key}`} label={field.label} value={String(value[field.key] ?? "")}
       type={field.type} multiline={field.multiline} readOnly={readOnly}
       inline={inline}
       onChange={next => onChange({ ...value, [field.key]: next })} />
@@ -313,7 +467,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
       </div>}
       {fields.map(field =>
-      <section className="bilingual-field-pair" key={field.key}>
+      <section className="bilingual-field-pair" key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
         {!hideFieldHeadings && <h3>{t(field.label)}</h3>}
         <div className="bilingual-field-values">{locales.map(locale => {
           const readOnly = readOnlyAll || readOnlyLocales?.[locale] || (locale === "zh" && field.readOnlyZh);
@@ -474,7 +628,7 @@ function SectionForm<T>({ section, title, description, initial, children, produc
     : "Fixture saves stay in this browser session.");
   return <form className="page-section editor-form editor-workspace-route" onSubmit={event => { event.preventDefault(); void submit(); }}>
       <EditorContentScroll formContent>
-        {!hidePageHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
+        {!hidePageHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
         {children(editor.draft, editor.update, editor.saved)}
       </EditorContentScroll>
       <EditorActionFooter>
@@ -490,23 +644,24 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   </form>;
 }
 
-function PageHeadingWithAction({ title, description, action }: { title: string; description: string; action: ReactNode }) {
+function PageHeadingWithAction({ title, description, action, editorAnchor }: { title: string; description: string; action: ReactNode; editorAnchor?: string }) {
   const { t } = useUiLocale();
-  return <div className="page-heading">
+  return <div className="page-heading" data-editor-anchor={editorAnchor}>
     <p className="eyebrow">{t("Resume content")}</p>
     <div className="page-heading-title-row"><h1>{t(title)}</h1>{action}</div>
     <p>{t(description)}</p>
   </div>;
 }
 
-function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, hideLabelWhenExpanded = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading, sectionTextContent }: {
+function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, hideLabelWhenExpanded = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading, sectionTextContent, anchorScope }: {
   items: T[]; onChange: (items: T[]) => void; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode; groupLabel: string; addLabel?: string; allowMultipleOpen?: boolean; confirmedItems?: T[];
   hideLabelWhenExpanded?: boolean;
   onConfirmedDelete?: (id: string) => void; deleteDisabled?: (id: string) => boolean;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
-  sectionHeading?: { title: string; description: string };
+  sectionHeading?: { title: string; description: string; anchorId?: string };
   sectionTextContent?: ReactNode;
+  anchorScope?: string;
 }) {
   const { t } = useUiLocale();
   const [openId, setOpenId] = useState<string | null>(items[0]?.id ?? null);
@@ -538,14 +693,14 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
   };
   const addButton = <button type="button" className="button secondary" onClick={add}>{t(addLabel)}</button>;
   return <div className="repeatable-group" aria-label={groupLabel || undefined}>
-    {sectionHeading ? <PageHeadingWithAction title={sectionHeading.title} description={sectionHeading.description} action={addButton} />
-      : <div className="group-heading">{groupLabel && <h2>{t(groupLabel)}</h2>}{addButton}</div>}
+    {sectionHeading ? <PageHeadingWithAction title={sectionHeading.title} description={sectionHeading.description} action={addButton} editorAnchor={sectionHeading.anchorId} />
+      : <div className="group-heading" data-editor-anchor={anchorScope ? `group:${anchorScope}` : undefined}>{groupLabel && <h2>{t(groupLabel)}</h2>}{addButton}</div>}
     {sectionTextContent}
     {items.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
     <div className="item-stack">{items.map((item, index) => {
       const itemLabel = label(item, index) || t("New item");
       const isOpen = allowMultipleOpen ? openIds.has(item.id) : openId === item.id;
-      return <article className="item-card" key={item.id}>
+      return <article className="item-card" key={item.id} data-editor-anchor={anchorScope ? `item:${anchorScope}:${item.id}` : undefined}>
         <div className="item-card-heading"><div className={!headerIdentity && hideLabelWhenExpanded && isOpen ? "visually-hidden-containing-block" : undefined}>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3 className={hideLabelWhenExpanded && isOpen ? "visually-hidden" : undefined}>{itemLabel}</h3></>}</div>
           <div className="item-actions">
             <button type="button" onClick={() => toggleOpen(item.id, isOpen)} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${itemLabel}`}>{isOpen ? t("Close") : t("Edit")}</button>
@@ -591,7 +746,7 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading} sectionText={sectionText}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />}
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />}
   </SectionForm></div>;
 }
 
@@ -840,11 +995,11 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const useActionHeading = section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <section className="page-section editor-workspace-route" aria-busy={editor.saving}>
     <EditorContentScroll>
-      {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
+      {!useActionHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
       <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
         onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
         headerIdentity={headerIdentity}
-        sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />
+        sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />
     </EditorContentScroll>
     <EditorActionFooter>
       {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
@@ -907,25 +1062,54 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const editorElementScroll = wideDesktop || (desktopEditorOnlyViewport && view === "editor");
   const [workspaceView, setWorkspaceView] = useState<"edit" | "split" | "preview">("split");
   const workspaceLayoutRef = useRef<HTMLDivElement>(null);
-  const pendingWorkspaceScrollRestore = useRef<{ editor: number; preview: number } | null>(null);
-  const modeScrollPositions = useRef<{ section: PreviewSection; editor: number | null; preview: number | null }>({ section, editor: null, preview: null });
-  const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: number } | null>(null);
-  const pendingResponsiveScrollRestore = useRef<{ section: PreviewSection; mode: "editor" | "preview"; progress: number; wideDesktop: boolean; desktopEditorOnlyViewport: boolean } | null>(null);
+  const pendingWorkspaceScrollRestore = useRef<{ section: PreviewSection; view: "edit" | "split" | "preview"; editor: EditorPosition; preview: PreviewPosition } | null>(null);
+  const modeScrollPositions = useRef<WorkspacePositions>({ section, editor: null, preview: null });
+  const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: WorkspacePosition } | null>(null);
+  const pendingResponsiveScrollRestore = useRef<{ section: PreviewSection; mode: "editor" | "preview"; position: WorkspacePosition; wideDesktop: boolean; desktopEditorOnlyViewport: boolean } | null>(null);
   const observedBreakpoints = useRef({ wideDesktop, desktopEditorOnlyViewport });
   const [restorePreviewPosition, setRestorePreviewPosition] = useState(false);
   const requestCanonicalPreview = context.onRequestCanonicalPreview;
+  const ensureModeScrollPositions = useCallback(() => {
+    if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
+    return modeScrollPositions.current;
+  }, [section]);
+  const captureVisibleWorkspacePositions = useCallback((layout: HTMLElement | null, visibleView: "edit" | "split" | "preview") => {
+    const positions = ensureModeScrollPositions();
+    const editor = layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+    const preview = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+    if (visibleView !== "preview" && editor && !editor.closest("[hidden]")) positions.editor = captureWorkspacePosition(layout, "editor", editor) as EditorPosition;
+    if (visibleView !== "edit" && preview && !preview.closest("[hidden]")) positions.preview = captureWorkspacePosition(layout, "preview", preview) as PreviewPosition;
+    return positions;
+  }, [ensureModeScrollPositions]);
+  useEffect(() => {
+    if (!wideDesktop) return;
+    const layout = workspaceLayoutRef.current;
+    const editor = layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+    const preview = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+    const positions = ensureModeScrollPositions();
+    const onEditorScroll = () => {
+      if (workspaceView !== "preview" && editor && !editor.closest("[hidden]")) positions.editor = captureWorkspacePosition(layout, "editor", editor) as EditorPosition;
+    };
+    const onPreviewScroll = () => {
+      if (workspaceView !== "edit" && preview && !preview.closest("[hidden]")) positions.preview = captureWorkspacePosition(layout, "preview", preview) as PreviewPosition;
+    };
+    if (workspaceView !== "preview") editor?.addEventListener("scroll", onEditorScroll, { passive: true });
+    if (workspaceView !== "edit") preview?.addEventListener("scroll", onPreviewScroll, { passive: true });
+    return () => {
+      editor?.removeEventListener("scroll", onEditorScroll);
+      preview?.removeEventListener("scroll", onPreviewScroll);
+    };
+  }, [section, wideDesktop, workspaceView, ensureModeScrollPositions]);
   const changeView = (next: "editor" | "preview") => {
     if (next === view) return;
     if (!wideDesktop) {
-      if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
-      const currentPosition = view === "editor" && desktopEditorOnlyViewport
-        ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")?.scrollTop ?? null
-        : readDocumentScrollPosition();
-      if (currentPosition !== null) modeScrollPositions.current[view] = currentPosition;
-      const nextPosition = modeScrollPositions.current[next];
+      const positions = ensureModeScrollPositions();
+      const currentOwner = getWorkspaceScrollOwner(workspaceLayoutRef.current, view, wideDesktop, desktopEditorOnlyViewport);
+      if (currentOwner && !currentOwner.closest("[hidden]")) storeWorkspacePosition(positions, view, captureWorkspacePosition(workspaceLayoutRef.current, view, currentOwner));
+      const nextPosition = positions[next];
       pendingModeRestore.current = next === "preview"
         ? nextPosition === null ? null : { section, view: next, position: nextPosition }
-        : { section, view: next, position: nextPosition ?? 0 };
+        : { section, view: next, position: nextPosition ?? emptyEditorPosition() };
       setRestorePreviewPosition(next === "preview" && nextPosition !== null);
     } else {
       pendingModeRestore.current = null;
@@ -934,43 +1118,17 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
     context.onPreviewModeChange(section, next);
   };
   useLayoutEffect(() => {
-    if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
+    ensureModeScrollPositions();
     const pending = pendingModeRestore.current;
     if (!pending || pending.section !== section || pending.view !== view || wideDesktop) return;
-    let frame = 0;
-    let attempts = 0;
-    let lastGeometry = "";
-    let stableGeometryFrames = 0;
-    const restoreAfterLayout = () => {
-      if (pendingModeRestore.current !== pending) return;
-      attempts += 1;
-      const owner = pending.view === "editor" && desktopEditorOnlyViewport
-        ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
-        : getDocumentScrollOwner();
-      if (owner) {
-        owner.scrollTop = pending.position;
-        if (Math.abs(owner.scrollTop - pending.position) <= 1) {
-          pendingModeRestore.current = null;
-          return;
-        }
-
-        const geometry = `${owner.scrollHeight}:${owner.clientHeight}`;
-        stableGeometryFrames = geometry === lastGeometry ? stableGeometryFrames + 1 : 0;
-        lastGeometry = geometry;
-        if (attempts >= 4 || stableGeometryFrames >= 2) {
-          owner.scrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
-          pendingModeRestore.current = null;
-          return;
-        }
-      } else if (attempts >= 4) {
-        pendingModeRestore.current = null;
-        return;
-      }
-      frame = window.requestAnimationFrame(restoreAfterLayout);
-    };
-    frame = window.requestAnimationFrame(restoreAfterLayout);
-    return () => window.cancelAnimationFrame(frame);
-  }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
+    const owner = pending.view === "editor" && desktopEditorOnlyViewport
+      ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
+      : getDocumentScrollOwner();
+    return restoreWorkspacePositionsAfterLayout([{ layout: workspaceLayoutRef.current, mode: pending.view, owner, position: pending.position }], () => {
+      if (pendingModeRestore.current === pending) pendingModeRestore.current = null;
+      if (owner && !owner.closest("[hidden]")) storeWorkspacePosition(ensureModeScrollPositions(), pending.view, captureWorkspacePosition(workspaceLayoutRef.current, pending.view, owner));
+    });
+  }, [section, view, wideDesktop, desktopEditorOnlyViewport, ensureModeScrollPositions]);
   useLayoutEffect(() => {
     observedBreakpoints.current = { wideDesktop, desktopEditorOnlyViewport };
     const onResize = () => {
@@ -985,18 +1143,32 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       const activeMode = previous.wideDesktop
         ? workspaceView === "edit" ? "editor" : workspaceView === "preview" ? "preview" : view
         : view;
-      const outgoing = getWorkspaceScrollOwner(workspaceLayoutRef.current, activeMode, previous.wideDesktop, previous.desktopEditorOnlyViewport);
-      if (outgoing) {
-        const { position, progress } = getScrollProgress(outgoing);
-        pendingResponsiveScrollRestore.current = { section, mode: activeMode, progress, wideDesktop: next.wideDesktop, desktopEditorOnlyViewport: next.desktopEditorOnlyViewport };
-        if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
-        modeScrollPositions.current[activeMode] = position;
+      const positions = ensureModeScrollPositions();
+      if (previous.wideDesktop) captureVisibleWorkspacePositions(workspaceLayoutRef.current, workspaceView);
+      else {
+        const outgoing = getWorkspaceScrollOwner(workspaceLayoutRef.current, activeMode, previous.wideDesktop, previous.desktopEditorOnlyViewport);
+        if (outgoing && !outgoing.closest("[hidden]")) storeWorkspacePosition(positions, activeMode, captureWorkspacePosition(workspaceLayoutRef.current, activeMode, outgoing));
       }
 
       if (previous.wideDesktop && !next.wideDesktop) {
         const nextMode = workspaceView === "edit" ? "editor" : workspaceView === "preview" ? "preview" : view;
+        const position = positions[nextMode] ?? (nextMode === "editor" ? emptyEditorPosition() : { raw: 0, coordinate: 0, scale: 1 });
+        pendingResponsiveScrollRestore.current = { section, mode: nextMode, position, wideDesktop: next.wideDesktop, desktopEditorOnlyViewport: next.desktopEditorOnlyViewport };
         setRestorePreviewPosition(nextMode === "preview");
         if (nextMode !== view) onPreviewModeChange(section, nextMode);
+        pendingWorkspaceScrollRestore.current = null;
+      } else if (!previous.wideDesktop && next.wideDesktop) {
+        pendingResponsiveScrollRestore.current = null;
+        setWorkspaceView("split");
+        pendingWorkspaceScrollRestore.current = {
+          section,
+          view: "split",
+          editor: positions.editor ?? emptyEditorPosition(),
+          preview: positions.preview ?? { raw: 0, coordinate: 0, scale: 1 },
+        };
+      } else if (previous.desktopEditorOnlyViewport !== next.desktopEditorOnlyViewport) {
+        const position = positions[activeMode] ?? (activeMode === "editor" ? emptyEditorPosition() : { raw: 0, coordinate: 0, scale: 1 });
+        pendingResponsiveScrollRestore.current = { section, mode: activeMode, position, wideDesktop: next.wideDesktop, desktopEditorOnlyViewport: next.desktopEditorOnlyViewport };
       }
       observedBreakpoints.current = next;
     };
@@ -1009,20 +1181,24 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       window.removeEventListener("resize", onResize);
       mediaQueries.forEach(media => media.removeEventListener?.("change", onResize));
     };
-  }, [section, view, workspaceView, wideDesktop, desktopEditorOnlyViewport, onPreviewModeChange]);
+  }, [section, view, workspaceView, wideDesktop, desktopEditorOnlyViewport, onPreviewModeChange, captureVisibleWorkspacePositions, ensureModeScrollPositions]);
   useLayoutEffect(() => {
     const pending = pendingResponsiveScrollRestore.current;
     if (!pending || pending.section !== section
       || pending.wideDesktop !== wideDesktop
       || pending.desktopEditorOnlyViewport !== desktopEditorOnlyViewport
       || pending.mode !== view) return;
-    const owner = getWorkspaceScrollOwner(workspaceLayoutRef.current, pending.mode, wideDesktop, desktopEditorOnlyViewport);
-    if (!owner) return;
-    const viewportHeight = owner === getDocumentScrollOwner() ? window.innerHeight : owner.clientHeight;
-    const maximum = Math.max(0, owner.scrollHeight - (owner.clientHeight || viewportHeight));
-    owner.scrollTop = Math.round(maximum * pending.progress);
-    pendingResponsiveScrollRestore.current = null;
-  }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
+    const layout = workspaceLayoutRef.current;
+    const owner = getWorkspaceScrollOwner(layout, pending.mode, wideDesktop, desktopEditorOnlyViewport);
+    return restoreWorkspacePositionsAfterLayout([{ layout, mode: pending.mode, owner, position: pending.position }], () => {
+      const current = ensureModeScrollPositions();
+      if (owner && !owner.closest("[hidden]")) {
+        const captured = captureWorkspacePosition(layout, pending.mode, owner);
+        storeWorkspacePosition(current, pending.mode, captured);
+      }
+      if (pendingResponsiveScrollRestore.current === pending) pendingResponsiveScrollRestore.current = null;
+    });
+  }, [section, view, wideDesktop, desktopEditorOnlyViewport, ensureModeScrollPositions]);
   useEffect(() => {
     if (view === "preview" || wideDesktop) requestCanonicalPreview();
   }, [requestCanonicalPreview, view, wideDesktop]);
@@ -1032,22 +1208,43 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const changeWorkspaceView = (next: "edit" | "split" | "preview") => {
     if (next === workspaceView) return;
     const layout = workspaceLayoutRef.current;
+    const positions = captureVisibleWorkspacePositions(layout, workspaceView);
     pendingWorkspaceScrollRestore.current = {
-      editor: layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]")?.scrollTop ?? 0,
-      preview: layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0,
+      section,
+      view: next,
+      editor: positions.editor ?? emptyEditorPosition(),
+      preview: positions.preview ?? { raw: 0, coordinate: 0, scale: 1 },
     };
     setWorkspaceView(next);
   };
   useLayoutEffect(() => {
-    if (!wideDesktop || !pendingWorkspaceScrollRestore.current) return;
+    const pending = pendingWorkspaceScrollRestore.current;
+    if (!wideDesktop || !pending) return;
+    if (pending.section !== section || pending.view !== workspaceView) {
+      if (pending.section !== section) pendingWorkspaceScrollRestore.current = null;
+      return;
+    }
     const layout = workspaceLayoutRef.current;
-    const positions = pendingWorkspaceScrollRestore.current;
-    const editor = layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]");
-    const preview = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]");
-    if (editor) editor.scrollTop = positions.editor;
-    if (preview) preview.scrollTop = positions.preview;
-    pendingWorkspaceScrollRestore.current = null;
-  }, [wideDesktop, workspaceView]);
+    const visibleModes: Array<"editor" | "preview"> = workspaceView === "split" ? ["editor", "preview"] : [workspaceView === "edit" ? "editor" : "preview"];
+    const targets = visibleModes.map(mode => ({
+      layout,
+      mode,
+      owner: layout?.querySelector<HTMLElement>(mode === "editor" ? "[data-editor-scroll-owner]" : "[data-preview-scroll-owner]") ?? null,
+      position: pending[mode],
+    }));
+    return restoreWorkspacePositionsAfterLayout(targets, () => {
+      if (pendingWorkspaceScrollRestore.current === pending) pendingWorkspaceScrollRestore.current = null;
+      const positions = ensureModeScrollPositions();
+      for (const mode of visibleModes) {
+        const owner = layout?.querySelector<HTMLElement>(mode === "editor" ? "[data-editor-scroll-owner]" : "[data-preview-scroll-owner]");
+        if (owner && !owner.closest("[hidden]")) {
+          const captured = captureWorkspacePosition(layout, mode, owner);
+          if (mode === "editor") positions.editor = captured as EditorPosition;
+          else positions.preview = captured as PreviewPosition;
+        }
+      }
+    });
+  }, [section, wideDesktop, workspaceView, ensureModeScrollPositions]);
   const locale = context.previewLocale ?? uiLocale;
   const statusMessage = context.fullSnapshotState === "error"
     ? t("The complete resume preview is unavailable because its data could not be loaded.")
@@ -1104,11 +1301,11 @@ function Profile() {
   </section>;
   return <SectionForm<ProfileSection> section="profile" title="Profile" description="Edit the identity, shared details, and labels shown around the hero and footer." initial={sections.profile}>
     {(profile, onChange, confirmed) => <>
-      <div className="panel"><h2>{t("Shared details")}</h2><p>{t("These values are the same in Chinese and English.")}</p>
+      <div className="panel" data-editor-anchor="profile:shared"><h2>{t("Shared details")}</h2><p>{t("These values are the same in Chinese and English.")}</p>
         <SharedFields idPrefix="profile-shared" value={profile.shared} onChange={shared => onChange({ ...profile, shared })}
           fields={[{ key: "graduationValue", label: "Graduation value" }, { key: "avatarInitials", label: "Avatar initials" }, { key: "footerName", label: "Footer name" }, { key: "copyright", label: "Copyright" }]} />
       </div>
-      <div className="panel"><h2>{t("Chinese and English profile")}</h2><BilingualFields idPrefix="profile" section="profile" itemId="profile" confirmed={confirmed.translations} value={profile.translations}
+      <div className="panel" data-editor-anchor="profile:translations"><h2>{t("Chinese and English profile")}</h2><BilingualFields idPrefix="profile" section="profile" itemId="profile" confirmed={confirmed.translations} value={profile.translations}
         onChange={translations => onChange({ ...profile, translations })}
         fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "avatarLabel", label: "Avatar accessibility label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]} />
       </div>
@@ -1256,8 +1453,8 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
 
   return <form className="page-section editor-form profile-editor-form editor-workspace-route" onSubmit={event => { event.preventDefault(); void saveProfileChanges(); }}>
       <EditorContentScroll formContent>
-      <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Profile")}</h1><p>{t("Edit the profile information shown across your resume.")}</p></div>
-      <section className="panel profile-editor-section profile-shared-section">
+      <div className="page-heading" data-editor-anchor="heading:profile"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Profile")}</h1><p>{t("Edit the profile information shown across your resume.")}</p></div>
+      <section className="panel profile-editor-section profile-shared-section" data-editor-anchor="profile:shared">
         <h2>{t("Shared information")}</h2><p>{t("These details appear in both language versions of your resume.")}</p>
         <SharedFields idPrefix="profile-shared" value={state.draft} readOnly={saving || saveInFlight}
           onChange={shared => { setProfileStatus(null); setState(current => current ? { ...current, draft: shared, notice: "", saveError: false } : current); }}
@@ -1281,7 +1478,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
             setState(current => current ? { ...current, draft: { ...current.draft, photoUrl: null }, notice: "", saveError: false } : current);
           }} />
       </section>
-      <section className="panel profile-editor-section profile-editor-locale">
+      <section className="panel profile-editor-section profile-editor-locale" data-editor-anchor="profile:translations">
         <h2>{t("Profile content")}</h2><p>{t("Edit Chinese and English content side by side.")}</p>
         <BilingualFields showLocaleHeaders idPrefix="profile" section="profile" itemId="profile" confirmed={state.translationBaseline} value={state.translationDraft} readOnlyLocales={{ zh: saving || saveInFlight, en: saving || saveInFlight }}
           onChange={(next, locale) => {
@@ -1318,7 +1515,7 @@ function ProfilePhotoField({ currentUrl, hasConfirmedPhoto, photoDraft, error, d
 }) {
   const { t } = useUiLocale();
   const previewUrl = photoDraft?.objectUrl ?? currentUrl;
-  return <div className="profile-photo-field">
+  return <div className="profile-photo-field" data-editor-anchor="profile:photo">
     <div className="profile-photo-field-preview">
       {previewUrl ? <img src={previewUrl} alt={t("Profile photo preview")} /> : <span>{t("No profile photo")}</span>}
     </div>
@@ -1731,7 +1928,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
 
   return <section className="page-section education-editor-scope editor-workspace-route">
     <EditorContentScroll>
-    <PageHeadingWithAction title="Education" description="" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
+    <PageHeadingWithAction title="Education" description="" editorAnchor="heading:education" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
     {sectionText.rendered}
     <div className="repeatable-group" aria-label={t("Education")}>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
@@ -1740,7 +1937,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         const isOpen = openIds.has(item.id);
         const localOnly = item.id.startsWith("local-education-");
         const partial = editor.partialCreates[item.id];
-        return <article className="item-card" key={item.id}>
+        return <article className="item-card" key={item.id} data-editor-anchor={`item:education:${item.id}`}>
           <div className="item-card-heading"><div>{educationCategorySelect(item, index, locale, t,
             category => patchDraft(item.id, value => educationCategoryChanged(value, category)), editor.saving)}</div>
             <div className="item-actions"><button type="button" onClick={() => setOpenIds(current => { const next = new Set(current); if (isOpen) next.delete(item.id); else next.add(item.id); return next; })} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${label}`}>{isOpen ? t("Close") : t("Edit")}</button>
@@ -1814,7 +2011,7 @@ function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPref
     {methods.map((method, index) => {
       const identity = { section: "projects" as const, itemId: projectId, field: `method:${method.id}` };
       const review = context.bilingualReviews[bilingualFieldKey(identity, locale)];
-      return <div className="method-row" key={method.id}>
+      return <div className="method-row" key={method.id} data-editor-anchor={`project-method:${projectId}:${locale}:${method.id}`}>
       <InputField id={`${idPrefix}-${locale}-method-${method.id}`} label={`${methodsTitle} ${index + 1}`} compactLabel={String(index + 1).padStart(2, "0")} value={method.value}
         modified={confirmedMethods.find(value => value.id === method.id)?.value !== method.value}
         reviewLabel={review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined}
@@ -1846,7 +2043,7 @@ function Projects() {
     render={(item, onChange, confirmed) => <>
       <BilingualFields showLocaleHeaders idPrefix={item.id} section="projects" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
         fields={[{ key: "title", label: "Title" }, { key: "subtitle", label: "Subtitle" }, { key: "period", label: "Period" }, { key: "description", label: "Description", multiline: true }]} />
-      <div className="project-shared-field"><InputField id={`${item.id}-project-url`} label="Project URL" type="url"
+      <div className="project-shared-field"><InputField id={`${item.id}-project-url`} editorAnchor={`project-url:${item.id}`} label="Project URL" type="url"
         value={item.translations.zh.href === item.translations.en.href ? item.translations.zh.href : item.translations.zh.href || item.translations.en.href}
         modified={confirmed ? item.translations.zh.href !== confirmed.translations.zh.href || item.translations.en.href !== confirmed.translations.en.href : false}
         onChange={href => {
@@ -1950,7 +2147,7 @@ function AwardFields({ item, confirmed, onChange }: {
       <div className="bilingual-column-headings" aria-hidden="true"><span />
         <span lang="zh">{t("Chinese")}</span><span lang="en">English</span><span>{t("Year")}</span>
       </div>
-      <section className="bilingual-field-pair awards-name-year-pair">
+      <section className="bilingual-field-pair awards-name-year-pair" data-editor-anchor={`award-fields:${itemId}:name-year`}>
         <h3>{t("Award name")}</h3>
         {(["zh", "en"] as const).map(locale => {
           const localeName = locale === "zh" ? t("Chinese") : t("English");
@@ -2117,11 +2314,11 @@ function Contact() {
   return <div className="contact-editor-scope"><SectionForm<ContactSection> section="contact" title="Contact" description="" quietCancelNotice
     initial={sections.contact} productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveContactProduction(context.repository!, context.additionalResumeId!, draft, baseline) : undefined}>
     {(contact, onChange, confirmed) => <>
-      <div className="panel"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
+      <div className="panel" data-editor-anchor="contact:labels"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
         onChange={translations => onChange({ ...contact, translations })}
         fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true }]} />
       </div>
-      <div className="panel"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen hideLabelWhenExpanded items={contact.focus} confirmedItems={confirmed.focus}
+      <div className="panel" data-editor-anchor="contact:focus"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-focus" items={contact.focus} confirmedItems={confirmed.focus}
         onChange={focus => onChange({ ...contact, focus })}
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
@@ -2129,7 +2326,7 @@ function Contact() {
         render={(item, change, base) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
-      <div className="panel"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded items={contact.status} confirmedItems={confirmed.status}
+      <div className="panel" data-editor-anchor="contact:status"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-status" items={contact.status} confirmedItems={confirmed.status}
         onChange={status => onChange({ ...contact, status })}
         onConfirmedDelete={id => onChange({ ...contact, status: renumber(contact.status.filter(item => item.id !== id)) })}
         create={(id, position): StatusItem => ({ id, position, statusType: "open", translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
@@ -2176,14 +2373,14 @@ function Links() {
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
     productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange, confirmed) => <>
-      <section className="links-section"><h2>{t("Public links")}</h2>
-        <div className="links-object-group"><h3>{t("Email")}</h3><SharedFields inline idPrefix="links-email" value={links.shared}
+      <section className="links-section" data-editor-anchor="links:public-links"><h2>{t("Public links")}</h2>
+        <div className="links-object-group" data-editor-anchor="links:email"><h3>{t("Email")}</h3><SharedFields inline idPrefix="links-email" value={links.shared}
           onChange={shared => onChange({ ...links, shared })}
           fields={[{ key: "email", label: "Email address", type: "email" }, { key: "emailLabel", label: "Contact label" }]} /></div>
-        <div className="links-object-group"><h3>GitHub</h3><SharedFields inline idPrefix="links-github" value={links.shared}
+        <div className="links-object-group" data-editor-anchor="links:github"><h3>GitHub</h3><SharedFields inline idPrefix="links-github" value={links.shared}
           onChange={shared => onChange({ ...links, shared })}
           fields={[{ key: "github", label: "URL", type: "url" }, { key: "githubLabel", label: "Hero button label" }]} /></div>
-        <div className="links-object-group"><h3>LinkedIn</h3><SharedFields inline idPrefix="links-linkedin" value={links.shared}
+        <div className="links-object-group" data-editor-anchor="links:linkedin"><h3>LinkedIn</h3><SharedFields inline idPrefix="links-linkedin" value={links.shared}
           onChange={shared => onChange({ ...links, shared })}
           fields={[{ key: "linkedInDisplayName", label: "Display name" }, { key: "linkedInLabel", label: "Hero button label" }]} />
           <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
@@ -2191,17 +2388,17 @@ function Links() {
             fields={[{ key: "linkedInLabel", label: "Contact label" }, { key: "linkedInHref", label: "URL", type: "url" }]} /></div>
         </div>
       </section>
-      <section className="links-section links-resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">
+      <section className="links-section links-resume-files" data-editor-anchor="links:resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">
         {(["zh", "en"] as const).map(locale => <ResumePdfUpload key={locale} locale={locale} href={links.translations[locale].portfolioHref} filename={links.resumePdfFilenames?.[locale]} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />)}
       </div><div className="links-localized-fields"><BilingualFields matrixLayout idPrefix="links-files" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
         onChange={translations => onChange({ ...links, translations })}
         fields={[{ key: "portfolioLabel", label: "Public button label" }]} /></div></section>
-      <section className="links-section"><h2>{t("Navigation labels")}</h2>
+      <section className="links-section" data-editor-anchor="links:navigation-labels"><h2>{t("Navigation labels")}</h2>
         <div className="navigation-labels">{links.navigation.map((item, index) => <BilingualFields key={item.id} matrixLayout matrixHeader={index === 0} idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: navigationRowLabels[item.sectionId] }]}
             onChange={translations => onChange({ ...links, navigation: links.navigation.map(current => current.id === item.id ? { ...current, translations } : current) })} />
         )}</div>
       </section>
-      <section className="links-section"><h2>{t("Footer text")}</h2>
+      <section className="links-section" data-editor-anchor="links:footer-text"><h2>{t("Footer text")}</h2>
         <div className="links-footer-setting">
           <h3>{t("Updated-at label")}</h3>
           <p>{t("Text displayed before the update date in the public resume footer.")}</p>

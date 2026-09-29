@@ -22,6 +22,7 @@ const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:
 const desktopEditorOnlyMedia = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
 let mockViewportWidth = window.innerWidth;
 let mockFinePointer = false;
 const mediaListeners = new Map<string, Set<(event: MediaQueryListEvent) => void>>();
@@ -33,6 +34,18 @@ function mockScrollGeometry(element: HTMLElement, scrollHeight: number, clientHe
   restoreGeometry.push(() => {
     if (oldScrollHeight) Object.defineProperty(element, "scrollHeight", oldScrollHeight); else Reflect.deleteProperty(element, "scrollHeight");
     if (oldClientHeight) Object.defineProperty(element, "clientHeight", oldClientHeight); else Reflect.deleteProperty(element, "clientHeight");
+  });
+}
+function mockPreviewGeometry(viewport: HTMLElement, scale: number, scrollHeight: number, clientHeight: number, width = 0) {
+  viewport.dataset.previewScale = String(scale);
+  const oldWidth = Object.getOwnPropertyDescriptor(viewport, "clientWidth");
+  Object.defineProperty(viewport, "clientWidth", { configurable: true, value: width });
+  mockScrollGeometry(viewport, scrollHeight, clientHeight);
+  const stage = viewport.querySelector<HTMLElement>(".resume-preview-stage")!;
+  stage.style.height = `${Math.max(1, scrollHeight)}px`;
+  vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ width, height: Math.max(1, scrollHeight), top: 0, bottom: Math.max(1, scrollHeight) } as DOMRect);
+  restoreGeometry.push(() => {
+    if (oldWidth) Object.defineProperty(viewport, "clientWidth", oldWidth); else Reflect.deleteProperty(viewport, "clientWidth");
   });
 }
 function matchesMedia(media: string) {
@@ -74,7 +87,7 @@ function renderApp(path: string, historyControls = false, initialEntries = [path
     identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter></UiLocaleProvider>);
 }
 
-afterEach(() => { cleanup(); restoreGeometry.splice(0).forEach(restore => restore()); mediaListeners.clear(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); });
+afterEach(() => { cleanup(); const root = (document.scrollingElement as HTMLElement | null) ?? document.documentElement; root.scrollTop = 0; document.documentElement.scrollTop = 0; document.body.scrollTop = 0; restoreGeometry.splice(0).forEach(restore => restore()); mediaListeners.clear(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight); });
 
 describe("sidebar navigation and canonical preview workspace", () => {
   it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
@@ -248,6 +261,382 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(editorPane.querySelector(".state-pill")?.textContent).toBe("Unsaved changes");
   });
 
+  it("keeps exactly the two route-scoped Editor and Preview positions through repeated wide workspace transitions", async () => {
+    setViewport(1440);
+    renderApp("/profile");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    mockScrollGeometry(editor, 1800, 600);
+    mockScrollGeometry(preview, 2000, 600);
+    const switcher = within(screen.getByRole("group", { name: "Workspace view" }));
+    const click = async (name: "Edit" | "Split" | "Preview") => {
+      fireEvent.click(switcher.getByRole("button", { name }));
+      await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(name.toLowerCase()));
+    };
+    const scroll = (owner: HTMLElement, value: number) => { owner.scrollTop = value; fireEvent.scroll(owner); };
+
+    scroll(editor, 240);
+    scroll(preview, 410);
+    await click("Edit");
+    await click("Preview");
+    expect(editor.scrollTop).toBe(240);
+    expect(preview.scrollTop).toBe(410);
+    await click("Edit");
+    await click("Preview");
+    expect(editor.scrollTop).toBe(240);
+    expect(preview.scrollTop).toBe(410);
+
+    await click("Edit");
+    scroll(editor, 520);
+    await click("Split");
+    expect(editor.scrollTop).toBe(520);
+    expect(preview.scrollTop).toBe(410);
+    scroll(editor, 760);
+    scroll(preview, 880);
+
+    await click("Edit");
+    expect(editor.scrollTop).toBe(760);
+    await click("Preview");
+    expect(preview.scrollTop).toBe(880);
+    await click("Split");
+    expect(editor.scrollTop).toBe(760);
+    expect(preview.scrollTop).toBe(880);
+    await click("Preview");
+    expect(preview.scrollTop).toBe(880);
+    await click("Edit");
+    expect(editor.scrollTop).toBe(760);
+    await click("Split");
+    expect(editor.scrollTop).toBe(760);
+    expect(preview.scrollTop).toBe(880);
+  });
+
+  it("preserves the Preview canvas location when its scale changes in both directions", async () => {
+    setViewport(1280);
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    mockPreviewGeometry(viewport, 0.6, 3600, 600, 588);
+    viewport.scrollTop = 900;
+    fireEvent.scroll(viewport);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Preview" }));
+    mockPreviewGeometry(viewport, 1, 5000, 600, 980);
+    await waitFor(() => expect(layout.dataset.workspaceView).toBe("preview"));
+    await waitFor(() => expect(viewport.scrollTop).toBe(1500));
+
+    viewport.scrollTop = 2100;
+    fireEvent.scroll(viewport);
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    mockPreviewGeometry(viewport, 0.6, 2400, 600, 588);
+    await waitFor(() => expect(layout.dataset.workspaceView).toBe("split"));
+    await waitFor(() => expect(viewport.scrollTop).toBe(1260));
+    expect(viewport.scrollTop / 0.6).toBeCloseTo(2100);
+  });
+
+  it("waits for Preview scale and stage geometry to settle before applying a saved canvas coordinate", async () => {
+    setViewport(1280);
+    renderApp("/education");
+    const viewport = screen.getByTestId("resume-preview") as HTMLElement;
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    mockPreviewGeometry(viewport, 0.6, 3600, 600, 588);
+    viewport.scrollTop = 900;
+    fireEvent.scroll(viewport);
+
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.push(callback); return frames.length; });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Preview" }));
+    expect(frames).toHaveLength(1);
+    act(() => frames.shift()?.(0));
+    expect(viewport.scrollTop).toBe(900);
+
+    mockPreviewGeometry(viewport, 1, 5000, 600, 980);
+    for (let frame = 0; frame < 4 && frames.length; frame += 1) act(() => frames.shift()?.(frame + 1));
+    expect(layout.dataset.workspaceView).toBe("preview");
+    expect(viewport.scrollTop).toBe(1500);
+  });
+
+  it("normalizes Editor progress when the Editor track reflows between Split and Edit", async () => {
+    setViewport(1440);
+    renderApp("/profile");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    mockScrollGeometry(editor, 1800, 600);
+    editor.scrollTop = 300;
+    fireEvent.scroll(editor);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    mockScrollGeometry(editor, 2600, 600);
+    await waitFor(() => expect(layout.dataset.workspaceView).toBe("edit"));
+    await waitFor(() => expect(editor.scrollTop).toBe(500));
+
+    editor.scrollTop = 750;
+    fireEvent.scroll(editor);
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    mockScrollGeometry(editor, 1800, 600);
+    await waitFor(() => expect(layout.dataset.workspaceView).toBe("split"));
+    await waitFor(() => expect(editor.scrollTop).toBe(450));
+  });
+
+  it("preserves a semantic Editor anchor through Split/Edit reflow cycles without cumulative drift", async () => {
+    setViewport(1440);
+    renderApp("/links");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const viewportTop = 100;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:resume-files"]')!;
+    let anchorContentTop = 930;
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: viewportTop, bottom: 700, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => ({ top: viewportTop + anchorContentTop - editor.scrollTop, bottom: viewportTop + anchorContentTop - editor.scrollTop + 36, height: 36, width: 400 } as DOMRect));
+    mockScrollGeometry(editor, 2600, 600);
+    editor.scrollTop = 910;
+    fireEvent.scroll(editor);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+    const expectAnchorAt = async (offset: number) => waitFor(() => expect(anchor.getBoundingClientRect().top - viewportTop).toBeCloseTo(offset, 0));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    anchorContentTop += 430;
+    mockScrollGeometry(editor, 3300, 600);
+    await expectAnchorAt(20);
+
+    editor.scrollTop = anchorContentTop - 54;
+    fireEvent.scroll(editor);
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    anchorContentTop -= 275;
+    mockScrollGeometry(editor, 2600, 600);
+    await expectAnchorAt(54);
+
+    editor.scrollTop = anchorContentTop - 37;
+    fireEvent.scroll(editor);
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    anchorContentTop += 190;
+    mockScrollGeometry(editor, 3100, 600);
+    await expectAnchorAt(37);
+
+    editor.scrollTop = anchorContentTop - 37;
+    fireEvent.scroll(editor);
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    anchorContentTop -= 120;
+    mockScrollGeometry(editor, 2600, 600);
+    await expectAnchorAt(37);
+  });
+
+  it("does not overwrite a hidden Editor anchor while Preview is active", async () => {
+    setViewport(1440);
+    renderApp("/links");
+    const editorPane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+    const editor = editorPane.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:navigation-labels"]')!;
+    const viewportTop = 80;
+    let anchorContentTop = 850;
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: viewportTop, bottom: 680, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => ({ top: viewportTop + anchorContentTop - editor.scrollTop, bottom: viewportTop + anchorContentTop - editor.scrollTop + 30, height: 30, width: 400 } as DOMRect));
+    mockScrollGeometry(editor, 2500, 600);
+    editor.scrollTop = 830;
+    fireEvent.scroll(editor);
+
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+    fireEvent.click(switcher().getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(editorPane.hidden).toBe(true));
+    editor.scrollTop = 0;
+    fireEvent.scroll(editor);
+    anchorContentTop += 360;
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(editorPane.hidden).toBe(false));
+    await waitFor(() => expect(anchor.getBoundingClientRect().top - viewportTop).toBeCloseTo(20, 0));
+    expect(preview).toBeTruthy();
+  });
+
+  it("keeps an Editor anchor and the Preview canvas location independent through Edit/Preview/Split", async () => {
+    setViewport(1440);
+    renderApp("/links");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:navigation-labels"]')!;
+    const viewportTop = 90;
+    const anchorContentTop = 1050;
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: viewportTop, bottom: 690, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => ({ top: viewportTop + anchorContentTop - editor.scrollTop, bottom: viewportTop + anchorContentTop - editor.scrollTop + 32, height: 32, width: 420 } as DOMRect));
+    mockScrollGeometry(editor, 2600, 600);
+    mockPreviewGeometry(preview, 1, 4000, 600, 980);
+    editor.scrollTop = 1030;
+    preview.scrollTop = 700;
+    fireEvent.scroll(editor);
+    fireEvent.scroll(preview);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(anchor.getBoundingClientRect().top - viewportTop).toBeCloseTo(20, 0));
+    editor.scrollTop = anchorContentTop - 55;
+    fireEvent.scroll(editor);
+
+    fireEvent.click(switcher().getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview"));
+    await waitFor(() => expect(preview.scrollTop).toBe(700));
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    await waitFor(() => expect(anchor.getBoundingClientRect().top - viewportTop).toBeCloseTo(55, 0));
+    expect(preview.scrollTop).toBe(700);
+  });
+
+  it("does not restore a previous route's Editor anchor into the next route", async () => {
+    setViewport(1440);
+    renderApp("/links", true);
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:resume-files"]')!;
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: 100, bottom: 700, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ top: 120, bottom: 150, height: 30, width: 400 } as DOMRect);
+    mockScrollGeometry(editor, 2600, 600);
+    editor.scrollTop = 800;
+    fireEvent.scroll(editor);
+
+    fireEvent.click(screen.getByRole("button", { name: "/education" }));
+    await waitFor(() => expect(screen.getByTestId("current-route").textContent).toBe("/education"));
+    const nextEditor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    expect(document.querySelector('[data-editor-anchor="links:resume-files"]')).toBeNull();
+    expect(nextEditor.scrollTop).toBe(0);
+  });
+
+  it("falls back safely when a saved Editor anchor no longer exists", async () => {
+    setViewport(1440);
+    renderApp("/links");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:resume-files"]')!;
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: 100, bottom: 700, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ top: 120, bottom: 150, height: 30, width: 400 } as DOMRect);
+    mockScrollGeometry(editor, 1600, 600);
+    editor.scrollTop = 400;
+    fireEvent.scroll(editor);
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Edit" }));
+    anchor.removeAttribute("data-editor-anchor");
+    mockScrollGeometry(editor, 2600, 600);
+    await waitFor(() => expect(editor.scrollTop).toBe(800));
+  });
+
+  it("restores Editor anchors when the active scroll owner changes between an element and the document", async () => {
+    setViewport(861, true);
+    renderApp("/links");
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+    const anchor = document.querySelector<HTMLElement>('[data-editor-anchor="links:resume-files"]')!;
+    const elementTop = 100;
+    let elementContentTop = 900;
+    const documentContentTop = 640;
+    let geometryOwner: "element" | "document" = "element";
+    vi.spyOn(editor, "getBoundingClientRect").mockReturnValue({ top: elementTop, bottom: 700, height: 600, width: 500 } as DOMRect);
+    vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => geometryOwner === "element"
+      ? ({ top: elementTop + elementContentTop - editor.scrollTop, bottom: elementTop + elementContentTop - editor.scrollTop + 30, height: 30, width: 400 } as DOMRect)
+      : ({ top: documentContentTop - documentOwner.scrollTop, bottom: documentContentTop - documentOwner.scrollTop + 30, height: 30, width: 400 } as DOMRect));
+    mockScrollGeometry(editor, 1800, 600);
+    mockScrollGeometry(documentOwner, 2000, 700);
+    editor.scrollTop = 880;
+    fireEvent.scroll(editor);
+
+    setViewport(860, false, true);
+    geometryOwner = "document";
+    await waitFor(() => expect(documentOwner.scrollTop).toBe(620));
+    expect(anchor.getBoundingClientRect().top).toBeCloseTo(20, 0);
+
+    setViewport(861, true, true);
+    geometryOwner = "element";
+    elementContentTop = 1100;
+    await waitFor(() => expect(editor.scrollTop).toBe(1080));
+    expect(anchor.getBoundingClientRect().top - elementTop).toBeCloseTo(20, 0);
+  });
+
+  it.each(destinations.map(([path]) => path))("renders stable Editor anchors within the active route at %s", path => {
+    setViewport(1440);
+    const view = renderApp(path);
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll")!;
+    const anchors = Array.from(editor.querySelectorAll<HTMLElement>("[data-editor-anchor]"));
+    expect(anchors.length).toBeGreaterThan(0);
+    expect(anchors.every(anchor => Boolean(anchor.dataset.editorAnchor?.trim()))).toBe(true);
+    expect(new Set(anchors.map(anchor => anchor.dataset.editorAnchor)).size).toBe(anchors.length);
+    view.unmount();
+  });
+
+  it("preserves independent logical Editor and Preview positions through the complete six-transition workspace flow", async () => {
+    setViewport(1440);
+    renderApp("/profile");
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    const editor = layout.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    mockScrollGeometry(editor, 1800, 600);
+    mockPreviewGeometry(preview, 0.6, 3600, 600, 588);
+    editor.scrollTop = 300;
+    preview.scrollTop = 600;
+    fireEvent.scroll(editor);
+    fireEvent.scroll(preview);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    mockScrollGeometry(editor, 2600, 600);
+    await waitFor(() => expect(editor.scrollTop).toBe(500));
+    editor.scrollTop = 800;
+    fireEvent.scroll(editor);
+
+    fireEvent.click(switcher().getByRole("button", { name: "Preview" }));
+    mockPreviewGeometry(preview, 1, 5000, 600, 980);
+    await waitFor(() => expect(preview.scrollTop).toBe(1000));
+    preview.scrollTop = 2200;
+    fireEvent.scroll(preview);
+
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    mockScrollGeometry(editor, 1800, 600);
+    mockPreviewGeometry(preview, 0.6, 4200, 600, 588);
+    await waitFor(() => expect(editor.scrollTop).toBe(480));
+    await waitFor(() => expect(preview.scrollTop).toBe(1320));
+
+    fireEvent.click(switcher().getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(preview.scrollTop / Number(preview.dataset.previewScale)).toBeCloseTo(2200));
+    fireEvent.click(switcher().getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(editor.scrollTop).toBe(480));
+    fireEvent.click(switcher().getByRole("button", { name: "Split" }));
+    await waitFor(() => expect(editor.scrollTop).toBe(480));
+    await waitFor(() => expect(preview.scrollTop / Number(preview.dataset.previewScale)).toBeCloseTo(2200));
+    expect(layout.dataset.workspaceView).toBe("split");
+  });
+
+  it("does not read or write a hidden pane as the source of its saved position", async () => {
+    setViewport(1440);
+    renderApp("/education");
+    const editorPane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+    const editor = editorPane.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const previewPanel = preview.closest<HTMLElement>(".resume-preview-panel")!;
+    let editorPosition = 240;
+    let previewPosition = 410;
+    Object.defineProperty(editor, "scrollTop", { configurable: true, get: () => editorPane.hidden ? 0 : editorPosition, set: value => { if (!editorPane.hidden) editorPosition = value; } });
+    Object.defineProperty(preview, "scrollTop", { configurable: true, get: () => previewPanel.hidden ? 0 : previewPosition, set: value => { if (!previewPanel.hidden) previewPosition = value; } });
+    fireEvent.scroll(editor);
+    fireEvent.scroll(preview);
+    const switcher = within(screen.getByRole("group", { name: "Workspace view" }));
+
+    fireEvent.click(switcher.getByRole("button", { name: "Edit" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("edit"));
+    expect(previewPanel.hidden).toBe(true);
+    expect(preview.scrollTop).toBe(0);
+    editorPosition = 520;
+    fireEvent.scroll(editor);
+    fireEvent.click(switcher.getByRole("button", { name: "Split" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    await waitFor(() => expect(preview.scrollTop).toBe(410));
+    expect(editor.scrollTop).toBe(520);
+
+    fireEvent.click(switcher.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview"));
+    expect(editorPane.hidden).toBe(true);
+    expect(editor.scrollTop).toBe(0);
+    previewPosition = 690;
+    fireEvent.scroll(preview);
+    fireEvent.click(switcher.getByRole("button", { name: "Split" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    await waitFor(() => expect(editor.scrollTop).toBe(520));
+    expect(preview.scrollTop).toBe(690);
+  });
+
   it("localizes all three workspace states through the existing Admin locale", () => {
     setViewport(1280);
     window.localStorage.setItem("cms-ui-locale", "zh");
@@ -416,37 +805,20 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
   });
 
-  it("retries a mode restore when the first scroll write is temporarily clamped", async () => {
+  it("restores Editor progress against the incoming geometry instead of preserving its old raw offset", async () => {
     setViewport(1279, true);
     renderApp("/education");
     const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     const switcher = screen.getByRole("group", { name: "Workspace view" });
     const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    mockScrollGeometry(editor, 1500, 500);
     editor.scrollTop = 240;
     fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
     documentScrollOwner.scrollTop = 410;
-
-    let position = 240;
-    let maximum = 100;
-    let writes = 0;
-    const previousScrollTop = Object.getOwnPropertyDescriptor(editor, "scrollTop");
-    const previousScrollHeight = Object.getOwnPropertyDescriptor(editor, "scrollHeight");
-    const previousClientHeight = Object.getOwnPropertyDescriptor(editor, "clientHeight");
-    Object.defineProperties(editor, {
-      scrollTop: { configurable: true, get: () => position, set: (value: number) => { writes += 1; position = Math.min(value, maximum); if (writes === 1) maximum = 500; } },
-      scrollHeight: { configurable: true, get: () => maximum + 500 },
-      clientHeight: { configurable: true, value: 500 },
-    });
-    restoreGeometry.push(() => {
-      if (previousScrollTop) Object.defineProperty(editor, "scrollTop", previousScrollTop); else Reflect.deleteProperty(editor, "scrollTop");
-      if (previousScrollHeight) Object.defineProperty(editor, "scrollHeight", previousScrollHeight); else Reflect.deleteProperty(editor, "scrollHeight");
-      if (previousClientHeight) Object.defineProperty(editor, "clientHeight", previousClientHeight); else Reflect.deleteProperty(editor, "clientHeight");
-    });
-
+    mockScrollGeometry(editor, 2500, 500);
     fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
-    await waitFor(() => expect(writes).toBeGreaterThanOrEqual(2));
-    expect(position).toBe(240);
+    await waitFor(() => expect(editor.scrollTop).toBe(480));
   });
 
   it("settles at the maximum reachable position when a saved mode position is beyond the current content range", async () => {
@@ -455,12 +827,13 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     const switcher = screen.getByRole("group", { name: "Workspace view" });
     const documentScrollOwner = document.scrollingElement ?? document.documentElement;
-    editor.scrollTop = 240;
+    mockScrollGeometry(editor, 1500, 500);
+    editor.scrollTop = 1000;
     fireEvent.click(within(switcher).getByRole("button", { name: "Preview" }));
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
     documentScrollOwner.scrollTop = 410;
 
-    let position = 240;
+    let position = 1000;
     let writes = 0;
     const previousScrollTop = Object.getOwnPropertyDescriptor(editor, "scrollTop");
     const previousScrollHeight = Object.getOwnPropertyDescriptor(editor, "scrollHeight");
@@ -477,7 +850,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
     });
 
     fireEvent.click(within(switcher).getByRole("button", { name: "Edit" }));
-    await waitFor(() => expect(writes).toBe(4));
+    await waitFor(() => expect(writes).toBe(1));
     expect(position).toBe(100);
   });
 
@@ -553,21 +926,54 @@ describe("sidebar navigation and canonical preview workspace", () => {
     renderApp("/education");
     const viewport = screen.getByTestId("resume-preview") as HTMLElement;
     const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
-    mockScrollGeometry(viewport, 1600, 600);
+    mockPreviewGeometry(viewport, 1, 1600, 600, 980);
     mockScrollGeometry(documentOwner, 3000, 720);
-    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Preview" }));
+    vi.spyOn(viewport, "getBoundingClientRect").mockImplementation(() => ({ top: 300 - documentOwner.scrollTop, bottom: 900 - documentOwner.scrollTop, width: 980, height: 600 } as DOMRect));
     viewport.scrollTop = 250;
+    fireEvent.scroll(viewport);
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Preview" }));
+    mockPreviewGeometry(viewport, 1, 2600, 600, 980);
+    await waitFor(() => expect(viewport.scrollTop).toBe(250));
 
     setViewport(1279, true, true);
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
-    expect(documentOwner.scrollTop).toBe(570);
+    await waitFor(() => expect(documentOwner.scrollTop).toBe(550));
     setViewport(1280, true, true);
+    mockPreviewGeometry(viewport, 1, 1600, 600, 980);
     await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
     expect(viewport.scrollTop).toBe(250);
   });
 
+  it.each(["split", "edit", "preview"] as const)("preserves both logical pane positions across a 1280/1279 round trip from wide %s", async startingView => {
+    setViewport(1280, true);
+    renderApp("/education");
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+    mockScrollGeometry(editor, 1800, 800);
+    mockScrollGeometry(preview, 1800, 800);
+    mockScrollGeometry(documentOwner, 1800, 800);
+    const switcher = () => within(screen.getByRole("group", { name: "Workspace view" }));
+    const setScroll = (owner: HTMLElement, value: number) => { owner.scrollTop = value; fireEvent.scroll(owner); };
+
+    setScroll(editor, 300);
+    setScroll(preview, 600);
+    if (startingView !== "split") {
+      fireEvent.click(switcher().getByRole("button", { name: startingView === "edit" ? "Edit" : "Preview" }));
+      await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(startingView));
+    }
+
+    setViewport(1279, true, true);
+    await waitFor(() => expect(switcher().getAllByRole("button")).toHaveLength(2));
+    setViewport(1280, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    await waitFor(() => expect(editor.scrollTop).toBe(300));
+    await waitFor(() => expect(preview.scrollTop).toBe(600));
+  });
+
   it("hands Editor position proportionally between its pane and document across 861/860", async () => {
     setViewport(861, true);
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 720 });
     renderApp("/profile");
     const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     const documentOwner = (document.scrollingElement ?? document.documentElement) as HTMLElement;
@@ -577,7 +983,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
 
     setViewport(860, true, true);
     await waitFor(() => expect(document.querySelector(".editor-preview-pane")?.getAttribute("data-editor-scroll-mode")).toBe("document"));
-    expect(documentOwner.scrollTop).toBe(800);
+    await waitFor(() => expect(documentOwner.scrollTop).toBe(800));
     setViewport(861, true, true);
     await waitFor(() => expect(document.querySelector(".editor-content-scroll[data-editor-scroll-owner]")).not.toBeNull());
     expect(editor.scrollTop).toBe(400);

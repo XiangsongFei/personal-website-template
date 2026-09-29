@@ -217,7 +217,7 @@ export function ResumePreviewPanel({ hidden = false, content, confirmedContent, 
   }, [section, scale, preserveScroll, focusRequest, hasContent, focusDocumentScroll]);
 
   return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")} hidden={hidden}>
-    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode={independentScroll ? "element" : "document"} data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
+    <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scale={scale} data-preview-scroll-mode={independentScroll ? "element" : "document"} data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
       {content && text && <div className="resume-preview-stage" style={{ height: `${navRenderedHeight + canvasRenderedHeight}px` }}>
         <div className="resume-preview-sticky-nav" style={{ top: `${stickyTop}px`, height: `${navRenderedHeight}px` }}>
