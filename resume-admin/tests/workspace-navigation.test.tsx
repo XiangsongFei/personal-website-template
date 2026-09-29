@@ -21,7 +21,7 @@ const modeKey = (section: PreviewSection) => `example-cv-cms:ui:preview-mode:${s
 const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:ui:scroll:${path}:${mode}`;
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 function useWideDesktop() {
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1440px)", addEventListener() {}, removeEventListener() {} }) });
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1280px)", addEventListener() {}, removeEventListener() {} }) });
 }
 
 function LocationProbe() { const location = useLocation(); return <output data-testid="current-route">{location.pathname}</output>; }
@@ -41,7 +41,7 @@ afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.
 describe("sidebar navigation and canonical preview workspace", () => {
   it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
     const css = readFileSync("src/preview/preview.css", "utf8");
-    const desktopRules = css.match(/@media\(min-width:1440px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const desktopRules = css.match(/@media\(min-width:1280px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
     const routeMainRule = desktopRules.match(/\.app-main\.has-preview-workspace>\.preview-route-main\{([^}]*)\}/)?.[1] ?? "";
     const workspaceRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\{([^}]*)\}/)?.[1] ?? "";
 
@@ -170,15 +170,80 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const editor = layout.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
     const routeContent = within(editor).getAllByRole("heading", { name: heading })[0];
+    const pane = layout.querySelector<HTMLElement>(".editor-preview-pane")!;
+    const routeFrame = editor.closest<HTMLElement>(".editor-workspace-route");
+    const footer = routeFrame?.querySelector<HTMLElement>(".editor-action-footer");
+    const saveNotice = footer?.querySelector<HTMLElement>(".save-notice");
 
     expect(editor.dataset.editorScrollMode).toBe("element");
     expect(preview.dataset.previewScrollMode).toBe("element");
+    expect(editor.classList.contains("editor-content-scroll")).toBe(true);
     expect(editor.contains(routeContent)).toBe(true);
+    expect(routeFrame).not.toBeNull();
+    expect(routeFrame?.firstElementChild).toBe(editor);
+    expect(routeFrame?.lastElementChild).toBe(footer);
+    expect(footer?.querySelector(".save-bar")).not.toBeNull();
+    expect(footer?.querySelector(".save-actions .button.secondary")).not.toBeNull();
+    expect(footer?.querySelector(".save-actions .button.primary")).not.toBeNull();
+    expect(!saveNotice || footer?.contains(saveNotice)).toBe(true);
     expect(editor).not.toBe(preview);
-    expect(editor.parentElement).toBe(layout);
+    expect(editor.parentElement).toBe(routeFrame);
+    expect(routeFrame && pane.contains(routeFrame)).toBe(true);
+    expect(pane.hasAttribute("data-editor-scroll-owner")).toBe(false);
     expect(preview.closest(".resume-preview-panel")?.parentElement).toBe(layout);
     expect(layout.querySelectorAll("[data-editor-scroll-owner]")).toHaveLength(1);
     expect(layout.querySelectorAll("[data-preview-scroll-owner]")).toHaveLength(1);
+  });
+
+  it("keeps the desktop Editor content viewport and action footer as separate workspace rows", () => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const desktopRules = css.match(/@media\(min-width:1280px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const paneRule = desktopRules.match(/\.editor-preview-pane\{([^}]*)\}/)?.[1] ?? "";
+    const frameRule = desktopRules.match(/\.editor-workspace-route\{([^}]*)\}/)?.[1] ?? "";
+    const contentRule = desktopRules.match(/\.editor-content-scroll\{([^}]*)\}/)?.[1] ?? "";
+    const footerRule = desktopRules.match(/\.editor-action-footer\{([^}]*)\}/)?.[1] ?? "";
+    const saveBarRule = desktopRules.match(/\.editor-action-footer \.save-bar\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(paneRule).toContain("overflow:hidden");
+    expect(frameRule).toContain("grid-template-rows:minmax(0,1fr) auto");
+    expect(frameRule).toContain("height:100%");
+    expect(contentRule).toContain("overflow-y:auto");
+    expect(contentRule).toContain("overscroll-behavior:contain");
+    expect(footerRule).toContain("padding:8px 0 6px");
+    expect(footerRule).toContain("background:#fff");
+    expect(saveBarRule).toContain("position:static");
+    expect(saveBarRule).toContain("margin-top:0");
+    expect(saveBarRule).toContain("padding:0");
+    expect(css).toContain(".editor-form-content{display:contents}");
+    expect(css).toContain(".editor-preview-pane>:first-child{height:100%;min-height:0}");
+    expect(css).toContain(".editor-workspace-route.editor-form{gap:0}");
+    expect(css).toContain(".links-editor-scope .editor-form-content{gap:0}");
+    expect(css).toContain(".links-editor-scope .editor-action-footer .save-bar{margin-top:0;padding:0}");
+    expect(css).not.toContain(".editor-bottom-actions{position:sticky");
+  });
+
+  it("keeps the stacked Editor on document scrolling without an inner Editor scroll owner", () => {
+    renderApp("/profile");
+    const pane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+    expect(pane.dataset.editorScrollMode).toBe("document");
+    expect(pane.hasAttribute("data-editor-scroll-owner")).toBe(true);
+    expect(pane.querySelector(".editor-content-scroll")?.hasAttribute("data-editor-scroll-owner")).toBe(false);
+  });
+
+  it("switches the workspace scroll model at the 1280px side-by-side breakpoint", () => {
+    useWideDesktop();
+    renderApp("/profile");
+    const desktopPane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+    expect(desktopPane.dataset.editorScrollMode).toBeUndefined();
+    expect(document.querySelector(".editor-content-scroll[data-editor-scroll-owner]")).not.toBeNull();
+    cleanup();
+
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: false, media: "(min-width: 1280px)", addEventListener() {}, removeEventListener() {} }) });
+    renderApp("/profile");
+    const stackedPane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+    expect(stackedPane.dataset.editorScrollMode).toBe("document");
+    expect(stackedPane.hasAttribute("data-editor-scroll-owner")).toBe(true);
+    expect(stackedPane.querySelector(".editor-content-scroll")?.hasAttribute("data-editor-scroll-owner")).toBe(false);
   });
 
   it("desktop Preview section navigation scrolls only the Preview pane with its sticky-row offset", () => {

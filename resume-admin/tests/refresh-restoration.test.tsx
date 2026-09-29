@@ -29,7 +29,7 @@ function mockDocumentReload() {
 }
 
 function useWideDesktop() {
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1440px)", addEventListener() {}, removeEventListener() {} }) });
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1280px)", addEventListener() {}, removeEventListener() {} }) });
 }
 
 function open(path: string, props: Partial<ComponentProps<typeof App>> = {}, reload = false) {
@@ -274,6 +274,22 @@ describe("route-scoped refresh restoration", () => {
     expect(editor.dataset.editorScrollMode).toBe("element");
     expect(preview.dataset.previewScrollMode).toBe("element");
     expect(scrollOwner().scrollTop).toBe(0);
+  });
+
+  it("clamps a stale desktop Editor snapshot to the stable content viewport range", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, value: 2400 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 600 });
+    window.sessionStorage.setItem(scrollKey("/profile", "editor"), "5000");
+
+    open("/profile", { resume }, true);
+
+    const editor = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    await waitFor(() => expect(editor.scrollTop).toBe(1800));
+    expect(editor.dataset.editorScrollMode).toBe("element");
+    expect(scrollOwner().scrollTop).toBe(0);
+    expect(window.sessionStorage.getItem(scrollKey("/profile", "editor"))).toBe("5000");
   });
 
   it.each(["/experience", "/skills"])("restores document scrolling on %s after route data and layout are ready", async path => {

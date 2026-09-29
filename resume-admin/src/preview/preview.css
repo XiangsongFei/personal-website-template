@@ -54,16 +54,27 @@
 .resume-preview-education-meta>span{display:flex;flex-direction:column;color:#666}
 .resume-preview-grade{display:block}
 .resume-preview-empty{color:#777;font-size:12px}
-@media(max-width:1439px){.editor-preview-layout{display:block;max-width:800px}.editor-preview-toggle{display:flex;gap:16px;margin:0 auto 22px;width:100%;max-width:800px}.editor-preview-toggle button{padding:8px 0;border:0;border-bottom:1px solid transparent;background:transparent;color:#777;font:inherit;font-size:14px;cursor:pointer}.editor-preview-toggle button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:600}.editor-preview-layout[data-preview-view=editor] .resume-preview-panel{display:none}.editor-preview-layout[data-preview-view=preview] .editor-preview-pane{display:none}.editor-preview-layout[data-preview-view=preview]{max-width:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-viewport{width:100%;max-width:760px;margin-right:auto;margin-left:auto}}
-@media(max-width:1439px){.preview-route-main{padding-top:18px}.editor-preview-toggle{position:sticky;top:var(--shell-header-height,68px);z-index:24;background:#fff}}
+@media(max-width:1279px){.editor-preview-layout{display:block;max-width:800px}.editor-preview-toggle{display:flex;gap:16px;margin:0 auto 22px;width:100%;max-width:800px}.editor-preview-toggle button{padding:8px 0;border:0;border-bottom:1px solid transparent;background:transparent;color:#777;font:inherit;font-size:14px;cursor:pointer}.editor-preview-toggle button[aria-pressed=true]{border-bottom-color:#333;color:#222;font-weight:600}.editor-preview-layout[data-preview-view=editor] .resume-preview-panel{display:none}.editor-preview-layout[data-preview-view=preview] .editor-preview-pane{display:none}.editor-preview-layout[data-preview-view=preview]{max-width:none}.editor-preview-layout[data-preview-view=preview] .resume-preview-viewport{width:100%;max-width:760px;margin-right:auto;margin-left:auto}.editor-form-content{display:contents}.editor-form-content>.page-heading{margin-bottom:4px}.profile-editor-form .editor-form-content>.page-heading{margin-bottom:8px}}
+@media(max-width:1279px){.preview-route-main{padding-top:18px}.editor-preview-toggle{position:sticky;top:var(--shell-header-height,68px);z-index:24;background:#fff}}
 @media(min-width:1440px){.preview-route-main{padding-left:16px;padding-right:16px}}
-@media(min-width:1440px){
+@media(min-width:1280px){
   .app-shell.has-preview-workspace{height:100vh;height:100dvh;min-height:0;overflow:hidden}
   .app-main.has-preview-workspace{display:flex;height:100%;min-height:0;flex-direction:column;overflow:hidden}
   .app-main.has-preview-workspace>.topbar{flex:0 0 70px}
   .app-main.has-preview-workspace>.preview-route-main{display:flex;width:100%;min-width:0;min-height:0;flex:1 1 auto;flex-direction:column;overflow:hidden;padding:18px 16px}
   .preview-route-main>.editor-preview-layout{width:100%;min-width:0;height:100%;min-height:0;flex:1 1 auto;align-items:stretch;grid-template-areas:"editor preview";grid-template-columns:minmax(0,1fr) clamp(500px,calc(50vw - 155px),650px);grid-template-rows:minmax(0,1fr);overflow:hidden}
-  .editor-preview-pane{grid-area:editor;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+  .editor-preview-pane{grid-area:editor;min-width:0;min-height:0;overflow:hidden}
+  .editor-preview-pane>:first-child{height:100%;min-height:0}
+  .editor-workspace-route{display:grid;width:100%;height:100%;min-height:0;grid-template-rows:minmax(0,1fr) auto;gap:0;overflow:hidden}
+  .editor-workspace-route.editor-form{gap:0}
+  .editor-content-scroll{min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+  .editor-form-content{display:grid;align-content:start;gap:34px}
+  .editor-form-content>.page-heading{margin-bottom:0}
+  .profile-editor-form .editor-form-content{gap:30px}
+  .links-editor-scope .editor-form-content{gap:0}
+  .editor-action-footer{min-width:0;padding:8px 0 6px;background:#fff;gap:10px}
+  .editor-action-footer .save-bar{position:static;bottom:auto;z-index:auto;margin-top:0;padding:0}
+  .links-editor-scope .editor-action-footer .save-bar{margin-top:0;padding:0}
   .resume-preview-panel{grid-area:preview;height:100%;min-height:0;overflow:hidden}
   .resume-preview-viewport{height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
 }

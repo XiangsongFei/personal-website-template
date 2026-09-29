@@ -157,6 +157,8 @@ const EditorContext = createContext<{
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
   profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
+const EditorElementScrollContext = createContext(false);
+
 function useLocalDraft<T>(section: SectionKey, initial: T) {
   const { productionMode, drafts } = useContext(EditorContext);
   const production = productionMode;
@@ -229,7 +231,7 @@ function InputField({ id, label, value, onChange, multiline = false, type = "tex
 }) {
   const { t } = useUiLocale();
   return <div className={`field${inline ? " links-inline-field" : ""}`}>
-    <label htmlFor={id}>{compactLabel ? <><span aria-hidden="true">{compactLabel}</span><span className="visually-hidden">{t(label)}</span></> : t(label)}</label>
+    <label htmlFor={id} className={compactLabel ? "visually-hidden-containing-block" : undefined}>{compactLabel ? <><span aria-hidden="true">{compactLabel}</span><span className="visually-hidden">{t(label)}</span></> : t(label)}</label>
     {multiline
       ? <textarea id={id} value={value} onChange={event => onChange(event.target.value)} readOnly={readOnly} rows={4} aria-label={compactLabel ? t(label) : undefined} aria-describedby={hint ? `${id}-hint` : undefined} />
       : <input id={id} type={type} value={value} onChange={event => onChange(event.target.value)} readOnly={readOnly} aria-label={compactLabel ? t(label) : undefined} aria-describedby={hint ? `${id}-hint` : undefined} />}
@@ -239,6 +241,17 @@ function InputField({ id, label, value, onChange, multiline = false, type = "tex
     </div>}
     {hint && <p className="field-hint" id={`${id}-hint`}>{hint}</p>}
   </div>;
+}
+
+function EditorContentScroll({ children, formContent = false }: { children: ReactNode; formContent?: boolean }) {
+  const elementScroll = useContext(EditorElementScrollContext);
+  return <div className={`editor-content-scroll${formContent ? " editor-form-content" : ""}`}
+    data-editor-scroll-owner={elementScroll ? "" : undefined}
+    data-editor-scroll-mode={elementScroll ? "element" : undefined}>{children}</div>;
+}
+
+function EditorActionFooter({ children }: { children: ReactNode }) {
+  return <div className="editor-action-footer">{children}</div>;
 }
 
 function SharedFields<T extends object>({ value, fields, onChange, idPrefix, readOnly = false, inline = false }: {
@@ -427,20 +440,22 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   const saveNotice = hiddenModeNotice ? "" : editor.notice || (hideSaveModeNotice ? "" : editor.production
     ? productionSave ? "" : "Local draft only. Production writes are disabled for this section."
     : "Fixture saves stay in this browser session.");
-  return <section className="page-section">
-    {!hidePageHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-    <form className="editor-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
-      {children(editor.draft, editor.update, editor.saved)}
-      <div className="save-bar">
-        <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
-        <div className="save-actions">
-          <button type="button" className="button secondary" onClick={cancelDraft} disabled={!dirty || saving}>{t("Cancel changes")}</button>
-          <button type="submit" className="button primary" disabled={!dirty || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
+  return <form className="page-section editor-form editor-workspace-route" onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <EditorContentScroll formContent>
+        {!hidePageHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
+        {children(editor.draft, editor.update, editor.saved)}
+      </EditorContentScroll>
+      <EditorActionFooter>
+        <div className="save-bar">
+          <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+          <div className="save-actions">
+            <button type="button" className="button secondary" onClick={cancelDraft} disabled={!dirty || saving}>{t("Cancel changes")}</button>
+            <button type="submit" className="button primary" disabled={!dirty || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
+          </div>
         </div>
-      </div>
-      {saveNotice && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
-    </form>
-  </section>;
+        {saveNotice && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
+      </EditorActionFooter>
+  </form>;
 }
 
 function PageHeadingWithAction({ title, description, action }: { title: string; description: string; action: ReactNode }) {
@@ -499,7 +514,7 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
       const itemLabel = label(item, index) || t("New item");
       const isOpen = allowMultipleOpen ? openIds.has(item.id) : openId === item.id;
       return <article className="item-card" key={item.id}>
-        <div className="item-card-heading"><div>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3 className={hideLabelWhenExpanded && isOpen ? "visually-hidden" : undefined}>{itemLabel}</h3></>}</div>
+        <div className="item-card-heading"><div className={!headerIdentity && hideLabelWhenExpanded && isOpen ? "visually-hidden-containing-block" : undefined}>{headerIdentity ? headerIdentity(item, index, itemLabel, changed => replace(item.id, changed)) : <><span className="item-number">{String(index + 1).padStart(2, "0")}</span><h3 className={hideLabelWhenExpanded && isOpen ? "visually-hidden" : undefined}>{itemLabel}</h3></>}</div>
           <div className="item-actions">
             <button type="button" onClick={() => toggleOpen(item.id, isOpen)} aria-label={`${isOpen ? t("Close editor for") : t("Edit")} ${itemLabel}`}>{isOpen ? t("Close") : t("Edit")}</button>
             <button type="button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`${t("Move")} ${itemLabel} ${t("up")}`}>↑</button>
@@ -791,17 +806,21 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "experience" || section === "projects" || section === "skills" || section === "awards";
-  return <section className="page-section" aria-busy={editor.saving}>
-    {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-    <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
-      onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
-      headerIdentity={headerIdentity}
-      sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />
-    {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
-    <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
-      <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
-        <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
-    </div>
+  return <section className="page-section editor-workspace-route" aria-busy={editor.saving}>
+    <EditorContentScroll>
+      {!useActionHeading && <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
+      <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
+        onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
+        headerIdentity={headerIdentity}
+        sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />
+    </EditorContentScroll>
+    <EditorActionFooter>
+      {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
+      <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+        <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
+          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
+      </div>
+    </EditorActionFooter>
   </section>;
 }
 
@@ -850,7 +869,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const { locale: uiLocale, t } = useUiLocale();
   const view = context.previewModes[section];
   const focusRequest = context.previewFocusRequests[section];
-  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1440px)").matches);
+  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   const modeScrollPositions = useRef<{ section: PreviewSection; editor: number | null; preview: number | null }>({ section, editor: null, preview: null });
   const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: number } | null>(null);
   const [restorePreviewPosition, setRestorePreviewPosition] = useState(false);
@@ -882,7 +901,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   }, [section, view, wideDesktop]);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1440px)");
+    const media = window.matchMedia("(min-width: 1280px)");
     const update = () => setWideDesktop(media.matches);
     update();
     media.addEventListener?.("change", update);
@@ -901,7 +920,9 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       <button type="button" aria-pressed={view === "editor"} onClick={() => changeView("editor")}>{t("Editor")}</button>
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
     </div>
-    <div className="editor-preview-pane" data-editor-scroll-owner data-editor-scroll-mode={wideDesktop ? "element" : "document"}>{children}</div>
+    <div className="editor-preview-pane" data-editor-scroll-owner={!wideDesktop ? "" : undefined} data-editor-scroll-mode={!wideDesktop ? "document" : undefined}>
+      <EditorElementScrollContext.Provider value={wideDesktop}>{children}</EditorElementScrollContext.Provider>
+    </div>
     <ResumePreviewPanel content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
       bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
@@ -1085,9 +1106,9 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
     setProfileStatus(null);
   }
 
-  return <section className="page-section">
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Profile")}</h1><p>{t("Edit the profile information shown across your resume.")}</p></div>
-    <form className="editor-form profile-editor-form" onSubmit={event => { event.preventDefault(); void saveProfileChanges(); }}>
+  return <form className="page-section editor-form profile-editor-form editor-workspace-route" onSubmit={event => { event.preventDefault(); void saveProfileChanges(); }}>
+      <EditorContentScroll formContent>
+      <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Profile")}</h1><p>{t("Edit the profile information shown across your resume.")}</p></div>
       <section className="panel profile-editor-section profile-shared-section">
         <h2>{t("Shared information")}</h2><p>{t("These details appear in both language versions of your resume.")}</p>
         <SharedFields idPrefix="profile-shared" value={state.draft} readOnly={saving || saveInFlight}
@@ -1127,19 +1148,21 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
           fields={[{ key: "name", label: "Name" }, { key: "navAboutLabel", label: "About navigation label" }, { key: "emailActionLabel", label: "Email action label" }, { key: "graduationLabel", label: "Graduation label" }, { key: "avatarLabel", label: "Avatar accessibility label" }, { key: "contactFocusHeading", label: "Current Focus heading" }, { key: "contactStatusHeading", label: "Current Status heading" }]}
           />
       </section>
-      <div className="save-bar">
-        <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{t(dirty ? "Unsaved changes" : "No unsaved changes")}</span>
-        <div className="save-actions">
-          <button type="button" className="button secondary" disabled={!dirty || saving || saveInFlight}
-            onClick={cancelProfileChanges}>{t("Cancel changes")}</button>
-          <button type="submit" className="button primary" disabled={!dirty || saving || saveInFlight || !repository || !onSaved || !onTranslationSaved}>
-            {saving || saveInFlight ? t("Saving…") : t("Save profile changes")}
-          </button>
+      </EditorContentScroll>
+      <EditorActionFooter>
+        <div className="save-bar">
+          <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{t(dirty ? "Unsaved changes" : "No unsaved changes")}</span>
+          <div className="save-actions">
+            <button type="button" className="button secondary" disabled={!dirty || saving || saveInFlight}
+              onClick={cancelProfileChanges}>{t("Cancel changes")}</button>
+            <button type="submit" className="button primary" disabled={!dirty || saving || saveInFlight || !repository || !onSaved || !onTranslationSaved}>
+              {saving || saveInFlight ? t("Saving…") : t("Save profile changes")}
+            </button>
+          </div>
         </div>
-      </div>
-      {profileStatus && <p className="save-notice profile-save-status" role={profileStatus.error ? "alert" : "status"} aria-live="polite">{t(profileStatus.message)}</p>}
-    </form>
-  </section>;
+        {profileStatus && <p className="save-notice profile-save-status" role={profileStatus.error ? "alert" : "status"} aria-live="polite">{t(profileStatus.message)}</p>}
+      </EditorActionFooter>
+  </form>;
 }
 
 function ProfilePhotoField({ currentUrl, hasConfirmedPhoto, photoDraft, error, disabled, onSelect, onRemove }: {
@@ -1558,7 +1581,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     });
   };
 
-  return <section className="page-section education-editor-scope">
+  return <section className="page-section education-editor-scope editor-workspace-route">
+    <EditorContentScroll>
     <PageHeadingWithAction title="Education" description="" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
     {sectionText.rendered}
     <div className="repeatable-group" aria-label={t("Education")}>
@@ -1597,11 +1621,14 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         </article>;
       })}</div>
     </div>
-    {(editor.notice || !methodsReady) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
-    <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
-      <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving}>{t("Cancel changes")}</button>
-        <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : t("Save Education changes")}</button></div>
-    </div>
+    </EditorContentScroll>
+    <EditorActionFooter>
+      {(editor.notice || !methodsReady) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
+      <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+        <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving}>{t("Cancel changes")}</button>
+          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : t("Save Education changes")}</button></div>
+      </div>
+    </EditorActionFooter>
   </section>;
 }
 
@@ -1733,7 +1760,7 @@ function AwardNameField({ id, label, localeLabel, value, modified, reviewLabel, 
   }, [resizeToContent]);
 
   return <div className="field awards-name-field">
-    <label htmlFor={id}><span aria-hidden="true">{localeLabel}</span><span className="visually-hidden">{t(label)}</span></label>
+    <label htmlFor={id} className="visually-hidden-containing-block"><span aria-hidden="true">{localeLabel}</span><span className="visually-hidden">{t(label)}</span></label>
     <textarea ref={textareaRef} id={id} aria-label={t(label)} rows={1} value={value}
       onChange={event => onChange(event.target.value)} />
     {(modified || reviewLabel) && <div className="field-edit-status">
@@ -2093,10 +2120,10 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const { t } = useUiLocale();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1440px)").matches);
+  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1440px)");
+    const media = window.matchMedia("(min-width: 1280px)");
     const update = () => setWideDesktop(media.matches);
     update();
     media.addEventListener?.("change", update);
@@ -2379,7 +2406,16 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
           const owner = mode === "editor" ? editorOwner : previewOwner;
           if (!item || !owner) continue;
           const maximum = Math.max(0, owner.scrollHeight - owner.clientHeight);
-          if (maximum + 2 < item.target) { item.geometry = ""; item.stableFrames = 0; waiting = true; continue; }
+          if (maximum + 2 < item.target) {
+            const geometry = `${owner.scrollHeight}:${owner.clientHeight}:${maximum}`;
+            item.stableFrames = geometry === item.geometry ? item.stableFrames + 1 : 1;
+            item.geometry = geometry;
+            if (item.stableFrames >= 2) {
+              owner.scrollTop = maximum;
+              pending.delete(mode);
+            } else waiting = true;
+            continue;
+          }
           owner.scrollTop = item.target;
           const actual = owner.scrollTop;
           if (Math.abs(actual - item.target) > 2) { item.geometry = ""; item.stableFrames = 0; waiting = true; continue; }

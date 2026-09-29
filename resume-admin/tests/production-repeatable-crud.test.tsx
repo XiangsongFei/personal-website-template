@@ -333,6 +333,12 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(css).toContain(".experience-editor-scope .save-bar{border-top:0}");
   });
 
+  it("contains visually-hidden labels locally without suppressing document scrolling", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toContain(".editor-form .visually-hidden-containing-block,.item-card-heading>div.visually-hidden-containing-block{position:relative}");
+    expect(css).not.toMatch(/(?:^|})\s*(?:html|body)(?:\s*,\s*(?:html|body))*\s*\{[^}]*overflow\s*:\s*hidden/i);
+  });
+
   it.each([
     { section: "experience", path: "/experience", field: "Chinese Organization" },
     { section: "projects", path: "/projects", field: "Chinese Title" },
@@ -725,9 +731,14 @@ describe("Batch 6A production repeatable CRUD", () => {
     const [expandedCard, ...collapsedCards] = Array.from(scope.querySelectorAll<HTMLElement>(".item-card"));
     const expandedTitle = expandedCard.querySelector<HTMLElement>(".item-card-heading h3")!;
     expect(expandedTitle.classList.contains("visually-hidden")).toBe(true);
+    expect(expandedTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(true);
     expect(within(expandedCard).getByRole("button", { name: /(Close editor for|关闭编辑器：)\s*Other locale award/ })).toBeTruthy();
     expect(within(expandedCard).getByLabelText(locale === "zh" ? "中文 荣誉名称" : "Chinese Award name")).toBeTruthy();
     expect(within(expandedCard).getByLabelText(locale === "zh" ? "英文 荣誉名称" : "English Award name")).toBeTruthy();
+    const awardNameLabel = expandedCard.querySelector<HTMLLabelElement>(".awards-name-field label")!;
+    expect(awardNameLabel.classList.contains("visually-hidden-containing-block")).toBe(true);
+    expect(awardNameLabel.querySelector(".visually-hidden")?.textContent).toBe(locale === "zh" ? "中文 荣誉名称" : "Chinese Award name");
+    expect(awardNameLabel.htmlFor).toBe(expandedCard.querySelector(".awards-name-field textarea")?.id);
     expect(expandedCard.querySelectorAll(".awards-year-field input")).toHaveLength(1);
     expect(collapsedCards.every(card => !card.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden"))).toBe(true);
     expect(collapsedCards.map(card => card.querySelector(".item-card-heading h3")?.textContent)).toEqual([
@@ -1340,9 +1351,15 @@ describe("Batch 6A production repeatable CRUD", () => {
 
     const focus = document.querySelector('[aria-label="Current Focus"]') as HTMLElement;
     const focusCard = focus.querySelector<HTMLElement>(".item-card")!;
-    expect(focusCard.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    const focusTitle = focusCard.querySelector<HTMLElement>(".item-card-heading h3")!;
+    expect(focusTitle.classList.contains("visually-hidden")).toBe(true);
+    expect(focusTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(true);
     expect(within(focusCard).getByLabelText("Chinese Focus title")).toBeTruthy();
     expect(within(focusCard).getByLabelText("English Focus title")).toBeTruthy();
+    const focusLabel = focusCard.querySelector<HTMLLabelElement>('label[for="focus-1-zh-title"]')!;
+    expect(focusLabel.classList.contains("visually-hidden-containing-block")).toBe(true);
+    expect(focusLabel.querySelector(".visually-hidden")?.textContent).toBe("Chinese Focus title");
+    expect(focusLabel.querySelector('[aria-hidden="true"]')?.textContent).toBe("中文");
     expect(within(focusCard).getByRole("button", { name: "Close editor for Data & Analysis" })).toBeTruthy();
 
     fireEvent.change(within(focusCard).getByLabelText("Chinese Focus title"), { target: { value: "临时标题" } });
