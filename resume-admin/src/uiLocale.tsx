@@ -60,7 +60,7 @@ function translate(text: string, locale: UiLocale): string {
 }
 
 Object.assign(dictionary, {
-  "Editor": "编辑器", "Preview": "预览", "Editor or preview view": "编辑器或预览视图", "Resume preview": "简历预览", "Preview language": "预览语言", "Preview Chinese": "预览中文", "Preview English": "预览英文",
+  "Editor": "编辑器", "Preview": "预览", "Edit": "编辑", "Split": "并排", "Workspace view": "工作区视图", "Editor or preview view": "编辑器或预览视图", "Resume preview": "简历预览", "Preview language": "预览语言", "Preview Chinese": "预览中文", "Preview English": "预览英文",
   "Loading Profile preview…": "正在加载个人资料预览……", "Profile preview is unavailable because its data could not be loaded.": "个人资料预览不可用，因为无法加载对应数据。",
   "Loading Education preview…": "正在加载教育经历预览……", "Education preview is unavailable because its data could not be loaded.": "教育经历预览不可用，因为无法加载对应数据。",
   "Loading Introduction preview…": "正在加载个人简介预览……", "Introduction preview is unavailable because its data could not be loaded.": "个人简介预览不可用，因为无法加载对应数据。",

@@ -19,10 +19,14 @@ const destinations = [
 ] as const;
 const modeKey = (section: PreviewSection) => `example-cv-cms:ui:preview-mode:${section}`;
 const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:ui:scroll:${path}:${mode}`;
+const desktopEditorOnlyMedia = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
-function useWideDesktop() {
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1280px)", addEventListener() {}, removeEventListener() {} }) });
+const originalInnerWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
+function setViewport(width: number, finePointer = false) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: (media: string) => ({ matches: media === "(min-width: 1280px)" && width >= 1280 || media === desktopEditorOnlyMedia && finePointer && width >= 861 && width <= 1279, media, addEventListener() {}, removeEventListener() {} }) });
 }
+function useWideDesktop() { setViewport(1280); }
 
 function LocationProbe() { const location = useLocation(); return <output data-testid="current-route">{location.pathname}</output>; }
 function RouteButtons() {
@@ -36,20 +40,39 @@ function renderApp(path: string, historyControls = false, initialEntries = [path
     identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter></UiLocaleProvider>);
 }
 
-afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); });
+afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); });
 
 describe("sidebar navigation and canonical preview workspace", () => {
   it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
     const css = readFileSync("src/preview/preview.css", "utf8");
+    const shellCss = readFileSync("src/styles.css", "utf8");
     const desktopRules = css.match(/@media\(min-width:1280px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
     const routeMainRule = desktopRules.match(/\.app-main\.has-preview-workspace>\.preview-route-main\{([^}]*)\}/)?.[1] ?? "";
     const workspaceRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\{([^}]*)\}/)?.[1] ?? "";
 
+    expect(shellCss).toContain(".app-shell{grid-template-columns:190px minmax(0,1fr);background:#fff}");
+    expect(shellCss).toContain("@media(max-width:860px){.app-shell{display:block}.sidebar{position:fixed;left:0;top:0;width:268px;");
     expect(routeMainRule).toContain("width:100%");
     expect(routeMainRule).toContain("min-width:0");
+    expect(routeMainRule).toContain("padding:14px 16px 5px");
     expect(workspaceRule).toContain("width:100%");
     expect(workspaceRule).toContain("min-width:0");
-    expect(workspaceRule).toContain("grid-template-columns:minmax(0,1fr) clamp(500px,calc(50vw - 155px),650px)");
+    expect(workspaceRule).toContain("max-width:1390px");
+    expect(workspaceRule).toContain("grid-template-columns:minmax(0,1fr) clamp(530px,calc(50vw - 125px),680px)");
+  });
+
+  it.each([1280, 1366, 1440, 2048])("transfers the released 30px from the desktop Sidebar to Preview at %ipx without changing the Editor track", width => {
+    const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+    const oldLayout = Math.min(1360, width - 220 - 32);
+    const newLayout = Math.min(1390, width - 190 - 32);
+    const oldPreview = clamp(width / 2 - 155, 500, 650);
+    const newPreview = clamp(width / 2 - 125, 530, 680);
+    const oldEditor = oldLayout - oldPreview - 32;
+    const newEditor = newLayout - newPreview - 32;
+
+    expect(newLayout - oldLayout).toBe(30);
+    expect(newPreview - oldPreview).toBe(30);
+    expect(newEditor).toBe(oldEditor);
   });
 
   it.each([
@@ -105,12 +128,154 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(editor.scrollTop).toBe(240);
     expect((document.scrollingElement ?? document.documentElement).scrollTop).toBe(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    fireEvent.click(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button")[1]);
     expect(editor.scrollTop).toBe(240);
     expect(preview.scrollTop).toBe(1500);
-    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    fireEvent.click(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button")[0]);
     expect(editor.scrollTop).toBe(240);
     expect(preview.scrollTop).toBe(1500);
+  });
+
+  it("switches Split → Preview → Split → Edit → Split without losing drafts, dirty state, or pane scroll positions", () => {
+    setViewport(1440);
+    window.sessionStorage.setItem(modeKey("profile"), "preview");
+    renderApp("/profile");
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    const editorPane = layout.querySelector<HTMLElement>(".editor-preview-pane")!;
+    const editorScroll = editorPane.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    const previewPanel = preview.closest<HTMLElement>(".resume-preview-panel")!;
+    const name = screen.getByLabelText("English Name") as HTMLInputElement;
+    const switcher = screen.getByRole("group", { name: "Workspace view" });
+    const editButton = within(switcher).getByRole("button", { name: "Edit" });
+    const splitButton = within(switcher).getByRole("button", { name: "Split" });
+    const previewButton = within(switcher).getByRole("button", { name: "Preview" });
+
+    expect(document.querySelector(".sidebar")).not.toBeNull();
+    expect(document.querySelector(".topbar")?.classList.contains("has-workspace-view-switcher")).toBe(true);
+    expect(document.querySelector(".topbar-left .topbar-workspace-slot")?.firstElementChild).toBe(switcher);
+    expect(document.querySelector(".topbar-left")?.contains(switcher)).toBe(true);
+    expect(document.querySelector(".topbar .account-placeholder")).not.toBeNull();
+    expect(layout.querySelector(".preview-workspace-switcher")).toBeNull();
+    expect(within(switcher).queryByText("View")).toBeNull();
+    expect(within(switcher).getAllByRole("button")).toHaveLength(3);
+    expect(layout.dataset.workspaceView).toBe("split");
+    expect(splitButton.getAttribute("aria-pressed")).toBe("true");
+    expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(editorPane.hidden).toBe(false);
+    expect(previewPanel.hidden).toBe(false);
+    expect(within(switcher).queryByRole("button", { name: "Expand Preview" })).toBeNull();
+    fireEvent.change(name, { target: { value: "Unsaved focus-mode draft" } });
+    editorScroll.scrollTop = 135;
+    preview.scrollTop = 275;
+    expect(editorPane.querySelector(".state-pill")?.textContent).toBe("Unsaved changes");
+
+    fireEvent.click(previewButton);
+    expect(layout.dataset.workspaceView).toBe("preview");
+    expect(previewButton.getAttribute("aria-pressed")).toBe("true");
+    expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(editorPane.hidden).toBe(true);
+    expect(editorPane.querySelector(".editor-action-footer")).not.toBeNull();
+    expect(previewPanel.hidden).toBe(false);
+    expect(screen.getByTestId("resume-preview")).toBe(preview);
+    expect(editorScroll.scrollTop).toBe(135);
+    expect(preview.scrollTop).toBe(275);
+    expect(name.value).toBe("Unsaved focus-mode draft");
+    expect(editorPane.querySelector(".state-pill")?.textContent).toBe("Unsaved changes");
+
+    fireEvent.click(splitButton);
+    expect(layout.dataset.workspaceView).toBe("split");
+    expect(editorPane.hidden).toBe(false);
+    expect(previewPanel.hidden).toBe(false);
+    expect(splitButton.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(editButton);
+    expect(layout.dataset.workspaceView).toBe("edit");
+    expect(editButton.getAttribute("aria-pressed")).toBe("true");
+    expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(editorPane.hidden).toBe(false);
+    expect(previewPanel.hidden).toBe(true);
+    expect(editorScroll.scrollTop).toBe(135);
+    expect(preview.scrollTop).toBe(275);
+    expect(name.value).toBe("Unsaved focus-mode draft");
+    expect(editorPane.querySelector(".state-pill")?.textContent).toBe("Unsaved changes");
+
+    fireEvent.click(splitButton);
+    expect(layout.dataset.workspaceView).toBe("split");
+    expect(editorPane.hidden).toBe(false);
+    expect(previewPanel.hidden).toBe(false);
+    expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(editorPane.querySelector("[data-editor-scroll-owner]")).toBe(editorScroll);
+    expect(screen.getByTestId("resume-preview")).toBe(preview);
+    expect(editorScroll.scrollTop).toBe(135);
+    expect(preview.scrollTop).toBe(275);
+    expect(name.value).toBe("Unsaved focus-mode draft");
+    expect(editorPane.querySelector(".state-pill")?.textContent).toBe("Unsaved changes");
+  });
+
+  it("localizes all three workspace states through the existing Admin locale", () => {
+    setViewport(1280);
+    window.localStorage.setItem("cms-ui-locale", "zh");
+    renderApp("/education");
+
+    const switcher = screen.getByRole("group", { name: "工作区视图" });
+    expect(document.querySelector(".topbar-left .topbar-workspace-slot")?.firstElementChild).toBe(switcher);
+    expect(within(switcher).queryByText("视图")).toBeNull();
+    expect(within(switcher).getByRole("button", { name: "编辑" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "并排" })).toBeTruthy();
+    expect(within(switcher).getByRole("button", { name: "预览" })).toBeTruthy();
+  });
+
+  it("keeps Split sizing and fixed Preview rendering unchanged while Edit/Preview use single-pane tracks", () => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const shellCss = readFileSync("src/styles.css", "utf8");
+    const app = readFileSync("src/App.tsx", "utf8");
+    const panel = readFileSync("src/preview/ResumePreviewPanel.tsx", "utf8");
+    const desktopRules = css.match(/@media\(min-width:1280px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const normalRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\{([^}]*)\}/)?.[1] ?? "";
+    const editRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\[data-workspace-view=edit\]\{([^}]*)\}/)?.[1] ?? "";
+    const previewRule = desktopRules.match(/\.preview-route-main>\.editor-preview-layout\[data-workspace-view=preview\]\{([^}]*)\}/)?.[1] ?? "";
+    const previewStageRule = desktopRules.match(/\.editor-preview-layout\[data-workspace-view=preview\] \.resume-preview-stage\{([^}]*)\}/)?.[1] ?? "";
+    const topbarRule = desktopRules.match(/\.topbar\.has-workspace-view-switcher\{([^}]*)\}/)?.[1] ?? "";
+    const topbarLeftRule = desktopRules.match(/\.topbar\.has-workspace-view-switcher \.topbar-left\{([^}]*)\}/)?.[1] ?? "";
+    const accountRule = desktopRules.match(/\.topbar\.has-workspace-view-switcher \.account-placeholder\{([^}]*)\}/)?.[1] ?? "";
+    const switcherRule = desktopRules.match(/\.preview-workspace-switcher\{([^}]*)\}/)?.[1] ?? "";
+    const workspaceSlotRule = desktopRules.match(/\.topbar-workspace-slot\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(normalRule).toContain('grid-template-columns:minmax(0,1fr) clamp(530px,calc(50vw - 125px),680px)');
+    expect(normalRule).toContain("max-width:1390px");
+    expect(css).toContain("gap:32px");
+    expect(editRule).toContain("max-width:none");
+    expect(editRule).toContain('grid-template-areas:"editor"');
+    expect(previewRule).toContain("max-width:none");
+    expect(previewRule).toContain('grid-template-areas:"preview"');
+    expect(previewStageRule).toContain("width:min(100%,980px)");
+    expect(panel).toContain("const PUBLIC_PAGE_WIDTH = 980");
+    expect(panel).toContain("Math.min(1, viewport.clientWidth / PUBLIC_PAGE_WIDTH)");
+    expect(app).toContain('className="preview-workspace-switcher"');
+    expect(app).toContain("createPortal(");
+    expect(topbarRule).toContain("justify-content:space-between");
+    expect(topbarRule).not.toContain("display:grid");
+    expect(topbarLeftRule).toContain("flex:0 0 auto");
+    expect(accountRule).toContain("flex:0 0 auto");
+    expect(shellCss).toContain(".topbar{height:70px;padding:0 clamp(20px,3vw,46px)");
+    expect(workspaceSlotRule).not.toContain("padding-left");
+    expect(desktopRules).not.toContain(".topbar-workspace-slot::before");
+    expect(switcherRule).toContain("gap:22px");
+    expect(switcherRule).not.toContain("justify-content:center");
+    expect(app).toContain('data-workspace-view={wideDesktop ? workspaceView : undefined}');
+    expect(css).toContain(".editor-action-footer{min-width:0;padding:8px 0 6px;background:#fff;gap:10px}");
+    expect(css).toContain(".resume-preview-viewport{height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}");
+
+    for (const width of [1279, 860, 640]) {
+      cleanup();
+      window.localStorage.clear();
+      setViewport(width);
+      renderApp("/education");
+      expect(screen.queryByRole("group", { name: "Workspace view" })).toBeNull();
+      expect(document.querySelector(".editor-preview-layout[data-workspace-view]")).toBeNull();
+      expect(screen.getByTestId("resume-preview").getAttribute("data-preview-scroll-mode")).toBe("document");
+    }
   });
 
   it("keeps the responsive stacked workspace on document scrolling", () => {
@@ -220,6 +385,103 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(css).toContain(".links-editor-scope .editor-form-content{gap:0}");
     expect(css).toContain(".links-editor-scope .editor-action-footer .save-bar{margin-top:0;padding:0}");
     expect(css).not.toContain(".editor-bottom-actions{position:sticky");
+  });
+
+  it.each([2048, 1440, 1366, 1280])("uses the same independent Editor/footer/Preview shell at %ipx across editor routes", width => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    expect(css).toContain("@media(min-width:1280px){");
+    expect(css).toContain("@media(max-width:1279px){");
+    expect(readFileSync("src/App.tsx", "utf8")).toContain('useMediaQuery("(min-width: 1280px)")');
+
+    const routes = destinations.filter(([path]) => ["/profile", "/education", "/experience", "/projects", "/skills", "/awards", "/links"].includes(path));
+    for (const route of routes) {
+      const path = route[0];
+      const heading = route[3];
+      cleanup();
+      setViewport(width);
+      renderApp(path);
+      const pane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+      const content = pane.querySelector<HTMLElement>(".editor-content-scroll")!;
+      const frame = pane.querySelector<HTMLElement>(".editor-workspace-route")!;
+      const footer = frame.querySelector<HTMLElement>(".editor-action-footer")!;
+      const preview = screen.getByTestId("resume-preview") as HTMLElement;
+
+      expect(content.querySelector(`h1, h2, h3`)).toBeTruthy();
+      expect(within(content).getAllByRole("heading", { name: heading })[0]).toBeTruthy();
+      expect(frame.firstElementChild).toBe(content);
+      expect(frame.lastElementChild).toBe(footer);
+      expect(footer.querySelector(".save-bar .state-pill")).not.toBeNull();
+      expect(footer.querySelector(".save-actions .button.secondary")).not.toBeNull();
+      expect(footer.querySelector(".save-actions .button.primary")).not.toBeNull();
+      expect(preview).not.toBe(content);
+
+      expect(pane.dataset.editorScrollMode).toBeUndefined();
+      expect(pane.hasAttribute("data-editor-scroll-owner")).toBe(false);
+      expect(content.dataset.editorScrollMode).toBe("element");
+      expect(preview.dataset.previewScrollMode).toBe("element");
+    }
+  });
+
+  it("keeps all tested routes on document scrolling immediately below the 1280px desktop boundary", () => {
+    setViewport(1279);
+    const routes = destinations.filter(route => ["/profile", "/education", "/experience", "/projects", "/skills", "/awards", "/links"].includes(route[0]));
+    for (const route of routes) {
+      const path = route[0];
+      cleanup();
+      renderApp(path);
+      const pane = document.querySelector<HTMLElement>(".editor-preview-pane")!;
+      const content = pane.querySelector<HTMLElement>(".editor-content-scroll")!;
+      const preview = screen.getByTestId("resume-preview") as HTMLElement;
+      expect(pane.dataset.editorScrollMode).toBe("document");
+      expect(pane.hasAttribute("data-editor-scroll-owner")).toBe(true);
+      expect(content.hasAttribute("data-editor-scroll-owner")).toBe(false);
+      expect(preview.dataset.previewScrollMode).toBe("document");
+    }
+  });
+
+  it("uses the bottom-footer Editor shell for fine-pointer Editor-only desktops without changing the side-by-side or stacked modes", async () => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const editorOnlyRules = css.match(/@media\(min-width:861px\) and \(max-width:1279px\) and \(pointer:fine\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const routeMainRule = editorOnlyRules.match(/\.app-main\.has-preview-workspace\.is-editor-only-desktop>\.preview-route-main\{([^}]*)\}/)?.[1] ?? "";
+    expect(editorOnlyRules).toBeTruthy();
+    expect(routeMainRule).toContain("padding:18px 16px 5px");
+    expect(readFileSync("src/App.tsx", "utf8")).toContain(desktopEditorOnlyMedia);
+    const routes = destinations.map(([path, , , heading]) => [path, heading] as const);
+
+    for (const [path, heading] of routes) {
+      cleanup();
+      window.sessionStorage.clear();
+      setViewport(1024, true);
+      renderApp(path);
+      const shell = document.querySelector<HTMLElement>(".app-shell.is-editor-only-desktop");
+      const layout = document.querySelector<HTMLElement>('.editor-preview-layout[data-preview-view="editor"]')!;
+      const pane = layout.querySelector<HTMLElement>(".editor-preview-pane")!;
+      const frame = pane.querySelector<HTMLElement>(".editor-workspace-route")!;
+      const content = frame.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+      const footer = frame.querySelector<HTMLElement>(".editor-action-footer")!;
+      const preview = screen.getByTestId("resume-preview") as HTMLElement;
+
+      expect(shell).not.toBeNull();
+      expect(within(content).getAllByRole("heading", { name: heading })[0]).toBeTruthy();
+      expect(frame.firstElementChild).toBe(content);
+      expect(frame.lastElementChild).toBe(footer);
+      expect(footer.querySelector(".save-bar .state-pill")).not.toBeNull();
+      expect(footer.querySelector(".save-actions .button.secondary")).not.toBeNull();
+      expect(footer.querySelector(".save-actions .button.primary")).not.toBeNull();
+      expect(preview.dataset.previewScrollMode).toBe("document");
+    }
+  });
+
+  it("preserves the Editor-only desktop content offset when switching Editor to Preview and back", async () => {
+    setViewport(1024, true);
+    renderApp("/education");
+    const content = document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
+    content.scrollTop = 240;
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(".editor-preview-toggle button"));
+    fireEvent.click(buttons[1]);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("preview"));
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(content.scrollTop).toBe(240));
   });
 
   it("keeps the stacked Editor on document scrolling without an inner Editor scroll owner", () => {

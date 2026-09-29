@@ -50,7 +50,8 @@ function PreviewLink({ href, label, icon, modified = false }: { href: string; la
   </a>;
 }
 
-export function ResumePreviewPanel({ content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true, independentScroll = false }: {
+export function ResumePreviewPanel({ hidden = false, content, confirmedContent, entryIdentities, confirmedEntryIdentities, bilingualReviews = [], section, locale, statusMessage, onLocaleChange, photoPreviewUrl, preserveScroll = false, focusRequest = 0, focusDocumentScroll = true, independentScroll = false }: {
+  hidden?: boolean;
   content: ResumeContent | null;
   confirmedContent?: ResumeContent | null;
   entryIdentities?: ResumePreviewEntryIdentities;
@@ -207,7 +208,7 @@ export function ResumePreviewPanel({ content, confirmedContent, entryIdentities,
     };
   }, [section, scale, preserveScroll, focusRequest, hasContent, focusDocumentScroll]);
 
-  return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")}>
+  return <aside ref={panelRef} className="resume-preview-panel" aria-label={t("Resume preview")} hidden={hidden}>
     <div className="resume-preview-viewport" ref={viewportRef} data-testid="resume-preview" data-preview-scroll-owner data-preview-scroll-mode={independentScroll ? "element" : "document"} data-preview-focus={section === "profile" || section === "introduction" || section === "links" ? "about" : section} lang={locale}>
       {!content && <p className="resume-preview-empty" aria-live="polite">{statusMessage}</p>}
       {content && text && <div className="resume-preview-stage" style={{ height: `${navRenderedHeight + canvasRenderedHeight}px` }}>

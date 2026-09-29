@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MouseEvent, type ReactNode, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
@@ -34,6 +35,20 @@ const previewRouteByPath: Partial<Record<string, PreviewSection>> = {
   "/experience": "experience", "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "links",
 };
 const previewSections: PreviewSection[] = ["profile", "introduction", "education", "experience", "projects", "skills", "awards", "contact", "links"];
+const DESKTOP_EDITOR_ONLY_QUERY = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, [query]);
+  return matches;
+}
 
 const clone = <T,>(value: T): T => structuredClone(value);
 const renumber = <T extends OrderedItem,>(items: T[]): T[] => items.map((item, position) => ({ ...item, position }));
@@ -137,6 +152,7 @@ const EditorContext = createContext<{
   onRequestCanonicalPreview: () => void;
   previewModes: Record<PreviewSection, "editor" | "preview">;
   previewFocusRequests: Record<PreviewSection, number>;
+  workspaceSwitcherHost?: HTMLElement | null;
   onPreviewModeChange: (section: PreviewSection, view: "editor" | "preview") => void;
   onPreviewDraftChanged: (section: PreviewSection, value: PreviewDraftValue) => void;
   previewLocale: Locale | null;
@@ -869,7 +885,12 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const { locale: uiLocale, t } = useUiLocale();
   const view = context.previewModes[section];
   const focusRequest = context.previewFocusRequests[section];
-  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
+  const wideDesktop = useMediaQuery("(min-width: 1280px)");
+  const desktopEditorOnlyViewport = useMediaQuery(DESKTOP_EDITOR_ONLY_QUERY);
+  const editorElementScroll = wideDesktop || (desktopEditorOnlyViewport && view === "editor");
+  const [workspaceView, setWorkspaceView] = useState<"edit" | "split" | "preview">("split");
+  const workspaceLayoutRef = useRef<HTMLDivElement>(null);
+  const pendingWorkspaceScrollRestore = useRef<{ editor: number; preview: number } | null>(null);
   const modeScrollPositions = useRef<{ section: PreviewSection; editor: number | null; preview: number | null }>({ section, editor: null, preview: null });
   const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: number } | null>(null);
   const [restorePreviewPosition, setRestorePreviewPosition] = useState(false);
@@ -878,7 +899,9 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
     if (next === view) return;
     if (!wideDesktop) {
       if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
-      const currentPosition = readDocumentScrollPosition();
+      const currentPosition = view === "editor" && desktopEditorOnlyViewport
+        ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")?.scrollTop ?? null
+        : readDocumentScrollPosition();
       if (currentPosition !== null) modeScrollPositions.current[view] = currentPosition;
       const nextPosition = modeScrollPositions.current[next];
       pendingModeRestore.current = next === "preview"
@@ -895,35 +918,56 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
     if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
     const pending = pendingModeRestore.current;
     if (!pending || pending.section !== section || pending.view !== view || wideDesktop) return;
-    const owner = getDocumentScrollOwner();
+    const owner = pending.view === "editor" && desktopEditorOnlyViewport
+      ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
+      : getDocumentScrollOwner();
     if (owner) owner.scrollTop = pending.position;
     pendingModeRestore.current = null;
-  }, [section, view, wideDesktop]);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1280px)");
-    const update = () => setWideDesktop(media.matches);
-    update();
-    media.addEventListener?.("change", update);
-    return () => media.removeEventListener?.("change", update);
-  }, []);
+  }, [section, view, wideDesktop, desktopEditorOnlyViewport]);
   useEffect(() => {
     if (view === "preview" || wideDesktop) requestCanonicalPreview();
   }, [requestCanonicalPreview, view, wideDesktop]);
+  useEffect(() => {
+    if (!wideDesktop) setWorkspaceView("split");
+  }, [wideDesktop]);
+  const changeWorkspaceView = (next: "edit" | "split" | "preview") => {
+    if (next === workspaceView) return;
+    const layout = workspaceLayoutRef.current;
+    pendingWorkspaceScrollRestore.current = {
+      editor: layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]")?.scrollTop ?? 0,
+      preview: layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0,
+    };
+    setWorkspaceView(next);
+  };
+  useLayoutEffect(() => {
+    if (!wideDesktop || !pendingWorkspaceScrollRestore.current) return;
+    const layout = workspaceLayoutRef.current;
+    const positions = pendingWorkspaceScrollRestore.current;
+    const editor = layout?.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+    const preview = layout?.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+    if (editor) editor.scrollTop = positions.editor;
+    if (preview) preview.scrollTop = positions.preview;
+    pendingWorkspaceScrollRestore.current = null;
+  }, [wideDesktop, workspaceView]);
   const locale = context.previewLocale ?? uiLocale;
   const statusMessage = context.fullSnapshotState === "error"
     ? t("The complete resume preview is unavailable because its data could not be loaded.")
     : t("Loading complete resume preview…");
 
-  return <div className="editor-preview-layout" data-preview-view={view}>
+  return <>
+    {wideDesktop && context.workspaceSwitcherHost && createPortal(<div className="preview-workspace-switcher" role="group" aria-label={t("Workspace view")}>
+      {(["edit", "split", "preview"] as const).map(option => <button key={option} type="button" aria-pressed={workspaceView === option}
+        onClick={() => changeWorkspaceView(option)}>{t(option === "edit" ? "Edit" : option === "split" ? "Split" : "Preview")}</button>)}
+    </div>, context.workspaceSwitcherHost)}
+    <div ref={workspaceLayoutRef} className="editor-preview-layout" data-preview-view={view} data-workspace-view={wideDesktop ? workspaceView : undefined}>
     <div className="editor-preview-toggle" role="group" aria-label={t("Editor or preview view")}>
       <button type="button" aria-pressed={view === "editor"} onClick={() => changeView("editor")}>{t("Editor")}</button>
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
     </div>
-    <div className="editor-preview-pane" data-editor-scroll-owner={!wideDesktop ? "" : undefined} data-editor-scroll-mode={!wideDesktop ? "document" : undefined}>
-      <EditorElementScrollContext.Provider value={wideDesktop}>{children}</EditorElementScrollContext.Provider>
+    <div className="editor-preview-pane" hidden={wideDesktop && workspaceView === "preview"} data-editor-scroll-owner={!wideDesktop && !desktopEditorOnlyViewport ? "" : undefined} data-editor-scroll-mode={!wideDesktop && !desktopEditorOnlyViewport ? "document" : undefined}>
+      <EditorElementScrollContext.Provider value={editorElementScroll}>{children}</EditorElementScrollContext.Provider>
     </div>
-    <ResumePreviewPanel content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
+    <ResumePreviewPanel hidden={wideDesktop && workspaceView === "edit"} content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
       bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
       focusRequest={focusRequest}
@@ -931,7 +975,8 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       independentScroll={wideDesktop}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
-  </div>;
+    </div>
+  </>;
 }
 
 function ReviewLocaleSwitch() {
@@ -2120,15 +2165,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const { t } = useUiLocale();
   const location = useLocation();
   const navigationType = useNavigationType();
-  const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(min-width: 1280px)");
-    const update = () => setWideDesktop(media.matches);
-    update();
-    media.addEventListener?.("change", update);
-    return () => media.removeEventListener?.("change", update);
-  }, []);
+  const wideDesktop = useMediaQuery("(min-width: 1280px)");
+  const desktopEditorOnlyViewport = useMediaQuery(DESKTOP_EDITOR_ONLY_QUERY);
   const [previewModes, setPreviewModes] = useState<Record<PreviewSection, "editor" | "preview">>(readPreviewModes);
   const [previewFocusRequests, setPreviewFocusRequests] = useState<Record<PreviewSection, number>>(() => Object.fromEntries(previewSections.map(section => [section, 0])) as Record<PreviewSection, number>);
   const onPreviewModeChange = useCallback((section: PreviewSection, view: "editor" | "preview") => {
@@ -2254,6 +2292,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     if (profilePhotoObjectUrl.current) URL.revokeObjectURL(profilePhotoObjectUrl.current);
   }, []);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [workspaceSwitcherHost, setWorkspaceSwitcherHost] = useState<HTMLDivElement | null>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const firstLink = useRef<HTMLAnchorElement>(null);
   const handleSidebarNavigation = (path: string, event: MouseEvent<HTMLAnchorElement>) => {
@@ -2298,6 +2337,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const additionalErrorText = additionalRouteKey ? ({ introduction: "Unable to load Introduction.", experience: "Unable to load Experience.", projects: "Unable to load Projects.", skills: "Unable to load Skills.", awards: "Unable to load Awards.", contact: "Unable to load Contact.", links: "Unable to load Links & Site Text." } as const)[additionalRouteKey] : "";
   const previewSection = previewRouteByPath[location.pathname];
   const isPreviewRoute = previewSection !== undefined;
+  const editorOnlyDesktop = Boolean(!wideDesktop && desktopEditorOnlyViewport && previewSection && previewModes[previewSection] === "editor");
   const routeDataReady = !productionMode || resume !== null || fullSnapshotState === "error"
     || (isOverviewRoute && (overviewData !== null || overviewLoadState === "error"))
     || (location.pathname === "/profile" && (profileEditor !== null || profileLoadState === "error"))
@@ -2312,11 +2352,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     if (previousWorkspacePathname.current === location.pathname) return;
     previousWorkspacePathname.current = location.pathname;
 
-    if (wideDesktop && isPreviewRoute) {
+    if ((wideDesktop || editorOnlyDesktop) && isPreviewRoute) {
       const editorOwner = document.querySelector<HTMLElement>("[data-editor-scroll-owner]");
-      const previewOwner = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
       if (editorOwner) editorOwner.scrollTop = 0;
-      if (previewOwner) previewOwner.scrollTop = 0;
+      if (wideDesktop) {
+        const previewOwner = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+        if (previewOwner) previewOwner.scrollTop = 0;
+      }
       return;
     }
 
@@ -2327,7 +2369,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       const documentOwner = getDocumentScrollOwner();
       if (documentOwner) documentOwner.scrollTop = 0;
     }
-  }, [location.pathname, previewSection, isPreviewRoute, wideDesktop]);
+  }, [location.pathname, previewSection, isPreviewRoute, wideDesktop, editorOnlyDesktop]);
 
   useLayoutEffect(() => {
     const pathname = location.pathname;
@@ -2497,18 +2539,24 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     }
 
     const isInitialRefreshRoute = isDocumentReload && pathname === initialPathname.current && navigationType === "POP";
+    const mode = previewSection ? readPreviewMode(previewSection) : "editor";
     let previewOwner = previewSection
       ? document.querySelector<HTMLElement>("[data-preview-scroll-owner]")
       : null;
-    const mode = previewSection ? readPreviewMode(previewSection) : "editor";
+    const editorOnlyScrollOwner = editorOnlyDesktop && mode === "editor"
+      ? document.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")
+      : null;
     const previewUsesDocumentScroll = (owner = previewOwner) => owner?.dataset.previewScrollMode === "document";
-    const getModeOwner = (ownerMode: "editor" | "preview") => ownerMode === "preview" && !previewUsesDocumentScroll()
-      ? previewOwner : documentOwner;
+    const getModeOwner = (ownerMode: "editor" | "preview") => ownerMode === "editor" && editorOnlyDesktop
+      ? editorOnlyScrollOwner
+      : ownerMode === "preview" && !previewUsesDocumentScroll() ? previewOwner : documentOwner;
     let cancelPendingRestoration: (() => void) | null = null;
     const currentMode = () => previewSection ? readPreviewMode(previewSection) : "editor";
-    const currentOwnerPosition = (ownerMode: "editor" | "preview") => ownerMode === "preview" && !previewUsesDocumentScroll()
-      ? (document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0)
-      : readDocumentScrollPosition();
+    const currentOwnerPosition = (ownerMode: "editor" | "preview") => ownerMode === "editor" && editorOnlyDesktop
+      ? (editorOnlyScrollOwner?.scrollTop ?? 0)
+      : ownerMode === "preview" && !previewUsesDocumentScroll()
+        ? (document.querySelector<HTMLElement>("[data-preview-scroll-owner]")?.scrollTop ?? 0)
+        : readDocumentScrollPosition();
     const onRefreshIntent = (event: KeyboardEvent) => {
       const refreshKey = ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r")
         || event.key === "F5" || event.key === "BrowserRefresh";
@@ -2539,8 +2587,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     };
     const stopDocumentSaving = observeUserScroll(window, position => persistUserPosition(currentMode(), position), {
       ignoreIntent: event => currentMode() === "preview" && !previewUsesDocumentScroll()
-        && Boolean(previewOwner && event.target instanceof Node && previewOwner.contains(event.target)),
+        && Boolean(previewOwner && event.target instanceof Node && previewOwner.contains(event.target))
+        || currentMode() === "editor" && editorOnlyDesktop
+        && Boolean(editorOnlyScrollOwner && event.target instanceof Node && editorOnlyScrollOwner.contains(event.target)),
     });
+    const stopEditorSaving = editorOnlyScrollOwner
+      ? observeUserScroll(editorOnlyScrollOwner, position => persistUserPosition("editor", position))
+      : () => {};
     let stopPreviewSaving = previewOwner && !previewUsesDocumentScroll()
       ? observeUserScroll(previewOwner, position => persistUserPosition("preview", position))
       : () => {};
@@ -2553,7 +2606,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         window.removeEventListener("beforeunload", onNonKeyboardReload);
         window.removeEventListener("pagehide", onNonKeyboardReload);
         window.removeEventListener("pageshow", onBfcachePageShow);
-        stopDocumentSaving(); stopPreviewSaving();
+        stopDocumentSaving(); stopPreviewSaving(); stopEditorSaving();
       };
     }
 
@@ -2573,8 +2626,10 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     let observedPreviewStage: HTMLElement | null = null;
     const maximumAllowedDifference = 2;
     const getOwner = () => getModeOwner(mode);
-    const currentPosition = () => mode === "preview" && !previewUsesDocumentScroll()
-      ? (previewOwner?.scrollTop ?? 0) : Math.max(documentOwner.scrollTop, window.scrollY);
+    const currentPosition = () => mode === "editor" && editorOnlyDesktop
+      ? (editorOnlyScrollOwner?.scrollTop ?? 0)
+      : mode === "preview" && !previewUsesDocumentScroll()
+        ? (previewOwner?.scrollTop ?? 0) : Math.max(documentOwner.scrollTop, window.scrollY);
     const observeElement = (element: Element | null) => {
       if (!element || observedElements.has(element)) return;
       observedElements.add(element);
@@ -2618,7 +2673,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         stableFrames = 0; previousGeometry = ""; return;
       }
       owner.scrollTop = target;
-      if ((mode === "editor" || previewUsesDocumentScroll()) && Math.abs(currentPosition() - target) > maximumAllowedDifference) window.scrollTo(0, target);
+      if (((mode === "editor" && !editorOnlyDesktop) || previewUsesDocumentScroll()) && Math.abs(currentPosition() - target) > maximumAllowedDifference) window.scrollTo(0, target);
       const actual = currentPosition();
       if (Math.abs(actual - target) > maximumAllowedDifference) { stableFrames = 0; previousGeometry = ""; return; }
 
@@ -2637,6 +2692,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       observeElement(documentOwner);
       observeElement(document.documentElement);
       observeElement(document.body);
+      observeElement(editorOnlyScrollOwner);
       const main = document.getElementById("main-content");
       observeElement(main);
       observeElement(previewOwner);
@@ -2710,8 +2766,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       cancelPendingRestoration = null;
       stopDocumentSaving();
       stopPreviewSaving();
+      stopEditorSaving();
     };
-  }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection, isPreviewRoute, wideDesktop]);
+  }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection, isPreviewRoute, wideDesktop, editorOnlyDesktop]);
 
   return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
     productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
@@ -2720,7 +2777,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
     bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll,
-    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}`}>
+    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, workspaceSwitcherHost, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">
       <div className="brand"><strong>{t("Resume Editor")}</strong></div>
@@ -2746,8 +2803,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       </nav>
     </aside>
     {menuOpen && <button className="drawer-backdrop" type="button" aria-label={t("Close navigation menu")} onClick={() => { setMenuOpen(false); menuButton.current?.focus(); }} />}
-    <div className={`app-main${isPreviewRoute ? " has-preview-workspace" : ""}`}>
-      <header className="topbar"><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button></div>
+    <div className={`app-main${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
+      <header className={`topbar${isPreviewRoute && wideDesktop ? " has-workspace-view-switcher" : ""}`}><div className="topbar-left"><button ref={menuButton} className="menu-button" type="button" aria-controls="cms-sidebar" aria-expanded={menuOpen} aria-label={menuOpen ? t("Close menu") : t("Open menu")} onClick={() => setMenuOpen(value => !value)}>☰</button>
+          {isPreviewRoute && wideDesktop && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}</div>
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}
       <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1}>{showOverviewRouteState

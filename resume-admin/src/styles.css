@@ -148,7 +148,7 @@ main{max-width:1260px;margin:0 auto;padding:clamp(24px,3.6vw,48px) clamp(20px,3v
 :root{--shell-header-height:68px}
 :root{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202020;background:#fff}
 :focus-visible{outline:2px solid #77766f;outline-offset:2px}
-.app-shell{grid-template-columns:220px minmax(0,1fr);background:#fff}
+.app-shell{grid-template-columns:190px minmax(0,1fr);background:#fff}
 .sidebar{background:#fff;color:#242424;border-right:1px solid #eee;padding:0 14px 16px}
 .brand{height:var(--shell-header-height);min-height:var(--shell-header-height);flex:none;gap:0;padding:0 10px;border-bottom-color:#eee}
 .brand-mark{display:none}
