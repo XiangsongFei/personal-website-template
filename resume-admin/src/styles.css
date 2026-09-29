@@ -557,6 +557,18 @@ main{color:#242424}
   .projects-editor-scope .project-shared-field .field>label{padding-top:0}
 }
 
+/* Education short bilingual titles keep a paired layout when the local editor has room. */
+@container (min-width:480px) and (max-width:620px){
+  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-column-headings,
+  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-field-pair{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px)}
+  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-column-headings>span:first-child{display:none}
+  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-field-values{grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
+  .education-editor-scope .education-short-bilingual-field{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:12px 0}
+  .education-editor-scope .education-short-bilingual-field>h3,
+  .education-editor-scope .education-short-bilingual-field .bilingual-field-values{grid-column:1}
+  .education-editor-scope .education-short-bilingual-field .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
+}
+
 /* Login-only editorial treatment; authentication structure and behavior stay unchanged. */
 .auth-login-screen{box-sizing:border-box;min-height:100vh;min-height:100svh;min-height:100dvh;overflow-y:auto;padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#fff}
 .auth-login-content{box-sizing:border-box;width:min(100%,380px);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}

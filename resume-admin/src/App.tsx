@@ -451,10 +451,10 @@ function SharedFields<T extends object>({ value, fields, onChange, idPrefix, rea
   )}</div>;
 }
 
-function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true, hideFieldHeadings = false }: {
+function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true, hideFieldHeadings = false, educationPairedShortFields = false }: {
   value: Bilingual<T>; fields: FieldSpec<T>[]; onChange: (value: Bilingual<T>, locale: Locale) => void; idPrefix: string;
   readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode; hideFieldHeadings?: boolean;
-  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean;
+  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean; educationPairedShortFields?: boolean;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -467,7 +467,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
       </div>}
       {fields.map(field =>
-      <section className="bilingual-field-pair" key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
+      <section className={`bilingual-field-pair${educationPairedShortFields && !field.multiline ? " education-short-bilingual-field" : ""}`} key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
         {!hideFieldHeadings && <h3>{t(field.label)}</h3>}
         <div className="bilingual-field-values">{locales.map(locale => {
           const readOnly = readOnlyAll || readOnlyLocales?.[locale] || (locale === "zh" && field.readOnlyZh);
@@ -746,7 +746,7 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards";
   return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading} sectionText={sectionText}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />}
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered && section === "education" ? <div className="education-section-title-fields">{sectionText.rendered}</div> : sectionText?.rendered} anchorScope={section} />}
   </SectionForm></div>;
 }
 
@@ -1698,12 +1698,12 @@ function Education() {
     label={item => educationCategoryLabel(item, locale, t)}
     headerIdentity={(item, index, _itemLabel, onChange) => educationCategorySelect(item, index, locale, t, category => onChange(educationCategoryChanged(item, category)))}
     render={(item, onChange, confirmed) => <>
-      {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders idPrefix={`${item.id}-category`} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id}
+      {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders educationPairedShortFields idPrefix={`${item.id}-category`} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id}
         confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
         fields={[{ key: "customCategoryLabel", label: "Custom category name" }]} />}
-      <BilingualFields showLocaleHeaders idPrefix={item.id} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
+      <div className="education-entry-title-fields"><BilingualFields showLocaleHeaders educationPairedShortFields idPrefix={item.id} section="education" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
         fields={[{ key: "title", label: "Title" }, { key: "program", label: "Program" }, { key: "period", label: "Period" }, { key: "grade", label: "Grade" },
-          ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} />
+          ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} /></div>
     </>} />;
 }
 
@@ -1934,7 +1934,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   return <section className="page-section education-editor-scope editor-workspace-route">
     <EditorContentScroll>
     <PageHeadingWithAction title="Education" description="" editorAnchor="heading:education" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
-    {sectionText.rendered}
+    {sectionText.rendered && <div className="education-section-title-fields">{sectionText.rendered}</div>}
     <div className="repeatable-group" aria-label={t("Education")}>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
       <div className="item-stack">{editor.draft.map((item, index) => {
@@ -1959,14 +1959,14 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           {isOpen && <div className="item-card-body">
             {partial?.blocked && <p className="save-notice" role="alert">{t("Parent creation returned no confirmed row. Verify production manually before retrying this item.")}</p>}
             {partial && !partial.blocked && <p className="save-notice" role="status">{t("Production created the parent. Translation rows confirmed:")} {partial.inserted.join(", ") || t("none")}. {t("Save again to finish.")}</p>}
-            {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders idPrefix={`${item.id}-category`} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id}
+            {educationCategoryFor(item) === "custom" && <BilingualFields showLocaleHeaders educationPairedShortFields idPrefix={`${item.id}-category`} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id}
               confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
               onChange={(translations, locale) => patchDraft(item.id, value => ({ ...value, translations: { ...value.translations, [locale]: translations[locale] } }))}
               fields={[{ key: "customCategoryLabel", label: "Custom category name" }]} />}
-            <BilingualFields showLocaleHeaders idPrefix={item.id} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id} confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
+            <div className="education-entry-title-fields"><BilingualFields showLocaleHeaders educationPairedShortFields idPrefix={item.id} section="education" itemId={baselineById.get(item.id)?.sourceKey ?? item.sourceKey ?? item.id} confirmed={baselineById.get(item.id)?.translations} value={item.translations} readOnlyAll={editor.saving}
               onChange={(translations, locale) => patchDraft(item.id, value => ({ ...value, translations: { ...value.translations, [locale]: translations[locale] } }))}
               fields={[{ key: "title", label: "Title" }, { key: "program", label: "Program" }, { key: "period", label: "Period" }, { key: "grade", label: "Grade" },
-                ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} />
+                ...(item.entryType === "summerSchool" ? [{ key: "courseTitle", label: "Course title" }, { key: "courseDescription", label: "Course description", multiline: true }] as const : [])]} /></div>
           </div>}
         </article>;
       })}</div>
