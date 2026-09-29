@@ -104,12 +104,52 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(window.sessionStorage.getItem(scrollKey("/education", "preview"))).toBe("1500");
     expect(editor.scrollTop).toBe(240);
     expect((document.scrollingElement ?? document.documentElement).scrollTop).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(editor.scrollTop).toBe(240);
+    expect(preview.scrollTop).toBe(1500);
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(editor.scrollTop).toBe(240);
+    expect(preview.scrollTop).toBe(1500);
   });
 
   it("keeps the responsive stacked workspace on document scrolling", () => {
     renderApp("/education");
     expect(document.querySelector<HTMLElement>("[data-editor-scroll-owner]")?.dataset.editorScrollMode).toBe("document");
     expect((screen.getByTestId("resume-preview") as HTMLElement).dataset.previewScrollMode).toBe("document");
+  });
+
+  it("restores independent Editor and Preview document positions when switching modes on one route", () => {
+    renderApp("/experience");
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    documentScrollOwner.scrollTop = 420;
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    documentScrollOwner.scrollTop = 910;
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(documentScrollOwner.scrollTop).toBe(420);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    expect(documentScrollOwner.scrollTop).toBe(910);
+    fireEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(documentScrollOwner.scrollTop).toBe(420);
+  });
+
+  it("starts a newly entered and revisited sidebar Editor route at the top without carrying the old route position", async () => {
+    renderApp("/experience");
+    const documentScrollOwner = document.scrollingElement ?? document.documentElement;
+    const nav = within(screen.getByRole("navigation", { name: "CMS sections" }));
+    documentScrollOwner.scrollTop = 1200;
+
+    fireEvent.click(nav.getByRole("link", { name: "Projects" }));
+    await waitFor(() => expect(screen.getByTestId("current-route").textContent).toBe("/projects"));
+    expect(screen.getByRole("button", { name: "Editor" }).getAttribute("aria-pressed")).toBe("true");
+    expect(documentScrollOwner.scrollTop).toBe(0);
+
+    documentScrollOwner.scrollTop = 760;
+    fireEvent.click(nav.getByRole("link", { name: "Experience" }));
+    await waitFor(() => expect(screen.getByTestId("current-route").textContent).toBe("/experience"));
+    expect(documentScrollOwner.scrollTop).toBe(0);
   });
 
   it("keeps desktop pane ownership after changing Admin routes", async () => {

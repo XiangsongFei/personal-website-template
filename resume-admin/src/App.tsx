@@ -752,10 +752,35 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const view = context.previewModes[section];
   const focusRequest = context.previewFocusRequests[section];
   const [wideDesktop, setWideDesktop] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1440px)").matches);
+  const modeScrollPositions = useRef<{ section: PreviewSection; editor: number | null; preview: number | null }>({ section, editor: null, preview: null });
+  const pendingModeRestore = useRef<{ section: PreviewSection; view: "editor" | "preview"; position: number } | null>(null);
+  const [restorePreviewPosition, setRestorePreviewPosition] = useState(false);
   const requestCanonicalPreview = context.onRequestCanonicalPreview;
   const changeView = (next: "editor" | "preview") => {
+    if (next === view) return;
+    if (!wideDesktop) {
+      if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
+      const currentPosition = readDocumentScrollPosition();
+      if (currentPosition !== null) modeScrollPositions.current[view] = currentPosition;
+      const nextPosition = modeScrollPositions.current[next];
+      pendingModeRestore.current = next === "preview"
+        ? nextPosition === null ? null : { section, view: next, position: nextPosition }
+        : { section, view: next, position: nextPosition ?? 0 };
+      setRestorePreviewPosition(next === "preview" && nextPosition !== null);
+    } else {
+      pendingModeRestore.current = null;
+      setRestorePreviewPosition(false);
+    }
     context.onPreviewModeChange(section, next);
   };
+  useLayoutEffect(() => {
+    if (modeScrollPositions.current.section !== section) modeScrollPositions.current = { section, editor: null, preview: null };
+    const pending = pendingModeRestore.current;
+    if (!pending || pending.section !== section || pending.view !== view || wideDesktop) return;
+    const owner = getDocumentScrollOwner();
+    if (owner) owner.scrollTop = pending.position;
+    pendingModeRestore.current = null;
+  }, [section, view, wideDesktop]);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(min-width: 1440px)");
@@ -782,7 +807,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
       bilingualReviews={Object.values(context.bilingualReviews)} section={section} locale={locale} statusMessage={statusMessage}
       focusRequest={focusRequest}
-      focusDocumentScroll={view === "preview" && !wideDesktop}
+      focusDocumentScroll={view === "preview" && !wideDesktop && !restorePreviewPosition}
       independentScroll={wideDesktop}
       preserveScroll={context.preservePreviewScroll && view === "preview"}
       onLocaleChange={context.setPreviewLocale} photoPreviewUrl={context.profilePhotoDraft?.objectUrl} />
@@ -1968,6 +1993,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     if (view === "preview") setPreviewFocusRequests(current => ({ ...current, [section]: current[section] + 1 }));
   }, [previewModes]);
   const initialPathname = useRef(location.pathname);
+  const previousWorkspacePathname = useRef(location.pathname);
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const restoredScrollIdentity = useRef<string | null>(null);
   const drafts = useRef(new Map<SectionKey, unknown>());
@@ -2109,6 +2135,27 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const preservePreviewScroll = Boolean(isDocumentReload && location.pathname === initialPathname.current
     && navigationType === "POP" && previewSection && readPreviewMode(previewSection) === "preview"
     && readStoredScrollPosition(location.pathname, "preview") !== null);
+
+  useLayoutEffect(() => {
+    if (previousWorkspacePathname.current === location.pathname) return;
+    previousWorkspacePathname.current = location.pathname;
+
+    if (wideDesktop && isPreviewRoute) {
+      const editorOwner = document.querySelector<HTMLElement>("[data-editor-scroll-owner]");
+      const previewOwner = document.querySelector<HTMLElement>("[data-preview-scroll-owner]");
+      if (editorOwner) editorOwner.scrollTop = 0;
+      if (previewOwner) previewOwner.scrollTop = 0;
+      return;
+    }
+
+    // A sidebar route entered in Editor mode starts at its beginning. A route
+    // opened directly in Preview keeps PreviewWorkspace's normal section focus.
+    const opensEditor = !previewSection || readPreviewMode(previewSection) === "editor";
+    if (opensEditor) {
+      const documentOwner = getDocumentScrollOwner();
+      if (documentOwner) documentOwner.scrollTop = 0;
+    }
+  }, [location.pathname, previewSection, isPreviewRoute, wideDesktop]);
 
   useLayoutEffect(() => {
     const pathname = location.pathname;
