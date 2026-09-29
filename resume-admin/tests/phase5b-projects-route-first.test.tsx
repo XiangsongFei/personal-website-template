@@ -55,6 +55,7 @@ describe("Phase 5B Projects route-first loading", () => {
   it("cold /projects reads only site, project parents, translations, and methods", async () => {
     const reads: string[] = [];
     const rows: Record<string, Record<string, unknown>[]> = {
+      resume_locale_content: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, locale, education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "Portfolio", portfolio_href: "", kaggle_label: "View project", updated_at_label: "Last updated", linkedin_label: "LinkedIn", linkedin_href: "" })),
       resume_project_entries: [
         { id: "project-b", resume_id: resumeId, position: 1, source_key: "b-key" },
         { id: "project-a", resume_id: resumeId, position: 0, source_key: "a-key" },
@@ -77,7 +78,7 @@ describe("Phase 5B Projects route-first loading", () => {
     const full = vi.spyOn(repo, "load");
     show(repo, "/projects", new ResumeSectionStore(), true);
     expect(await screen.findByLabelText("English Title")).toBeTruthy();
-    expect(reads).toEqual(["resume_sites", "resume_project_entries", "resume_project_translations", "resume_project_methods"]);
+    expect(reads.sort()).toEqual(["resume_sites", "resume_locale_content", "resume_project_entries", "resume_project_translations", "resume_project_methods"].sort());
     expect(full).not.toHaveBeenCalled();
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();

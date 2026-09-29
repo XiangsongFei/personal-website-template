@@ -72,7 +72,7 @@ describe("Phase 5D Links route-first loading", () => {
     await screen.findByLabelText("URL");
     const scope = document.querySelector(".links-editor-scope")!;
     expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
-      "Public links", "Resume files", "Navigation labels", "Site Text",
+      "Public links", "Resume files", "Navigation labels", "Footer text",
     ]);
     expect(scope.querySelectorAll(".page-heading")).toHaveLength(0);
     expect(scope.querySelectorAll(".panel")).toHaveLength(0);
@@ -107,14 +107,19 @@ describe("Phase 5D Links route-first loading", () => {
     expect(linkedinLocalized.querySelectorAll(".bilingual-column-headings")).toHaveLength(0);
     expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair"), row => row.firstElementChild?.nextElementSibling?.classList.contains("bilingual-field-values"))).toEqual([true, true]);
     expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["Chinese", "English", "Chinese", "English"]);
-    const siteTextSection = Array.from(document.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "Site Text")!;
-    expect(Array.from(siteTextSection.querySelectorAll(".bilingual-field-pair > h3"), node => node.textContent)).toEqual([
-      "Education section title", "Experience section title", "Projects section title", "Skills section title", "Awards section title", "Project link label", "Updated-at label",
-    ]);
+    const siteTextSection = Array.from(document.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "Footer text")!;
+    expect(siteTextSection.querySelector(".links-footer-setting > h3")?.textContent).toBe("Updated-at label");
+    expect(siteTextSection.querySelector(".links-footer-setting > p")?.textContent)
+      .toBe("Text displayed before the update date in the public resume footer.");
+    expect(siteTextSection.querySelectorAll(".bilingual-field-pair > h3")).toHaveLength(0);
     expect(document.querySelector(".links-editor-scope")?.textContent).not.toMatch(/\bexperience\b|\bprojects\b|\bskills\b|\bawards\b|\bcontact\b/);
-    for (const label of ["Education section title", "Experience section title", "Projects section title", "Skills section title", "Awards section title", "Project link label", "Updated-at label"]) {
+    for (const label of ["Updated-at label"]) {
       expect(screen.getByLabelText(`English ${label}`)).toBeTruthy();
       expect(screen.getByLabelText(`Chinese ${label}`)).toBeTruthy();
+    }
+    for (const label of ["Education section title", "Experience section title", "Projects section title", "Skills section title", "Awards section title", "Project link label"]) {
+      expect(screen.queryByLabelText(`English ${label}`)).toBeNull();
+      expect(screen.queryByLabelText(`Chinese ${label}`)).toBeNull();
     }
     expect(siteTextSection.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     const resumeLabelMatrix = document.querySelector(".links-resume-files .links-translation-matrix")!;
@@ -132,14 +137,46 @@ describe("Phase 5D Links route-first loading", () => {
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     const scope = document.querySelector(".links-editor-scope")!;
     expect(Array.from(scope.querySelectorAll(".links-section h2")).map(heading => heading.textContent)).toEqual([
-      "公开链接", "简历文件", "导航标签", "网站文本",
+      "公开链接", "简历文件", "导航标签", "页脚文案",
     ]);
     expect(Array.from(scope.querySelectorAll(".navigation-labels .bilingual-field-pair > h3"), node => node.textContent)).toEqual([
       "工作经历", "项目经历", "技能", "荣誉奖项", "联系方式",
     ]);
     expect(screen.getByLabelText("联系区标签")).toBeTruthy();
     expect(screen.getByLabelText("英文 公开按钮文案")).toBeTruthy();
+    const footer = Array.from(scope.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "页脚文案")!;
+    expect(footer.querySelector(".links-footer-setting > h3")?.textContent).toBe("更新时间标签");
+    expect(footer.querySelector(".links-footer-setting > p")?.textContent).toBe("公开简历页脚中更新时间前显示的文字");
     expect(screen.getByRole("button", { name: "保存网站与链接修改" })).toBeTruthy();
+  });
+
+  it("keeps navigation labels and footer text editable, cancellable, and saved through their existing writers", async () => {
+    const updatePublicLinks = vi.fn().mockResolvedValue(undefined);
+    const updateSiteText = vi.fn().mockResolvedValue(undefined);
+    const updateNavigationLabel = vi.fn().mockResolvedValue(undefined);
+    const repo = repository();
+    Object.assign(repo, { updatePublicLinks, updateSiteText, updateNavigationLabel });
+    show(repo);
+    const chineseNavigation = await screen.findByLabelText("Chinese Experience") as HTMLInputElement;
+    const englishFooter = screen.getByLabelText("English Updated-at label") as HTMLInputElement;
+    const initialNavigation = chineseNavigation.value;
+    const initialFooter = englishFooter.value;
+    fireEvent.change(chineseNavigation, { target: { value: "工作（草稿）" } });
+    fireEvent.change(englishFooter, { target: { value: "Last updated" } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("Chinese Experience") as HTMLInputElement).value).toBe(initialNavigation);
+    expect((screen.getByLabelText("English Updated-at label") as HTMLInputElement).value).toBe(initialFooter);
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(updateNavigationLabel).not.toHaveBeenCalled();
+    expect(updateSiteText).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Chinese Experience"), { target: { value: "工作（已保存）" } });
+    fireEvent.change(screen.getByLabelText("English Updated-at label"), { target: { value: "Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
+    await waitFor(() => expect(screen.getByText("No unsaved changes")).toBeTruthy());
+    expect(updateNavigationLabel).toHaveBeenCalledWith(resumeId, links.navigation[0].id, "zh", "工作（已保存）");
+    expect(updateSiteText).toHaveBeenCalledWith(resumeId, "en", { updatedAtLabel: "Updated" });
   });
 
   it("cold /links reads only the actual Links schema tables and maps public links without an id", async () => {

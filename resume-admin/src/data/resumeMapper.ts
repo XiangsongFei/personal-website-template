@@ -1,6 +1,6 @@
 import type {
   AwardItem, ContactSection, EditorSections, EducationItem, ExperienceItem, FocusItem, IntroItem,
-  LinksSection, Locale, NavigationItem, ProfileSection, ProjectItem, ProjectMethod, SkillItem, StatusItem,
+  Bilingual, LinksSection, Locale, NavigationItem, ProfileSection, ProjectItem, ProjectMethod, SiteTextTranslation, SkillItem, StatusItem,
 } from "../model";
 
 type Row = Record<string, unknown>;
@@ -241,22 +241,27 @@ export function mapContactRows(localeRows: Row[], focusParents: Row[], focusTran
 export function mapLinksRows(linkRows: Row[], localeRows: Row[], navigationRows: Row[], navigationTranslations: Row[], resumeId: string): LinksSection {
   for (const tableRows of [linkRows, localeRows, navigationRows, navigationTranslations]) assertResumeOwnership(tableRows, resumeId);
   const links = singleton(linkRows, "resume_public_links");
-  const localeContent = byLocale(localeRows, "resume_id", resumeId);
   const navigation = sorted(navigationRows).map((parent, index) => {
     if (!navSections[index]) throw new Error("Unexpected navigation item count");
     return { ...item(parent), sectionId: navSections[index],
       translations: translated(navigationTranslations, "navigation_item_id", value(parent, "id"), row => ({ label: field(row, "label") })) };
   });
   if (navigation.length !== navSections.length) throw new Error("Expected five fixed navigation items");
-  const siteText = (locale: Locale, key: string) => field(localeContent[locale], key);
   return {
     shared: { email: value(links, "email"), github: value(links, "github"), githubLabel: value(links, "github_label"),
       linkedInDisplayName: value(links, "linkedin_display_name"), emailLabel: value(links, "email_label"), linkedInLabel: value(links, "linkedin_label") },
-    translations: { zh: mapSiteText("zh", siteText), en: mapSiteText("en", siteText) }, navigation,
+    translations: mapSiteTextRows(localeRows, resumeId), navigation,
   };
 }
 
-function mapSiteText(locale: Locale, text: (locale: Locale, key: string) => string) {
+export function mapSiteTextRows(localeRows: Row[], resumeId: string): Bilingual<SiteTextTranslation> {
+  assertResumeOwnership(localeRows, resumeId);
+  const localeContent = byLocale(localeRows, "resume_id", resumeId);
+  const siteText = (locale: Locale, key: string) => field(localeContent[locale], key);
+  return { zh: mapSiteText("zh", siteText), en: mapSiteText("en", siteText) };
+}
+
+function mapSiteText(locale: Locale, text: (locale: Locale, key: string) => string): SiteTextTranslation {
   return {
     educationLabel: text(locale, "education_label"), experienceLabel: text(locale, "experience_label"),
     projectHeading: text(locale, "project_heading"), skillsLabel: text(locale, "skills_label"),

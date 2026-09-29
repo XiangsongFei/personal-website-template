@@ -2,12 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
-  mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata,
+  mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
   mapSkillRows, type LoadedResume, type OverviewResumeData, type ResumeRows, type ResumeSiteMetadata, type ResumeTable,
 } from "./resumeMapper";
 import type {
-  AwardItem, ContactSection, EducationCategory, EducationItem, ExperienceItem, IntroItem, LinksSection,
-  Locale, ProfileSection, ProfileTranslation, ProjectItem, SkillItem,
+  AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, IntroItem, LinksSection,
+  Locale, ProfileSection, ProfileTranslation, ProjectItem, SiteTextTranslation, SkillItem,
 } from "../model";
 
 export const resumeTables = [
@@ -55,6 +55,7 @@ export interface ResumeSectionRepository {
   loadAwards(resumeId: string): Promise<AwardItem[]>;
   loadContact(resumeId: string): Promise<ContactSection>;
   loadLinks(resumeId: string): Promise<LinksSection>;
+  loadSiteText?(resumeId: string): Promise<Bilingual<SiteTextTranslation>>;
 }
 
 export type CompleteResumeRepository = ResumeRepository & ResumeSectionRepository;
@@ -223,6 +224,10 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
       const [zh, en] = await Promise.all(((["zh", "en"] as const).map(locale =>
         readResumePdfFilename(supabase, locale, mapped.translations[locale].portfolioHref))));
       return { ...mapped, resumePdfFilenames: { zh, en } };
+    },
+    async loadSiteText(resumeId) {
+      const localeContent = await readResumeRows(supabase, "resume_locale_content", resumeId);
+      return mapSiteTextRows(localeContent, resumeId);
     },
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");

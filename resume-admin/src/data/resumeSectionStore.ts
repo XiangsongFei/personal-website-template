@@ -1,6 +1,6 @@
 import type {
-  AwardItem, ContactSection, EducationItem, ExperienceItem, IntroItem, LinksSection,
-  ProfileSection, ProjectItem, SkillItem,
+  AwardItem, Bilingual, ContactSection, EducationItem, ExperienceItem, IntroItem, LinksSection,
+  ProfileSection, ProjectItem, SiteTextTranslation, SkillItem,
 } from "../model";
 import type { OverviewResumeData, ResumeSiteMetadata } from "./resumeMapper";
 
@@ -15,6 +15,7 @@ export type SectionData = {
   awards: AwardItem[];
   contact: ContactSection;
   links: LinksSection;
+  siteText: Bilingual<SiteTextTranslation>;
 };
 
 export type ResumeSectionKey = keyof SectionData;

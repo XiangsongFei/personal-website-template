@@ -86,6 +86,7 @@ describe("Phase 5A route-first section loading", () => {
       if (table === "resume_sites") return { maybeSingle: async () => ({ data: { id: resumeId, site_key: "example-cv", is_published: true, updated_at: null }, error: null }) };
       if (table === spec.parents) return Promise.resolve({ data: [parents], error: null });
       if (table === spec.translations) return Promise.resolve({ data: (["zh", "en"] as const).map(locale => translationRow(key, locale)), error: null });
+      if (table === "resume_locale_content") return Promise.resolve({ data: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, locale, education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "Portfolio", portfolio_href: "", kaggle_label: "View project", updated_at_label: "Last updated", linkedin_label: "LinkedIn", linkedin_href: "" })) });
       throw new Error(`Unexpected table read ${table}`);
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
     const repo = createResumeRepository({ from } as unknown as SupabaseClient);
@@ -93,7 +94,7 @@ describe("Phase 5A route-first section loading", () => {
     show(repo, spec.path);
     const inputName = spec.input;
     expect(await screen.findByLabelText(inputName)).toBeTruthy();
-    expect(reads).toEqual(["resume_sites", spec.parents, spec.translations]);
+    expect(reads.sort()).toEqual([spec.parents, spec.translations, ...(key === "introduction" ? [] : ["resume_locale_content"]), "resume_sites"].sort());
     expect(fullLoad).not.toHaveBeenCalled();
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
   });

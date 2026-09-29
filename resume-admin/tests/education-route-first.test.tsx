@@ -73,13 +73,14 @@ describe("Phase 4 route-first Education loading", () => {
       if (table === "resume_sites") return { maybeSingle: async () => ({ data: { id: resumeId, site_key: "example-cv", is_published: true, updated_at: null }, error: null }) };
       if (table === "resume_education_entries") return Promise.resolve({ data: [{ id: "edu-id", resume_id: resumeId, source_key: "stable-key", position: 0, entry_type: "summerSchool" }], error: null });
       if (table === "resume_education_translations") return Promise.resolve({ data: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, education_entry_id: "edu-id", locale, title: `${locale} title`, program: "program", period: "period", grade: "grade", course_title: null, course_description: null })), error: null });
+      if (table === "resume_locale_content") return Promise.resolve({ data: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, locale, education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "Portfolio", portfolio_href: "", kaggle_label: "View project", updated_at_label: "Last updated", linkedin_label: "LinkedIn", linkedin_href: "" })), error: null });
       throw new Error(`Unexpected Data API table: ${table}`);
     }) })), update: vi.fn(), insert: vi.fn(), delete: vi.fn() }));
     const repo = createResumeRepository({ from } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/education", true);
     expect(await screen.findByLabelText("English Title")).toBeTruthy();
-    expect(reads).toEqual(["resume_sites", "resume_education_entries", "resume_education_translations"]);
+    expect(reads.sort()).toEqual(["resume_education_entries", "resume_education_translations", "resume_locale_content", "resume_sites"]);
     expect(full).not.toHaveBeenCalled();
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();

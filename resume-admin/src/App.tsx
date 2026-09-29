@@ -6,7 +6,7 @@ import type { EditableRepeatableSection, EditableTranslation, ResumeRepository, 
 import type {
   AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
-  SkillItem, StatusItem,
+  SkillItem, SiteTextTranslation, StatusItem,
 } from "./model";
 import { buildCanonicalResumePreview, type CanonicalResumePreview } from "./preview/resumeContentMapper";
 import { ResumePreviewPanel, type PreviewSection } from "./preview/ResumePreviewPanel";
@@ -63,6 +63,14 @@ function getDocumentScrollOwner(): HTMLElement | null {
 type EditableSectionItem = IntroItem | ExperienceItem | ProjectItem | SkillItem | AwardItem;
 type PreviewDrafts = Partial<Pick<EditorSections, PreviewSection>>;
 type PreviewDraftValue = EditorSections[PreviewSection];
+type SectionTextPage = "education" | "experience" | "projects" | "skills" | "awards";
+type SectionTextKey = "educationLabel" | "experienceLabel" | "projectHeading" | "kaggleLabel" | "skillsLabel" | "honorsLabel";
+type SectionTextValues = Partial<Pick<SiteTextTranslation, SectionTextKey>>;
+type SectionTextDraftState = { baseline: Bilingual<SectionTextValues>; draft: Bilingual<SectionTextValues> };
+const sectionTextKeys: Record<SectionTextPage, SectionTextKey[]> = {
+  education: ["educationLabel"], experience: ["experienceLabel"], projects: ["projectHeading", "kaggleLabel"],
+  skills: ["skillsLabel"], awards: ["honorsLabel"],
+};
 type EditableFormItem = OrderedItem & { sourceKey?: string | null; translations: Record<Locale, object> };
 type ProductionListState<T extends EditableFormItem = EditableSectionItem> = { marker: "production-list"; baseline: T[]; draft: T[];
   partialCreates: Record<string, { inserted: Locale[]; blocked?: boolean }>; saving: boolean; notice: string; error: boolean };
@@ -101,15 +109,20 @@ function initialEducationEditorState(items: EducationItem[]): EducationEditorSta
 
 const EditorContext = createContext<{
   sections: EditorSections; resume: LoadedResume | null; overviewData: OverviewResumeData | null; overviewSiteMetadata: ResumeSiteMetadata | null;
-  overviewLoadState: "loading" | "error"; onRetryOverview: (() => void) | null; drafts: Map<SectionKey, unknown>;
+  overviewLoadState: "loading" | "error"; onRetryOverview: (() => void) | null; drafts: Map<string, unknown>;
   productionMode: boolean; fullSnapshotState: "idle" | "loading" | "error"; profileResumeId: string | null; profileLoadState: "loading" | "error"; onRetryProfile: (() => void) | null;
   educationSection: EducationItem[] | null; educationResumeId: string | null; educationLoadState: "loading" | "error";
   onRetryEducation: (() => void) | null; onEducationChanged: ((resumeId: string, education: EducationItem[]) => void) | null;
   onReloadEducation: (() => Promise<EducationItem[]>) | null; onEducationDeleted: ((resumeId: string, entryId: string) => void) | null;
   additionalSections: Partial<Pick<EditorSections, "introduction" | "experience" | "projects" | "skills" | "awards" | "contact" | "links">>;
-  additionalRouteLoadState: "loading" | "error";
+  additionalRouteLoadState: "loading" | "error" | "loaded";
   additionalResumeId: string | null;
   onAdditionalChanged: ((section: SectionKey, resumeId: string, value: unknown) => void) | null;
+  siteTextTranslations: Bilingual<SiteTextTranslation> | null;
+  siteTextResumeId: string | null;
+  onSiteTextChanged: ((resumeId: string, translations: Bilingual<SiteTextTranslation>) => void) | null;
+  sectionTextDrafts: Partial<Record<SectionTextPage, SectionTextDraftState>>;
+  setSectionTextDrafts: Dispatch<SetStateAction<Partial<Record<SectionTextPage, SectionTextDraftState>>>>;
   onReloadAdditional: ((section: EditableRepeatableSection) => Promise<EditableSectionItem[]>) | null;
   repository: ResumeRepository | null; onProfileSaved: ((row: UpdatedProfileRow) => void) | null;
   onProfileTranslationSaved: ((row: UpdatedProfileTranslationRow) => void) | null;
@@ -140,7 +153,7 @@ const EditorContext = createContext<{
   onBilingualReviewConfirm: (identity: BilingualFieldIdentity, locale: Locale) => void;
   onBilingualCancel: (changedKeys: Set<string>) => void;
   onBilingualSave: (changedKeys: Set<string>) => void;
-}>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
+}>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, siteTextTranslations: null, siteTextResumeId: null, onSiteTextChanged: null, sectionTextDrafts: {}, setSectionTextDrafts: () => {}, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
   profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
@@ -239,9 +252,9 @@ function SharedFields<T extends object>({ value, fields, onChange, idPrefix, rea
   )}</div>;
 }
 
-function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true }: {
+function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true, hideFieldHeadings = false }: {
   value: Bilingual<T>; fields: FieldSpec<T>[]; onChange: (value: Bilingual<T>, locale: Locale) => void; idPrefix: string;
-  readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode;
+  readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode; hideFieldHeadings?: boolean;
   section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean;
 }) {
   const { t } = useUiLocale();
@@ -256,7 +269,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
       </div>}
       {fields.map(field =>
       <section className="bilingual-field-pair" key={field.key}>
-        <h3>{t(field.label)}</h3>
+        {!hideFieldHeadings && <h3>{t(field.label)}</h3>}
         <div className="bilingual-field-values">{locales.map(locale => {
           const readOnly = readOnlyAll || readOnlyLocales?.[locale] || (locale === "zh" && field.readOnlyZh);
           const localeName = locale === "zh" ? t("Chinese") : t("English");
@@ -290,20 +303,96 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
   </div>;
 }
 
-function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel }: {
+function useSectionText(page: SectionTextPage | null) {
+  const context = useContext(EditorContext);
+  const { t } = useUiLocale();
+  const keys = page ? sectionTextKeys[page] : [];
+  const resumeId = context.siteTextResumeId ?? context.additionalResumeId ?? (page === "education" ? context.educationResumeId : null) ?? context.resume?.resumeId ?? null;
+  const stored = page ? context.sectionTextDrafts[page] : undefined;
+  const siteText = context.siteTextTranslations ?? context.sections.links.translations;
+  const pick = (locale: Locale) => Object.fromEntries(keys.map(key => [key, siteText[locale][key]])) as SectionTextValues;
+  const baseline: Bilingual<SectionTextValues> = stored?.baseline ?? { zh: pick("zh"), en: pick("en") };
+  const draft: Bilingual<SectionTextValues> = stored?.draft ?? baseline;
+  const dirty = (["zh", "en"] as const).some(locale => keys.some(key => draft[locale][key] !== baseline[locale][key]));
+  const setDraft = (next: Bilingual<SectionTextValues>) => { if (page) context.setSectionTextDrafts(current => ({ ...current, [page]: { baseline, draft: next } })); };
+  const onChange = (next: Bilingual<SectionTextValues>, locale: Locale) => {
+    for (const key of keys) context.onBilingualFieldEdit({ section: "links", itemId: "links", field: key }, locale, next[locale][key] !== baseline[locale][key]);
+    setDraft({ ...draft, [locale]: next[locale] });
+  };
+  const cancel = () => {
+    const changed = new Set<string>();
+    for (const locale of ["zh", "en"] as const) for (const key of keys) if (draft[locale][key] !== baseline[locale][key])
+      changed.add(bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale));
+    context.onBilingualCancel(changed);
+    setDraft(baseline);
+  };
+  const save = async (): Promise<boolean> => {
+    if (!dirty) return true;
+    if (!context.repository?.updateSiteText || !resumeId) return false;
+    let complete = true;
+    let updatedTranslations = context.siteTextTranslations ?? context.sections.links.translations;
+    let changedAny = false;
+    for (const locale of ["zh", "en"] as const) {
+      const changed = Object.fromEntries(keys.filter(key => draft[locale][key] !== baseline[locale][key]).map(key => [key, draft[locale][key]])) as SectionTextValues;
+      if (!Object.keys(changed).length) continue;
+      try {
+        await context.repository.updateSiteText(resumeId, locale, changed);
+        changedAny = true;
+        updatedTranslations = { ...updatedTranslations, [locale]: { ...updatedTranslations[locale], ...changed } };
+        context.onBilingualSave(new Set(Object.keys(changed).map(key => bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale))));
+        if (page) context.setSectionTextDrafts(current => {
+          const latest = current[page] ?? { baseline, draft };
+          return { ...current, [page]: {
+            baseline: { ...latest.baseline, [locale]: { ...latest.baseline[locale], ...changed } },
+            draft: { ...latest.draft, [locale]: { ...latest.draft[locale], ...changed } },
+          } };
+        });
+      } catch { complete = false; }
+    }
+    if (changedAny) context.onSiteTextChanged?.(resumeId, updatedTranslations);
+    return complete;
+  };
+  const confirmLocal = () => {
+    if (!page) return;
+    const changed = new Set<string>();
+    for (const locale of ["zh", "en"] as const) for (const key of keys) if (draft[locale][key] !== baseline[locale][key])
+      changed.add(bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale));
+    context.onBilingualSave(changed);
+    context.setSectionTextDrafts(current => ({ ...current, [page]: { baseline: draft, draft } }));
+  };
+  const fields = keys.map(key => ({ key, label: key === "kaggleLabel" ? "Project link text" : "Section title" })) as FieldSpec<SectionTextValues>[];
+  const renderFields = (fieldKeys: SectionTextKey[], instanceId?: string) => <BilingualFields showLocaleHeaders idPrefix={`section-text-${page}${instanceId ? `-${instanceId}` : ""}`} section="links" itemId="links"
+    confirmed={baseline} value={draft} onChange={onChange} fields={fields.filter(field => fieldKeys.includes(field.key))} hideFieldHeadings />;
+  const projectLinkText = (projectId: string) => page === "projects" ? <div className="project-link-text-editor">
+    <h4>{t("Project link text")}</h4>
+    <p className="section-text-helper">{t("All projects with a Project URL use this same display text.")}</p>
+    {renderFields(["kaggleLabel"], projectId)}
+  </div> : null;
+  const rendered = page && <section className="section-text-editor section-text-editor-heading-only">
+    <h2>{t("Section title")}</h2>
+    <p className="section-text-helper">{t("Public resume section name")}</p>
+    {renderFields(page === "projects" ? ["projectHeading"] : keys)}
+  </section>;
+  return { baseline, draft, dirty, cancel, save, confirmLocal, rendered, projectLinkText };
+}
+
+function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void, confirmed: T) => ReactNode;
   productionSave?: (draft: T, baseline: T) => Promise<T | void>;
   productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void; quietCancelNotice?: boolean;
   hidePageHeading?: boolean; hideSaveModeNotice?: boolean; saveLabel?: string;
+  sectionText?: ReturnType<typeof useSectionText>;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
   const { onPreviewDraftChanged } = context;
   const editor = useLocalDraft(section, initial);
+  const dirty = editor.dirty || Boolean(sectionText?.dirty) || productionDirty;
   const cancelDraft = () => {
     context.onBilingualCancel(collectChangedBilingualFieldKeys(section, editor.draft, editor.saved));
     editor.cancel(quietCancelNotice);
+    sectionText?.cancel();
     onProductionCancel?.();
   };
   const [saving, setSaving] = useState(false);
@@ -320,12 +409,13 @@ function SectionForm<T>({ section, title, description, initial, children, produc
         return;
       }
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
-      try { const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); editor.setMessage(section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
+      try { const sectionTextSaved = sectionText ? await sectionText.save() : true; const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); setSaveError(!sectionTextSaved); editor.setMessage(sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
       finally { saveLock.current = false; setSaving(false); }
       return;
     }
     const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved);
+    sectionText?.confirmLocal();
     editor.save();
     context.onBilingualSave(changedKeys);
   };
@@ -342,10 +432,10 @@ function SectionForm<T>({ section, title, description, initial, children, produc
     <form className="editor-form" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {children(editor.draft, editor.update, editor.saved)}
       <div className="save-bar">
-        <span className={editor.dirty || productionDirty ? "state-pill is-dirty" : "state-pill"}>{editor.dirty || productionDirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+        <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
         <div className="save-actions">
-          <button type="button" className="button secondary" onClick={cancelDraft} disabled={!(editor.dirty || productionDirty) || saving}>{t("Cancel changes")}</button>
-          <button type="submit" className="button primary" disabled={!(editor.dirty || productionDirty) || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
+          <button type="button" className="button secondary" onClick={cancelDraft} disabled={!dirty || saving}>{t("Cancel changes")}</button>
+          <button type="submit" className="button primary" disabled={!dirty || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
         </div>
       </div>
       {saveNotice && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
@@ -362,13 +452,14 @@ function PageHeadingWithAction({ title, description, action }: { title: string; 
   </div>;
 }
 
-function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, hideLabelWhenExpanded = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading }: {
+function RepeatableList<T extends OrderedItem>({ items, onChange, create, label, render, groupLabel, addLabel = "Add item", allowMultipleOpen = false, hideLabelWhenExpanded = false, onConfirmedDelete, deleteDisabled, confirmedItems = [], headerIdentity, sectionHeading, sectionTextContent }: {
   items: T[]; onChange: (items: T[]) => void; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode; groupLabel: string; addLabel?: string; allowMultipleOpen?: boolean; confirmedItems?: T[];
   hideLabelWhenExpanded?: boolean;
   onConfirmedDelete?: (id: string) => void; deleteDisabled?: (id: string) => boolean;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
   sectionHeading?: { title: string; description: string };
+  sectionTextContent?: ReactNode;
 }) {
   const { t } = useUiLocale();
   const [openId, setOpenId] = useState<string | null>(items[0]?.id ?? null);
@@ -402,6 +493,7 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
   return <div className="repeatable-group" aria-label={groupLabel || undefined}>
     {sectionHeading ? <PageHeadingWithAction title={sectionHeading.title} description={sectionHeading.description} action={addButton} />
       : <div className="group-heading">{groupLabel && <h2>{t(groupLabel)}</h2>}{addButton}</div>}
+    {sectionTextContent}
     {items.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
     <div className="item-stack">{items.map((item, index) => {
       const itemLabel = label(item, index) || t("New item");
@@ -423,16 +515,19 @@ function RepeatableList<T extends OrderedItem>({ items, onChange, create, label,
   </div>;
 }
 
-function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false }: {
+function RepeatableSection<T extends OrderedItem>({ section, title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false, sectionTextOverride }: {
   section: "introduction" | "education" | "experience" | "projects" | "skills" | "awards";
   title: string; description: string; create: (id: string, position: number) => T;
   label: (item: T, index: number) => string; render: (item: T, onChange: (item: T) => void, confirmed?: T) => ReactNode;
   headerIdentity?: (item: T, index: number, itemLabel: string, onChange: (item: T) => void) => ReactNode;
   hideLabelWhenExpanded?: boolean;
+  sectionTextOverride?: ReturnType<typeof useSectionText>;
 }) {
   const context = useContext(EditorContext);
   const { locale } = useUiLocale();
   const { sections, productionMode } = context;
+  const ownedSectionText = useSectionText(section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? section : null);
+  const sectionText = sectionTextOverride ?? ownedSectionText;
   const scopeClass = section === "introduction" ? "introduction-editor-scope"
     : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? `${section}-editor-scope`
     : undefined;
@@ -443,29 +538,30 @@ function RepeatableSection<T extends OrderedItem>({ section, title, description,
       items={items as unknown as EditableSectionItem[]} repository={context.repository} drafts={context.drafts} onChanged={context.onAdditionalChanged}
       onReload={context.onReloadAdditional} title={title} description={description} create={create as unknown as (id: string, position: number) => EditableSectionItem}
       label={label as unknown as (item: EditableSectionItem, index: number) => string} render={render as unknown as (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void) => ReactNode}
-      headerIdentity={headerIdentity as unknown as ProductionRepeatableProps["headerIdentity"]} hideLabelWhenExpanded={hideLabelWhenExpanded} /></div>;
+      headerIdentity={headerIdentity as unknown as ProductionRepeatableProps["headerIdentity"]} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionText={sectionText} /></div>;
   }
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "education" ? "Add Education" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "education" || section === "experience" || section === "projects" || section === "skills" || section === "awards";
-  return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading}>
-    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description } : undefined} />}
+  return <div className={scopeClass}><SectionForm section={section} title={title} description={description} initial={sections[section] as unknown as T[]} hidePageHeading={useActionHeading} sectionText={sectionText}>
+    {(items, onChange, confirmed) => <RepeatableList items={items} confirmedItems={confirmed as T[]} onChange={onChange} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} headerIdentity={headerIdentity} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded} sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />}
   </SectionForm></div>;
 }
 
 type ProductionRepeatableProps = {
   section: EditableRepeatableSection; resumeId: string; items: EditableSectionItem[]; repository: ResumeRepository;
-  drafts: Map<SectionKey, unknown>;
+  drafts: Map<string, unknown>;
   onChanged: ((section: EditableRepeatableSection, resumeId: string, value: EditableSectionItem[]) => void) | null;
   onReload: ((section: EditableRepeatableSection) => Promise<EditableSectionItem[]>) | null;
   title: string; description: string; create: (id: string, position: number) => EditableSectionItem;
   label: (item: EditableSectionItem, index: number) => string; render: (item: EditableSectionItem, onChange: (item: EditableSectionItem) => void, confirmed?: EditableSectionItem) => ReactNode;
   headerIdentity?: (item: EditableSectionItem, index: number, itemLabel: string, onChange: (item: EditableSectionItem) => void) => ReactNode;
   hideLabelWhenExpanded?: boolean;
+  sectionText?: ReturnType<typeof useSectionText>;
 };
 
 function ProductionRepeatableSection({ section, resumeId, items, repository, drafts, onChanged, onReload,
-  title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false }: ProductionRepeatableProps) {
+  title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false, sectionText }: ProductionRepeatableProps) {
   const { t, locale } = useUiLocale();
   const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave } = useContext(EditorContext);
   const stored = drafts.get(section) as ProductionListState | undefined;
@@ -483,8 +579,9 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   };
   const baseline = editor.baseline as EditableSectionItem[];
   const draft = editor.draft as EditableSectionItem[];
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline)
+  const contentDirty = JSON.stringify(draft) !== JSON.stringify(baseline)
     || baseline.some(item => !draft.some(value => value.id === item.id));
+  const dirty = contentDirty || Boolean(sectionText?.dirty);
   const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked);
   const hasRecovery = Object.keys(editor.partialCreates).length > 0;
 
@@ -505,6 +602,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     const patchCache = () => onChanged?.(section, resumeId, clone(working.baseline));
     commit(working);
     try {
+      const sectionTextSaved = sectionText ? await sectionText.save() : true;
       // Explicitly remove child translations first so parent deletion never depends on FK cascade behavior.
       for (const oldItem of [...working.baseline]) {
         if (working.draft.some(item => item.id === oldItem.id)) continue;
@@ -675,7 +773,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         }
       }
       contextOnSave(collectChangedBilingualFieldKeys(section, working.draft, editor.baseline));
-      working = { ...working, baseline: clone(working.draft), draft: clone(working.draft), saving: false, notice: section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : "Changes saved to production.", error: false };
+      working = { ...working, baseline: clone(working.draft), draft: clone(working.draft), saving: false, notice: sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish.", error: !sectionTextSaved };
       commit(working); patchCache();
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production save failed. Your changes remain unsaved; please retry.";
@@ -687,6 +785,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const cancel = () => {
     if (hasRecovery || editor.saving) return;
     contextOnCancel?.(collectChangedBilingualFieldKeys(section, draft, baseline));
+    sectionText?.cancel();
     stateUpdate(current => ({ ...current, draft: clone(current.baseline), notice: section === "introduction" ? "Introduction changes reverted." : "", error: false }));
   };
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
@@ -697,7 +796,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
       onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
       headerIdentity={headerIdentity}
-      sectionHeading={useActionHeading ? { title, description } : undefined} />
+      sectionHeading={useActionHeading ? { title, description } : undefined} sectionTextContent={sectionText?.rendered} />
     {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
     <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
       <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
@@ -1209,15 +1308,16 @@ function skillCategorySelect(item: SkillItem, index: number, t: (text: string) =
 function Education() {
   const { resume, repository, productionMode, educationResumeId, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted, educationEditor, setEducationEditor } = useContext(EditorContext);
   const { t, locale } = useUiLocale();
+  const sectionText = useSectionText("education");
   if (productionMode) {
     if (educationEditor && (educationResumeId || resume?.resumeId)) return <ProductionEducation resumeId={educationResumeId ?? resume!.resumeId} editor={educationEditor}
-      setEditor={setEducationEditor} repository={repository} onEducationChanged={onEducationChanged} onReloadEducation={onReloadEducation} onEducationDeleted={onEducationDeleted} />;
+      setEditor={setEducationEditor} repository={repository} onEducationChanged={onEducationChanged} onReloadEducation={onReloadEducation} onEducationDeleted={onEducationDeleted} sectionText={sectionText} />;
     return <section className="page-section" aria-busy={educationLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1>
       {educationLoadState === "loading" ? <p role="status">{t("Loading Education...")}</p> : <div role="alert"><p>{t("Unable to load Education.")}</p>
         <button type="button" className="button secondary" onClick={onRetryEducation ?? undefined}>{t("Retry")}</button></div>}
     </div></section>;
   }
-  return <RepeatableSection<EducationItem> section="education" title="Education" description=""
+  return <RepeatableSection<EducationItem> section="education" title="Education" description="" sectionTextOverride={sectionText}
     create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", category: null, translations: {
       zh: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
       en: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
@@ -1234,10 +1334,11 @@ function Education() {
     </>} />;
 }
 
-function ProductionEducation({ resumeId, editor, setEditor, repository, onEducationChanged, onReloadEducation, onEducationDeleted }: {
+function ProductionEducation({ resumeId, editor, setEditor, repository, onEducationChanged, onReloadEducation, onEducationDeleted, sectionText }: {
   resumeId: string; editor: EducationEditorState; setEditor: Dispatch<SetStateAction<EducationEditorState | null>>; repository: ResumeRepository | null;
   onEducationChanged: ((resumeId: string, education: EducationItem[]) => void) | null;
   onReloadEducation: (() => Promise<EducationItem[]>) | null; onEducationDeleted: ((resumeId: string, entryId: string) => void) | null;
+  sectionText: ReturnType<typeof useSectionText>;
 }) {
   const { t, locale } = useUiLocale();
   const context = useContext(EditorContext);
@@ -1245,8 +1346,9 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const methodsReady = Boolean(repository?.updateEducationEntry && repository.updateEducationTranslation
     && repository.insertEducationEntry && repository.insertEducationTranslation && repository.readEducationTranslation && repository.deleteEducationEntry);
   const baselineById = new Map(editor.baseline.map(item => [item.id, item]));
-  const dirty = editor.draft.some(item => !baselineById.has(item.id) || JSON.stringify(item) !== JSON.stringify(baselineById.get(item.id)))
+  const contentDirty = editor.draft.some(item => !baselineById.has(item.id) || JSON.stringify(item) !== JSON.stringify(baselineById.get(item.id)))
     || editor.baseline.some(item => !editor.draft.some(draft => draft.id === item.id));
+  const dirty = contentDirty || sectionText.dirty;
   const patchDraft = (id: string, change: (item: EducationItem) => EducationItem) => setEditor(current => current ? {
     ...current, draft: current.draft.map(item => item.id === id ? change(item) : item), notice: "", error: false,
   } : current);
@@ -1258,6 +1360,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     let confirmedParentCreated = false;
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
+      const sectionTextSaved = await sectionText.save();
       let workingDraft = clone(editor.draft);
       let workingBaseline = clone(editor.baseline);
       const partialCreates = { ...editor.partialCreates };
@@ -1389,7 +1492,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
       workingBaseline.sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
       context.onBilingualSave(collectChangedBilingualFieldKeys("education", editor.draft, editor.baseline));
       setEditor(current => current ? { ...current, baseline: workingBaseline, draft: workingDraft, partialCreates,
-        notice: "Education changes saved to production.", error: false } : current);
+        notice: sectionTextSaved ? "Education changes saved to production." : "Education content saved. Some section text remains unsaved; retry to finish.", error: !sectionTextSaved } : current);
       onEducationChanged?.(resumeId, workingBaseline);
     } catch (cause) {
       if (confirmedParentCreated || Object.values(editor.partialCreates).some(value => !value.blocked)) {
@@ -1442,6 +1545,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   };
   const cancel = () => {
     context.onBilingualCancel(collectChangedBilingualFieldKeys("education", editor.draft, editor.baseline));
+    sectionText.cancel();
     const retainedIds = new Set([...editor.baseline, ...editor.draft.filter(item => Boolean(editor.partialCreates[item.id]))].map(item => item.id));
     setOpenIds(current => new Set([...current].filter(id => retainedIds.has(id))));
     setEditor(current => {
@@ -1456,6 +1560,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
 
   return <section className="page-section education-editor-scope">
     <PageHeadingWithAction title="Education" description="" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
+    {sectionText.rendered}
     <div className="repeatable-group" aria-label={t("Education")}>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
       <div className="item-stack">{editor.draft.map((item, index) => {
@@ -1555,7 +1660,9 @@ function Projects() {
   const { t, locale } = useUiLocale();
   const context = useContext(EditorContext);
   const methodsHeading = t("Methods");
+  const sectionText = useSectionText("projects");
   return <RepeatableSection<ProjectItem> section="projects" title="Projects" description=""
+    sectionTextOverride={sectionText}
     create={(id, position) => ({ id, sourceKey: null, position, translations: {
       zh: { title: "", subtitle: "", period: "", description: "", href: "" },
       en: { title: "", subtitle: "", period: "", description: "", href: "" },
@@ -1573,6 +1680,7 @@ function Projects() {
           onChange({ ...item, translations: { zh: { ...item.translations.zh, href }, en: { ...item.translations.en, href } } });
         }} />
       </div>
+      {(item.translations.zh.href.trim() || item.translations.en.href.trim()) && sectionText.projectLinkText(item.id)}
       <div className="projects-methods-heading"><h3>{methodsHeading}</h3></div>
       <div className="bilingual-grid methods-grid">{(["zh", "en"] as const).map(locale => <MethodFields key={locale} idPrefix={item.id} projectId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} locale={locale}
         methods={item.methods[locale]} confirmedMethods={confirmed?.methods[locale]} onChange={methods => onChange({ ...item, methods: { ...item.methods, [locale]: methods } })} />)}</div>
@@ -1918,9 +2026,15 @@ function Links() {
             onChange={translations => onChange({ ...links, navigation: links.navigation.map(current => current.id === item.id ? { ...current, translations } : current) })} />
         )}</div>
       </section>
-      <section className="links-section"><h2>{t("Site Text")}</h2><BilingualFields matrixLayout idPrefix="links-site-text" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
-        onChange={translations => onChange({ ...links, translations })}
-        fields={[{ key: "educationLabel", label: "Education section title" }, { key: "experienceLabel", label: "Experience section title" }, { key: "projectHeading", label: "Projects section title" }, { key: "skillsLabel", label: "Skills section title" }, { key: "honorsLabel", label: "Awards section title" }, { key: "kaggleLabel", label: "Project link label" }, { key: "updatedAtLabel", label: "Updated-at label" }]} /></section>
+      <section className="links-section"><h2>{t("Footer text")}</h2>
+        <div className="links-footer-setting">
+          <h3>{t("Updated-at label")}</h3>
+          <p>{t("Text displayed before the update date in the public resume footer.")}</p>
+          <BilingualFields matrixLayout hideFieldHeadings idPrefix="links-site-text" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+            onChange={translations => onChange({ ...links, translations })}
+            fields={[{ key: "updatedAtLabel", label: "Updated-at label" }]} />
+        </div>
+      </section>
     </>}
   </SectionForm></div>;
 }
@@ -1933,6 +2047,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   educationSection = null, educationResumeId = null, educationLoadState = "loading", onRetryEducation = null,
   onEducationChanged = null, onReloadEducation = null, onEducationDeleted = null,
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
+  siteTextTranslations = null, siteTextResumeId = null, onSiteTextChanged = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
   onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {} }: {
   identityEmail: string | null;
@@ -1960,10 +2075,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   additionalSections?: Partial<Pick<EditorSections, "introduction" | "experience" | "projects" | "skills" | "awards" | "contact" | "links">>;
   additionalRouteKey?: "introduction" | "experience" | "projects" | "skills" | "awards" | "contact" | "links" | null;
   additionalRouteFirst?: boolean;
-  additionalRouteLoadState?: "loading" | "error";
+  additionalRouteLoadState?: "loading" | "error" | "loaded";
   onRetryAdditionalRoute?: (() => void) | null;
   additionalResumeId?: string | null;
   onAdditionalChanged?: ((section: SectionKey, resumeId: string, value: unknown) => void) | null;
+  siteTextTranslations?: Bilingual<SiteTextTranslation> | null;
+  siteTextResumeId?: string | null;
+  onSiteTextChanged?: ((resumeId: string, translations: Bilingual<SiteTextTranslation>) => void) | null;
   onReloadAdditional?: ((section: EditableRepeatableSection) => Promise<EditableSectionItem[]>) | null;
   fullSnapshotState?: "idle" | "loading" | "error";
   onRetryFullSnapshot?: (() => void) | null;
@@ -1996,7 +2114,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const previousWorkspacePathname = useRef(location.pathname);
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const restoredScrollIdentity = useRef<string | null>(null);
-  const drafts = useRef(new Map<SectionKey, unknown>());
+  const drafts = useRef(new Map<string, unknown>());
+  const [sectionTextDrafts, setSectionTextDrafts] = useState<Partial<Record<SectionTextPage, SectionTextDraftState>>>({});
   const [previewDrafts, setPreviewDrafts] = useState<PreviewDrafts>({});
   const [previewLocale, setPreviewLocale] = useState<Locale | null>(null);
   const onPreviewDraftChanged = useCallback((section: PreviewSection, value: PreviewDraftValue) => {
@@ -2019,12 +2138,26 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     ? { shared: profileEditor.draft, translations: profileEditor.translationDraft }
     : previewDrafts.profile ?? confirmedPreviewSections.profile;
   const previewEducation = educationEditor?.draft ?? previewDrafts.education ?? confirmedPreviewSections.education;
-  const previewSnapshot: EditorSections = { ...confirmedPreviewSections, ...previewDrafts, profile: previewProfile, education: previewEducation };
+  const previewLinks = previewDrafts.links ?? confirmedPreviewSections.links;
+  const previewLinkTranslations = { ...previewLinks.translations };
+  if (siteTextTranslations) for (const locale of ["zh", "en"] as const) {
+    previewLinkTranslations[locale] = { ...previewLinkTranslations[locale], ...siteTextTranslations[locale] };
+  }
+  for (const state of Object.values(sectionTextDrafts)) if (state) {
+    for (const locale of ["zh", "en"] as const) previewLinkTranslations[locale] = { ...previewLinkTranslations[locale], ...state.draft[locale] };
+  }
+  const previewSnapshot: EditorSections = { ...confirmedPreviewSections, ...previewDrafts, profile: previewProfile, education: previewEducation,
+    links: { ...previewLinks, translations: previewLinkTranslations } };
   const confirmedPreviewProfile = profileEditor
     ? { shared: profileEditor.baseline, translations: profileEditor.translationBaseline }
     : confirmedPreviewSections.profile;
+  const confirmedPreviewLinkTranslations = { ...confirmedPreviewSections.links.translations };
+  if (siteTextTranslations) for (const locale of ["zh", "en"] as const) {
+    confirmedPreviewLinkTranslations[locale] = { ...confirmedPreviewLinkTranslations[locale], ...siteTextTranslations[locale] };
+  }
   const confirmedPreviewSnapshot: EditorSections = {
     ...confirmedPreviewSections,
+    links: { ...confirmedPreviewSections.links, translations: confirmedPreviewLinkTranslations },
     profile: confirmedPreviewProfile,
     education: educationEditor?.baseline ?? confirmedPreviewSections.education,
   };
@@ -2032,6 +2165,14 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     ? null
     : buildCanonicalResumePreview(previewSnapshot, confirmedPreviewSnapshot);
   const profileRequests = useRef<ProfileRequests>({ shared: false, translations: { zh: false, en: false } }).current;
+  const dirtySectionText = Object.values(sectionTextDrafts).some(state => state && (["zh", "en"] as const).some(locale =>
+    Object.keys(state.draft[locale]).some(key => state.draft[locale][key as SectionTextKey] !== state.baseline[locale][key as SectionTextKey])));
+  useEffect(() => {
+    if (!dirtySectionText) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirtySectionText]);
   const [pdfFiles, setPdfFiles] = useState<Partial<Record<Locale, File>>>({});
   const [pdfErrors, setPdfErrors] = useState<Partial<Record<Locale, string>>>({});
   const [profilePhotoDraft, setProfilePhotoDraft] = useState<ProfilePhotoDraft>(null);
@@ -2118,9 +2259,13 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     return () => document.removeEventListener("keydown", onEscape);
   }, [menuOpen]);
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
+  const needsSectionTextRoute = ["/education", "/experience", "/projects", "/skills", "/awards"].includes(location.pathname);
   const showOverviewRouteState = productionMode && overviewRouteFirst && isOverviewRoute && !resume && !overviewData;
   const showFullSnapshotState = productionMode && !resume && location.pathname !== "/profile" && location.pathname !== "/education" && !additionalRouteFirst && !(isOverviewRoute && overviewRouteFirst);
-  const showAdditionalRouteState = productionMode && additionalRouteFirst && additionalRouteKey !== null && !resume && !additionalSections[additionalRouteKey];
+  const showEducationTextState = productionMode && location.pathname === "/education" && !resume
+    && educationSection !== null && additionalRouteLoadState !== "loaded";
+  const showAdditionalRouteState = productionMode && additionalRouteFirst && additionalRouteKey !== null && !resume
+    && (!additionalSections[additionalRouteKey] || (needsSectionTextRoute && additionalRouteLoadState !== "loaded"));
   const additionalRouteTitle = additionalRouteKey ? ({ introduction: "Introduction", experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact", links: "Links & Site Text" } as const)[additionalRouteKey] : "";
   const additionalLoadingText = additionalRouteKey ? ({ introduction: "Loading Introduction...", experience: "Loading Experience...", projects: "Loading Projects...", skills: "Loading Skills...", awards: "Loading Awards...", contact: "Loading Contact...", links: "Loading Links & Site Text..." } as const)[additionalRouteKey] : "";
   const additionalErrorText = additionalRouteKey ? ({ introduction: "Unable to load Introduction.", experience: "Unable to load Experience.", projects: "Unable to load Projects.", skills: "Unable to load Skills.", awards: "Unable to load Awards.", contact: "Unable to load Contact.", links: "Unable to load Links & Site Text." } as const)[additionalRouteKey] : "";
@@ -2535,7 +2680,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
     productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
     educationSection, educationResumeId: educationResumeId ?? resume?.resumeId ?? null, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted,
-    additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, onReloadAdditional,
+    additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, siteTextTranslations, siteTextResumeId, onSiteTextChanged, sectionTextDrafts, setSectionTextDrafts, onReloadAdditional,
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
     bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll,
@@ -2573,6 +2718,11 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         ? <section className="page-section" aria-busy={overviewLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Workspace Overview")}</p><h1>{t("Overview")}</h1>
           {overviewLoadState === "loading" ? <p role="status">{t("Loading Overview...")}</p> : <div role="alert"><p>{t("Unable to load Overview.")}</p>
             <button type="button" className="button secondary" onClick={onRetryOverview ?? undefined}>{t("Retry")}</button></div>}
+        </div></section>
+        : showEducationTextState
+        ? <section className="page-section" aria-busy={additionalRouteLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1>
+          {additionalRouteLoadState === "loading" ? <p role="status">{t("Loading section text…")}</p> : <div role="alert"><p>{t("Unable to load section text.")}</p>
+            <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button></div>}
         </div></section>
         : showAdditionalRouteState
         ? previewSection && previewSection !== "profile" && previewSection !== "education"

@@ -405,6 +405,17 @@ main{color:#242424}
 .links-editor-scope .links-object-group + .links-object-group{margin-top:17px}
 .links-editor-scope .links-object-group h3{margin:0 0 9px;color:#666;font-size:14px;font-weight:600;line-height:1.4}
 .links-editor-scope .links-localized-fields{margin-top:10px}
+.section-text-editor{margin:0 0 30px;padding:0 0 24px;border-bottom:1px solid #eee}
+.section-text-editor h2{margin:0 0 10px;color:#202020;font-size:18px;font-weight:600;line-height:1.4}
+.section-text-editor .section-text-helper{margin:0 0 12px;color:#777;font-size:13px;line-height:1.5}
+.section-text-editor .bilingual-field-pair{padding:8px 0}
+.section-text-editor-heading-only{margin-bottom:24px;padding-bottom:19px}
+.section-text-editor-heading-only h2{margin-bottom:8px}
+.section-text-editor-heading-only .section-text-helper{margin-bottom:10px}
+.section-text-editor-heading-only .bilingual-column-headings,.section-text-editor-heading-only .bilingual-field-pair{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px)}
+.section-text-editor-heading-only .bilingual-column-headings>span:first-child{display:none}
+.section-text-editor-heading-only .bilingual-field-values{grid-column:1/-1}
+.section-text-editor-heading-only .bilingual-field-pair{padding:7px 0}
 .links-editor-scope .field-grid.links-inline-row{display:grid;grid-template-columns:var(--links-content-columns);column-gap:var(--links-content-gap);row-gap:10px;min-width:0}
 .links-editor-scope .links-inline-field{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:end;gap:12px;width:100%;min-width:0}
 .links-editor-scope .links-inline-field>label{margin:0 0 8px;color:#777;font-size:12px;font-weight:500;letter-spacing:0;white-space:nowrap}
@@ -432,6 +443,10 @@ main{color:#242424}
 .links-editor-scope .pdf-upload-label{margin:0 0 8px;color:#444;font-size:14px;font-weight:600}
 .links-editor-scope .save-bar{margin-top:28px;border-top:0;padding-top:0}
 .links-editor-scope .navigation-labels{display:grid;gap:0}
+.links-editor-scope .navigation-labels .bilingual-field-pair>h3{color:#777;font-size:11px;font-weight:400}
+.links-editor-scope .links-footer-setting h3{margin:0 0 5px;color:#555;font-size:14px;font-weight:600;line-height:1.4}
+.links-editor-scope .links-footer-setting>p{margin:0 0 8px;color:#777;font-size:13px;line-height:1.5}
+.links-editor-scope .links-footer-setting .links-translation-matrix{margin:0}
 @container (max-width:620px){
   .education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{display:none}
   .education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
@@ -488,6 +503,13 @@ main{color:#242424}
 .projects-editor-scope .project-shared-field .field>label{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600}
 .projects-editor-scope .project-shared-field .field>input{grid-column:2/-1}
 .projects-editor-scope .project-shared-field .field>.field-edit-status{grid-column:2/-1}
+.projects-editor-scope .project-link-text-editor{margin:2px 0 8px;padding:0 0 4px}
+.projects-editor-scope .project-link-text-editor h4{margin:0 0 4px;color:#555;font-size:14px;font-weight:600;line-height:1.4}
+.projects-editor-scope .project-link-text-editor .section-text-helper{margin:0 0 6px;color:#777;font-size:13px;line-height:1.5}
+.projects-editor-scope .project-link-text-editor .bilingual-column-headings,.projects-editor-scope .project-link-text-editor .bilingual-field-pair{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px)}
+.projects-editor-scope .project-link-text-editor .bilingual-column-headings>span:first-child{display:none}
+.projects-editor-scope .project-link-text-editor .bilingual-field-values{grid-column:1/-1}
+.projects-editor-scope .project-link-text-editor .bilingual-field-pair{padding:4px 0}
 .projects-editor-scope .projects-methods-heading{margin:20px 0 10px}
 .projects-editor-scope .projects-methods-heading h3{margin:0;color:#444;font-size:15px;font-weight:600}
 .projects-editor-scope .methods-grid{margin-top:0}
@@ -530,7 +552,7 @@ main{color:#242424}
 }
 
 /* Login-only editorial treatment; authentication structure and behavior stay unchanged. */
-.auth-login-screen{box-sizing:border-box;min-height:100vh;min-height:100svh;min-height:100dvh;overflow-y:auto;padding:calc(max(24px,env(safe-area-inset-top)) + 11vh) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#fff}
+.auth-login-screen{box-sizing:border-box;min-height:100vh;min-height:100svh;min-height:100dvh;overflow-y:auto;padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#fff}
 .auth-login-content{box-sizing:border-box;width:min(100%,380px);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
 .auth-login-header{display:flex;align-items:center;justify-content:space-between;gap:18px;min-width:0;margin-bottom:48px}
 .auth-login-content .ui-locale-switch{flex:0 0 auto;gap:8px;margin-top:-2px}
@@ -554,4 +576,4 @@ main{color:#242424}
 .auth-login-content form>button:hover:not(:disabled){background:#111}
 .auth-login-content form>button:disabled{opacity:.58;cursor:wait}
 @media(min-width:641px){.auth-login-screen{place-items:start center;padding-top:clamp(140px,calc(23.66vh - 70px),160px)}}
-@media(max-width:640px){.auth-login-header{gap:14px;margin-bottom:44px}.auth-login-content h1{font-size:28px}.auth-login-content form{margin-top:32px}}
+@media(max-width:640px){.auth-login-screen{padding-bottom:calc(max(24px,env(safe-area-inset-bottom)) + 80px)}.auth-login-header{gap:14px;margin-bottom:44px}.auth-login-content h1{font-size:28px}.auth-login-content form{margin-top:32px}}

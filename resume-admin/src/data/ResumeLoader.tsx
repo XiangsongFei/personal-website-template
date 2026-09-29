@@ -7,7 +7,7 @@ import type {
 } from "./resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "./resumeSectionStore";
 import { isDocumentReloadNavigation } from "../refreshState";
-import type { EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections } from "../model";
+import type { Bilingual, EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections, SiteTextTranslation } from "../model";
 
 const pendingLoads = new WeakMap<ResumeRepository, Map<string, Promise<LoadedResume>>>();
 
@@ -44,6 +44,15 @@ function supportsOverviewReads(repository: ResumeRepository | null): repository 
   return typeof candidate.loadSiteMetadata === "function" && typeof candidate.loadOverview === "function";
 }
 
+type SiteTextReadRepository = ResumeRepository & Pick<ResumeSectionRepository, "loadSiteMetadata"> & {
+  loadSiteText(resumeId: string): Promise<Bilingual<SiteTextTranslation>>;
+};
+function supportsSiteTextReads(repository: ResumeRepository | null): repository is SiteTextReadRepository {
+  if (!repository) return false;
+  const candidate = repository as ResumeRepository & Partial<ResumeSectionRepository>;
+  return typeof candidate.loadSiteMetadata === "function" && typeof candidate.loadSiteText === "function";
+}
+
 function supportsCanonicalPreviewReads(repository: ResumeRepository | null): repository is ResumeRepository & ResumeSectionRepository {
   if (!repository) return false;
   const candidate = repository as ResumeRepository & Partial<ResumeSectionRepository>;
@@ -74,6 +83,7 @@ type AdditionalRouteResult = { key: AdditionalRouteKey; resumeId: string; value:
 const routeKeys: Record<string, AdditionalRouteKey> = {
   "/introduction": "introduction", "/experience": "experience", "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "links",
 };
+const sectionTextPaths = new Set(["/education", "/experience", "/projects", "/skills", "/awards"]);
 
 function supportsAdditionalReads(repository: ResumeRepository | null, key: AdditionalRouteKey | null): boolean {
   if (!repository || !key) return false;
@@ -106,6 +116,12 @@ async function loadProfileFromStore(sessionKey: string, repository: ProfileReadR
   const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
   const profile = await store.loadSection(sessionKey, metadata.resumeId, "profile", () => repository.loadProfile(metadata.resumeId));
   return { resumeId: metadata.resumeId, profile };
+}
+
+async function loadSiteTextFromStore(sessionKey: string, repository: SiteTextReadRepository, store: ResumeSectionStore): Promise<{ resumeId: string; translations: Bilingual<SiteTextTranslation> }> {
+  const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
+  const translations = await store.loadSection(sessionKey, metadata.resumeId, "siteText", () => repository.loadSiteText(metadata.resumeId));
+  return { resumeId: metadata.resumeId, translations };
 }
 
 async function loadEducationFromStore(sessionKey: string, repository: EducationReadRepository, store: ResumeSectionStore, reload = false): Promise<{ resumeId: string; education: EducationItem[] }> {
@@ -144,6 +160,8 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
   const useSectionOverview = isOverviewRoute && supportsOverviewReads(repository);
   const additionalRouteKey = routeKeys[location.pathname] ?? null;
+  const needsSectionText = sectionTextPaths.has(location.pathname);
+  const useSectionTextRead = needsSectionText && supportsSiteTextReads(repository);
   const isPreviewRoute = isProfileRoute || isEducationRoute || additionalRouteKey !== null;
   const useSectionAdditional = supportsAdditionalReads(repository, additionalRouteKey);
   const useSectionProfile = isProfileRoute && supportsProfileReads(repository);
@@ -171,6 +189,9 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   additionalStatesRef.current = additionalStates;
   const [additionalAttempts, setAdditionalAttempts] = useState<Partial<Record<AdditionalRouteKey, number>>>({});
   const failedAdditionalAttempts = useRef<Partial<Record<AdditionalRouteKey, number>>>({});
+  const [siteTextState, setSiteTextState] = useState<{ kind: "idle" | "loading" | "error" } | { kind: "loaded"; resumeId: string; translations: Bilingual<SiteTextTranslation> }>({ kind: "idle" });
+  const [siteTextAttempt, setSiteTextAttempt] = useState(0);
+  const failedSiteTextAttempt = useRef<number | null>(null);
 
   // Non-Profile routes keep the existing complete snapshot and start it only when visited.
   useEffect(() => {
@@ -274,6 +295,21 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     return () => { active = false; };
   }, [useSectionAdditional, additionalRouteKey, repository, sessionKey, sectionStore, additionalAttempts, resume]);
 
+  useEffect(() => {
+    if (!useSectionTextRead || !repository || resume || !supportsSiteTextReads(repository)) return;
+    if (siteTextState.kind === "loaded" || failedSiteTextAttempt.current === siteTextAttempt) return;
+    let active = true;
+    setSiteTextState(current => current.kind === "loaded" ? current : { kind: "loading" });
+    loadSiteTextFromStore(sessionKey, repository, sectionStore).then(value => {
+      if (active) setSiteTextState({ kind: "loaded", ...value });
+    }, () => {
+      if (!active) return;
+      failedSiteTextAttempt.current = siteTextAttempt;
+      setSiteTextState({ kind: "error" });
+    });
+    return () => { active = false; };
+  }, [useSectionTextRead, repository, sessionKey, sectionStore, siteTextAttempt, siteTextState.kind, resume]);
+
   function retryProfile() {
     profileLoaded.current = false;
     failedProfileAttempt.current = null;
@@ -346,6 +382,17 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     setAdditionalAttempts(current => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
   }
 
+  function retrySiteText() {
+    failedSiteTextAttempt.current = null;
+    setSiteTextState({ kind: "loading" });
+    setSiteTextAttempt(value => value + 1);
+  }
+
+  function siteTextChanged(resumeId: string, translations: Bilingual<SiteTextTranslation>) {
+    sectionStore.patchSection(sessionKey, resumeId, "siteText", () => translations);
+    setSiteTextState({ kind: "loaded", resumeId, translations });
+  }
+
   function patchEducation(resumeId: string, education: EducationItem[]) {
     sectionStore.patchSection(sessionKey, resumeId, "education", () => education);
     setEducationState(current => current.kind === "loaded" && current.resumeId === resumeId ? { ...current, education } : current);
@@ -404,10 +451,15 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const educationLoadState = educationState.kind === "error" || (isEducationRoute && !supportsEducationReads(repository) && fullSnapshotState === "error")
     ? "error" : "loading";
   const additionalRouteState = additionalRouteKey ? additionalStates[additionalRouteKey] : undefined;
-  const additionalRouteLoadState = additionalRouteState?.kind === "error"
-    || (additionalRouteKey && !useSectionAdditional && fullSnapshotState === "error") ? "error" : "loading";
+  const sectionTextLoadState = useSectionTextRead && !resume ? siteTextState.kind : undefined;
+  const destinationState = additionalRouteKey ? additionalRouteState?.kind : isEducationRoute ? educationState.kind : undefined;
+  const additionalRouteLoadState = destinationState === "error" || sectionTextLoadState === "error"
+    || (additionalRouteKey && !useSectionAdditional && fullSnapshotState === "error") ? "error"
+    : (destinationState === "loaded" || Boolean(resume)) && (!useSectionTextRead || Boolean(resume) || sectionTextLoadState === "loaded") ? "loaded" : "loading";
   const additionalRoute = additionalRouteState?.kind === "loaded" ? additionalRouteState : null;
-  const additionalSections = additionalRoute ? { [additionalRoute.key]: additionalRoute.value } as AdditionalRouteSections : {};
+  const additionalSections: AdditionalRouteSections = additionalRoute
+    ? { [additionalRoute.key]: additionalRoute.value }
+    : {};
 
   // On a document refresh, wait for the requested route's first data read before
   // mounting the editor shell. This avoids showing a transient route-loading page
@@ -422,14 +474,17 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const initialUsesEducationRead = initialIsEducation && supportsEducationReads(repository);
   const initialUsesOverviewRead = initialIsOverview && supportsOverviewReads(repository);
   const initialUsesAdditionalRead = supportsAdditionalReads(repository, initialAdditionalKey);
+  const initialNeedsSectionText = sectionTextPaths.has(initialPath) && supportsSiteTextReads(repository);
   const initialRouteReady = initialUsesProfileRead
     ? profileState.kind === "loaded" || profileState.kind === "error"
     : initialUsesEducationRead
-      ? educationState.kind === "loaded" || educationState.kind === "error"
+      ? (educationState.kind === "loaded" || educationState.kind === "error")
+        && (!initialNeedsSectionText || siteTextState.kind === "loaded" || siteTextState.kind === "error")
       : initialUsesOverviewRead
         ? overviewState.kind === "loaded" || overviewState.kind === "error"
         : initialUsesAdditionalRead && initialAdditionalKey
-          ? additionalStates[initialAdditionalKey]?.kind === "loaded" || additionalStates[initialAdditionalKey]?.kind === "error"
+          ? (additionalStates[initialAdditionalKey]?.kind === "loaded" || additionalStates[initialAdditionalKey]?.kind === "error")
+            && (!initialNeedsSectionText || siteTextState.kind === "loaded" || siteTextState.kind === "error")
           : resume !== null || fullSnapshotState === "error";
 
   if (isDocumentReload && location.pathname === initialPath && !initialRouteReady) return null;
@@ -444,10 +499,13 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     onEducationChanged={patchEducation} onReloadEducation={reloadEducation}
     onEducationDeleted={removeEducation}
     additionalSections={additionalSections}
+    siteTextTranslations={siteTextState.kind === "loaded" ? siteTextState.translations : null}
+    siteTextResumeId={siteTextState.kind === "loaded" ? siteTextState.resumeId : null}
+    onSiteTextChanged={siteTextChanged}
     additionalRouteKey={additionalRouteKey}
     additionalRouteFirst={useSectionAdditional}
     additionalRouteLoadState={additionalRouteLoadState}
-    onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => retryAdditional(additionalRouteKey) : retryFullSnapshot}
+    onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => { retryAdditional(additionalRouteKey); if (useSectionTextRead) retrySiteText(); } : useSectionTextRead ? retrySiteText : retryFullSnapshot}
     additionalResumeId={additionalRoute?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved} />;

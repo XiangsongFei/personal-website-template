@@ -88,6 +88,13 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
   } as unknown as ResumeRepository & ResumeSectionRepository & typeof methods;
   return { repository, methods, items, translations, createdIds };
 }
+function addEducationWriters(repository: ResumeRepository) {
+  Object.assign(repository, {
+    updateEducationEntry: vi.fn(), updateEducationTranslation: vi.fn(), insertEducationEntry: vi.fn(),
+    insertEducationTranslation: vi.fn(), readEducationTranslation: vi.fn(), deleteEducationEntry: vi.fn(),
+  });
+  return repository;
+}
 function open(spec: { path: string }, repository: ResumeRepository, store = new ResumeSectionStore(), strict = false) {
   const tree = <UiLocaleProvider><MemoryRouter initialEntries={[spec.path]}><AuthGate client={auth()} resumeRepository={repository} sectionStore={store} /></MemoryRouter></UiLocaleProvider>;
   return { ...render(strict ? <StrictMode>{tree}</StrictMode> : tree), store };
@@ -112,6 +119,162 @@ async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextArea
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Batch 6A production repeatable CRUD", () => {
+  it.each([
+    { path: "/education", label: "Chinese Section title", value: "Education section name", key: "educationLabel" },
+    { path: "/experience", label: "Chinese Section title", value: "Experience section name", key: "experienceLabel" },
+    { path: "/projects", label: "Chinese Section title", value: "Project section name", key: "projectHeading" },
+    { path: "/skills", label: "Chinese Section title", value: "Skills section name", key: "skillsLabel" },
+    { path: "/awards", label: "Chinese Section title", value: "Awards section name", key: "honorsLabel" },
+  ] as const)("relocates and saves $key on $path through the existing site-text writer", async ({ path, label, value, key }) => {
+    const setup = makeRepository("skills");
+    const repository = path === "/education" ? addEducationWriters(setup.repository) : setup.repository;
+    open({ path }, repository);
+    const title = await screen.findByLabelText(label) as HTMLInputElement;
+    expect(title).toBeTruthy();
+    const sectionText = title.closest<HTMLElement>(".section-text-editor")!;
+    if (path === "/projects") {
+      expect(within(sectionText).getByRole("heading", { name: "Section title", level: 2 })).toBeTruthy();
+      expect(within(sectionText).getByText("Public resume section name")).toBeTruthy();
+      expect(sectionText.querySelectorAll(".section-text-setting")).toHaveLength(0);
+      expect(sectionText.querySelectorAll(".bilingual-field-pair > h3")).toHaveLength(0);
+      expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
+    } else {
+      expect(within(sectionText).getByRole("heading", { name: "Section title", level: 2 })).toBeTruthy();
+      expect(within(sectionText).getByText("Public resume section name")).toBeTruthy();
+      expect(sectionText.querySelectorAll(".bilingual-field-pair > h3")).toHaveLength(0);
+    }
+    expect(screen.getByLabelText("English Section title")).toBeTruthy();
+    expect(screen.queryByLabelText(/Education section title|Experience section title|Projects section title|Skills section title|Awards section title/)).toBeNull();
+    fireEvent.change(title, { target: { value } });
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(setup.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { [key]: value });
+  });
+
+  it("shows the global project link text only below a project URL and saves it through the existing site-text writer", async () => {
+    const { repository, methods } = makeRepository("projects");
+    open({ path: "/projects" }, repository);
+    const heading = await screen.findByLabelText("Chinese Section title") as HTMLInputElement;
+    expect(screen.getByRole("heading", { name: "Section title", level: 2 })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Section settings" })).toBeNull();
+    expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
+    const url = screen.getByLabelText("Project URL");
+    fireEvent.change(url, { target: { value: " https://example.test/project " } });
+    const linkLabel = await screen.findByLabelText("Chinese Project link text") as HTMLInputElement;
+    expect(screen.getByLabelText("English Project link text")).toBeTruthy();
+    const contextualGroup = linkLabel.closest<HTMLElement>(".project-link-text-editor")!;
+    expect(within(contextualGroup).getByRole("heading", { name: "Project link text", level: 4 })).toBeTruthy();
+    expect(within(contextualGroup).getByText("All projects with a Project URL use this same display text.")).toBeTruthy();
+    fireEvent.change(url, { target: { value: "   " } });
+    expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
+    fireEvent.change(heading, { target: { value: "Project area" } });
+    fireEvent.change(url, { target: { value: "https://example.test/project" } });
+    const visibleLabel = await screen.findByLabelText("Chinese Project link text") as HTMLInputElement;
+    fireEvent.change(visibleLabel, { target: { value: "查看项目" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Project area", kaggleLabel: "查看项目" });
+    expect(methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
+      expect.objectContaining({ href: "https://example.test/project" }));
+  });
+
+  it("shows shared project-link text in multiple URL-bearing entries using the same draft and Cancel baseline", async () => {
+    const repo = makeRepository("projects", { twoItems: true });
+    for (const item of repo.items as ProjectItem[]) {
+      item.translations.zh.href = "https://example.test/project";
+      item.translations.en.href = "https://example.test/project";
+    }
+    open({ path: "/projects" }, repo.repository);
+    await screen.findByLabelText("Project URL");
+    const cards = document.querySelectorAll(".projects-editor-scope .item-card");
+    expect(cards).toHaveLength(2);
+    fireEvent.click(cards[1].querySelector(".item-actions button")!);
+    await waitFor(() => expect(screen.getAllByLabelText("Chinese Project link text")).toHaveLength(2));
+    const linkFields = screen.getAllByLabelText("Chinese Project link text") as HTMLInputElement[];
+    expect(linkFields.map(field => field.value)).toEqual(["查看示例", "查看示例"]);
+    fireEvent.change(linkFields[0], { target: { value: "查看项目" } });
+    expect((screen.getAllByLabelText("Chinese Project link text") as HTMLInputElement[]).map(field => field.value))
+      .toEqual(["查看项目", "查看项目"]);
+    fireEvent.change(screen.getAllByLabelText("Project URL")[0], { target: { value: "   " } });
+    expect(screen.getAllByLabelText("Chinese Project link text")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getAllByLabelText("Chinese Project link text") as HTMLInputElement[]).map(field => field.value))
+      .toEqual(["查看示例", "查看示例"]);
+    expect((screen.getAllByLabelText("Project URL") as HTMLInputElement[]).map(field => field.value))
+      .toEqual(["https://example.test/project", "https://example.test/project"]);
+  });
+
+  it("keeps the global link text when a project URL is cleared and saved", async () => {
+    const repo = makeRepository("projects");
+    for (const item of repo.items as ProjectItem[]) {
+      item.translations.zh.href = "https://example.test/project";
+      item.translations.en.href = "https://example.test/project";
+    }
+    open({ path: "/projects" }, repo.repository);
+    const url = await screen.findByLabelText("Project URL");
+    fireEvent.change(screen.getByLabelText("Chinese Project link text"), { target: { value: "查看项目" } });
+    fireEvent.change(url, { target: { value: "" } });
+    expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { kaggleLabel: "查看项目" });
+    expect(repo.methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
+      expect.objectContaining({ href: "" }));
+  });
+
+  it("keeps relocated section text draft in Preview and restores it on Cancel", async () => {
+    window.sessionStorage.setItem("example-cv-cms:ui:preview-mode:education", "preview");
+    const { repository } = makeRepository("skills");
+    open({ path: "/education" }, addEducationWriters(repository));
+    const field = await screen.findByLabelText("English Section title") as HTMLInputElement;
+    await waitFor(() => expect(document.querySelector("#preview-education .resume-preview-section-label")?.textContent).toBe("Education"));
+    fireEvent.change(field, { target: { value: "Learning" } });
+    await waitFor(() => expect(document.querySelector("#preview-education .resume-preview-section-label")?.textContent).toBe("Learning"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    await waitFor(() => expect(document.querySelector("#preview-education .resume-preview-section-label")?.textContent).toBe("Education"));
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it("saves section text with existing content and keeps only failed text dirty for retry", async () => {
+    const { repository, methods } = makeRepository("experience");
+    methods.updateSiteText.mockRejectedValueOnce(new Error("temporary section text failure"));
+    open({ path: "/experience" }, repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "经历标题" } });
+    fireEvent.change(screen.getByLabelText("Chinese Organization"), { target: { value: "更新后的组织" } });
+    save();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { experienceLabel: "经历标题" });
+    expect(methods.updateEditableTranslation).toHaveBeenCalled();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.updateSiteText).toHaveBeenCalledTimes(2);
+    expect(methods.updateEditableTranslation).toHaveBeenCalledTimes(1);
+  });
+
+  it("guards refresh when only relocated section text is dirty", async () => {
+    const { repository } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "技能标题" } });
+    const event = new Event("beforeunload", { cancelable: true });
+    fireEvent(window, event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("retains a moved section-text draft across sidebar navigation", async () => {
+    const { repository } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    const title = await screen.findByLabelText("Chinese Section title") as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Unsaved skill heading" } });
+    fireEvent.click(screen.getByRole("link", { name: "Site & Links" }));
+    await screen.findByLabelText("English Updated-at label");
+    fireEvent.click(screen.getByRole("link", { name: "Skills" }));
+    expect((await screen.findByLabelText("Chinese Section title") as HTMLInputElement).value).toBe("Unsaved skill heading");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel changes" }).hasAttribute("disabled")).toBe(false);
+  });
+
   it.each([
     { section: "experience", path: "/experience", title: "Experience", add: "Add experience" },
     { section: "projects", path: "/projects", title: "Projects", add: "Add project" },
@@ -1421,12 +1584,13 @@ describe("Batch 6A production repeatable CRUD", () => {
     cleanup();
     const siteText = makeRepository("skills");
     open({ path: "/links" }, siteText.repository);
-    fireEvent.change(await screen.findByLabelText("English Education section title"), { target: { value: "Learning" } });
+    expect(await screen.findByLabelText("English Updated-at label")).toBeTruthy();
+    expect(screen.queryByLabelText("English Education section title")).toBeNull();
     fireEvent.change(screen.getByLabelText("English Public button label"), { target: { value: "Download CV" } });
     fireEvent.change(screen.getByLabelText("Chinese Experience"), { target: { value: "经历（更新）" } });
     save();
     await screen.findByText("No unsaved changes");
-    expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { educationLabel: "Learning", portfolioLabel: "Download CV" });
+    expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { portfolioLabel: "Download CV" });
     expect(siteText.methods.updateNavigationLabel).toHaveBeenCalledWith(resumeId, expect.any(String), "zh", "经历（更新）");
   });
 
