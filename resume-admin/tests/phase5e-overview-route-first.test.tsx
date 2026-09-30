@@ -137,9 +137,11 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(await screen.findByRole("navigation", { name: locale === "en" ? "CMS sections" : "CMS 模块" })).toBeTruthy();
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toBe(loading);
+    expect(document.querySelector(".workspace-system-state")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Loading resume content…" })).toBeNull();
     pending.reject(new Error("Overview translation read failed"));
     expect((await screen.findByRole("alert")).textContent).toContain(errorText);
+    expect(document.querySelector(".workspace-system-state")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: retry }));
     expect(await screen.findByText("Retried name")).toBeTruthy();
     expect(repo.loadOverview).toHaveBeenCalledTimes(2);

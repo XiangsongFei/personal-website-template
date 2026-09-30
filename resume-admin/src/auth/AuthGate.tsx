@@ -4,7 +4,8 @@ import { ResumeLoader } from "../data/ResumeLoader";
 import type { ResumeRepository } from "../data/resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "../data/resumeSectionStore";
 import type { AdminAuthClient, AdminIdentity } from "./supabase";
-import { UiLocaleSwitch, useUiLocale } from "../uiLocale";
+import { useUiLocale } from "../uiLocale";
+import { AdminSystemShell, AdminSystemState } from "../SystemState";
 
 type AuthState =
   | { kind: "restoring" }
@@ -19,7 +20,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   resumeRepository: ResumeRepository | null;
   sectionStore?: ResumeSectionStore;
 }) {
-  const { t } = useUiLocale();
+  const { t, locale } = useUiLocale();
   const navigate = useNavigate();
   const [state, setState] = useState<AuthState>({ kind: "restoring" });
   const [loginPending, setLoginPending] = useState(false);
@@ -175,13 +176,9 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
     }
   }
 
-  if (!client) return <AuthScreen title={t("Configuration required")} message={t("Set the local Supabase URL and publishable key to use the admin app.")} />;
-  if (state.kind === "restoring" || state.kind === "checking") return null;
-  if (state.kind === "signedOut") return <main className="auth-screen auth-login-screen"><section className="auth-card auth-login-content">
-    <header className="auth-login-header">
-      <div className="auth-login-brand"><span>EXAMPLE_CV</span><span>{t("Resume CMS")}</span></div>
-      <UiLocaleSwitch />
-    </header>
+  if (!client) return <AdminSystemState title={t("Configuration required")} description={locale === "zh" ? <><span className="configuration-required-chinese-sentence">{t("Admin setup is incomplete.")}</span><span className="configuration-required-chinese-sentence">{t("Please contact the administrator.")}</span></> : t("Admin setup is incomplete. Please contact the administrator.")} className="configuration-required-state" />;
+  if (state.kind === "restoring" || state.kind === "checking") return <AdminSystemState title={t("Checking access")} description={t("Please wait while your session and admin access are verified.")} busy />;
+  if (state.kind === "signedOut") return <AdminSystemShell>
     <h1>{t("Welcome back")}</h1><p className="auth-login-description">{t("Sign in to continue managing your resume.")}</p>
     <form onSubmit={submit}>
       <label htmlFor="auth-email">{t("Email")}</label><input id="auth-email" name="email" type="email" autoComplete="username" placeholder={t("Enter your email")} required />
@@ -189,16 +186,9 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       {loginError && <p className="auth-error" role="alert">{loginError}</p>}
       <button type="submit" disabled={loginPending}>{loginPending ? t("Signing in…") : t("Sign in")}</button>
     </form>
-  </section></main>;
+  </AdminSystemShell>;
   if (state.kind === "authorized") return <ResumeLoader key={state.identity.sessionKey} repository={resumeRepository} sessionKey={state.identity.sessionKey} identityEmail={state.identity.email}
     onSignOut={() => void signOut()} signOutPending={signOutPending} signOutError={signOutError} sectionStore={sectionStore} />;
-  if (state.kind === "denied") return <AuthScreen title={t("Access denied")} message={`${t("This account is not authorized to edit this resume.")}${state.identity.email ? ` (${state.identity.email})` : ""}`} action={<><button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
-  return <AuthScreen title={t("Unable to check access")} message={t("The session or administrator check failed. Please retry.")} action={<><button type="button" onClick={() => void restore()}>{t("Retry")}</button>{state.identity && <button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>}{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
-}
-
-function AuthScreen({ title, message, busy = false, action }: { title: string; message: string; busy?: boolean; action?: React.ReactNode }) {
-  const { t } = useUiLocale();
-  return <div className="auth-screen"><div className="auth-card" aria-busy={busy}>
-    <UiLocaleSwitch /><p className="auth-eyebrow">{t("Example CV CMS")}</p><h1>{title}</h1><p role={busy ? "status" : undefined}>{message}</p>{action && <div className="auth-actions">{action}</div>}
-  </div></div>;
+  if (state.kind === "denied") return <AdminSystemState title={t("Access denied")} description={`${t("This account is not authorized to edit this resume.")}${state.identity.email ? ` (${state.identity.email})` : ""}`} action={<><button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
+  return <AdminSystemState title={t("Unable to check access")} description={t("The session or administrator check failed. Please retry.")} action={<><button type="button" onClick={() => void restore()}>{t("Retry")}</button>{state.identity && <button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>}{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
 }

@@ -673,3 +673,19 @@ main{color:#242424}
   .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-mobile-label{display:block}
   .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-locale-reserve{display:none}
 }
+
+/* Shared presentation for blocking system states and workspace load failures. */
+.system-state-content{width:100%;max-width:620px;min-width:0}
+.system-state-content>.eyebrow{margin-bottom:10px}
+.system-state-content h1{margin:0 0 10px;color:#202020;font-size:clamp(30px,3vw,36px);font-weight:650;line-height:1.2;letter-spacing:-.025em;overflow-wrap:anywhere}
+.system-state-description{max-width:600px;margin:0;color:#71706b;font-size:16px;line-height:1.6;overflow-wrap:anywhere}
+.system-state-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:24px}
+.auth-system-state-content{width:100%;max-width:none}
+.configuration-required-state{width:100%}
+.auth-system-state-content h1{margin:0 0 8px;font-size:30px;font-weight:650;line-height:1.2;letter-spacing:normal}
+.auth-system-state-content .system-state-description{font-size:15px;line-height:1.65}
+.auth-system-state-content .system-state-actions{margin-top:28px}
+.workspace-system-state{margin-inline:auto}
+@media(min-width:641px){.configuration-required-state{width:calc(50vw + 50% - 24px);max-width:none}.configuration-required-state .system-state-description{max-width:none;white-space:nowrap}}
+@media(max-width:640px){.system-state-content h1{font-size:28px}.system-state-actions{gap:10px;margin-top:20px}}
+@media(max-width:640px){.configuration-required-state{width:100%}.configuration-required-state .configuration-required-chinese-sentence{display:block}.configuration-required-state .system-state-description{white-space:normal}}

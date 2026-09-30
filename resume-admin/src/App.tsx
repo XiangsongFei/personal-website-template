@@ -19,6 +19,7 @@ import { AdaptivePairedField } from "./AdaptivePairedField";
 import { AdaptiveMethodsGrid } from "./AdaptiveMethodsGrid";
 import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readDocumentScrollPosition, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
+import { SystemStateContent } from "./SystemState";
 
 const navigation = [
   { label: "Overview", path: "/overview" },
@@ -1323,12 +1324,9 @@ function Profile() {
     onSaved={onProfileSaved} onTranslationSaved={onProfileTranslationSaved} photoDraft={profilePhotoDraft}
     setPhotoDraft={setProfilePhotoDraft} photoError={profilePhotoError} setPhotoError={setProfilePhotoError}
     onPhotoUrlChanged={onProfilePhotoUrlChanged} />;
-  if (productionMode) return <section className="page-section" aria-busy={profileLoadState === "loading"}>
-    <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Profile")}</h1>
-      {profileLoadState === "loading" ? <p role="status">{t("Loading Profile…")}</p> : <div role="alert"><p>{t("Unable to load Profile.")}</p>
-        <button type="button" className="button secondary" onClick={onRetryProfile ?? undefined}>{t("Retry")}</button></div>}
-    </div>
-  </section>;
+  if (productionMode) return <WorkspaceSystemState eyebrow={t("Resume content")} title={t("Profile")}
+    description={profileLoadState === "loading" ? t("Loading Profile…") : t("Unable to load Profile.")} busy={profileLoadState === "loading"}
+    action={profileLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryProfile ?? undefined}>{t("Retry")}</button> : undefined} />;
   return <SectionForm<ProfileSection> section="profile" title="Profile" description="Edit the identity, shared details, and labels shown around the hero and footer." initial={sections.profile}>
     {(profile, onChange, confirmed) => <>
       <div className="panel" data-editor-anchor="profile:shared"><h2>{t("Shared details")}</h2><p>{t("These values are the same in Chinese and English.")}</p>
@@ -1697,10 +1695,9 @@ function Education() {
   if (productionMode) {
     if (educationEditor && (educationResumeId || resume?.resumeId)) return <ProductionEducation resumeId={educationResumeId ?? resume!.resumeId} editor={educationEditor}
       setEditor={setEducationEditor} repository={repository} onEducationChanged={onEducationChanged} onReloadEducation={onReloadEducation} onEducationDeleted={onEducationDeleted} sectionText={sectionText} />;
-    return <section className="page-section" aria-busy={educationLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1>
-      {educationLoadState === "loading" ? <p role="status">{t("Loading Education...")}</p> : <div role="alert"><p>{t("Unable to load Education.")}</p>
-        <button type="button" className="button secondary" onClick={onRetryEducation ?? undefined}>{t("Retry")}</button></div>}
-    </div></section>;
+    return <WorkspaceSystemState eyebrow={t("Resume content")} title={t("Education")}
+      description={educationLoadState === "loading" ? t("Loading Education...") : t("Unable to load Education.")} busy={educationLoadState === "loading"}
+      action={educationLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryEducation ?? undefined}>{t("Retry")}</button> : undefined} />;
   }
   return <RepeatableSection<EducationItem> section="education" title="Education" description="" sectionTextOverride={sectionText}
     create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", category: null, translations: {
@@ -2448,7 +2445,11 @@ function Links() {
   </SectionForm></div>;
 }
 
-function NotFound() { const { t } = useUiLocale(); return <section className="page-section"><div className="page-heading"><h1>{t("Section not found")}</h1><p>{t("Choose a CMS section from the navigation.")}</p><Link to="/overview">{t("Return to Overview")}</Link></div></section>; }
+function WorkspaceSystemState({ eyebrow, title, description, busy = false, action }: { eyebrow?: string; title: string; description: string; busy?: boolean; action?: ReactNode }) {
+  return <section className="page-section" aria-busy={busy}><SystemStateContent className="workspace-system-state" eyebrow={eyebrow} title={title} description={description} busy={busy} action={action} /></section>;
+}
+
+function NotFound() { const { t } = useUiLocale(); return <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} action={<Link to="/overview">{t("Return to Overview")}</Link>} />; }
 
 export function App({ identityEmail, onSignOut, signOutPending, signOutError, resume = null, repository = null,
   productionMode = resume !== null, profileSection = null, profileResumeId = null,
@@ -3147,33 +3148,21 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}
       <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1}>{showOverviewRouteState
-        ? <section className="page-section" aria-busy={overviewLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Workspace Overview")}</p><h1>{t("Overview")}</h1>
-          {overviewLoadState === "loading" ? <p role="status">{t("Loading Overview...")}</p> : <div role="alert"><p>{t("Unable to load Overview.")}</p>
-            <button type="button" className="button secondary" onClick={onRetryOverview ?? undefined}>{t("Retry")}</button></div>}
-        </div></section>
+        ? <WorkspaceSystemState eyebrow={t("Workspace Overview")} title={t("Overview")} description={t(overviewLoadState === "loading" ? "Loading Overview..." : "Unable to load Overview.")} busy={overviewLoadState === "loading"}
+          action={overviewLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryOverview ?? undefined}>{t("Retry")}</button> : undefined} />
         : showEducationTextState
-        ? <section className="page-section" aria-busy={additionalRouteLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t("Education")}</h1>
-          {additionalRouteLoadState === "loading" ? <p role="status">{t("Loading section text…")}</p> : <div role="alert"><p>{t("Unable to load section text.")}</p>
-            <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button></div>}
-        </div></section>
+        ? <WorkspaceSystemState eyebrow={t("Resume content")} title={t("Education")} description={t(additionalRouteLoadState === "loading" ? "Loading section text…" : "Unable to load section text.")} busy={additionalRouteLoadState === "loading"}
+          action={additionalRouteLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button> : undefined} />
         : showAdditionalRouteState
         ? previewSection && previewSection !== "profile" && previewSection !== "education"
-          ? <PreviewWorkspace section={previewSection}><section className="page-section" aria-busy={additionalRouteLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(additionalRouteTitle)}</h1>
-            {additionalRouteLoadState === "loading" ? <p role="status">{t(additionalLoadingText)}</p> : <div role="alert"><p>{t(additionalErrorText)}</p>
-              <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button></div>}
-          </div></section></PreviewWorkspace>
-          : <section className="page-section" aria-busy={additionalRouteLoadState === "loading"}><div className="page-heading"><p className="eyebrow">{t("Resume content")}</p><h1>{t(additionalRouteTitle)}</h1>
-          {additionalRouteLoadState === "loading" ? <p role="status">{t(additionalLoadingText)}</p> : <div role="alert"><p>{t(additionalErrorText)}</p>
-            <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button></div>}
-        </div></section>
+          ? <PreviewWorkspace section={previewSection}><WorkspaceSystemState eyebrow={t("Resume content")} title={t(additionalRouteTitle)} description={t(additionalRouteLoadState === "loading" ? additionalLoadingText : additionalErrorText)} busy={additionalRouteLoadState === "loading"}
+            action={additionalRouteLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button> : undefined} /></PreviewWorkspace>
+          : <WorkspaceSystemState eyebrow={t("Resume content")} title={t(additionalRouteTitle)} description={t(additionalRouteLoadState === "loading" ? additionalLoadingText : additionalErrorText)} busy={additionalRouteLoadState === "loading"}
+            action={additionalRouteLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryAdditionalRoute ?? undefined}>{t("Retry")}</button> : undefined} />
         : showFullSnapshotState
-        ? <section className="page-section" aria-busy={fullSnapshotState !== "error"}>
-          <div className="page-heading"><p className="eyebrow">{t("Resume content")}</p>
-            {fullSnapshotState === "error" ? <><h1>{t("Unable to load resume content")}</h1><p>{t("The production resume could not be loaded. No fixture content has been substituted.")}</p>
-              <button type="button" onClick={onRetryFullSnapshot ?? undefined}>{t("Retry")}</button></>
-              : <><h1>{t("Loading resume content…")}</h1><p role="status">{t("Reading the current example-cv content.")}</p></>}
-          </div>
-        </section>
+        ? <WorkspaceSystemState eyebrow={t("Resume content")} title={t(fullSnapshotState === "error" ? "Unable to load resume content" : "Loading resume content…")}
+          description={t(fullSnapshotState === "error" ? "The production resume could not be loaded. No fixture content has been substituted." : "Reading the current example-cv content.")}
+          busy={fullSnapshotState !== "error"} action={fullSnapshotState === "error" ? <button type="button" className="button secondary" onClick={onRetryFullSnapshot ?? undefined}>{t("Retry")}</button> : undefined} />
         : <Routes>
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />
         <Route path="/profile" element={<PreviewWorkspace section="profile"><Profile /></PreviewWorkspace>} /><Route path="/introduction" element={<PreviewWorkspace section="introduction"><Introduction /></PreviewWorkspace>} />
