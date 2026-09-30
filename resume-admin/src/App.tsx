@@ -451,10 +451,10 @@ function SharedFields<T extends object>({ value, fields, onChange, idPrefix, rea
   )}</div>;
 }
 
-function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true, hideFieldHeadings = false, educationPairedShortFields = false }: {
+function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, readOnlyAll = false, readOnlyLocales, footer, section, itemId, confirmed, locales: shownLocales, showLocaleHeaders = false, hideReadOnlyHint = false, matrixLayout = false, inlineLocaleIndicators = false, matrixHeader = true, hideFieldHeadings = false, educationPairedShortFields = false, pairedShortFields = [] }: {
   value: Bilingual<T>; fields: FieldSpec<T>[]; onChange: (value: Bilingual<T>, locale: Locale) => void; idPrefix: string;
   readOnlyAll?: boolean; readOnlyLocales?: Partial<Record<Locale, boolean>>; footer?: (locale: Locale) => ReactNode; hideFieldHeadings?: boolean;
-  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean; educationPairedShortFields?: boolean;
+  section?: SectionKey; itemId?: string; confirmed?: Bilingual<T>; locales?: readonly Locale[]; showLocaleHeaders?: boolean; hideReadOnlyHint?: boolean; matrixLayout?: boolean; inlineLocaleIndicators?: boolean; matrixHeader?: boolean; educationPairedShortFields?: boolean; pairedShortFields?: readonly string[];
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -467,7 +467,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
       </div>}
       {fields.map(field =>
-      <section className={`bilingual-field-pair${educationPairedShortFields && !field.multiline ? " education-short-bilingual-field" : ""}`} key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
+      <section className={`bilingual-field-pair${educationPairedShortFields && !field.multiline ? " education-short-bilingual-field" : ""}${pairedShortFields.includes(String(field.key)) && !field.multiline ? " paired-short-bilingual-field" : ""}`} key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
         {!hideFieldHeadings && <h3>{t(field.label)}</h3>}
         <div className="bilingual-field-values">{locales.map(locale => {
           const readOnly = readOnlyAll || readOnlyLocales?.[locale] || (locale === "zh" && field.readOnlyZh);
@@ -560,17 +560,18 @@ function useSectionText(page: SectionTextPage | null) {
     context.setSectionTextDrafts(current => ({ ...current, [page]: { baseline: draft, draft } }));
   };
   const fields = keys.map(key => ({ key, label: key === "kaggleLabel" ? "Project link text" : "Section title" })) as FieldSpec<SectionTextValues>[];
-  const renderFields = (fieldKeys: SectionTextKey[], instanceId?: string) => <BilingualFields showLocaleHeaders idPrefix={`section-text-${page}${instanceId ? `-${instanceId}` : ""}`} section="links" itemId="links"
-    confirmed={baseline} value={draft} onChange={onChange} fields={fields.filter(field => fieldKeys.includes(field.key))} hideFieldHeadings />;
+  const renderFields = (fieldKeys: SectionTextKey[], instanceId?: string, pairedFieldKeys: SectionTextKey[] = []) => <BilingualFields showLocaleHeaders idPrefix={`section-text-${page}${instanceId ? `-${instanceId}` : ""}`} section="links" itemId="links"
+    confirmed={baseline} value={draft} onChange={onChange} fields={fields.filter(field => fieldKeys.includes(field.key))} hideFieldHeadings pairedShortFields={pairedFieldKeys} />;
   const projectLinkText = (projectId: string) => page === "projects" ? <div className="project-link-text-editor">
     <h4>{t("Project link text")}</h4>
     <p className="section-text-helper">{t("All projects with a Project URL use this same display text.")}</p>
-    {renderFields(["kaggleLabel"], projectId)}
+    {renderFields(["kaggleLabel"], projectId, ["kaggleLabel"])}
   </div> : null;
   const rendered = page && <section className="section-text-editor section-text-editor-heading-only">
     <h2>{t("Section title")}</h2>
     <p className="section-text-helper">{t("Public resume section name")}</p>
-    {renderFields(page === "projects" ? ["projectHeading"] : keys)}
+    {renderFields(page === "projects" ? ["projectHeading"] : keys, undefined,
+      page === "experience" ? ["experienceLabel"] : page === "projects" ? ["projectHeading"] : page === "skills" ? ["skillsLabel"] : page === "awards" ? ["honorsLabel"] : [])}
   </section>;
   return { baseline, draft, dirty, cancel, save, confirmLocal, rendered, projectLinkText };
 }
@@ -1994,7 +1995,7 @@ function Experience() {
       en: { organization: "", title: "", period: "", description: "", location: null },
     } })}
     label={(item, index) => item.translations[locale].organization || item.translations[locale === "zh" ? "en" : "zh"].organization || `${t("Experience")} ${index + 1}`}
-    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="experience" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders pairedShortFields={["period"]} idPrefix={item.id} section="experience" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "organization", label: "Organization" }, { key: "title", label: "Role" }, { key: "period", label: "Period" }, { key: "location", label: "Location" }, { key: "description", label: "Description", multiline: true }]} />} />;
 }
@@ -2046,7 +2047,7 @@ function Projects() {
     }, methods: { zh: [], en: [] } })}
     label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || (locale === "zh" ? `项目经历 ${index + 1}` : `Project ${index + 1}`)}
     render={(item, onChange, confirmed) => <>
-      <BilingualFields showLocaleHeaders idPrefix={item.id} section="projects" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
+      <BilingualFields showLocaleHeaders pairedShortFields={["period"]} idPrefix={item.id} section="projects" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations} onChange={translations => onChange({ ...item, translations })}
         fields={[{ key: "title", label: "Title" }, { key: "subtitle", label: "Subtitle" }, { key: "period", label: "Period" }, { key: "description", label: "Description", multiline: true }]} />
       <div className="project-shared-field"><InputField id={`${item.id}-project-url`} editorAnchor={`project-url:${item.id}`} label="Project URL" type="url"
         value={item.translations.zh.href === item.translations.en.href ? item.translations.zh.href : item.translations.zh.href || item.translations.en.href}
@@ -2070,7 +2071,7 @@ function Skills() {
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { title: "", items: "" }, en: { title: "", items: "" } } })}
     label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${t("Skill group")} ${index + 1}`}
     headerIdentity={(item, index, _itemLabel, onChange) => skillCategorySelect(item, index, t, category => onChange(skillCategoryChanged(item, category)))}
-    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders pairedShortFields={["title"]} idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "title", label: locale === "zh" ? "Skill group name" : "Name" }, { key: "items", label: locale === "zh" ? "Skills content" : "Skills" }]} />} />;
 }
@@ -2319,7 +2320,7 @@ function Contact() {
   return <div className="contact-editor-scope"><SectionForm<ContactSection> section="contact" title="Contact" description="" quietCancelNotice
     initial={sections.contact} productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveContactProduction(context.repository!, context.additionalResumeId!, draft, baseline) : undefined}>
     {(contact, onChange, confirmed) => <>
-      <div className="panel" data-editor-anchor="contact:labels"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
+      <div className="panel" data-editor-anchor="contact:labels"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint pairedShortFields={["contactLabel"]} idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
         onChange={translations => onChange({ ...contact, translations })}
         fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true }]} />
       </div>
@@ -2328,7 +2329,7 @@ function Contact() {
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
         label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${locale === "zh" ? "关注" : "Focus"} ${index + 1}`}
-        render={(item, change, base) => <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
+        render={(item, change, base) => <BilingualFields showLocaleHeaders pairedShortFields={["title"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
       <div className="panel" data-editor-anchor="contact:status"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-status" items={contact.status} confirmedItems={confirmed.status}
@@ -2342,7 +2343,7 @@ function Contact() {
               options={[{ value: "study", label: t("Study") }, { value: "graduation", label: t("Graduation") }, { value: "open", label: t("Open") }]}
               onChange={statusType => change({ ...item, statusType })} />
           </div>
-          <BilingualFields showLocaleHeaders idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
+          <BilingualFields showLocaleHeaders pairedShortFields={["title"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
             fields={[{ key: "title", label: "Status title" }, { key: "detail", label: "Detail" }]} />
         </>} /></div>
     </>}
@@ -2388,18 +2389,18 @@ function Links() {
         <div className="links-object-group" data-editor-anchor="links:linkedin"><h3>LinkedIn</h3><SharedFields inline idPrefix="links-linkedin" value={links.shared}
           onChange={shared => onChange({ ...links, shared })}
           fields={[{ key: "linkedInDisplayName", label: "Display name" }, { key: "linkedInLabel", label: "Hero button label" }]} />
-          <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+          <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators pairedShortFields={["linkedInLabel"]} idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
             onChange={translations => onChange({ ...links, translations })}
             fields={[{ key: "linkedInLabel", label: "Contact label" }, { key: "linkedInHref", label: "URL", type: "url" }]} /></div>
         </div>
       </section>
       <section className="links-section links-resume-files" data-editor-anchor="links:resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">
         {(["zh", "en"] as const).map(locale => <ResumePdfUpload key={locale} locale={locale} href={links.translations[locale].portfolioHref} filename={links.resumePdfFilenames?.[locale]} file={pdfFiles[locale]} error={pdfErrors[locale]} onSelect={file => selectPdf(locale, file)} />)}
-      </div><div className="links-localized-fields"><BilingualFields matrixLayout idPrefix="links-files" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+      </div><div className="links-localized-fields"><BilingualFields matrixLayout pairedShortFields={["portfolioLabel"]} idPrefix="links-files" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
         onChange={translations => onChange({ ...links, translations })}
         fields={[{ key: "portfolioLabel", label: "Public button label" }]} /></div></section>
       <section className="links-section" data-editor-anchor="links:navigation-labels"><h2>{t("Navigation labels")}</h2>
-        <div className="navigation-labels">{links.navigation.map((item, index) => <BilingualFields key={item.id} matrixLayout matrixHeader={index === 0} idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: navigationRowLabels[item.sectionId] }]}
+        <div className="navigation-labels">{links.navigation.map((item, index) => <BilingualFields key={item.id} matrixLayout matrixHeader={index === 0} pairedShortFields={["label"]} idPrefix={item.id} section="links" itemId={item.id} confirmed={confirmed.navigation.find(value => value.id === item.id)?.translations} value={item.translations} fields={[{ key: "label", label: navigationRowLabels[item.sectionId] }]}
             onChange={translations => onChange({ ...links, navigation: links.navigation.map(current => current.id === item.id ? { ...current, translations } : current) })} />
         )}</div>
       </section>
@@ -2407,7 +2408,7 @@ function Links() {
         <div className="links-footer-setting">
           <h3>{t("Updated-at label")}</h3>
           <p>{t("Text displayed before the update date in the public resume footer.")}</p>
-          <BilingualFields matrixLayout hideFieldHeadings idPrefix="links-site-text" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+          <BilingualFields matrixLayout hideFieldHeadings pairedShortFields={["updatedAtLabel"]} idPrefix="links-site-text" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
             onChange={translations => onChange({ ...links, translations })}
             fields={[{ key: "updatedAtLabel", label: "Updated-at label" }]} />
         </div>

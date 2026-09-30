@@ -143,6 +143,7 @@ describe("Batch 6A production repeatable CRUD", () => {
       expect(within(sectionText).getByText("Public resume section name")).toBeTruthy();
       expect(sectionText.querySelectorAll(".bilingual-field-pair > h3")).toHaveLength(0);
     }
+    expect(title.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(path !== "/education");
     expect(screen.getByLabelText("English Section title")).toBeTruthy();
     expect(screen.queryByLabelText(/Education section title|Experience section title|Projects section title|Skills section title|Awards section title/)).toBeNull();
     fireEvent.change(title, { target: { value } });
@@ -164,6 +165,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const linkLabel = await screen.findByLabelText("Chinese Project link text") as HTMLInputElement;
     expect(screen.getByLabelText("English Project link text")).toBeTruthy();
     const contextualGroup = linkLabel.closest<HTMLElement>(".project-link-text-editor")!;
+    expect(linkLabel.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
     expect(within(contextualGroup).getByRole("heading", { name: "Project link text", level: 4 })).toBeTruthy();
     expect(within(contextualGroup).getByText("All projects with a Project URL use this same display text.")).toBeTruthy();
     fireEvent.change(url, { target: { value: "   " } });
@@ -177,6 +179,51 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Project area", kaggleLabel: "查看项目" });
     expect(methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "https://example.test/project" }));
+  });
+
+  it.each([
+    { section: "experience", path: "/experience", paired: "Chinese Period", unchanged: "Chinese Organization" },
+    { section: "projects", path: "/projects", paired: "Chinese Period", unchanged: "Chinese Title" },
+    { section: "skills", path: "/skills", paired: "Chinese Name", unchanged: "Chinese Skills" },
+  ] as const)("opts only the approved short field into bilingual pairing on $path", async ({ section, path, paired, unchanged }) => {
+    open({ path }, makeRepository(section).repository);
+    const pairedField = await screen.findByLabelText(paired);
+    const unchangedField = screen.getByLabelText(unchanged);
+    expect(pairedField.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    expect(unchangedField.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    if (section === "experience") {
+      expect(screen.getByLabelText("Chinese Description").closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    }
+    if (section === "projects") {
+      expect(screen.getByLabelText("Chinese Description").closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    }
+  });
+
+  it("keeps Awards Name out of the short-field pairing treatment", async () => {
+    open({ path: "/awards" }, makeRepository("awards").repository);
+    const awardName = await screen.findByLabelText("Chinese Award name");
+    expect(awardName.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+  });
+
+  it("pairs only the approved Contact and Links bilingual fields", async () => {
+    open({ path: "/contact" }, makeRepository("skills").repository);
+    const contactLabel = await screen.findByLabelText("Chinese Section label");
+    expect(contactLabel.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    expect(screen.getByLabelText("Chinese Availability").closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    const focusTitle = screen.getAllByLabelText("Chinese Focus title")[0];
+    expect(focusTitle.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    expect(screen.getAllByLabelText("Chinese Detail")[0].closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    const statusTitle = screen.getByLabelText("Chinese Status title");
+    expect(statusTitle.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    cleanup();
+
+    open({ path: "/links" }, makeRepository("skills").repository);
+    const linkedinLabel = await screen.findByLabelText("Chinese Contact label");
+    expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    expect(screen.getByLabelText("Chinese URL").closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(false);
+    for (const label of ["Chinese Public button label", "Chinese Experience", "Chinese Updated-at label"]) {
+      expect(screen.getByLabelText(label).closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
+    }
   });
 
   it("shows shared project-link text in multiple URL-bearing entries using the same draft and Cancel baseline", async () => {
