@@ -66,6 +66,65 @@ describe("bilingual review and modified content", () => {
     expect(within(namePair).getByText("Review Chinese")).toBeTruthy();
   });
 
+  it.each(["zh", "en"] as const)("reassigns the outstanding Skills Name review to the opposite locale after a %s value edit", locale => {
+    showRoute("/skills");
+    const zh = screen.getByLabelText("Chinese Name") as HTMLInputElement;
+    const en = screen.getByLabelText("English Name") as HTMLInputElement;
+    const pair = zh.closest(".bilingual-field-pair") as HTMLElement;
+    const source = locale === "zh" ? zh : en;
+    const target = locale === "zh" ? en : zh;
+    const sourceReview = locale === "zh" ? "Review English" : "Review Chinese";
+    const targetReview = locale === "zh" ? "Review Chinese" : "Review English";
+    const sourceOriginal = source.value;
+    const targetOriginal = target.value;
+
+    fireEvent.change(source, { target: { value: `${sourceOriginal} A` } });
+    expect(within(pair).getByText(sourceReview)).toBeTruthy();
+    expect(source.closest(".field")?.querySelector(".field-edit-status")?.textContent).toContain("Modified");
+
+    // Focus movement alone does not create, transfer, or clear review state.
+    fireEvent.focus(target);
+    expect(within(pair).getByText(sourceReview)).toBeTruthy();
+    expect(within(pair).queryByText(targetReview)).toBeNull();
+
+    // Editing the prior review target invalidates that reminder for its old value
+    // and starts a fresh reminder for the newly edited locale's counterpart.
+    fireEvent.change(target, { target: { value: `${targetOriginal} B` } });
+    expect(within(pair).queryByText(sourceReview)).toBeNull();
+    expect(within(pair).getByText(targetReview)).toBeTruthy();
+    expect(target.closest(".field")?.querySelector(".field-edit-status")?.textContent).toContain("Modified");
+    expect(source.closest(".field")?.querySelector(".field-edit-status")?.textContent).toContain("Modified");
+
+    // A subsequent value edit replaces the opposite-locale reminder with the
+    // latest direction; confirming it clears only that current reminder.
+    fireEvent.change(target, { target: { value: `${targetOriginal} C` } });
+    expect(within(pair).queryByText(sourceReview)).toBeNull();
+    expect(within(pair).getByText(targetReview)).toBeTruthy();
+    const skillCard = zh.closest(".item-card") as HTMLElement;
+    fireEvent.click(skillCard.querySelector(".item-actions button")!);
+    expect(screen.queryByText(targetReview)).toBeNull();
+    fireEvent.click(skillCard.querySelector(".item-actions button")!);
+    const reopenedPair = (screen.getByLabelText("Chinese Name") as HTMLInputElement).closest(".bilingual-field-pair") as HTMLElement;
+    expect(within(reopenedPair).getByText(targetReview)).toBeTruthy();
+    fireEvent.click(within(reopenedPair).getByRole("button", { name: "No change needed" }));
+    expect(within(reopenedPair).queryByText(targetReview)).toBeNull();
+  });
+
+  it("keeps Skills reminders scoped to Skills across route changes", () => {
+    showRoute("/skills");
+    const zh = screen.getByLabelText("Chinese Name") as HTMLInputElement;
+    fireEvent.change(zh, { target: { value: `${zh.value} changed` } });
+    expect(screen.getByText("Review English")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("link", { name: "Experience" }));
+    expect(screen.queryByText("Review English")).toBeNull();
+    expect(screen.queryByText("Review Chinese")).toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: "Skills" }));
+    expect(screen.getByText("Review English")).toBeTruthy();
+    expect(screen.queryByText("Review Chinese")).toBeNull();
+  });
+
   it.each(["zh", "en"] as const)("keeps Introduction review state symmetric for a %s edit", locale => {
     showRoute("/introduction");
     const sourceLocale = locale === "zh" ? "Chinese" : "English";
@@ -140,16 +199,18 @@ describe("bilingual review and modified content", () => {
     expect(localeWarning("en")).toBeNull();
   });
 
-  it("clears a reminder when the counterpart is edited or explicitly confirmed", () => {
+  it("replaces a counterpart reminder with a reminder for the newly edited locale, or clears it when explicitly confirmed", () => {
     showExperience();
     const zh = field("zh", "title");
     fireEvent.change(zh, { target: { value: `${(zh as HTMLInputElement).value} updated` } });
     const en = field("en", "title");
     fireEvent.change(en, { target: { value: `${(en as HTMLInputElement).value} checked` } });
     expect(screen.queryByText("Review English")).toBeNull();
-    expect(screen.queryByText("Review Chinese")).toBeNull();
+    expect(screen.getByText("Review Chinese")).toBeTruthy();
 
     fireEvent.change(zh, { target: { value: `${(zh as HTMLInputElement).value} again` } });
+    expect(screen.queryByText("Review Chinese")).toBeNull();
+    expect(screen.getByText("Review English")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "No change needed" }));
     expect(screen.queryByText("Review English")).toBeNull();
   });

@@ -1641,22 +1641,9 @@ const skillPresetTitles: Record<Exclude<SkillCategory, "custom">, Record<Locale,
 };
 
 function skillCategoryFor(item: SkillItem): SkillCategory {
-  let category: Exclude<SkillCategory, "custom"> | null = null;
-  for (const locale of ["zh", "en"] as const) {
-    const title = item.translations[locale].title;
-    if (!title.trim()) continue;
-    const match = (Object.entries(skillPresetTitles) as [Exclude<SkillCategory, "custom">, Record<Locale, string>][])
-      .find(([, titles]) => titles[locale] === title);
-    if (!match || (category !== null && category !== match[0])) return "custom";
-    category = match[0];
-  }
-  return category ?? "custom";
-}
-
-function synchronizedSkillTitle(title: string, locale: Locale, category: Exclude<SkillCategory, "custom">): string {
-  const isBlank = title.trim().length === 0;
-  const isPresetTitle = Object.values(skillPresetTitles).some(titles => titles[locale] === title);
-  return isBlank || isPresetTitle ? skillPresetTitles[category][locale] : title;
+  const match = (Object.entries(skillPresetTitles) as [Exclude<SkillCategory, "custom">, Record<Locale, string>][])
+    .find(([, titles]) => item.translations.zh.title === titles.zh && item.translations.en.title === titles.en);
+  return match?.[0] ?? "custom";
 }
 
 function customSkillTitle(title: string, locale: Locale): string {
@@ -1675,8 +1662,8 @@ function skillCategoryChanged(item: SkillItem, category: SkillCategory): SkillIt
     } };
   }
   return { ...item, translations: {
-    zh: { ...item.translations.zh, title: synchronizedSkillTitle(item.translations.zh.title, "zh", category) },
-    en: { ...item.translations.en, title: synchronizedSkillTitle(item.translations.en.title, "en", category) },
+    zh: { ...item.translations.zh, title: skillPresetTitles[category].zh },
+    en: { ...item.translations.en, title: skillPresetTitles[category].en },
   } };
 }
 
@@ -2095,11 +2082,19 @@ function Projects() {
 }
 
 function Skills() {
+  const context = useContext(EditorContext);
   const { t, locale } = useUiLocale();
   return <RepeatableSection<SkillItem> section="skills" title="Skills" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { title: "", items: "" }, en: { title: "", items: "" } } })}
     label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${t("Skill group")} ${index + 1}`}
-    headerIdentity={(item, index, _itemLabel, onChange) => skillCategorySelect(item, index, t, category => onChange(skillCategoryChanged(item, category)))}
+    headerIdentity={(item, index, _itemLabel, onChange) => skillCategorySelect(item, index, t, category => {
+      if (category !== "custom") {
+        const identity = { section: "skills" as const, itemId: item.sourceKey ?? item.id, field: "title" };
+        context.onBilingualReviewConfirm(identity, "zh");
+        context.onBilingualReviewConfirm(identity, "en");
+      }
+      onChange(skillCategoryChanged(item, category));
+    })}
     render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title", "items"]} idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "title", label: locale === "zh" ? "Skill group name" : "Name" }, { key: "items", label: locale === "zh" ? "Skills content" : "Skills" }]} />} />;
@@ -2586,10 +2581,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const targetKey = bilingualFieldKey(identity, targetLocale);
     setBilingualReviews(current => {
       const next = { ...current };
-      const wasReviewTarget = Boolean(next[ownKey]);
       const existingSourceReminder = next[targetKey]?.sourceLocale === locale ? next[targetKey] : undefined;
       delete next[ownKey];
-      if (modified && !wasReviewTarget) next[targetKey] = { ...identity, sourceLocale: locale, targetLocale, sourceSaved: existingSourceReminder?.sourceSaved ?? false };
+      if (modified) next[targetKey] = { ...identity, sourceLocale: locale, targetLocale, sourceSaved: existingSourceReminder?.sourceSaved ?? false };
       else if (!modified && existingSourceReminder && !existingSourceReminder.sourceSaved) delete next[targetKey];
       return next;
     });

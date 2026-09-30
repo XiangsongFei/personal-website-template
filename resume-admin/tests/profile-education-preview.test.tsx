@@ -448,4 +448,19 @@ describe("Profile and Education live-preview prototype", () => {
     expect(repo.updateProfileTranslation).not.toHaveBeenCalled();
     expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
   });
+
+  it("reflects a selected Skills preset pair in both Preview locales", () => {
+    open("/skills");
+    const category = screen.getByRole("combobox", { name: "Skill category 01" });
+    fireEvent.click(category);
+    fireEvent.click(within(screen.getByRole("listbox", { name: "Skill category 01" })).getByRole("option", { name: "Programming" }));
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("编程");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
+
+    setPreviewLocale("zh");
+    const skillSection = screen.getByTestId("resume-preview").querySelector("#preview-skills")!;
+    expect(skillSection.querySelector(".resume-preview-skill-list strong")?.textContent).toBe("编程");
+    setPreviewLocale("en");
+    expect(skillSection.querySelector(".resume-preview-skill-list strong")?.textContent).toBe("Programming");
+  });
 });

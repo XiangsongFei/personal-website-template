@@ -642,22 +642,89 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
   });
 
-  it.each([
-    { customized: "zh" as const, expectedCustom: "技术能力" },
-    { customized: "en" as const, expectedCustom: "Core Capabilities" },
-  ])("preset changes preserve a manually customized $customized title independently", async ({ customized, expectedCustom }) => {
+  it.each(["zh", "en"] as const)("selecting a preset replaces both locale titles even when the previous $customized name was custom", async customized => {
     const { repository, items } = makeRepository("skills");
     const group = (items as SkillItem[])[0];
-    group.translations[customized].title = expectedCustom;
+    group.translations[customized].title = customized === "zh" ? "技术能力" : "Core Capabilities";
     open({ path: "/skills" }, repository);
     await screen.findByLabelText("Chinese Name");
     chooseSkillCategory(0, "Data & Systems");
-    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value)
-      .toBe(customized === "zh" ? expectedCustom : "数据与系统");
-    expect((screen.getByLabelText("English Name") as HTMLInputElement).value)
-      .toBe(customized === "en" ? expectedCustom : "Data & Systems");
-    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("数据与系统");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Data & Systems");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Data & Systems");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("sets arbitrary Custom Skills names to the selected Programming pair and updates the Preview draft", async () => {
+    const { repository, items } = makeRepository("skills");
+    const group = (items as SkillItem[])[0];
+    group.translations.zh.title = "v好剧";
+    group.translations.en.title = "Core Programming";
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+
+    chooseSkillCategory(0, "Programming");
+
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Programming");
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("编程");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(screen.queryByText("Review English")).toBeNull();
+    expect(screen.queryByText("Review Chinese")).toBeNull();
+
+    const card = document.querySelector(".skills-editor-scope .item-card")!;
+    fireEvent.click(card.querySelector(".item-actions button")!);
+    expect(screen.queryByLabelText("Chinese Name")).toBeNull();
+    fireEvent.click(card.querySelector(".item-actions button")!);
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("编程");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Programming");
+  });
+
+  it.each([
+    { locale: "zh" as const, label: "Chinese Name", edited: "v好剧", exact: "编程" },
+    { locale: "en" as const, label: "English Name", edited: "Something Else", exact: "Programming" },
+  ])("detaches a preset when the $locale name changes and recognizes the exact pair again", async ({ label, edited, exact }) => {
+    const { repository } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText(label);
+    const name = screen.getByLabelText(label) as HTMLInputElement;
+    fireEvent.change(name, { target: { value: edited } });
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Custom");
+
+    fireEvent.change(name, { target: { value: exact } });
+    expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe("Programming");
+  });
+
+  it("switches directly between Skills presets as complete bilingual pairs", async () => {
+    const { repository } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    await screen.findByLabelText("Chinese Name");
+    for (const preset of [
+      { option: "Analytics", zh: "分析", en: "Analytics" },
+      { option: "Tools", zh: "工具", en: "Tools" },
+    ]) {
+      chooseSkillCategory(0, preset.option);
+      expect(document.querySelector(".skills-editor-scope .admin-dropdown-value")?.textContent).toBe(preset.option);
+      expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe(preset.zh);
+      expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe(preset.en);
+    }
+  });
+
+  it("clears prior title review reminders when a preset synchronizes both locales", async () => {
+    const { repository } = makeRepository("skills");
+    open({ path: "/skills" }, repository);
+    const zh = await screen.findByLabelText("Chinese Name");
+    fireEvent.change(zh, { target: { value: "手动修改" } });
+    expect(screen.getByText("Review English")).toBeTruthy();
+
+    chooseSkillCategory(0, "Programming");
+
+    expect(screen.queryByText("Review English")).toBeNull();
+    expect(screen.queryByText("Review Chinese")).toBeNull();
+    expect((screen.getByLabelText("Chinese Name") as HTMLInputElement).value).toBe("编程");
+    expect((screen.getByLabelText("English Name") as HTMLInputElement).value).toBe("Programming");
   });
 
   it("selecting Custom clears preset titles and Cancel restores the Languages preset", async () => {
