@@ -2205,7 +2205,7 @@ function AwardFields({ item, confirmed, onChange }: {
 
 function Awards() {
   const { t, locale } = useUiLocale();
-  return <RepeatableSection<AwardItem> section="awards" title="Awards" description="" hideLabelWhenExpanded
+  return <RepeatableSection<AwardItem> section="awards" title="Awards" description=""
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { name: "", year: "" }, en: { name: "", year: "" } } })}
     label={(item, index) => item.translations[locale].name || item.translations[locale === "zh" ? "en" : "zh"].name || `${locale === "zh" ? "荣誉奖项" : t("Award")} ${index + 1}`}
     render={(item, onChange, confirmed) => <AwardFields item={item} confirmed={confirmed} onChange={onChange} />} />;
@@ -2350,7 +2350,7 @@ function Contact() {
         onChange={translations => onChange({ ...contact, translations })}
         fields={[{ key: "contactLabel", label: "Section label" }, { key: "availability", label: "Availability", multiline: true }]} />
       </div>
-      <div className="panel" data-editor-anchor="contact:focus"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-focus" items={contact.focus} confirmedItems={confirmed.focus}
+      <div className="panel" data-editor-anchor="contact:focus"><RepeatableList groupLabel="Current Focus" addLabel="Add focus" allowMultipleOpen anchorScope="contact-focus" items={contact.focus} confirmedItems={confirmed.focus}
         onChange={focus => onChange({ ...contact, focus })}
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
@@ -2358,7 +2358,7 @@ function Contact() {
         render={(item, change, base) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title", "detail"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
-      <div className="panel" data-editor-anchor="contact:status"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-status" items={contact.status} confirmedItems={confirmed.status}
+      <div className="panel" data-editor-anchor="contact:status"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen anchorScope="contact-status" items={contact.status} confirmedItems={confirmed.status}
         onChange={status => onChange({ ...contact, status })}
         onConfirmedDelete={id => onChange({ ...contact, status: renumber(contact.status.filter(item => item.id !== id)) })}
         create={(id, position): StatusItem => ({ id, position, statusType: "open", translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}

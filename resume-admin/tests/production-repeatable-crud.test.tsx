@@ -921,9 +921,11 @@ describe("Batch 6A production repeatable CRUD", () => {
     ]);
     const [expandedCard, ...collapsedCards] = Array.from(scope.querySelectorAll<HTMLElement>(".item-card"));
     const expandedTitle = expandedCard.querySelector<HTMLElement>(".item-card-heading h3")!;
-    expect(expandedTitle.classList.contains("visually-hidden")).toBe(true);
-    expect(expandedTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(true);
+    expect(expandedTitle.classList.contains("visually-hidden")).toBe(false);
+    expect(expandedTitle.textContent).toBe("Other locale award");
+    expect(expandedTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(false);
     expect(within(expandedCard).getByRole("button", { name: /(Close editor for|关闭编辑器：)\s*Other locale award/ })).toBeTruthy();
+    expect(expandedCard.querySelectorAll(".item-actions button")).toHaveLength(4);
     expect(within(expandedCard).getByLabelText(locale === "zh" ? "中文 荣誉名称" : "Chinese Award name")).toBeTruthy();
     expect(within(expandedCard).getByLabelText(locale === "zh" ? "英文 荣誉名称" : "English Award name")).toBeTruthy();
     const awardNameLabel = expandedCard.querySelector<HTMLLabelElement>(".awards-name-field label")!;
@@ -948,6 +950,30 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(expandedTitle.textContent).toBe("Other locale award");
     expect(screen.getByRole("button", { name: locale === "zh" ? "保存荣誉奖项修改" : "Save award changes" })).toBeTruthy();
     expect(scope.textContent).not.toMatch(/Save production changes|保存到生产环境|Changes saved to production|修改已保存到生产环境/);
+  });
+
+  it.each(["en", "zh"] as const)("keeps the live %s Award name in the expanded header through edit, collapse, reopen, and Cancel", async locale => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
+    const { repository } = makeRepository("awards");
+    open({ path: "/awards" }, repository);
+    const card = (await screen.findByLabelText(locale === "zh" ? "中文 荣誉名称" : "Chinese Award name")).closest(".item-card") as HTMLElement;
+    const headerTitle = () => card.querySelector<HTMLElement>(".item-card-heading h3")?.textContent;
+    const localizedName = card.querySelector<HTMLTextAreaElement>(locale === "zh" ? "#award-1-zh-name" : "#award-1-en-name")!;
+    const baseline = localizedName.value;
+    expect(headerTitle()).toBe(locale === "zh" ? "示例项目成果" : "Example Project Outcome");
+
+    fireEvent.change(card.querySelector<HTMLTextAreaElement>(`#${localizedName.id}`)!, { target: { value: `${baseline} updated` } });
+    expect(headerTitle()).toBe(`${baseline} updated`);
+    expect(card.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(false);
+
+    fireEvent.click(card.querySelector<HTMLButtonElement>(".item-actions button")!);
+    expect(headerTitle()).toBe(`${baseline} updated`);
+    fireEvent.click(card.querySelector<HTMLButtonElement>(".item-actions button")!);
+    expect(headerTitle()).toBe(`${baseline} updated`);
+
+    fireEvent.click(screen.getByRole("button", { name: locale === "zh" ? "取消修改" : "Cancel changes" }));
+    expect(headerTitle()).toBe(baseline);
+    expect(card.querySelector<HTMLTextAreaElement>(`#${localizedName.id}`)?.value).toBe(baseline);
   });
 
   it("auto-grows bilingual Awards names while preserving complete draft, Preview, Cancel, and Save values", async () => {
@@ -1481,10 +1507,14 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(within(statusCards()[1]).getByRole("button", { name: "Edit Open to Discussions" }));
     expect(focus.querySelectorAll(".item-card-body")).toHaveLength(2);
     expect(status.querySelectorAll(".item-card-body")).toHaveLength(2);
-    expect(Array.from(focus.querySelectorAll(".item-card-heading h3")).every(heading => heading.classList.contains("visually-hidden"))).toBe(true);
-    expect(Array.from(status.querySelectorAll(".item-card-heading h3")).every(heading => heading.classList.contains("visually-hidden"))).toBe(true);
+    expect(Array.from(focus.querySelectorAll(".item-card-heading h3")).every(heading => !heading.classList.contains("visually-hidden"))).toBe(true);
+    expect(Array.from(status.querySelectorAll(".item-card-heading h3")).every(heading => !heading.classList.contains("visually-hidden"))).toBe(true);
     expect(within(focusCards()[1]).getByRole("button", { name: "Close editor for Projects & Practice" })).toBeTruthy();
     expect(within(statusCards()[1]).getByRole("button", { name: "Close editor for Open to Discussions" })).toBeTruthy();
+
+    fireEvent.click(within(statusCards()[1]).getByRole("button", { name: "Move Open to Discussions up" }));
+    expect(statusCards().map(card => card.querySelector(".item-card-heading h3")?.textContent)).toEqual(["Open to Discussions", "Example Template"]);
+    expect(statusCards().map(card => card.dataset.editorAnchor)).toEqual(["item:contact-status:status-2", "item:contact-status:status-1"]);
 
     fireEvent.click(within(focusCards()[1]).getByRole("button", { name: "Move Projects & Practice up" }));
     expect(focusCards().map(card => Boolean(card.querySelector(".item-card-body")))).toEqual([true, true]);
@@ -1519,7 +1549,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Add focus" : "添加关注" }));
     expect(screen.getByRole("button", { name: locale === "en" ? "Close editor for Focus 3" : "关闭编辑器： 关注 3" })).toBeTruthy();
     const newFocus = Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Focus"] .item-card')).at(-1)!;
-    expect(newFocus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(newFocus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(false);
     expect(within(newFocus).getByLabelText(locale === "en" ? "Chinese Focus title" : "中文 关注标题")).toBeTruthy();
     expect(within(newFocus).getByLabelText(locale === "en" ? "English Focus title" : "英文 关注标题")).toBeTruthy();
     fireEvent.click(within(newFocus).getByRole("button", { name: locale === "en" ? "Close editor for Focus 3" : "关闭编辑器： 关注 3" }));
@@ -1527,7 +1557,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Add status" : "添加状态" }));
     expect(screen.getByRole("button", { name: locale === "en" ? "Close editor for Status 3" : "关闭编辑器： 状态 3" })).toBeTruthy();
     const newStatus = Array.from(scope.querySelectorAll<HTMLElement>('[aria-label="Current Status"] .item-card')).at(-1)!;
-    expect(newStatus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
+    expect(newStatus.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(false);
     expect(within(newStatus).getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" })).toBeTruthy();
     expect(within(newStatus).getByLabelText(locale === "en" ? "Chinese Status title" : "中文 状态标题")).toBeTruthy();
     expect(within(newStatus).getByLabelText(locale === "en" ? "English Status title" : "英文 状态标题")).toBeTruthy();
@@ -1549,63 +1579,107 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(css).toContain(".contact-editor-scope button:focus-visible{outline:2px solid #77766f;outline-offset:2px}");
   });
 
-  it("hides expanded Contact summaries but keeps editable titles, cancel, and save behavior", async () => {
+  it.each(["en", "zh"] as const)("shows the live expanded Current Focus title in %s while keeping Cancel and Save behavior", async locale => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
     const contact = makeRepository("skills");
     open({ path: "/contact" }, contact.repository);
-    await screen.findByLabelText("English Section label");
+    await screen.findByLabelText(locale === "en" ? "English Section label" : "英文 部分标签");
 
     const focus = document.querySelector('[aria-label="Current Focus"]') as HTMLElement;
     const focusCard = focus.querySelector<HTMLElement>(".item-card")!;
     const focusTitle = focusCard.querySelector<HTMLElement>(".item-card-heading h3")!;
-    expect(focusTitle.classList.contains("visually-hidden")).toBe(true);
-    expect(focusTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(true);
-    expect(within(focusCard).getByLabelText("Chinese Focus title")).toBeTruthy();
-    expect(within(focusCard).getByLabelText("English Focus title")).toBeTruthy();
+    const titleLabel = locale === "en" ? "English Focus title" : "中文 关注标题";
+    const titleField = within(focusCard).getByLabelText(titleLabel) as HTMLInputElement;
+    const originalTitle = locale === "en" ? "Data & Analysis" : "数据与分析";
+    expect(focusTitle.classList.contains("visually-hidden")).toBe(false);
+    expect(focusTitle.parentElement?.classList.contains("visually-hidden-containing-block")).toBe(false);
+    expect(focusTitle.textContent).toBe(originalTitle);
+    expect(within(focusCard).getByLabelText(locale === "en" ? "Chinese Focus title" : "英文 关注标题")).toBeTruthy();
     const focusLabel = focusCard.querySelector<HTMLLabelElement>('label[for="focus-1-zh-title"]')!;
     expect(focusLabel.classList.contains("visually-hidden-containing-block")).toBe(true);
-    expect(focusLabel.querySelector(".visually-hidden")?.textContent).toBe("Chinese Focus title");
+    expect(focusLabel.querySelector(".visually-hidden")?.textContent).toBe(locale === "en" ? "Chinese Focus title" : "中文 关注标题");
     expect(focusLabel.querySelector('[aria-hidden="true"]')?.textContent).toBe("中文");
-    expect(within(focusCard).getByRole("button", { name: "Close editor for Data & Analysis" })).toBeTruthy();
+    expect(within(focusCard).getByRole("button", { name: locale === "en" ? "Close editor for Data & Analysis" : "关闭编辑器： 数据与分析" })).toBeTruthy();
 
-    fireEvent.change(within(focusCard).getByLabelText("Chinese Focus title"), { target: { value: "临时标题" } });
-    expect(screen.getByText("Unsaved changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
-    expect((within(focusCard).getByLabelText("Chinese Focus title") as HTMLInputElement).value).toBe("数据与分析");
-    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    const changeTitle = (value: string) => fireEvent.change(titleField, { target: { value } });
+    const currentLocaleTitle = locale === "en" ? "Data & Analysis updated" : "数据与分析已更新";
+    changeTitle(currentLocaleTitle);
+    expect(focusTitle.textContent).toBe(currentLocaleTitle);
+    expect(screen.getByText(locale === "en" ? "Unsaved changes" : "有未保存修改")).toBeTruthy();
 
-    fireEvent.change(within(focusCard).getByLabelText("Chinese Focus title"), { target: { value: "已保存标题" } });
-    save();
-    await screen.findByText("No unsaved changes");
-    expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", "zh", { title: "已保存标题", detail: "" });
+    const closeLabel = locale === "en" ? "Close editor for Data & Analysis updated" : "关闭编辑器： 数据与分析已更新";
+    fireEvent.click(within(focusCard).getByRole("button", { name: closeLabel }));
+    expect(focusCard.querySelector(".item-card-body")).toBeNull();
+    expect(focusCard.querySelector(".item-card-heading h3")?.textContent).toBe(currentLocaleTitle);
+    fireEvent.click(within(focusCard).getByRole("button", { name: locale === "en" ? "Edit Data & Analysis updated" : "编辑 数据与分析已更新" }));
+    expect(focusCard.querySelector(".item-card-body")).toBeTruthy();
+    expect(focusCard.querySelector(".item-card-heading h3")?.textContent).toBe(currentLocaleTitle);
+
+    fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Cancel changes" : "取消修改" }));
+    expect((within(focusCard).getByLabelText(titleLabel) as HTMLInputElement).value).toBe(originalTitle);
+    expect(focusTitle.textContent).toBe(originalTitle);
+    expect(screen.getByText(locale === "en" ? "No unsaved changes" : "没有未保存修改")).toBeTruthy();
+
+    const savedTitle = locale === "en" ? "Saved English focus" : "已保存的关注标题";
+    fireEvent.change(within(focusCard).getByLabelText(titleLabel), { target: { value: savedTitle } });
+    expect(focusTitle.textContent).toBe(savedTitle);
+    fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Save contact changes" : "保存联系方式修改" }));
+    await screen.findByText(locale === "en" ? "No unsaved changes" : "没有未保存修改");
+    expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", locale === "en" ? "en" : "zh", { title: savedTitle, detail: "" });
   });
 
-  it("hides the expanded Status summary while retaining type and bilingual controls", async () => {
+  it.each(["en", "zh"] as const)("shows the live expanded Current Status title in %s and keeps type independent", async locale => {
+    window.localStorage.setItem(UI_LOCALE_KEY, locale);
     const contact = makeRepository("skills");
     open({ path: "/contact" }, contact.repository);
-    await screen.findByLabelText("English Section label");
+    await screen.findByLabelText(locale === "en" ? "English Section label" : "英文 部分标签");
 
     const status = document.querySelector('[aria-label="Current Status"]') as HTMLElement;
     const statusCard = status.querySelector<HTMLElement>(".item-card")!;
-    expect(statusCard.querySelector(".item-card-heading h3")?.classList.contains("visually-hidden")).toBe(true);
-    expect(within(statusCard).getByRole("combobox", { name: "Status type" })).toBeTruthy();
-    expect(within(statusCard).getByLabelText("Chinese Status title")).toBeTruthy();
-    expect(within(statusCard).getByLabelText("English Status title")).toBeTruthy();
-    expect(within(statusCard).getByRole("button", { name: "Close editor for Example Template" })).toBeTruthy();
+    const headerTitle = statusCard.querySelector<HTMLElement>(".item-card-heading h3")!;
+    const titleLabel = locale === "en" ? "English Status title" : "中文 状态标题";
+    const originalTitle = locale === "en" ? "Example Template" : "示例模板";
+    const changedTitle = locale === "en" ? "Currently Studying" : "正在学习";
+    expect(headerTitle.classList.contains("visually-hidden")).toBe(false);
+    expect(headerTitle.textContent).toBe(originalTitle);
+    expect(within(statusCard).getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" })).toBeTruthy();
+    expect(within(statusCard).getByLabelText(locale === "en" ? "Chinese Status title" : "英文 状态标题")).toBeTruthy();
+    expect(within(statusCard).getByLabelText(titleLabel)).toBeTruthy();
+    expect(within(statusCard).getByRole("button", { name: locale === "en" ? "Close editor for Example Template" : "关闭编辑器： 示例模板" })).toBeTruthy();
 
-    const type = within(statusCard).getByRole("combobox", { name: "Status type" });
+    fireEvent.change(within(statusCard).getByLabelText(titleLabel), { target: { value: changedTitle } });
+    expect(headerTitle.textContent).toBe(changedTitle);
+
+    const type = within(statusCard).getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" });
     fireEvent.click(type);
-    const listbox = screen.getByRole("listbox", { name: "Status type" });
-    expect(within(listbox).getByRole("option", { name: "Study" })).toBeTruthy();
-    expect(within(listbox).getByRole("option", { name: "Graduation" })).toBeTruthy();
-    expect(within(listbox).getByRole("option", { name: "Open" })).toBeTruthy();
-    fireEvent.click(within(listbox).getByRole("option", { name: "Graduation" }));
-    expect(screen.getByText("Unsaved changes")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
-    expect(within(statusCard).getByRole("combobox", { name: "Status type" }).textContent).toBe("Study");
+    const listbox = screen.getByRole("listbox", { name: locale === "en" ? "Status type" : "状态类型" });
+    expect(within(listbox).getByRole("option", { name: locale === "en" ? "Study" : "学习" })).toBeTruthy();
+    expect(within(listbox).getByRole("option", { name: locale === "en" ? "Graduation" : "毕业" })).toBeTruthy();
+    expect(within(listbox).getByRole("option", { name: locale === "en" ? "Open" : "开放" })).toBeTruthy();
+    fireEvent.click(within(listbox).getByRole("option", { name: locale === "en" ? "Graduation" : "毕业" }));
+    expect(headerTitle.textContent).toBe(changedTitle);
+    expect(screen.getByText(locale === "en" ? "Unsaved changes" : "有未保存修改")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Cancel changes" : "取消修改" }));
+    expect((within(statusCard).getByLabelText(titleLabel) as HTMLInputElement).value).toBe(originalTitle);
+    expect(headerTitle.textContent).toBe(originalTitle);
+    expect(within(statusCard).getByRole("combobox", { name: locale === "en" ? "Status type" : "状态类型" }).textContent).toBe(locale === "en" ? "Study" : "学习");
     expect(contact.methods.updateStatusType).not.toHaveBeenCalled();
 
-    fireEvent.click(within(statusCard).getByRole("button", { name: "Close editor for Example Template" }));
-    expect(statusCard.querySelector(".item-card-heading h3")?.textContent).toBe("Example Template");
+    fireEvent.click(within(statusCard).getByRole("button", { name: locale === "en" ? "Close editor for Example Template" : "关闭编辑器： 示例模板" }));
+    expect(statusCard.querySelector(".item-card-body")).toBeNull();
+    expect(headerTitle.textContent).toBe(originalTitle);
+    fireEvent.click(within(statusCard).getByRole("button", { name: locale === "en" ? "Edit Example Template" : "编辑 示例模板" }));
+    expect(statusCard.querySelector(".item-card-body")).toBeTruthy();
+    expect(headerTitle.textContent).toBe(originalTitle);
+
+    const savedTitle = locale === "en" ? "Saved Status Title" : "已保存状态标题";
+    fireEvent.change(within(statusCard).getByLabelText(titleLabel), { target: { value: savedTitle } });
+    expect(headerTitle.textContent).toBe(savedTitle);
+    fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Save contact changes" : "保存联系方式修改" }));
+    await screen.findByText(locale === "en" ? "No unsaved changes" : "没有未保存修改");
+    expect(contact.methods.updateStatusTranslation).toHaveBeenCalledWith(resumeId, "status-1", locale, expect.objectContaining({ title: savedTitle }));
+    expect(contact.methods.updateStatusType).not.toHaveBeenCalled();
   });
 
   it("keeps expanded summary headings for repeatable editors outside Contact", async () => {
