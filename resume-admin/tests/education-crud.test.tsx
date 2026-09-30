@@ -98,7 +98,7 @@ function adminAuth(): AdminAuthClient {
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Stage 4G Education production CRUD", () => {
-  it("scopes paired short-title layout hooks to Education and preserves bilingual values", async () => {
+  it("uses the shared single-line pair hook for approved Education fields and preserves bilingual values", async () => {
     openEducation(makeRepository());
     await screen.findByRole("button", { name: "Save Education changes" });
 
@@ -109,10 +109,11 @@ describe("Stage 4G Education production CRUD", () => {
     expect((document.getElementById("section-text-education-en-educationLabel") as HTMLInputElement).value).toBe("Education");
     expect((document.getElementById("education-id-zh-title") as HTMLInputElement).value).toBe("中文教育");
     expect((document.getElementById("education-id-en-title") as HTMLInputElement).value).toBe("English Education");
+    expect(education.querySelector('[data-editor-anchor="field:section-text-education:educationLabel"]')?.classList.contains("paired-bilingual-single-line")).toBe(true);
     for (const key of ["title", "program", "period", "grade", "courseTitle"]) {
-      expect(education.querySelector(`[data-editor-anchor="field:education-id:${key}"]`)?.classList.contains("education-short-bilingual-field")).toBe(true);
+      expect(education.querySelector(`[data-editor-anchor="field:education-id:${key}"]`)?.classList.contains("paired-bilingual-single-line")).toBe(true);
     }
-    expect(education.querySelector('[data-editor-anchor="field:education-id:courseDescription"]')?.classList.contains("education-short-bilingual-field")).toBe(false);
+    expect(education.querySelector('[data-editor-anchor="field:education-id:courseDescription"]')?.classList.contains("paired-bilingual-single-line")).toBe(false);
     expect((document.getElementById("education-id-zh-program") as HTMLInputElement).value).toBe("Program");
     expect((document.getElementById("education-id-en-program") as HTMLInputElement).value).toBe("Program");
     expect((document.getElementById("education-id-zh-period") as HTMLInputElement).value).toBe("2024");
@@ -126,6 +127,15 @@ describe("Stage 4G Education production CRUD", () => {
     await screen.findByRole("heading", { name: "Experience" });
     expect(document.querySelector(".experience-editor-scope .education-section-title-fields")).toBeNull();
     expect(document.querySelector(".experience-editor-scope .education-entry-title-fields")).toBeNull();
+  });
+
+  it("uses the shared single-line pair hook for the conditional Custom Category Name", async () => {
+    openEducation(makeRepository());
+    await screen.findByRole("button", { name: "Save Education changes" });
+    chooseCategory(1, "custom");
+    const name = await screen.findByLabelText("Chinese Custom category name");
+    expect(name.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
+    expect(screen.getByLabelText("English Custom category name").closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
   });
 
   it("omits generic save instructions while keeping the route save area", async () => {

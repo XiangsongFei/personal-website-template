@@ -382,6 +382,7 @@ main{color:#242424}
 .education-editor-scope .bilingual-field-pair>h3,.experience-editor-scope .bilingual-field-pair>h3,.projects-editor-scope .bilingual-field-pair>h3,.skills-editor-scope .bilingual-field-pair>h3,.awards-editor-scope .bilingual-field-pair>h3,.contact-editor-scope .bilingual-field-pair>h3,.links-editor-scope .bilingual-field-pair>h3{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600}
 .education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values,.contact-editor-scope .bilingual-field-values,.links-editor-scope .bilingual-field-values{grid-column:2/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
 .education-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.experience-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.projects-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.skills-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.awards-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.contact-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.links-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:none}
+.introduction-editor-scope .bilingual-field-multiline .bilingual-field-values,.education-editor-scope .bilingual-field-multiline .bilingual-field-values,.experience-editor-scope .bilingual-field-multiline .bilingual-field-values,.projects-editor-scope .bilingual-field-multiline .bilingual-field-values,.contact-editor-scope .bilingual-field-multiline .bilingual-field-values{grid-template-columns:minmax(0,1fr)}
 .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);row-gap:0}
 .awards-editor-scope .awards-fields-grid>.bilingual-column-headings{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px)}
 .awards-editor-scope .awards-name-year-pair{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);align-items:start;padding:12px 0}
@@ -453,11 +454,21 @@ main{color:#242424}
 .links-editor-scope .links-footer-setting h3{margin:0 0 5px;color:#555;font-size:14px;font-weight:600;line-height:1.4}
 .links-editor-scope .links-footer-setting>p{margin:0 0 8px;color:#777;font-size:13px;line-height:1.5}
 .links-editor-scope .links-footer-setting .links-translation-matrix{margin:0}
+
+/* Experience Organization and Role keep their approved label-above-fields layout. */
+.experience-editor-scope .experience-paired-field-heading-above{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:12px 0}
+.experience-editor-scope .experience-paired-field-heading-above>h3{grid-column:1;padding-top:8px}
+.experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{grid-column:1}
+.experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
+
 @container (max-width:620px){
   .education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{display:none}
   .education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
   .education-editor-scope .bilingual-field-pair>h3,.experience-editor-scope .bilingual-field-pair>h3,.projects-editor-scope .bilingual-field-pair>h3,.skills-editor-scope .bilingual-field-pair>h3,.awards-editor-scope .bilingual-field-pair>h3,.contact-editor-scope .bilingual-field-pair>h3,.links-editor-scope .bilingual-field-pair>h3{grid-column:1;padding-top:0}
   .education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values,.contact-editor-scope .bilingual-field-values,.links-editor-scope .bilingual-field-values{grid-column:1;grid-template-columns:minmax(0,1fr);gap:15px}
+  .experience-editor-scope .experience-paired-field-heading-above{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
+  .experience-editor-scope .experience-paired-field-heading-above>h3{grid-column:1;padding-top:0}
+  .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{grid-template-columns:minmax(0,1fr)}
   .education-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.experience-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.projects-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.skills-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.awards-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.contact-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.links-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
   .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(0,1fr)}
   .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
@@ -474,38 +485,23 @@ main{color:#242424}
   .projects-editor-scope .methods-grid,.education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
 }
 
-/* Pair only explicitly approved short fields when a desktop editor column has enough room. */
+/* Explicit single-line locale pairs stay 1:1 across fine-pointer editing widths. */
 @media (min-width:861px) and (pointer:fine){
-  @container (min-width:480px) and (max-width:620px){
-    .experience-editor-scope .paired-short-bilingual-field,
-    .projects-editor-scope .paired-short-bilingual-field,
-    .skills-editor-scope .paired-short-bilingual-field,
-    .awards-editor-scope .paired-short-bilingual-field,
-    .contact-editor-scope .paired-short-bilingual-field,
-    .links-editor-scope .paired-short-bilingual-field{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:12px 0}
-    .experience-editor-scope .paired-short-bilingual-field>h3,
-    .projects-editor-scope .paired-short-bilingual-field>h3,
-    .skills-editor-scope .paired-short-bilingual-field>h3,
-    .awards-editor-scope .paired-short-bilingual-field>h3,
-    .contact-editor-scope .paired-short-bilingual-field>h3,
-    .links-editor-scope .paired-short-bilingual-field>h3{grid-column:1;padding-top:0}
-    .experience-editor-scope .paired-short-bilingual-field .bilingual-field-values,
-    .projects-editor-scope .paired-short-bilingual-field .bilingual-field-values,
-    .skills-editor-scope .paired-short-bilingual-field .bilingual-field-values,
-    .awards-editor-scope .paired-short-bilingual-field .bilingual-field-values,
-    .contact-editor-scope .paired-short-bilingual-field .bilingual-field-values{grid-column:1;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,3.8cqi,20px)}
-    .experience-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field,
-    .projects-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field,
-    .skills-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field,
-    .awards-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field,
-    .projects-editor-scope .project-link-text-editor .paired-short-bilingual-field{grid-template-columns:minmax(0,1fr)}
-    .experience-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field .bilingual-field-values,
-    .projects-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field .bilingual-field-values,
-    .skills-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field .bilingual-field-values,
-    .awards-editor-scope .section-text-editor-heading-only .paired-short-bilingual-field .bilingual-field-values,
-    .projects-editor-scope .project-link-text-editor .paired-short-bilingual-field .bilingual-field-values{grid-column:1;grid-template-columns:repeat(2,minmax(0,1fr))}
-    .links-editor-scope .links-translation-matrix:not(.links-inline-locale-fields) .paired-short-bilingual-field .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr))}
-  }
+  .education-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .experience-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .projects-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .skills-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .awards-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .contact-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+  .links-editor-scope .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .education-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .experience-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .projects-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .skills-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .awards-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .contact-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+  .links-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field{min-width:0}
+  .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
   @container (min-width:560px) and (max-width:620px){
     .links-editor-scope .links-inline-locale-fields .paired-short-bilingual-field .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,3.8cqi,20px)}
   }
@@ -592,18 +588,6 @@ main{color:#242424}
   .projects-editor-scope .project-shared-field .field{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
   .projects-editor-scope .project-shared-field .field>label,.projects-editor-scope .project-shared-field .field>input,.projects-editor-scope .project-shared-field .field>.field-edit-status{grid-column:1}
   .projects-editor-scope .project-shared-field .field>label{padding-top:0}
-}
-
-/* Education short bilingual titles keep a paired layout when the local editor has room. */
-@container (min-width:480px) and (max-width:620px){
-  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-column-headings,
-  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-field-pair{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:clamp(14px,3.8cqi,30px)}
-  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-column-headings>span:first-child{display:none}
-  .education-editor-scope .education-section-title-fields .section-text-editor-heading-only .bilingual-field-values{grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
-  .education-editor-scope .education-short-bilingual-field{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:12px 0}
-  .education-editor-scope .education-short-bilingual-field>h3,
-  .education-editor-scope .education-short-bilingual-field .bilingual-field-values{grid-column:1}
-  .education-editor-scope .education-short-bilingual-field .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
 }
 
 /* Login-only editorial treatment; authentication structure and behavior stay unchanged. */
