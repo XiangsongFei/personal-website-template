@@ -108,6 +108,8 @@ describe("Stage 4E Profile editor", () => {
     pending.resolve(confirmed("2030"));
     expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(document.querySelector(".editor-footer-state")?.textContent).toBe("No unsaved changes · Profile changes saved.");
+    expect(document.querySelector(".profile-save-status")).toBeNull();
     expect(screen.getByRole("button", { name: "Save profile changes" }).hasAttribute("disabled")).toBe(true);
     expect(onProfileSaved).toHaveBeenCalledExactlyOnceWith(confirmed("2030"));
     editGraduation("2031");

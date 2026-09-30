@@ -238,6 +238,9 @@ main{color:#242424}
 .save-bar{background:#fff;border:0;border-top:1px solid #eee;border-radius:0;box-shadow:none;backdrop-filter:none;padding:10px 0}
 .state-pill{color:#777;font-size:12px;font-weight:550}
 .state-pill.is-dirty{color:#555}
+.editor-action-footer .save-bar{flex-wrap:wrap}
+.editor-action-footer .editor-footer-state{flex:1 1 180px;min-width:0;line-height:1.45}
+.editor-footer-status-dot{opacity:.55}
 .button{border-radius:3px;padding:8px 11px;font-size:12px;font-weight:600;min-height:35px}
 .button.primary{border-color:#222;background:#222;color:#fff}
 .button.primary:hover:not(:disabled){border-color:#000;background:#000;color:#fff}

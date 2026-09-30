@@ -506,7 +506,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     additionalRouteFirst={useSectionAdditional}
     additionalRouteLoadState={additionalRouteLoadState}
     onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => { retryAdditional(additionalRouteKey); if (useSectionTextRead) retrySiteText(); } : useSectionTextRead ? retrySiteText : retryFullSnapshot}
-    additionalResumeId={additionalRoute?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
+    additionalResumeId={additionalRoute?.resumeId ?? resume?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved} />;
 }

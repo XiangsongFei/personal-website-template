@@ -578,6 +578,28 @@ function useSectionText(page: SectionTextPage | null) {
   return { baseline, draft, dirty, cancel, save, confirmLocal, rendered, projectLinkText };
 }
 
+const inlineFooterFeedback = new Set([
+  "Local changes reverted.", "Introduction changes reverted.",
+  "Profile changes saved.", "Introduction changes saved.", "Project changes saved.",
+  "Skill changes saved.", "Award changes saved.", "Contact changes saved.",
+  "Site & link changes saved.", "Changes saved to production.",
+  "Education changes saved to production.",
+]);
+
+function canInlineFooterFeedback(message: string, error: boolean) {
+  return !error && inlineFooterFeedback.has(message);
+}
+
+function EditorFooterState({ dirty, message = "", error = false }: { dirty: boolean; message?: string; error?: boolean }) {
+  const { t } = useUiLocale();
+  const inlineMessage = canInlineFooterFeedback(message, error);
+  return <span className={`state-pill editor-footer-state${dirty ? " is-dirty" : ""}`}
+    role={inlineMessage ? "status" : undefined} aria-live={inlineMessage ? "polite" : undefined}>
+    <span>{t(dirty ? "Unsaved changes" : "No unsaved changes")}</span>
+    {inlineMessage && <><span className="editor-footer-status-dot" aria-hidden="true">{" · "}</span><span className="editor-footer-status-message">{t(message)}</span></>}
+  </span>;
+}
+
 function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void, confirmed: T) => ReactNode;
@@ -636,13 +658,13 @@ function SectionForm<T>({ section, title, description, initial, children, produc
       </EditorContentScroll>
       <EditorActionFooter>
         <div className="save-bar">
-          <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+          <EditorFooterState dirty={dirty} message={saveNotice} error={saveError} />
           <div className="save-actions">
             <button type="button" className="button secondary" onClick={cancelDraft} disabled={!dirty || saving}>{t("Cancel changes")}</button>
             <button type="submit" className="button primary" disabled={!dirty || saving}>{saving ? t("Saving…") : saveLabel ? t(saveLabel) : section === "introduction" ? t("Save Introduction changes") : section === "experience" ? t("Save experience changes") : section === "projects" && editor.production && productionSave ? t("Save project changes") : section === "skills" ? t("Save skill changes") : section === "awards" ? t("Save award changes") : section === "contact" && editor.production && productionSave ? t("Save contact changes") : editor.production && !productionSave ? t("Save local draft") : editor.production ? t("Save production changes") : t("Save section")}</button>
           </div>
         </div>
-        {saveNotice && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
+        {saveNotice && !canInlineFooterFeedback(saveNotice, saveError) && <p className="save-notice" role={saveError ? "alert" : "status"} aria-live="polite">{t(saveNotice)}</p>}
       </EditorActionFooter>
   </form>;
 }
@@ -1005,8 +1027,8 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />
     </EditorContentScroll>
     <EditorActionFooter>
-      {editor.notice && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
-      <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+      {editor.notice && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
+      <div className="save-bar"><EditorFooterState dirty={dirty} message={editor.notice} error={editor.error} />
         <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
           <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
       </div>
@@ -1504,7 +1526,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       </EditorContentScroll>
       <EditorActionFooter>
         <div className="save-bar">
-          <span className={dirty ? "state-pill is-dirty" : "state-pill"}>{t(dirty ? "Unsaved changes" : "No unsaved changes")}</span>
+          <EditorFooterState dirty={dirty} message={profileStatus?.message} error={profileStatus?.error} />
           <div className="save-actions">
             <button type="button" className="button secondary" disabled={!dirty || saving || saveInFlight}
               onClick={cancelProfileChanges}>{t("Cancel changes")}</button>
@@ -1513,7 +1535,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
             </button>
           </div>
         </div>
-        {profileStatus && <p className="save-notice profile-save-status" role={profileStatus.error ? "alert" : "status"} aria-live="polite">{t(profileStatus.message)}</p>}
+        {profileStatus?.error && <p className="save-notice profile-save-status" role="alert" aria-live="polite">{t(profileStatus.message)}</p>}
       </EditorActionFooter>
   </form>;
 }
@@ -1976,8 +1998,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     </div>
     </EditorContentScroll>
     <EditorActionFooter>
-      {(editor.notice || !methodsReady) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
-      <div className="save-bar"><span className={dirty ? "state-pill is-dirty" : "state-pill"}>{dirty ? t("Unsaved changes") : t("No unsaved changes")}</span>
+      {(editor.notice || !methodsReady) && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
+      <div className="save-bar"><EditorFooterState dirty={dirty} message={editor.notice} error={editor.error} />
         <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving}>{t("Cancel changes")}</button>
           <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : t("Save Education changes")}</button></div>
       </div>

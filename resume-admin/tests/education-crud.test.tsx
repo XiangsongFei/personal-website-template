@@ -101,6 +101,7 @@ describe("Stage 4G Education production CRUD", () => {
   it("uses the shared single-line pair hook for approved Education fields and preserves bilingual values", async () => {
     openEducation(makeRepository());
     await screen.findByRole("button", { name: "Save Education changes" });
+    expect(screen.queryByText("Local draft only. Production writes are disabled for this section.")).toBeNull();
 
     const education = document.querySelector(".education-editor-scope")!;
     expect(education.querySelector(".education-section-title-fields")).toBeTruthy();
@@ -244,6 +245,7 @@ describe("Stage 4G Education production CRUD", () => {
     chooseCategory(1, "graduate");
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
     await screen.findByText("Education changes saved to production.");
+    expect(document.querySelector(".editor-footer-state")?.textContent).toBe("No unsaved changes · Education changes saved to production.");
     expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "zh", expect.objectContaining({ title: "研究生教育" }));
     expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "en", expect.objectContaining({ title: "Graduate Education" }));
   });

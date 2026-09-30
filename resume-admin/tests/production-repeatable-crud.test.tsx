@@ -1170,6 +1170,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     save();
     await screen.findByRole("alert");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(document.querySelector(".editor-footer-state")?.textContent).toBe("Unsaved changes");
     expect((field as HTMLInputElement | HTMLTextAreaElement).value).toBe(`Retry ${spec.title}`);
     save();
     await screen.findByText("No unsaved changes");
