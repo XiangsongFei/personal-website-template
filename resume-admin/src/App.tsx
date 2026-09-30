@@ -16,6 +16,7 @@ import { bilingualFieldKey, collectChangedBilingualFieldKeys, type BilingualFiel
 import { UiLocaleSwitch, useUiLocale } from "./uiLocale";
 import { AdminDropdown } from "./AdminDropdown";
 import { AdaptivePairedField } from "./AdaptivePairedField";
+import { AdaptiveMethodsGrid } from "./AdaptiveMethodsGrid";
 import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readDocumentScrollPosition, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
 
@@ -2066,8 +2067,8 @@ function Projects() {
       </div>
       {(item.translations.zh.href.trim() || item.translations.en.href.trim()) && sectionText.projectLinkText(item.id)}
       <div className="projects-methods-heading"><h3>{methodsHeading}</h3></div>
-      <div className="bilingual-grid methods-grid">{(["zh", "en"] as const).map(locale => <MethodFields key={locale} idPrefix={item.id} projectId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} locale={locale}
-        methods={item.methods[locale]} confirmedMethods={confirmed?.methods[locale]} onChange={methods => onChange({ ...item, methods: { ...item.methods, [locale]: methods } })} />)}</div>
+      <AdaptiveMethodsGrid values={(["zh", "en"] as const).map(methodLocale => item.methods[methodLocale].map(method => method.value))}>{(["zh", "en"] as const).map(locale => <MethodFields key={locale} idPrefix={item.id} projectId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} locale={locale}
+        methods={item.methods[locale]} confirmedMethods={confirmed?.methods[locale]} onChange={methods => onChange({ ...item, methods: { ...item.methods, [locale]: methods } })} />)}</AdaptiveMethodsGrid>
     </>} />;
 }
 

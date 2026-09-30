@@ -483,7 +483,7 @@ main{color:#242424}
   .links-editor-scope .links-translation-matrix .bilingual-field-pair>h3,.links-editor-scope .links-translation-matrix .bilingual-field-values{grid-column:1}
   .links-editor-scope .links-translation-matrix .bilingual-field-values{grid-template-columns:minmax(0,1fr);gap:10px}
   .links-editor-scope .resume-file-grid{grid-template-columns:minmax(0,1fr);gap:18px}
-  .projects-editor-scope .methods-grid,.education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
+  .education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
 }
 
 /* Preserve layout-specific treatments; adaptive pairs are handled at all sizes below. */
@@ -539,6 +539,7 @@ main{color:#242424}
 .projects-editor-scope .projects-methods-heading{margin:20px 0 10px}
 .projects-editor-scope .projects-methods-heading h3{margin:0;color:#444;font-size:15px;font-weight:600}
 .projects-editor-scope .methods-grid{margin-top:0}
+.projects-editor-scope .methods-grid.is-adaptive-stacked{grid-template-columns:minmax(0,1fr)}
 
 /* Awards-only: keep the list title-led with a quiet save area. */
 .awards-editor-scope .page-heading>p:empty{display:none}

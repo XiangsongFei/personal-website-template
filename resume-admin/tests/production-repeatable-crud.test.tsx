@@ -1200,6 +1200,15 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(repo.methods.updateProjectMethod).not.toHaveBeenCalledWith(resumeId, "project-1", expect.stringMatching(/^local-method-/), expect.anything(), expect.anything());
   });
 
+  it("keeps the English add-method action and locale-specific write unchanged", async () => {
+    const repo = makeRepository("projects"); open({ path: "/projects" }, repo.repository, new ResumeSectionStore(), true);
+    await screen.findByLabelText("English methods 1");
+    fireEvent.click(screen.getByRole("button", { name: "Add English method" }));
+    fireEvent.change(await screen.findByLabelText("English methods 3"), { target: { value: "New English method" } });
+    save(); await screen.findByText("No unsaved changes");
+    expect(repo.methods.insertProjectMethod).toHaveBeenCalledWith(resumeId, "project-1", "en", 2, "New English method");
+  });
+
   it("deletes and reorders project methods by their real locale-specific UUIDs", async () => {
     const repo = makeRepository("projects"); open({ path: "/projects" }, repo.repository);
     await screen.findByLabelText("English methods 2");
@@ -1302,11 +1311,15 @@ describe("Batch 6A production repeatable CRUD", () => {
     const repo = makeRepository("projects"); open({ path: "/projects" }, repo.repository);
     await screen.findByLabelText("English methods 1");
     const scope = document.querySelector(".projects-editor-scope")!;
+    const methodsGrid = scope.querySelector<HTMLElement>(".methods-grid")!;
+    expect(methodsGrid.dataset.methodListLayout).toBe("paired");
+    expect(methodsGrid.classList.contains("is-adaptive-stacked")).toBe(false);
     const groups = Array.from(scope.querySelectorAll<HTMLElement>(".method-group"));
     expect(groups.map(group => group.querySelector("h4")?.textContent)).toEqual(["Chinese", "English"]);
     expect(groups.map(group => Array.from(group.querySelectorAll(".method-row .field>label [aria-hidden=true]"), label => label.textContent))).toEqual([["01", "02"], ["01", "02"]]);
     expect(groups[0].querySelectorAll(".method-row")).toHaveLength(2);
     expect(groups[1].querySelectorAll(".method-row")).toHaveLength(2);
+    expect(methodsGrid.querySelectorAll(".method-row.is-adaptive-stacked")).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Move English methods 2 up" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Chinese methods 1" }));
     save(); await screen.findByText("No unsaved changes");
