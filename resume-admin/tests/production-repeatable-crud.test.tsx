@@ -181,7 +181,7 @@ describe("Batch 6A production repeatable CRUD", () => {
       expect.objectContaining({ href: "https://example.test/project" }));
   });
 
-  it("uses the common single-line pairing for approved Experience and Projects fields, independent of text length", async () => {
+  it("keeps approved Experience and Projects fields in the common adaptive single-line set", async () => {
     open({ path: "/experience" }, makeRepository("experience").repository);
     const organization = await screen.findByLabelText("Chinese Organization");
     const role = screen.getByLabelText("Chinese Role");
@@ -229,18 +229,37 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(css).not.toContain("education-short-bilingual-field");
   });
 
-  it("keeps Awards Name out of the common single-line pairing rollout", async () => {
+  it("adapts Award Name textareas while keeping the shared Year outside the locale region", async () => {
     open({ path: "/awards" }, makeRepository("awards").repository);
     const awardName = await screen.findByLabelText("Chinese Award name");
-    expect(awardName.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(false);
+    const adaptiveNames = awardName.closest(".awards-name-values")!;
+    expect(adaptiveNames.classList.contains("paired-bilingual-single-line")).toBe(true);
+    expect(adaptiveNames.querySelectorAll(".bilingual-field-values textarea")).toHaveLength(2);
+    const sharedYear = screen.getByRole("textbox", { name: "Year" });
+    expect(sharedYear.closest(".awards-name-year-pair")).toBe(awardName.closest(".awards-name-year-pair"));
+    expect(sharedYear.closest(".bilingual-field-values")).toBeNull();
+    expect(adaptiveNames.contains(sharedYear)).toBe(false);
   });
 
-  it("pairs only Skills group title and keeps Skills content outside the rollout", async () => {
+  it("adapts both Skills group title and the unchanged list-like Skills content string", async () => {
     open({ path: "/skills" }, makeRepository("skills").repository);
     const title = await screen.findByLabelText("Chinese Name");
     const items = screen.getByLabelText("Chinese Skills");
     expect(title.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
-    expect(items.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(false);
+    expect(items.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
+    expect((items as HTMLInputElement).value).toBe("Python · SQL · TypeScript");
+  });
+
+  it("persists Skills content as the original list-like text value", async () => {
+    const skills = makeRepository("skills");
+    open({ path: "/skills" }, skills.repository);
+    const items = await screen.findByLabelText("Chinese Skills");
+    const value = "Python / Rust · Go";
+    fireEvent.change(items, { target: { value } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(skills.methods.updateEditableTranslation).toHaveBeenCalledWith("skills", resumeId, "skill-1", "zh",
+      expect.objectContaining({ items: value }));
   });
 
   it("keeps Introduction paragraphs full-width and outside the single-line rollout", async () => {
@@ -262,18 +281,20 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByLabelText("Chinese Availability").closest(".bilingual-field-pair")?.classList.contains("bilingual-field-multiline")).toBe(true);
     const focusTitle = screen.getAllByLabelText("Chinese Focus title")[0];
     expect(focusTitle.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
-    expect(screen.getAllByLabelText("Chinese Detail")[0].closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(false);
+    expect(screen.getAllByLabelText("Chinese Detail")[0].closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
     expect(screen.getAllByLabelText("Chinese Detail")[0].closest(".bilingual-field-pair")?.classList.contains("bilingual-field-multiline")).toBe(false);
     const statusTitle = screen.getByLabelText("Chinese Status title");
     expect(statusTitle.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
-    expect(screen.getAllByLabelText("Chinese Detail")[1].closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(false);
-    expect(screen.getByRole("combobox", { name: "Status type" })).toBeTruthy();
+    expect(screen.getAllByLabelText("Chinese Detail")[1].closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
+    const statusType = screen.getByRole("combobox", { name: "Status type" });
+    expect(statusType.closest(".paired-bilingual-single-line")).toBeNull();
     cleanup();
 
     open({ path: "/links" }, makeRepository("skills").repository);
     const linkedinLabel = await screen.findByLabelText("Chinese Contact label");
     expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
-    expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(false);
+    expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
+    expect(linkedinLabel.closest(".bilingual-field-values")?.querySelectorAll("input")).toHaveLength(2);
     const linkedInUrl = screen.getByLabelText("Chinese URL").closest(".bilingual-field-pair");
     expect(linkedInUrl?.classList.contains("paired-short-bilingual-field")).toBe(false);
     expect(linkedInUrl?.classList.contains("paired-bilingual-single-line")).toBe(false);
@@ -1659,12 +1680,16 @@ describe("Batch 6A production repeatable CRUD", () => {
     const contact = makeRepository("skills");
     open({ path: "/contact" }, contact.repository);
     fireEvent.change(await screen.findByLabelText("English Focus title"), { target: { value: "Analytics focus" } });
+    fireEvent.change(screen.getAllByLabelText("Chinese Detail")[0], { target: { value: "焦点详情" } });
     save();
     await screen.findByText("No unsaved changes");
     expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", "en", { title: "Analytics focus", detail: "" });
+    expect(contact.methods.updateFocusTranslation).toHaveBeenCalledWith(resumeId, "focus-1", "zh", { title: "数据与分析", detail: "焦点详情" });
+    fireEvent.change(screen.getAllByLabelText("English Detail")[1], { target: { value: "Status details" } });
     chooseStatusType(0, "Graduation");
     save();
     await screen.findByText("No unsaved changes");
+    expect(contact.methods.updateStatusTranslation).toHaveBeenCalledWith(resumeId, "status-1", "en", { title: "Example Template", detail: "Status details" });
     expect(contact.methods.updateStatusType).toHaveBeenCalledWith(resumeId, "status-1", "graduation");
   });
 

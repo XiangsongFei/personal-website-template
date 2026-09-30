@@ -386,15 +386,15 @@ main{color:#242424}
 .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);row-gap:0}
 .awards-editor-scope .awards-fields-grid>.bilingual-column-headings{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px)}
 .awards-editor-scope .awards-name-year-pair{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);align-items:start;padding:12px 0}
-.awards-editor-scope .awards-name-year-pair>.field:nth-of-type(1){grid-column:2}
-.awards-editor-scope .awards-name-year-pair>.field:nth-of-type(2){grid-column:3}
-.awards-editor-scope .awards-name-year-pair>.awards-name-field{min-width:0;overflow-wrap:anywhere}
+.awards-editor-scope .awards-name-year-pair>.awards-name-values{grid-column:2/4;display:block;width:100%;min-width:0;padding:0}
+.awards-editor-scope .awards-name-values .bilingual-field-values{grid-column:1;gap:clamp(14px,3.8cqi,30px)}
+.awards-editor-scope .awards-name-values .awards-name-field>label>span[aria-hidden=true]{display:none}
+.awards-editor-scope .awards-name-values .awards-name-field{min-width:0;overflow-wrap:anywhere}
 .awards-editor-scope .awards-name-field>label{margin-bottom:0}
 .awards-editor-scope .awards-name-field textarea{width:100%;min-width:0;max-width:100%;height:auto;min-height:40px;resize:none;overflow-x:hidden;overflow-y:hidden;overflow-wrap:anywhere;white-space:pre-wrap;border:0;border-bottom:1px solid #e2e0dc;border-radius:0;background:#fff;color:#202020;padding:9px 0;font-size:15px;font-weight:400;line-height:1.45;box-shadow:none;transition:border-color .12s}
 .awards-editor-scope .awards-name-field textarea:focus{border-color:#666}
 .awards-editor-scope .awards-year-field{grid-column:4;width:100%}
 .awards-editor-scope .awards-year-mobile-label{display:none}
-.awards-editor-scope .awards-name-year-pair>.field label>span[aria-hidden=true]{display:none}
 .awards-editor-scope .awards-year-field input{text-align:left}
 .education-editor-scope .field,.experience-editor-scope .field,.projects-editor-scope .field,.skills-editor-scope .field,.awards-editor-scope .field,.contact-editor-scope .field,.links-editor-scope .field{width:100%;max-width:100%;min-width:0}
 .education-editor-scope .field textarea,.experience-editor-scope .field textarea,.projects-editor-scope .field textarea,.skills-editor-scope .field textarea,.awards-editor-scope .field textarea,.contact-editor-scope .field textarea,.links-editor-scope .field textarea{width:100%;max-width:100%;min-width:0}
@@ -461,6 +461,8 @@ main{color:#242424}
 .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{grid-column:1}
 .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
 
+/* Paired single-line fields adapt from measured capacity at every viewport size. */
+
 @container (max-width:620px){
   .education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{display:none}
   .education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
@@ -472,8 +474,7 @@ main{color:#242424}
   .education-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.experience-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.projects-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.skills-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.awards-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.contact-editor-scope .bilingual-field-values .field label>span[aria-hidden=true],.links-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
   .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(0,1fr)}
   .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
-  .awards-editor-scope .awards-name-year-pair>.field:nth-of-type(1),.awards-editor-scope .awards-name-year-pair>.field:nth-of-type(2),.awards-editor-scope .awards-year-field{grid-column:1}
-  .awards-editor-scope .awards-name-year-pair>.field label>span[aria-hidden=true]{display:inline}
+  .awards-editor-scope .awards-name-year-pair>.awards-name-values,.awards-editor-scope .awards-name-year-pair>.awards-year-field{grid-column:1}
   .awards-editor-scope .awards-name-field>label{margin-bottom:5px}
   .awards-editor-scope .awards-year-mobile-label{display:flex}
   .links-editor-scope .field-grid{grid-template-columns:minmax(0,1fr)}
@@ -485,22 +486,8 @@ main{color:#242424}
   .projects-editor-scope .methods-grid,.education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
 }
 
-/* Explicit single-line locale pairs stay 1:1 across fine-pointer editing widths. */
+/* Preserve layout-specific treatments; adaptive pairs are handled at all sizes below. */
 @media (min-width:861px) and (pointer:fine){
-  .education-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .experience-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .projects-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .skills-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .awards-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .contact-editor-scope .paired-bilingual-single-line .bilingual-field-values,
-  .links-editor-scope .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .education-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .experience-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .projects-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .skills-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .awards-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .contact-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
-  .links-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field{min-width:0}
   .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
   @container (min-width:560px) and (max-width:620px){
     .links-editor-scope .links-inline-locale-fields .paired-short-bilingual-field .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(12px,3.8cqi,20px)}
@@ -616,3 +603,27 @@ main{color:#242424}
 .auth-login-content form>button:disabled{opacity:.58;cursor:wait}
 @media(min-width:641px){.auth-login-screen{place-items:start center;padding-top:clamp(140px,calc(23.66vh - 70px),160px)}}
 @media(max-width:640px){.auth-login-screen{padding-bottom:calc(max(24px,env(safe-area-inset-bottom)) + 80px)}.auth-login-header{gap:14px;margin-bottom:44px}.auth-login-content h1{font-size:28px}.auth-login-content form{margin-top:32px}}
+
+/* Only opted-in pairs use measured 1:1 fit at any screen or pointer size. */
+.education-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.experience-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.projects-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.skills-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.awards-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.contact-editor-scope .paired-bilingual-single-line .bilingual-field-values,
+.links-editor-scope .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr))}
+.education-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.experience-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.projects-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.skills-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.awards-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.contact-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field,
+.links-editor-scope .paired-bilingual-single-line .bilingual-field-values>.field{min-width:0}
+.education-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.experience-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.projects-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.skills-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.awards-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.contact-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
+.links-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values{grid-template-columns:minmax(0,1fr)}
+.paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}

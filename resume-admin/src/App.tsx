@@ -15,6 +15,7 @@ import { validateProfilePhoto } from "./data/profilePhoto";
 import { bilingualFieldKey, collectChangedBilingualFieldKeys, type BilingualFieldIdentity, type BilingualReviewReminder } from "./bilingualReview";
 import { UiLocaleSwitch, useUiLocale } from "./uiLocale";
 import { AdminDropdown } from "./AdminDropdown";
+import { AdaptivePairedField } from "./AdaptivePairedField";
 import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readDocumentScrollPosition, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
 
@@ -467,7 +468,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
       </div>}
       {fields.map(field =>
-      <section className={`bilingual-field-pair${field.multiline ? " bilingual-field-multiline" : ""}${pairedShortFields.includes(String(field.key)) && !field.multiline ? " paired-short-bilingual-field" : ""}${pairedSingleLineFields.includes(String(field.key)) && !field.multiline ? " paired-bilingual-single-line" : ""}${pairedSingleLineHeadingFields.includes(String(field.key)) && !field.multiline ? " experience-paired-field-heading-above" : ""}`} key={field.key} data-editor-anchor={`field:${idPrefix}:${field.key}`}>
+      <AdaptivePairedField key={field.key} className={`bilingual-field-pair${field.multiline ? " bilingual-field-multiline" : ""}${pairedShortFields.includes(String(field.key)) && !field.multiline ? " paired-short-bilingual-field" : ""}${pairedSingleLineFields.includes(String(field.key)) && !field.multiline ? " paired-bilingual-single-line" : ""}${pairedSingleLineHeadingFields.includes(String(field.key)) && !field.multiline ? " experience-paired-field-heading-above" : ""}`} anchor={`field:${idPrefix}:${field.key}`} adaptive={pairedSingleLineFields.includes(String(field.key)) && !field.multiline} values={locales.map(locale => String(value[locale][field.key] ?? ""))}>
         {!hideFieldHeadings && <h3>{t(field.label)}</h3>}
         <div className="bilingual-field-values">{locales.map(locale => {
           const readOnly = readOnlyAll || readOnlyLocales?.[locale] || (locale === "zh" && field.readOnlyZh);
@@ -491,7 +492,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
               onChange({ ...value, [locale]: { ...value[locale], [field.key]: next } }, locale);
             }} />;
         })}</div>
-      </section>
+      </AdaptivePairedField>
     )}</div>
     {footer && <div className="bilingual-footer-grid">{locales.map(locale =>
       <section className="language-panel bilingual-footer-panel" key={locale}>
@@ -2076,7 +2077,7 @@ function Skills() {
     create={(id, position) => ({ id, sourceKey: null, position, translations: { zh: { title: "", items: "" }, en: { title: "", items: "" } } })}
     label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${t("Skill group")} ${index + 1}`}
     headerIdentity={(item, index, _itemLabel, onChange) => skillCategorySelect(item, index, t, category => onChange(skillCategoryChanged(item, category)))}
-    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title"]} idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
+    render={(item, onChange, confirmed) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title", "items"]} idPrefix={item.id} section="skills" itemId={confirmed?.sourceKey ?? item.sourceKey ?? item.id} confirmed={confirmed?.translations} value={item.translations}
       onChange={translations => onChange({ ...item, translations })}
       fields={[{ key: "title", label: locale === "zh" ? "Skill group name" : "Name" }, { key: "items", label: locale === "zh" ? "Skills content" : "Skills" }]} />} />;
 }
@@ -2160,7 +2161,8 @@ function AwardFields({ item, confirmed, onChange }: {
       </div>
       <section className="bilingual-field-pair awards-name-year-pair" data-editor-anchor={`award-fields:${itemId}:name-year`}>
         <h3>{t("Award name")}</h3>
-        {(["zh", "en"] as const).map(locale => {
+        <AdaptivePairedField as="div" className="awards-name-values paired-bilingual-single-line" anchor={`award-fields:${itemId}:name`} adaptive values={(["zh", "en"] as const).map(locale => item.translations[locale].name)}>
+        <div className="bilingual-field-values">{(["zh", "en"] as const).map(locale => {
           const localeName = locale === "zh" ? t("Chinese") : t("English");
           const identity = { section: "awards" as const, itemId, field: "name" };
           const key = bilingualFieldKey(identity, locale);
@@ -2175,7 +2177,8 @@ function AwardFields({ item, confirmed, onChange }: {
               context.onBilingualFieldEdit(identity, locale, next !== baseValue);
               onChange({ ...item, translations: { ...item.translations, [locale]: { ...item.translations[locale], name: next } } });
             }} />;
-        })}
+        })}</div>
+        </AdaptivePairedField>
         <AwardYearField item={item} confirmed={confirmed} onChange={onChange} />
       </section>
     </div>
@@ -2334,7 +2337,7 @@ function Contact() {
         onConfirmedDelete={id => onChange({ ...contact, focus: renumber(contact.focus.filter(item => item.id !== id)) })}
         create={(id, position): FocusItem => ({ id, position, translations: { zh: { title: "", detail: "" }, en: { title: "", detail: "" } } })}
         label={(item, index) => item.translations[locale].title || item.translations[locale === "zh" ? "en" : "zh"].title || `${locale === "zh" ? "关注" : "Focus"} ${index + 1}`}
-        render={(item, change, base) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
+        render={(item, change, base) => <BilingualFields showLocaleHeaders pairedSingleLineFields={["title", "detail"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations}
           onChange={translations => change({ ...item, translations })}
           fields={[{ key: "title", label: "Focus title" }, { key: "detail", label: "Detail" }]} />} /></div>
       <div className="panel" data-editor-anchor="contact:status"><RepeatableList groupLabel="Current Status" addLabel="Add status" allowMultipleOpen hideLabelWhenExpanded anchorScope="contact-status" items={contact.status} confirmedItems={confirmed.status}
@@ -2348,7 +2351,7 @@ function Contact() {
               options={[{ value: "study", label: t("Study") }, { value: "graduation", label: t("Graduation") }, { value: "open", label: t("Open") }]}
               onChange={statusType => change({ ...item, statusType })} />
           </div>
-          <BilingualFields showLocaleHeaders pairedSingleLineFields={["title"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
+          <BilingualFields showLocaleHeaders pairedSingleLineFields={["title", "detail"]} idPrefix={item.id} section="contact" itemId={item.id} confirmed={base?.translations} value={item.translations} onChange={translations => change({ ...item, translations })}
             fields={[{ key: "title", label: "Status title" }, { key: "detail", label: "Detail" }]} />
         </>} /></div>
     </>}
@@ -2394,7 +2397,7 @@ function Links() {
         <div className="links-object-group" data-editor-anchor="links:linkedin"><h3>LinkedIn</h3><SharedFields inline idPrefix="links-linkedin" value={links.shared}
           onChange={shared => onChange({ ...links, shared })}
           fields={[{ key: "linkedInDisplayName", label: "Display name" }, { key: "linkedInLabel", label: "Hero button label" }]} />
-          <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators pairedShortFields={["linkedInLabel"]} idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
+          <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators pairedShortFields={["linkedInLabel"]} pairedSingleLineFields={["linkedInLabel"]} idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
             onChange={translations => onChange({ ...links, translations })}
             fields={[{ key: "linkedInLabel", label: "Contact label" }, { key: "linkedInHref", label: "URL", type: "url" }]} /></div>
         </div>
