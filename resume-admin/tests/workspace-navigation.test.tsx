@@ -18,6 +18,7 @@ const destinations = [
   ["/awards", "Awards", "awards", "Awards"], ["/contact", "Contact", "contact", "Contact"], ["/links", "Site & Links", "about", "Public links"],
 ] as const;
 const modeKey = (section: PreviewSection) => `example-cv-cms:ui:preview-mode:${section}`;
+const workspaceViewKey = (section: PreviewSection) => `example-cv-cms:ui:workspace-view:${section}`;
 const scrollKey = (path: string, mode: "editor" | "preview") => `example-cv-cms:ui:scroll:${path}:${mode}`;
 const desktopEditorOnlyMedia = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
@@ -184,6 +185,78 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(preview.scrollTop).toBe(1500);
   });
 
+  it.each(["edit", "split", "preview"] as const)("uses a saved desktop workspace view %s on the initial render", view => {
+    useWideDesktop();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), view);
+    // The responsive two-state contract remains separate from the desktop three-state preference.
+    window.sessionStorage.setItem(modeKey("profile"), "editor");
+    renderApp("/profile");
+    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    expect(layout.dataset.workspaceView).toBe(view);
+    expect(window.sessionStorage.getItem(modeKey("profile"))).toBe("editor");
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe(view);
+  });
+
+  it.each(destinations.map(([path]) => path))("restores the independent desktop preference for %s", path => {
+    const section = path.slice(1) as PreviewSection;
+    setViewport(1440);
+    window.sessionStorage.setItem(workspaceViewKey(section), "preview");
+    renderApp(path);
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview");
+  });
+
+  it("defaults malformed desktop workspace-view storage to Split", () => {
+    useWideDesktop();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "side-by-side");
+    renderApp("/profile");
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split");
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe("side-by-side");
+  });
+
+  it.each(["edit", "split", "preview"] as const)("persists and restores %s after a same-route hard-remount simulation", view => {
+    useWideDesktop();
+    const first = renderApp("/profile");
+    const switcher = within(screen.getByRole("group", { name: "Workspace view" }));
+    if (view === "split") fireEvent.click(switcher.getByRole("button", { name: "Preview" }));
+    fireEvent.click(switcher.getByRole("button", { name: view === "edit" ? "Edit" : view === "split" ? "Split" : "Preview" }));
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe(view);
+    first.unmount();
+    renderApp("/profile");
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(view);
+  });
+
+  it("keeps desktop workspace view preferences isolated by route", async () => {
+    useWideDesktop();
+    renderApp("/experience");
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Preview" }));
+    expect(window.sessionStorage.getItem(workspaceViewKey("experience"))).toBe("preview");
+
+    fireEvent.click(within(screen.getByRole("navigation", { name: "CMS sections" })).getByRole("link", { name: "Education" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    expect(window.sessionStorage.getItem(workspaceViewKey("education"))).toBeNull();
+    fireEvent.click(within(screen.getByRole("group", { name: "Workspace view" })).getByRole("button", { name: "Edit" }));
+    expect(window.sessionStorage.getItem(workspaceViewKey("education"))).toBe("edit");
+
+    fireEvent.click(within(screen.getByRole("navigation", { name: "CMS sections" })).getByRole("link", { name: "Experience" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview"));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "CMS sections" })).getByRole("link", { name: "Education" }));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("edit"));
+  });
+
+  it("restores a route's saved desktop view on wide re-entry without changing the intermediate two-state preference", async () => {
+    window.sessionStorage.setItem(workspaceViewKey("education"), "preview");
+    window.sessionStorage.setItem(modeKey("education"), "editor");
+    setViewport(1279, true);
+    renderApp("/education");
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-preview-view")).toBe("editor");
+    expect(within(screen.getByRole("group", { name: "Workspace view" })).getAllByRole("button")).toHaveLength(2);
+
+    setViewport(1280, true, true);
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview"));
+    expect(window.sessionStorage.getItem(modeKey("education"))).toBe("editor");
+    expect(window.sessionStorage.getItem(workspaceViewKey("education"))).toBe("preview");
+  });
+
   it("switches Split → Preview → Split → Edit → Split without losing drafts, dirty state, or pane scroll positions", () => {
     setViewport(1440);
     window.sessionStorage.setItem(modeKey("profile"), "preview");
@@ -220,6 +293,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
 
     fireEvent.click(previewButton);
     expect(layout.dataset.workspaceView).toBe("preview");
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe("preview");
     expect(previewButton.getAttribute("aria-pressed")).toBe("true");
     expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
     expect(editorPane.hidden).toBe(true);
@@ -233,12 +307,14 @@ describe("sidebar navigation and canonical preview workspace", () => {
 
     fireEvent.click(splitButton);
     expect(layout.dataset.workspaceView).toBe("split");
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe("split");
     expect(editorPane.hidden).toBe(false);
     expect(previewPanel.hidden).toBe(false);
     expect(splitButton.getAttribute("aria-pressed")).toBe("true");
 
     fireEvent.click(editButton);
     expect(layout.dataset.workspaceView).toBe("edit");
+    expect(window.sessionStorage.getItem(workspaceViewKey("profile"))).toBe("edit");
     expect(editButton.getAttribute("aria-pressed")).toBe("true");
     expect([editButton, splitButton, previewButton].filter(button => button.getAttribute("aria-pressed") === "true")).toHaveLength(1);
     expect(editorPane.hidden).toBe(false);
@@ -281,6 +357,8 @@ describe("sidebar navigation and canonical preview workspace", () => {
     await click("Preview");
     expect(editor.scrollTop).toBe(240);
     expect(preview.scrollTop).toBe(410);
+    expect([...Array(window.sessionStorage.length)].map((_, index) => window.sessionStorage.key(index))
+      .some(key => key?.includes("split-scroll") || key?.includes("workspace-scroll"))).toBe(false);
     await click("Edit");
     await click("Preview");
     expect(editor.scrollTop).toBe(240);
@@ -1002,7 +1080,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
     await waitFor(() => expect(documentOwner.scrollTop).toBe(550));
     setViewport(1280, true, true);
     mockPreviewGeometry(viewport, 1, 1600, 600, 980);
-    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("preview"));
     expect(viewport.scrollTop).toBe(250);
   });
 
@@ -1024,11 +1102,13 @@ describe("sidebar navigation and canonical preview workspace", () => {
       fireEvent.click(switcher().getByRole("button", { name: startingView === "edit" ? "Edit" : "Preview" }));
       await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(startingView));
     }
+    // workspace-view is separate from preview-mode; the latter continues to drive the 1279px two-state layout.
+    expect(window.sessionStorage.getItem(workspaceViewKey("education"))).toBe(startingView === "split" ? null : startingView);
 
     setViewport(1279, true, true);
     await waitFor(() => expect(switcher().getAllByRole("button")).toHaveLength(2));
     setViewport(1280, true, true);
-    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe("split"));
+    await waitFor(() => expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(startingView));
     await waitFor(() => expect(editor.scrollTop).toBe(300));
     await waitFor(() => expect(preview.scrollTop).toBe(600));
   });

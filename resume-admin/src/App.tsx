@@ -57,6 +57,24 @@ const clone = <T,>(value: T): T => structuredClone(value);
 const renumber = <T extends OrderedItem,>(items: T[]): T[] => items.map((item, position) => ({ ...item, position }));
 const UI_RESTORE_STORAGE_PREFIX = "example-cv-cms:ui:";
 const previewModeStorageKey = (section: PreviewSection) => `${UI_RESTORE_STORAGE_PREFIX}preview-mode:${section}`;
+type WorkspaceView = "edit" | "split" | "preview";
+const workspaceViewStorageKey = (section: PreviewSection) => `${UI_RESTORE_STORAGE_PREFIX}workspace-view:${section}`;
+
+function readWorkspaceView(section: PreviewSection): WorkspaceView {
+  try {
+    if (typeof window === "undefined") return "split";
+    const saved = window.sessionStorage.getItem(workspaceViewStorageKey(section));
+    return saved === "edit" || saved === "split" || saved === "preview" ? saved : "split";
+  } catch {
+    return "split";
+  }
+}
+
+function persistWorkspaceView(section: PreviewSection, view: WorkspaceView) {
+  try {
+    if (typeof window !== "undefined") window.sessionStorage.setItem(workspaceViewStorageKey(section), view);
+  } catch { /* Desktop workspace preference is optional. */ }
+}
 
 function readPreviewMode(section: PreviewSection): "editor" | "preview" {
   try {
@@ -1098,7 +1116,9 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   const wideDesktop = useMediaQuery("(min-width: 1280px)");
   const desktopEditorOnlyViewport = useMediaQuery(DESKTOP_EDITOR_ONLY_QUERY);
   const editorElementScroll = wideDesktop || (desktopEditorOnlyViewport && view === "editor");
-  const [workspaceView, setWorkspaceView] = useState<"edit" | "split" | "preview">("split");
+  const [workspaceViewState, setWorkspaceViewState] = useState<{ section: PreviewSection; view: WorkspaceView }>(() => ({ section, view: readWorkspaceView(section) }));
+  const workspaceView = workspaceViewState.section === section ? workspaceViewState.view : readWorkspaceView(section);
+  const setWorkspaceView = useCallback((next: WorkspaceView) => setWorkspaceViewState({ section, view: next }), [section]);
   const workspaceLayoutRef = useRef<HTMLDivElement>(null);
   const pendingWorkspaceScrollRestore = useRef<{ section: PreviewSection; view: "edit" | "split" | "preview"; editor: EditorPosition; preview: PreviewPosition } | null>(null);
   const modeScrollPositions = useRef<WorkspacePositions>({ section, editor: null, preview: null });
@@ -1197,10 +1217,11 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
         pendingWorkspaceScrollRestore.current = null;
       } else if (!previous.wideDesktop && next.wideDesktop) {
         pendingResponsiveScrollRestore.current = null;
-        setWorkspaceView("split");
+        const nextWorkspaceView = readWorkspaceView(section);
+        setWorkspaceView(nextWorkspaceView);
         pendingWorkspaceScrollRestore.current = {
           section,
-          view: "split",
+          view: nextWorkspaceView,
           editor: positions.editor ?? emptyEditorPosition(),
           preview: positions.preview ?? { raw: 0, coordinate: 0, scale: 1 },
         };
@@ -1219,7 +1240,7 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       window.removeEventListener("resize", onResize);
       mediaQueries.forEach(media => media.removeEventListener?.("change", onResize));
     };
-  }, [section, view, workspaceView, wideDesktop, desktopEditorOnlyViewport, onPreviewModeChange, captureVisibleWorkspacePositions, ensureModeScrollPositions]);
+  }, [section, view, workspaceView, wideDesktop, desktopEditorOnlyViewport, onPreviewModeChange, captureVisibleWorkspacePositions, ensureModeScrollPositions, setWorkspaceView]);
   useLayoutEffect(() => {
     const pending = pendingResponsiveScrollRestore.current;
     if (!pending || pending.section !== section
@@ -1242,9 +1263,10 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
   }, [requestCanonicalPreview, view, wideDesktop]);
   useEffect(() => {
     if (!wideDesktop) setWorkspaceView("split");
-  }, [wideDesktop]);
+  }, [wideDesktop, setWorkspaceView]);
   const changeWorkspaceView = (next: "edit" | "split" | "preview") => {
     if (next === workspaceView) return;
+    if (wideDesktop) persistWorkspaceView(section, next);
     const layout = workspaceLayoutRef.current;
     const positions = captureVisibleWorkspacePositions(layout, workspaceView);
     pendingWorkspaceScrollRestore.current = {
@@ -2712,6 +2734,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     || (location.pathname === "/profile" && (profileEditor !== null || profileLoadState === "error"))
     || (location.pathname === "/education" && (educationEditor !== null || educationLoadState === "error"))
     || (additionalRouteKey !== null && (additionalSections[additionalRouteKey] !== undefined || additionalRouteLoadState === "error"));
+  const canonicalPreviewReady = canonicalPreview !== null || fullSnapshotState === "error";
 
   const preservePreviewScroll = Boolean(isDocumentReload && location.pathname === initialPathname.current
     && navigationType === "POP" && previewSection && readPreviewMode(previewSection) === "preview"
@@ -2798,8 +2821,19 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         resizeObserver?.unobserve(element);
       };
       const stageFor = (owner: HTMLElement | null) => owner?.querySelector<HTMLElement>(".resume-preview-stage") ?? null;
-      const hasLoadedImages = () => Array.from(previewOwner?.querySelectorAll("img") ?? []).every(image => (image as HTMLImageElement).complete);
-      const layoutReady = () => routeDataReady && documentLoaded && pageShown && fontsLoaded && assetsLoaded && hasLoadedImages();
+      const hasLoadedImages = (owner: HTMLElement | null) => Array.from(owner?.querySelectorAll("img") ?? []).every(image => (image as HTMLImageElement).complete);
+      const previewGeometryReady = () => {
+        if (fullSnapshotState === "error") return true;
+        const stage = stageFor(previewOwner);
+        const renderedHeight = stage?.getBoundingClientRect().height ?? 0;
+        const styledHeight = Number.parseFloat(stage?.style.height ?? "") || 0;
+        return canonicalPreviewReady && Boolean(stage) && Math.max(renderedHeight, styledHeight) > 0;
+      };
+      const layoutReady = (mode: (typeof modes)[number]) => {
+        if (!documentLoaded || !pageShown || !fontsLoaded) return false;
+        if (mode === "editor") return routeDataReady && hasLoadedImages(editorOwner);
+        return canonicalPreviewReady && previewGeometryReady() && assetsLoaded && hasLoadedImages(previewOwner);
+      };
       const finishRestore = () => {
         pending.clear();
         restoredScrollIdentity.current = identity;
@@ -2810,12 +2844,16 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         restoreFrame = 0;
       };
       const attemptRestore = () => {
-        if (!pending.size || !layoutReady()) return;
+        if (!pending.size) return;
         let waiting = false;
         for (const mode of modes) {
           const item = pending.get(mode);
           const owner = mode === "editor" ? editorOwner : previewOwner;
           if (!item || !owner) continue;
+          // The route snapshot can make the Editor ready while the full Preview
+          // is still loading. Keep that saved Preview target pending until its
+          // own data and measured stage geometry are ready (or have failed).
+          if (!layoutReady(mode)) continue;
           const maximum = Math.max(0, owner.scrollHeight - owner.clientHeight);
           if (maximum + 2 < item.target) {
             const geometry = `${owner.scrollHeight}:${owner.clientHeight}:${maximum}`;
@@ -2871,16 +2909,16 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       const main = document.getElementById("main-content") ?? document.documentElement;
       if (typeof MutationObserver !== "undefined") {
         mutationObserver = new MutationObserver(() => {
-          syncOwners(); assetsLoaded = hasLoadedImages();
+          syncOwners(); assetsLoaded = hasLoadedImages(previewOwner);
           for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
           attemptRestore();
         });
         mutationObserver.observe(main, { childList: true, subtree: true });
       }
-      const onLoad = () => { documentLoaded = true; assetsLoaded = hasLoadedImages(); attemptRestore(); };
+      const onLoad = () => { documentLoaded = true; assetsLoaded = hasLoadedImages(previewOwner); attemptRestore(); };
       const onPageShow = () => { pageShown = true; attemptRestore(); };
       const onAssetsChange = () => {
-        assetsLoaded = hasLoadedImages();
+        assetsLoaded = hasLoadedImages(previewOwner);
         for (const item of pending.values()) { item.geometry = ""; item.stableFrames = 0; }
         attemptRestore();
       };
@@ -2894,7 +2932,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       if (!pageShown) window.addEventListener("pageshow", onPageShow, { once: true });
       document.addEventListener("load", onAssetsChange, true); document.addEventListener("error", onAssetsChange, true);
       if (document.fonts && !fontsLoaded) void document.fonts.ready.then(onFontsReady);
-      assetsLoaded = hasLoadedImages();
+      assetsLoaded = hasLoadedImages(previewOwner);
       if (pending.size) restoreFrame = window.requestAnimationFrame(attemptRestore);
       return () => {
         if (restoreFrame) window.cancelAnimationFrame(restoreFrame);
@@ -3137,7 +3175,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       stopPreviewSaving();
       stopEditorSaving();
     };
-  }, [location.pathname, navigationType, routeDataReady, isDocumentReload, previewSection, isPreviewRoute, wideDesktop, editorOnlyDesktop]);
+  }, [location.pathname, navigationType, routeDataReady, canonicalPreviewReady, fullSnapshotState, isDocumentReload, previewSection, isPreviewRoute, wideDesktop, editorOnlyDesktop]);
 
   return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
     productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,

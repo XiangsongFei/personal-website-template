@@ -16,6 +16,7 @@ const resume = {
   sections: structuredClone(fixtureSections),
 };
 const uiKey = "example-cv-cms:ui:";
+const workspaceViewKey = (section: string) => `${uiKey}workspace-view:${section}`;
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 const originalElementScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
 const originalElementClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
@@ -30,6 +31,24 @@ function mockDocumentReload() {
 
 function useWideDesktop() {
   Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: true, media: "(min-width: 1280px)", addEventListener() {}, removeEventListener() {} }) });
+}
+
+function mockPreviewRestoreGeometry(finalScrollHeight = 2601, previewClientHeight = 672) {
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() {
+    if (this.matches?.("[data-preview-scroll-owner]")) {
+      return this.querySelector(".resume-preview-stage") ? finalScrollHeight : previewClientHeight;
+    }
+    return 2400;
+  } });
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() {
+    return this.matches?.("[data-preview-scroll-owner]") ? previewClientHeight : 600;
+  } });
+  const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+    const rect = nativeRect.call(this);
+    if (!this.matches(".resume-preview-stage")) return rect;
+    return { ...rect, height: finalScrollHeight, bottom: rect.top + finalScrollHeight } as DOMRect;
+  });
 }
 
 function open(path: string, props: Partial<ComponentProps<typeof App>> = {}, reload = false) {
@@ -254,19 +273,20 @@ describe("route-scoped refresh restoration", () => {
     expect(screen.getByRole("button", { name: "Preview" }).getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("restores both desktop pane positions to their own route-scoped scroll owners", async () => {
+  it.each(["edit", "split", "preview"] as const)("restores desktop %s view and both existing pane positions to their route-scoped owners", async view => {
     useWideDesktop();
     Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, value: 2400 });
-    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 600 });
+    mockPreviewRestoreGeometry(2400, 600);
     window.sessionStorage.setItem(scrollKey("/profile", "editor"), "360");
     window.sessionStorage.setItem(scrollKey("/profile", "preview"), "520");
+    window.sessionStorage.setItem(workspaceViewKey("profile"), view);
     window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
 
     open("/profile", { resume }, true);
 
     const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    expect(document.querySelector(".editor-preview-layout")?.getAttribute("data-workspace-view")).toBe(view);
     await waitFor(() => {
       expect(editor.scrollTop).toBe(360);
       expect(preview.scrollTop).toBe(520);
@@ -274,6 +294,146 @@ describe("route-scoped refresh restoration", () => {
     expect(editor.dataset.editorScrollMode).toBe("element");
     expect(preview.dataset.previewScrollMode).toBe("element");
     expect(scrollOwner().scrollTop).toBe(0);
+  });
+
+  it("keeps a Preview-only refresh target pending until route-first Preview data arrives", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "900");
+
+    const view = open("/profile", {
+      productionMode: true,
+      profileSection: fixtureSections.profile,
+      profileLoadState: "loading",
+      fullSnapshotState: "loading",
+    }, true);
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    expect(preview.clientHeight).toBe(672);
+    expect(preview.scrollHeight).toBe(672);
+    expect(preview.scrollHeight - preview.clientHeight).toBe(0);
+    expect(preview.querySelector(".resume-preview-stage")).toBeNull();
+    expect(preview.scrollTop).toBe(0);
+    expect(window.sessionStorage.getItem(scrollKey("/profile", "preview"))).toBe("900");
+
+    view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+
+    await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(1929));
+    expect(preview.querySelector(".resume-preview-stage")).not.toBeNull();
+    expect(preview.querySelector(".resume-preview-stage")!.getBoundingClientRect().height).toBe(2601);
+    expect(preview.scrollTop).toBe(900);
+    expect(window.sessionStorage.getItem(scrollKey("/profile", "preview"))).toBe("900");
+  });
+
+  it("restores a saved Preview target immediately when canonical Preview geometry is ready", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "900");
+
+    open("/profile", { resume }, true);
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    await waitFor(() => expect(preview.scrollTop).toBe(900));
+    expect(preview.scrollHeight - preview.clientHeight).toBe(1929);
+  });
+
+  it("clamps an oversized Preview target only after delayed canonical geometry reaches its final range", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "2200");
+
+    const view = open("/profile", {
+      productionMode: true, profileSection: fixtureSections.profile,
+      profileLoadState: "loading", fullSnapshotState: "loading",
+    }, true);
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    expect(preview.scrollTop).toBe(0);
+    expect(preview.scrollHeight - preview.clientHeight).toBe(0);
+
+    view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+
+    await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(1929));
+    expect(preview.scrollTop).toBe(1929);
+  });
+
+  it("terminates pending Preview restoration safely after terminal full-snapshot failure", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry();
+    const requestFrame = vi.mocked(window.requestAnimationFrame);
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "900");
+
+    open("/profile", {
+      productionMode: true, profileSection: fixtureSections.profile,
+      profileLoadState: "loading", fullSnapshotState: "error",
+    }, true);
+
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    await waitFor(() => expect(preview.scrollTop).toBe(0));
+    expect(requestFrame.mock.calls.length).toBeLessThan(10);
+    const settledFrameCount = requestFrame.mock.calls.length;
+    act(() => {
+      MockResizeObserver.notify(preview);
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(requestFrame).toHaveBeenCalledTimes(settledFrameCount);
+    expect(preview.scrollTop).toBe(0);
+  });
+
+  it("leaves Preview at the top when no saved Preview position exists", () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry();
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "preview");
+    window.sessionStorage.setItem(`${uiKey}preview-mode:profile`, "preview");
+
+    open("/profile", { resume }, true);
+    expect((screen.getByTestId("resume-preview") as HTMLElement).scrollTop).toBe(0);
+    expect(window.sessionStorage.getItem(scrollKey("/profile", "preview"))).toBeNull();
+  });
+
+  it("restores Split Editor independently while keeping the delayed Preview target pending", async () => {
+    useWideDesktop();
+    Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
+    mockPreviewRestoreGeometry(1532);
+    window.sessionStorage.setItem(workspaceViewKey("profile"), "split");
+    window.sessionStorage.setItem(scrollKey("/profile", "editor"), "360");
+    window.sessionStorage.setItem(scrollKey("/profile", "preview"), "400");
+
+    const view = open("/profile", {
+      productionMode: true,
+      profileSection: fixtureSections.profile,
+      profileLoadState: "loading",
+      fullSnapshotState: "loading",
+    }, true);
+    const editor = document.querySelector<HTMLElement>("[data-editor-scroll-owner]")!;
+    const preview = screen.getByTestId("resume-preview") as HTMLElement;
+    expect(preview.clientHeight).toBe(672);
+    expect(preview.scrollHeight).toBe(672);
+    expect(preview.scrollHeight - preview.clientHeight).toBe(0);
+    expect(editor.scrollTop).toBe(360);
+    expect(preview.scrollTop).toBe(0);
+
+    view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+
+    await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(860));
+    expect(editor.scrollTop).toBe(360);
+    expect(preview.scrollTop).toBe(400);
   });
 
   it("clamps a stale desktop Editor snapshot to the stable content viewport range", async () => {

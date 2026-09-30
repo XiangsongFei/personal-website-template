@@ -13,6 +13,7 @@ import { clearAllRouteSnapshots, readRouteSnapshot, writeRouteSnapshot, type Rou
 const site = { resumeId: "snapshot-resume", siteKey: "example-cv" as const, isPublished: true, updatedAt: "2026-09-30T00:00:00Z" };
 const admin: AdminIdentity = { id: "snapshot-admin", email: "admin@example.test", sessionKey: "verified-session" };
 const storageKey = "example-cv-cms:route-snapshot:v1:/profile";
+const workspaceViewKey = "example-cv-cms:ui:workspace-view:profile";
 const originalLocale = window.localStorage.getItem(UI_LOCALE_KEY);
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 
@@ -106,6 +107,7 @@ describe("route-scoped refresh snapshots", () => {
     useWideDesktop();
     const snapshot = makeSnapshot();
     expect(writeRouteSnapshot(snapshot)).toBe(true);
+    window.sessionStorage.setItem(workspaceViewKey, "edit");
     let resolveIdentity!: (value: AdminIdentity | null) => void;
     const identityPromise = new Promise<AdminIdentity | null>(resolve => { resolveIdentity = resolve; });
     const auth = mockAuth(null, true, identityPromise);
@@ -117,6 +119,7 @@ describe("route-scoped refresh snapshots", () => {
     expect(screen.getByRole("heading", { name: "Profile", level: 1 })).toBeTruthy();
     const writeLock = document.querySelector<HTMLFieldSetElement>(".editor-write-lock")!;
     const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
+    expect(layout.dataset.workspaceView).toBe("edit");
     const editor = layout.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
     const preview = layout.querySelector<HTMLElement>("[data-preview-scroll-owner]")!;
     expect(writeLock.disabled).toBe(true);
@@ -146,6 +149,7 @@ describe("route-scoped refresh snapshots", () => {
     await waitFor(() => expect(repo.loadProfile).toHaveBeenCalledOnce());
     await waitFor(() => expect((document.querySelector(".editor-write-lock") as HTMLFieldSetElement).disabled).toBe(false));
     await waitFor(() => expect((readRouteSnapshot("/profile") as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.footerName).toBe("fresh-server-confirmed-name"));
+    expect(layout.dataset.workspaceView).toBe("edit");
     fireEvent.change(screen.getByLabelText("Graduation value"), { target: { value: "unsaved-draft-value" } });
     expect((readRouteSnapshot("/profile") as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.graduationValue).toBe(fixtureSections.profile.shared.graduationValue);
   });
