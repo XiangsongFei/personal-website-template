@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ResumeLoader } from "../data/ResumeLoader";
 import type { ResumeRepository } from "../data/resumeRepository";
+import { clearAllRouteSnapshots, readRouteSnapshot, type RouteSnapshot } from "../data/routeSnapshot";
 import { resumeSectionStore, type ResumeSectionStore } from "../data/resumeSectionStore";
+import { isDocumentReloadNavigation } from "../refreshState";
 import type { AdminAuthClient, AdminIdentity } from "./supabase";
 import { useUiLocale } from "../uiLocale";
 import { AdminSystemShell, AdminSystemState } from "../SystemState";
@@ -22,6 +24,11 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
 }) {
   const { t, locale } = useUiLocale();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
+  const [routeSnapshot, setRouteSnapshot] = useState<RouteSnapshot | null>(() => isDocumentReload ? readRouteSnapshot(location.pathname) : null);
+  const routeSnapshotRef = useRef(routeSnapshot);
+  routeSnapshotRef.current = routeSnapshot;
   const [state, setState] = useState<AuthState>({ kind: "restoring" });
   const [showCheckingAccess, setShowCheckingAccess] = useState(false);
   const [loginPending, setLoginPending] = useState(false);
@@ -43,9 +50,23 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
     const previous = stateRef.current;
     if (!keepCurrentAdmin || previous.kind !== "authorized") setState({ kind: "restoring" });
     try {
-      const identity = await client.getIdentity();
+      const current = stateRef.current;
+      const alreadyVerified = !forceCheck && current.kind === "authorized"
+        && verifiedSessionKey.current === current.identity.sessionKey;
+      let identity: AdminIdentity | null;
+      let combinedAccess: boolean | undefined;
+      if (alreadyVerified || !client.getIdentityAndAccess) {
+        identity = await client.getIdentity();
+        if (alreadyVerified && identity?.sessionKey === current.identity.sessionKey) combinedAccess = true;
+      } else {
+        const verification = await client.getIdentityAndAccess();
+        identity = verification.identity;
+        combinedAccess = verification.allowed;
+      }
       if (!mounted.current || currentRequest !== request.current) return;
       if (!identity) {
+        clearAllRouteSnapshots();
+        setRouteSnapshot(null);
         setShowCheckingAccess(false);
         hasObservedSession.current = true;
         activeSessionKey.current = null;
@@ -59,28 +80,47 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       activeSessionKey.current = identity.sessionKey;
       hasObservedSession.current = true;
 
-      const current = stateRef.current;
-      if (!forceCheck && current.kind === "authorized" && current.identity.sessionKey === identity.sessionKey
+      const currentState = stateRef.current;
+      if (!forceCheck && currentState.kind === "authorized" && currentState.identity.sessionKey === identity.sessionKey
         && verifiedSessionKey.current === identity.sessionKey) return;
-      const pending = adminChecks.current.get(identity.sessionKey);
-      if (pending) return await pending;
-
-      const preserveAuthorized = keepCurrentAdmin && current.kind === "authorized"
-        && current.identity.sessionKey === identity.sessionKey;
-      if (!preserveAuthorized) setState({ kind: "checking", identity });
-      const check = client.isResumeAdmin().then(allowed => {
+      if (combinedAccess !== undefined) {
         if (!mounted.current || currentRequest !== request.current || activeSessionKey.current !== identity.sessionKey) return;
         setShowCheckingAccess(false);
-        verifiedSessionKey.current = allowed ? identity.sessionKey : null;
-        if (allowed) sectionStore.setSession(identity.sessionKey);
+        verifiedSessionKey.current = combinedAccess ? identity.sessionKey : null;
+        if (!combinedAccess || (routeSnapshotRef.current && routeSnapshotRef.current.userId !== identity.id)) {
+          clearAllRouteSnapshots();
+          setRouteSnapshot(null);
+        }
+        if (combinedAccess) sectionStore.setSession(identity.sessionKey);
         else sectionStore.invalidate();
-        setState(allowed ? { kind: "authorized", identity } : { kind: "denied", identity });
-      });
-      adminChecks.current.set(identity.sessionKey, check);
-      try { await check; }
-      finally { if (adminChecks.current.get(identity.sessionKey) === check) adminChecks.current.delete(identity.sessionKey); }
+        setState(combinedAccess ? { kind: "authorized", identity } : { kind: "denied", identity });
+      } else {
+        const pending = adminChecks.current.get(identity.sessionKey);
+        if (pending) return await pending;
+
+        const preserveAuthorized = keepCurrentAdmin && currentState.kind === "authorized"
+          && currentState.identity.sessionKey === identity.sessionKey;
+        if (!preserveAuthorized) setState({ kind: "checking", identity });
+        const check = client.isResumeAdmin().then(allowed => {
+          if (!mounted.current || currentRequest !== request.current || activeSessionKey.current !== identity.sessionKey) return;
+          setShowCheckingAccess(false);
+          verifiedSessionKey.current = allowed ? identity.sessionKey : null;
+          if (!allowed || (routeSnapshotRef.current && routeSnapshotRef.current.userId !== identity.id)) {
+            clearAllRouteSnapshots();
+            setRouteSnapshot(null);
+          }
+          if (allowed) sectionStore.setSession(identity.sessionKey);
+          else sectionStore.invalidate();
+          setState(allowed ? { kind: "authorized", identity } : { kind: "denied", identity });
+        });
+        adminChecks.current.set(identity.sessionKey, check);
+        try { await check; }
+        finally { if (adminChecks.current.get(identity.sessionKey) === check) adminChecks.current.delete(identity.sessionKey); }
+      }
     } catch {
       if (mounted.current && currentRequest === request.current) {
+        clearAllRouteSnapshots();
+        setRouteSnapshot(null);
         setShowCheckingAccess(false);
         verifiedSessionKey.current = null;
         sectionStore.invalidate();
@@ -102,6 +142,8 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
         activeSessionKey.current = null;
         verifiedSessionKey.current = null;
         setShowCheckingAccess(false);
+        clearAllRouteSnapshots();
+        setRouteSnapshot(null);
         adminChecks.current.clear();
         sectionStore.invalidate();
         setState({ kind: "signedOut" });
@@ -168,6 +210,8 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
     try {
       await client.signOut();
       if (mounted.current) {
+        clearAllRouteSnapshots();
+        setRouteSnapshot(null);
         ++request.current;
         hasObservedSession.current = true;
         activeSessionKey.current = null;
@@ -184,9 +228,16 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   }
 
   if (!client) return <AdminSystemState title={t("Configuration required")} description={locale === "zh" ? <><span className="configuration-required-chinese-sentence">{t("Admin setup is incomplete.")}</span><span className="configuration-required-chinese-sentence">{t("Please contact the administrator.")}</span></> : t("Admin setup is incomplete. Please contact the administrator.")} className="configuration-required-state" />;
-  if (state.kind === "restoring" || state.kind === "checking") return showCheckingAccess
-    ? <AdminSystemState title={t("Checking access")} description={t("Please wait while your session and admin access are verified.")} busy />
-    : null;
+  if (state.kind === "restoring" || state.kind === "checking") {
+    if (isDocumentReload && routeSnapshot?.route === location.pathname) {
+      return <ResumeLoader key={`snapshot:${routeSnapshot.route}:${routeSnapshot.userId}`} repository={resumeRepository}
+        sessionKey="" identityEmail={null} identityId={null} authReady={false} initialSnapshot={routeSnapshot}
+        onSignOut={() => void signOut()} signOutPending={signOutPending} signOutError={signOutError} sectionStore={sectionStore} />;
+    }
+    return showCheckingAccess
+      ? <AdminSystemState title={t("Checking access")} description={t("Please wait while your session and admin access are verified.")} busy />
+      : null;
+  }
   if (state.kind === "signedOut") return <AdminSystemShell>
     <h1>{t("Welcome back")}</h1><p className="auth-login-description">{t("Sign in to continue managing your resume.")}</p>
     <form onSubmit={submit}>
@@ -196,8 +247,13 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       <button type="submit" disabled={loginPending}>{loginPending ? t("Signing in…") : t("Sign in")}</button>
     </form>
   </AdminSystemShell>;
-  if (state.kind === "authorized") return <ResumeLoader key={state.identity.sessionKey} repository={resumeRepository} sessionKey={state.identity.sessionKey} identityEmail={state.identity.email}
-    onSignOut={() => void signOut()} signOutPending={signOutPending} signOutError={signOutError} sectionStore={sectionStore} />;
+  if (state.kind === "authorized") {
+    const matchingSnapshot = isDocumentReload && routeSnapshot?.route === location.pathname && routeSnapshot.userId === state.identity.id ? routeSnapshot : null;
+    return <ResumeLoader key={matchingSnapshot ? `snapshot:${matchingSnapshot.route}:${matchingSnapshot.userId}` : `authorized:${state.identity.sessionKey}`}
+      repository={resumeRepository} sessionKey={state.identity.sessionKey} identityEmail={state.identity.email} identityId={state.identity.id}
+      authReady initialSnapshot={matchingSnapshot} onSignOut={() => void signOut()} signOutPending={signOutPending}
+      signOutError={signOutError} sectionStore={sectionStore} />;
+  }
   if (state.kind === "denied") return <AdminSystemState title={t("Access denied")} description={`${t("This account is not authorized to edit this resume.")}${state.identity.email ? ` (${state.identity.email})` : ""}`} action={<><button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
   return <AdminSystemState title={t("Unable to check access")} description={t("The session or administrator check failed. Please retry.")} action={<><button type="button" onClick={() => { setShowCheckingAccess(true); void restore(); }}>{t("Retry")}</button>{state.identity && <button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>}{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
 }

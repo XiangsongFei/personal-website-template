@@ -1361,14 +1361,15 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect((screen.getByRole("button", { name: "Cancel changes" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it.each(cases)("$title drafts survive internal navigation and UI-language switching without browser storage", async spec => {
+  it.each(cases)("$title drafts survive internal navigation and UI-language switching without persisting draft values", async spec => {
     const { repository, methods } = makeRepository(spec.section);
     const store = new ResumeSectionStore();
     open(spec, repository, store);
     const field = await screen.findByLabelText(spec.input) as HTMLInputElement | HTMLTextAreaElement;
     const fieldId = field.id;
     fireEvent.change(field, { target: { value: `Unsaved ${spec.title} draft` } });
-    expect(window.sessionStorage.length).toBe(0);
+    const storageValues = Array.from({ length: window.sessionStorage.length }, (_, index) => window.sessionStorage.getItem(window.sessionStorage.key(index) ?? "") ?? "");
+    expect(storageValues.some(value => value.includes(`Unsaved ${spec.title} draft`))).toBe(false);
     const other = spec.section === "awards" ? "Introduction" : "Awards";
     fireEvent.click(screen.getByRole("link", { name: other }));
     await screen.findByRole("heading", { name: other });

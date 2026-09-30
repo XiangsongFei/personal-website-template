@@ -341,14 +341,17 @@ const EditorContext = createContext<{
   onBilingualReviewConfirm: (identity: BilingualFieldIdentity, locale: Locale) => void;
   onBilingualCancel: (changedKeys: Set<string>) => void;
   onBilingualSave: (changedKeys: Set<string>) => void;
+  interactionLocked: boolean;
+  snapshotDataRevision: number;
+  onSnapshotRebased: () => void;
 }>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, siteTextTranslations: null, siteTextResumeId: null, onSiteTextChanged: null, sectionTextDrafts: {}, setSectionTextDrafts: () => {}, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
-  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
+  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, interactionLocked: false, snapshotDataRevision: 0, onSnapshotRebased: () => {}, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
 const EditorElementScrollContext = createContext(false);
 
 function useLocalDraft<T>(section: SectionKey, initial: T) {
-  const { productionMode, drafts } = useContext(EditorContext);
+  const { productionMode, drafts, snapshotDataRevision } = useContext(EditorContext);
   const production = productionMode;
   const storageKey = `example-cv-cms-fixture-${section}`;
   const [saved, setSaved] = useState<T>(() => {
@@ -367,6 +370,15 @@ function useLocalDraft<T>(section: SectionKey, initial: T) {
     ? clone((drafts.get(section) as { saved: T; draft: T } | undefined)?.draft ?? saved)
     : clone(saved));
   const [notice, setNotice] = useState("");
+  const appliedSnapshotRevision = useRef(snapshotDataRevision);
+  useLayoutEffect(() => {
+    if (!production || appliedSnapshotRevision.current === snapshotDataRevision) return;
+    appliedSnapshotRevision.current = snapshotDataRevision;
+    drafts.delete(section);
+    setSaved(clone(initial));
+    setDraft(clone(initial));
+    setNotice("");
+  }, [production, snapshotDataRevision, drafts, section, initial]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
 
   useEffect(() => {
@@ -1290,7 +1302,9 @@ function PreviewWorkspace({ section, children }: { section: PreviewSection; chil
       <button type="button" aria-pressed={view === "preview"} onClick={() => changeView("preview")}>{t("Preview")}</button>
     </div>}
     <div className="editor-preview-pane" hidden={wideDesktop && workspaceView === "preview"} data-editor-scroll-owner={!wideDesktop && !desktopEditorOnlyViewport ? "" : undefined} data-editor-scroll-mode={!wideDesktop && !desktopEditorOnlyViewport ? "document" : undefined}>
-      <EditorElementScrollContext.Provider value={editorElementScroll}>{children}</EditorElementScrollContext.Provider>
+      <fieldset className="editor-write-lock" disabled={context.interactionLocked} aria-disabled={context.interactionLocked}>
+        <EditorElementScrollContext.Provider value={editorElementScroll}>{children}</EditorElementScrollContext.Provider>
+      </fieldset>
     </div>
     <ResumePreviewPanel hidden={wideDesktop && workspaceView === "edit"} content={context.canonicalPreview?.content ?? null} confirmedContent={context.canonicalPreview?.confirmedContent ?? null}
       entryIdentities={context.canonicalPreview?.identities} confirmedEntryIdentities={context.canonicalPreview?.confirmedIdentities}
@@ -2459,7 +2473,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
   siteTextTranslations = null, siteTextResumeId = null, onSiteTextChanged = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
-  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {} }: {
+  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {} }: {
   identityEmail: string | null;
   onSignOut: () => void;
   signOutPending: boolean;
@@ -2499,6 +2513,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   onProfileSaved?: ((row: UpdatedProfileRow) => void) | null;
   onProfileTranslationSaved?: ((row: UpdatedProfileTranslationRow) => void) | null;
   onRequestCanonicalPreview?: () => void;
+  interactionLocked?: boolean;
+  snapshotDataRevision?: number;
+  onSnapshotRebased?: () => void;
 }) {
   const { t } = useUiLocale();
   const location = useLocation();
@@ -2535,6 +2552,20 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const initialEducation = educationSection ?? resume?.sections.education ?? null;
     return initialEducation ? initialEducationEditorState(initialEducation) : null;
   });
+  const appliedSnapshotRevision = useRef(snapshotDataRevision);
+  useLayoutEffect(() => {
+    if (appliedSnapshotRevision.current === snapshotDataRevision) return;
+    appliedSnapshotRevision.current = snapshotDataRevision;
+    setProfileEditor(initialProfile ? initialProfileEditorState(initialProfile) : null);
+    profileInitialized.current = initialProfile !== null;
+    const freshEducation = educationSection ?? resume?.sections.education ?? null;
+    setEducationEditor(freshEducation ? initialEducationEditorState(freshEducation) : null);
+    educationInitialized.current = freshEducation !== null || resume !== null;
+    setPreviewDrafts({});
+    setSectionTextDrafts({});
+    setPdfFiles({});
+    onSnapshotRebased();
+  }, [snapshotDataRevision, initialProfile, educationSection, resume, onSnapshotRebased]);
   const educationInitialized = useRef(educationSection !== null || resume !== null);
   const confirmedPreviewSections = resume?.sections ?? sections;
   const previewProfile = profileEditor
@@ -3114,8 +3145,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, siteTextTranslations, siteTextResumeId, onSiteTextChanged, sectionTextDrafts, setSectionTextDrafts, onReloadAdditional,
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
-    bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll,
-    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, workspaceSwitcherHost, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
+    bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll, interactionLocked, snapshotDataRevision,
+    educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, workspaceSwitcherHost, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests, onSnapshotRebased }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">
       <div className="brand"><strong>{t("Resume Editor")}</strong></div>

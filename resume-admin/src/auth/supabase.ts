@@ -1,9 +1,12 @@
 import { createClient, type AuthChangeEvent, type SupabaseClient } from "@supabase/supabase-js";
 
 export type AdminIdentity = { id: string; email: string | null; sessionKey: string };
+export type AdminIdentityAndAccess = { identity: AdminIdentity | null; allowed: boolean };
 
 export interface AdminAuthClient {
   getIdentity(): Promise<AdminIdentity | null>;
+  /** Concurrently validates the current session with Auth and the admin RPC. */
+  getIdentityAndAccess?(): Promise<AdminIdentityAndAccess>;
   signIn(email: string, password: string): Promise<void>;
   isResumeAdmin(): Promise<boolean>;
   signOut(): Promise<void>;
@@ -34,6 +37,7 @@ export function createAdminSupabaseClient(): SupabaseClient | null {
 
 export function createAdminAuthClient(supabase: SupabaseClient): AdminAuthClient {
   const identityChecks = new Map<string, Promise<AdminIdentity>>();
+  const accessChecks = new Map<string, Promise<AdminIdentityAndAccess>>();
   return {
     async getIdentity() {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -60,6 +64,43 @@ export function createAdminAuthClient(supabase: SupabaseClient): AdminAuthClient
         return await check;
       } finally {
         if (identityChecks.get(key) === check) identityChecks.delete(key);
+      }
+    },
+    async getIdentityAndAccess() {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session) return { identity: null, allowed: false };
+      const session = sessionData.session;
+      const key = authSessionKey(session);
+      let check = accessChecks.get(key);
+      if (!check) {
+        check = (async () => {
+          // Both remote checks are required. Use the captured token for getUser
+          // so its network request can run alongside the RPC rather than being
+          // serialized behind another auth storage-lock acquisition.
+          const [userResult, adminResult] = await Promise.all([
+            supabase.auth.getUser(session.access_token),
+            supabase.rpc("is_resume_admin"),
+          ]);
+          if (userResult.error) throw userResult.error;
+          if (adminResult.error) throw adminResult.error;
+          if (!userResult.data.user || userResult.data.user.id !== session.user.id) throw new Error("Invalid session");
+          const { data: current, error: currentError } = await supabase.auth.getSession();
+          if (currentError) throw currentError;
+          if (!current.session || authSessionKey(current.session) !== key || current.session.user.id !== userResult.data.user.id) {
+            throw new Error("Session changed during validation");
+          }
+          return {
+            identity: { id: userResult.data.user.id, email: userResult.data.user.email ?? null, sessionKey: key },
+            allowed: adminResult.data === true,
+          };
+        })();
+        accessChecks.set(key, check);
+      }
+      try {
+        return await check;
+      } finally {
+        if (accessChecks.get(key) === check) accessChecks.delete(key);
       }
     },
     async signIn(email, password) {

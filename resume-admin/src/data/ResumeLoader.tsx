@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { App } from "../App";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./resumeMapper";
 import type {
   ResumeRepository, ResumeSectionRepository, UpdatedProfileRow, UpdatedProfileTranslationRow,
 } from "./resumeRepository";
+import { createWriteReadinessRepository } from "./resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "./resumeSectionStore";
 import { isDocumentReloadNavigation } from "../refreshState";
 import type { Bilingual, EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections, SiteTextTranslation } from "../model";
+import { clearRouteSnapshot, routeRequiresSectionText, writeRouteSnapshot, type RouteSnapshot, type SnapshotRoute } from "./routeSnapshot";
 
 const pendingLoads = new WeakMap<ResumeRepository, Map<string, Promise<LoadedResume>>>();
 
@@ -79,7 +81,7 @@ async function loadCanonicalPreviewFromStore(sessionKey: string, repository: Res
 type AdditionalRouteKey = "introduction" | "experience" | "projects" | "skills" | "awards" | "contact" | "links";
 type AdditionalRouteValue = IntroItem[] | ExperienceItem[] | ProjectItem[] | SkillItem[] | AwardItem[] | ContactSection | LinksSection;
 type AdditionalRouteSections = Partial<Pick<EditorSections, AdditionalRouteKey>>;
-type AdditionalRouteResult = { key: AdditionalRouteKey; resumeId: string; value: AdditionalRouteValue };
+type AdditionalRouteResult = { key: AdditionalRouteKey; resumeId: string; value: AdditionalRouteValue; metadata: ResumeSiteMetadata };
 const routeKeys: Record<string, AdditionalRouteKey> = {
   "/introduction": "introduction", "/experience": "experience", "/projects": "projects", "/skills": "skills", "/awards": "awards", "/contact": "contact", "/links": "links",
 };
@@ -98,38 +100,38 @@ async function loadAdditionalFromStore(sessionKey: string, repository: ResumeRep
   const metadata = await store.loadSiteMetadata(sessionKey, () => (repository as ResumeRepository & ResumeSectionRepository).loadSiteMetadata());
   const sectionRepository = repository as ResumeRepository & ResumeSectionRepository;
   switch (key) {
-    case "introduction": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadIntroduction(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadIntroduction(metadata.resumeId))) };
-    case "experience": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadExperience(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadExperience(metadata.resumeId))) };
-    case "projects": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadProjects(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadProjects(metadata.resumeId))) };
-    case "skills": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadSkills(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadSkills(metadata.resumeId))) };
-    case "awards": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadAwards(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadAwards(metadata.resumeId))) };
-    case "contact": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadContact(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadContact(metadata.resumeId))) };
-    case "links": return { key, resumeId: metadata.resumeId, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadLinks(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadLinks(metadata.resumeId))) };
+    case "introduction": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadIntroduction(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadIntroduction(metadata.resumeId))) };
+    case "experience": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadExperience(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadExperience(metadata.resumeId))) };
+    case "projects": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadProjects(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadProjects(metadata.resumeId))) };
+    case "skills": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadSkills(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadSkills(metadata.resumeId))) };
+    case "awards": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadAwards(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadAwards(metadata.resumeId))) };
+    case "contact": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadContact(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadContact(metadata.resumeId))) };
+    case "links": return { key, resumeId: metadata.resumeId, metadata, value: await (reload ? store.reloadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadLinks(metadata.resumeId)) : store.loadSection(sessionKey, metadata.resumeId, key, () => sectionRepository.loadLinks(metadata.resumeId))) };
   }
 }
 
 type ProfileLoadState =
   | { kind: "idle" | "loading" | "error" }
-  | { kind: "loaded"; resumeId: string; profile: ProfileSection };
+  | { kind: "loaded"; metadata: ResumeSiteMetadata; resumeId: string; profile: ProfileSection };
 
-async function loadProfileFromStore(sessionKey: string, repository: ProfileReadRepository, store: ResumeSectionStore): Promise<{ resumeId: string; profile: ProfileSection }> {
+async function loadProfileFromStore(sessionKey: string, repository: ProfileReadRepository, store: ResumeSectionStore): Promise<{ metadata: ResumeSiteMetadata; resumeId: string; profile: ProfileSection }> {
   const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
   const profile = await store.loadSection(sessionKey, metadata.resumeId, "profile", () => repository.loadProfile(metadata.resumeId));
-  return { resumeId: metadata.resumeId, profile };
+  return { metadata, resumeId: metadata.resumeId, profile };
 }
 
-async function loadSiteTextFromStore(sessionKey: string, repository: SiteTextReadRepository, store: ResumeSectionStore): Promise<{ resumeId: string; translations: Bilingual<SiteTextTranslation> }> {
+async function loadSiteTextFromStore(sessionKey: string, repository: SiteTextReadRepository, store: ResumeSectionStore): Promise<{ metadata: ResumeSiteMetadata; resumeId: string; translations: Bilingual<SiteTextTranslation> }> {
   const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
   const translations = await store.loadSection(sessionKey, metadata.resumeId, "siteText", () => repository.loadSiteText(metadata.resumeId));
-  return { resumeId: metadata.resumeId, translations };
+  return { metadata, resumeId: metadata.resumeId, translations };
 }
 
-async function loadEducationFromStore(sessionKey: string, repository: EducationReadRepository, store: ResumeSectionStore, reload = false): Promise<{ resumeId: string; education: EducationItem[] }> {
+async function loadEducationFromStore(sessionKey: string, repository: EducationReadRepository, store: ResumeSectionStore, reload = false): Promise<{ metadata: ResumeSiteMetadata; resumeId: string; education: EducationItem[] }> {
   const metadata = await store.loadSiteMetadata(sessionKey, () => repository.loadSiteMetadata());
   const education = await (reload
     ? store.reloadSection(sessionKey, metadata.resumeId, "education", () => repository.loadEducation(metadata.resumeId))
     : store.loadSection(sessionKey, metadata.resumeId, "education", () => repository.loadEducation(metadata.resumeId)));
-  return { resumeId: metadata.resumeId, education };
+  return { metadata, resumeId: metadata.resumeId, education };
 }
 
 type OverviewLoadResult = { metadata: ResumeSiteMetadata; overview: OverviewResumeData };
@@ -143,10 +145,13 @@ async function loadOverviewFromStore(sessionKey: string, repository: OverviewRea
   return { metadata, overview };
 }
 
-export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut, signOutPending, signOutError, sectionStore = resumeSectionStore }: {
+export function ResumeLoader({ repository, sessionKey, identityEmail, identityId = null, authReady = true, initialSnapshot = null, onSignOut, signOutPending, signOutError, sectionStore = resumeSectionStore }: {
   repository: ResumeRepository | null;
   sessionKey: string;
   identityEmail: string | null;
+  identityId?: string | null;
+  authReady?: boolean;
+  initialSnapshot?: RouteSnapshot | null;
   onSignOut: () => void;
   signOutPending: boolean;
   signOutError: string;
@@ -155,6 +160,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const location = useLocation();
   const initialPathname = useRef(location.pathname);
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
+  const routeSnapshot = initialSnapshot?.route === initialPathname.current ? initialSnapshot : null;
   const isProfileRoute = location.pathname === "/profile";
   const isEducationRoute = location.pathname === "/education";
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
@@ -171,11 +177,15 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   const [fullAttempt, setFullAttempt] = useState(0);
   const [canonicalPreviewRequested, setCanonicalPreviewRequested] = useState(false);
   const requestCanonicalPreview = useCallback(() => setCanonicalPreviewRequested(true), []);
-  const [profileState, setProfileState] = useState<ProfileLoadState>({ kind: "idle" });
+  const [profileState, setProfileState] = useState<ProfileLoadState>(() => routeSnapshot?.route === "/profile"
+    ? { kind: "loaded", resumeId: routeSnapshot.site.resumeId, metadata: routeSnapshot.site, profile: routeSnapshot.data }
+    : { kind: "idle" });
   const [profileAttempt, setProfileAttempt] = useState(0);
   const profileLoaded = useRef(false);
   const failedProfileAttempt = useRef<number | null>(null);
-  const [educationState, setEducationState] = useState<{ kind: "idle" | "loading" | "error" } | { kind: "loaded"; resumeId: string; education: EducationItem[] }>({ kind: "idle" });
+  const [educationState, setEducationState] = useState<{ kind: "idle" | "loading" | "error" } | { kind: "loaded"; metadata: ResumeSiteMetadata; resumeId: string; education: EducationItem[] }>(() => routeSnapshot?.route === "/education"
+    ? { kind: "loaded", metadata: routeSnapshot.site, resumeId: routeSnapshot.site.resumeId, education: routeSnapshot.data }
+    : { kind: "idle" });
   const [educationAttempt, setEducationAttempt] = useState(0);
   const educationLoaded = useRef(false);
   const failedEducationAttempt = useRef<number | null>(null);
@@ -184,17 +194,48 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
   overviewStateRef.current = overviewState;
   const [overviewAttempt, setOverviewAttempt] = useState(0);
   const failedOverviewAttempt = useRef<number | null>(null);
-  const [additionalStates, setAdditionalStates] = useState<Partial<Record<AdditionalRouteKey, { kind: "idle" | "loading" | "error" } | ({ kind: "loaded" } & AdditionalRouteResult)>>>({});
+  const snapshotAdditionalKey = routeSnapshot?.route.slice(1) as AdditionalRouteKey | undefined;
+  const [additionalStates, setAdditionalStates] = useState<Partial<Record<AdditionalRouteKey, { kind: "idle" | "loading" | "error" } | ({ kind: "loaded" } & AdditionalRouteResult)>>>(() => routeSnapshot && snapshotAdditionalKey
+    ? { [snapshotAdditionalKey]: { kind: "loaded", key: snapshotAdditionalKey, resumeId: routeSnapshot.site.resumeId, metadata: routeSnapshot.site, value: routeSnapshot.data as AdditionalRouteValue } }
+    : {});
   const additionalStatesRef = useRef(additionalStates);
   additionalStatesRef.current = additionalStates;
   const [additionalAttempts, setAdditionalAttempts] = useState<Partial<Record<AdditionalRouteKey, number>>>({});
   const failedAdditionalAttempts = useRef<Partial<Record<AdditionalRouteKey, number>>>({});
-  const [siteTextState, setSiteTextState] = useState<{ kind: "idle" | "loading" | "error" } | { kind: "loaded"; resumeId: string; translations: Bilingual<SiteTextTranslation> }>({ kind: "idle" });
+  const [siteTextState, setSiteTextState] = useState<{ kind: "idle" | "loading" | "error" } | { kind: "loaded"; metadata: ResumeSiteMetadata; resumeId: string; translations: Bilingual<SiteTextTranslation> }>(() => routeSnapshot?.sectionText
+    ? { kind: "loaded", metadata: routeSnapshot.site, resumeId: routeSnapshot.site.resumeId, translations: routeSnapshot.sectionText }
+    : { kind: "idle" });
   const [siteTextAttempt, setSiteTextAttempt] = useState(0);
   const failedSiteTextAttempt = useRef<number | null>(null);
+  const [snapshotRouteFresh, setSnapshotRouteFresh] = useState(!routeSnapshot);
+  const [snapshotSectionTextFresh, setSnapshotSectionTextFresh] = useState(!routeSnapshot || !routeRequiresSectionText(routeSnapshot.route));
+  const [snapshotFreshReady, setSnapshotFreshReady] = useState(!routeSnapshot);
+  const [snapshotBaselineApplied, setSnapshotBaselineApplied] = useState(!routeSnapshot);
+  const [snapshotDataRevision, setSnapshotDataRevision] = useState(0);
+  const snapshotReplacementSignaled = useRef(false);
+  const markSnapshotBaselineApplied = useCallback(() => setSnapshotBaselineApplied(true), []);
+  const invalidateSnapshotOnFailure = useCallback((route: SnapshotRoute) => {
+    if (routeSnapshot?.route !== route) return;
+    clearRouteSnapshot(route);
+    setSnapshotFreshReady(true);
+    setSnapshotDataRevision(value => value + 1);
+  }, [routeSnapshot]);
+  const writeReadyRef = useRef(false);
+  const guardedRepository = useMemo(() => repository ? createWriteReadinessRepository(repository, () => writeReadyRef.current) : null, [repository]);
+
+  useEffect(() => {
+    if (snapshotRouteFresh && snapshotSectionTextFresh) {
+      setSnapshotFreshReady(true);
+      if (routeSnapshot && !snapshotReplacementSignaled.current && authReady) {
+        snapshotReplacementSignaled.current = true;
+        setSnapshotDataRevision(value => value + 1);
+      }
+    }
+  }, [snapshotRouteFresh, snapshotSectionTextFresh, routeSnapshot, authReady]);
 
   // Non-Profile routes keep the existing complete snapshot and start it only when visited.
   useEffect(() => {
+    if (!authReady) return;
     if (supportsCanonicalPreviewReads(repository) && isPreviewRoute) return;
     if ((isProfileRoute && supportsProfileReads(repository)) || (isEducationRoute && supportsEducationReads(repository)) || useSectionAdditional || useSectionOverview) return;
     let active = true;
@@ -209,11 +250,12 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       if (active) setFullSnapshotState("error");
     });
     return () => { active = false; };
-  }, [isProfileRoute, isEducationRoute, isPreviewRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume]);
+  }, [authReady, isProfileRoute, isEducationRoute, isPreviewRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume]);
 
   // Editors remain route-first. Fetch the remaining confirmed slices only when
   // the Preview is visible, reusing any section reads already in the session cache.
   useEffect(() => {
+    if (!authReady) return;
     if (!canonicalPreviewRequested || !isPreviewRoute || !repository || !supportsCanonicalPreviewReads(repository) || resume) return;
     let active = true;
     setFullSnapshotState("loading");
@@ -225,9 +267,10 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       if (active) setFullSnapshotState("error");
     });
     return () => { active = false; };
-  }, [canonicalPreviewRequested, isPreviewRoute, repository, sessionKey, sectionStore, fullAttempt, resume]);
+  }, [authReady, canonicalPreviewRequested, isPreviewRoute, repository, sessionKey, sectionStore, fullAttempt, resume]);
 
   useEffect(() => {
+    if (!authReady) return;
     if (!useSectionOverview || !repository || !supportsOverviewReads(repository) || resume) return;
     if (overviewStateRef.current.kind === "loaded" || failedOverviewAttempt.current === overviewAttempt) return;
     let active = true;
@@ -240,10 +283,11 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       setOverviewState({ kind: "error" });
     });
     return () => { active = false; };
-  }, [useSectionOverview, repository, sessionKey, sectionStore, overviewAttempt, resume]);
+  }, [authReady, useSectionOverview, repository, sessionKey, sectionStore, overviewAttempt, resume]);
 
   // Profile reads only site metadata and the two Profile tables, through the session cache.
   useEffect(() => {
+    if (!authReady) return;
     if (!useSectionProfile || !repository || !supportsProfileReads(repository)) return;
     if (profileLoaded.current || failedProfileAttempt.current === profileAttempt) return;
     let active = true;
@@ -252,15 +296,18 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       if (!active) return;
       profileLoaded.current = true;
       setProfileState({ kind: "loaded", ...value });
+      if (routeSnapshot?.route === "/profile") setSnapshotRouteFresh(true);
     }, () => {
       if (!active) return;
       failedProfileAttempt.current = profileAttempt;
       setProfileState({ kind: "error" });
+      invalidateSnapshotOnFailure("/profile");
     });
     return () => { active = false; };
-  }, [useSectionProfile, repository, sessionKey, sectionStore, profileAttempt]);
+  }, [authReady, useSectionProfile, repository, sessionKey, sectionStore, profileAttempt, routeSnapshot, invalidateSnapshotOnFailure]);
 
   useEffect(() => {
+    if (!authReady) return;
     if (!useSectionEducation || !repository || !supportsEducationReads(repository)) return;
     if (resume) return;
     if (educationLoaded.current || failedEducationAttempt.current === educationAttempt) return;
@@ -270,45 +317,58 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
       if (!active) return;
       educationLoaded.current = true;
       setEducationState({ kind: "loaded", ...value });
+      if (routeSnapshot?.route === "/education") setSnapshotRouteFresh(true);
     }, () => {
       if (!active) return;
       failedEducationAttempt.current = educationAttempt;
       setEducationState({ kind: "error" });
+      invalidateSnapshotOnFailure("/education");
     });
     return () => { active = false; };
-  }, [useSectionEducation, repository, sessionKey, sectionStore, educationAttempt, resume]);
+  }, [authReady, useSectionEducation, repository, sessionKey, sectionStore, educationAttempt, resume, routeSnapshot, invalidateSnapshotOnFailure]);
 
   useEffect(() => {
+    if (!authReady) return;
     if (!useSectionAdditional || !additionalRouteKey || !repository || resume) return;
     const attempt = additionalAttempts[additionalRouteKey] ?? 0;
     if (additionalStatesRef.current[additionalRouteKey]?.kind === "loaded"
-      || failedAdditionalAttempts.current[additionalRouteKey] === attempt) return;
+      && (!routeSnapshot || snapshotFreshReady) || failedAdditionalAttempts.current[additionalRouteKey] === attempt) return;
     let active = true;
-    setAdditionalStates(current => ({ ...current, [additionalRouteKey]: { kind: "loading" } }));
+    setAdditionalStates(current => routeSnapshot?.route === `/${additionalRouteKey}` && !snapshotFreshReady
+      && current[additionalRouteKey]?.kind === "loaded" ? current : { ...current, [additionalRouteKey]: { kind: "loading" } });
     loadAdditionalFromStore(sessionKey, repository, sectionStore, additionalRouteKey).then(value => {
-      if (active) setAdditionalStates(current => ({ ...current, [additionalRouteKey]: { kind: "loaded", ...value } }));
+      if (active) {
+        setAdditionalStates(current => ({ ...current, [additionalRouteKey]: { kind: "loaded", ...value } }));
+        if (routeSnapshot?.route === `/${additionalRouteKey}`) setSnapshotRouteFresh(true);
+      }
     }, () => {
       if (!active) return;
       failedAdditionalAttempts.current[additionalRouteKey] = attempt;
       setAdditionalStates(current => ({ ...current, [additionalRouteKey]: { kind: "error" } }));
+      if (routeSnapshot?.route === `/${additionalRouteKey}`) invalidateSnapshotOnFailure(routeSnapshot.route);
     });
     return () => { active = false; };
-  }, [useSectionAdditional, additionalRouteKey, repository, sessionKey, sectionStore, additionalAttempts, resume]);
+  }, [authReady, useSectionAdditional, additionalRouteKey, repository, sessionKey, sectionStore, additionalAttempts, resume, snapshotFreshReady, routeSnapshot, invalidateSnapshotOnFailure]);
 
   useEffect(() => {
+    if (!authReady) return;
     if (!useSectionTextRead || !repository || resume || !supportsSiteTextReads(repository)) return;
-    if (siteTextState.kind === "loaded" || failedSiteTextAttempt.current === siteTextAttempt) return;
+    if ((siteTextState.kind === "loaded" && (!routeSnapshot || snapshotFreshReady)) || failedSiteTextAttempt.current === siteTextAttempt) return;
     let active = true;
     setSiteTextState(current => current.kind === "loaded" ? current : { kind: "loading" });
     loadSiteTextFromStore(sessionKey, repository, sectionStore).then(value => {
-      if (active) setSiteTextState({ kind: "loaded", ...value });
+      if (active) {
+        setSiteTextState({ kind: "loaded", ...value });
+        if (routeSnapshot && routeRequiresSectionText(routeSnapshot.route)) setSnapshotSectionTextFresh(true);
+      }
     }, () => {
       if (!active) return;
       failedSiteTextAttempt.current = siteTextAttempt;
       setSiteTextState({ kind: "error" });
+      if (routeSnapshot && routeRequiresSectionText(routeSnapshot.route)) invalidateSnapshotOnFailure(routeSnapshot.route);
     });
     return () => { active = false; };
-  }, [useSectionTextRead, repository, sessionKey, sectionStore, siteTextAttempt, siteTextState.kind, resume]);
+  }, [authReady, useSectionTextRead, repository, sessionKey, sectionStore, siteTextAttempt, siteTextState.kind, resume, snapshotFreshReady, routeSnapshot, invalidateSnapshotOnFailure]);
 
   function retryProfile() {
     profileLoaded.current = false;
@@ -390,7 +450,10 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
 
   function siteTextChanged(resumeId: string, translations: Bilingual<SiteTextTranslation>) {
     sectionStore.patchSection(sessionKey, resumeId, "siteText", () => translations);
-    setSiteTextState({ kind: "loaded", resumeId, translations });
+    const metadataState = sectionStore.getSiteMetadataState(sessionKey);
+    if (metadataState.status === "loaded" && metadataState.value.resumeId === resumeId) {
+      setSiteTextState({ kind: "loaded", metadata: metadataState.value, resumeId, translations });
+    }
   }
 
   function patchEducation(resumeId: string, education: EducationItem[]) {
@@ -420,6 +483,8 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
 
   function profileSaved(row: UpdatedProfileRow) {
     sectionStore.patchSection(sessionKey, row.resumeId, "profile", current => ({ ...current, shared: row.shared }));
+    setProfileState(current => current.kind === "loaded" && current.resumeId === row.resumeId
+      ? { ...current, profile: { ...current.profile, shared: row.shared } } : current);
     setResume(current => current?.resumeId === row.resumeId ? {
       ...current, sections: { ...current.sections, profile: { ...current.sections.profile, shared: row.shared } },
     } : current);
@@ -430,6 +495,8 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     sectionStore.patchSection(sessionKey, row.resumeId, "profile", current => ({
       ...current, translations: { ...current.translations, [row.locale]: row.translation },
     }));
+    setProfileState(current => current.kind === "loaded" && current.resumeId === row.resumeId
+      ? { ...current, profile: { ...current.profile, translations: { ...current.profile.translations, [row.locale]: row.translation } } } : current);
     setResume(current => current?.resumeId === row.resumeId ? {
       ...current, sections: { ...current.sections, profile: {
         ...current.sections.profile,
@@ -461,6 +528,46 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     ? { [additionalRoute.key]: additionalRoute.value }
     : {};
 
+  const currentRouteDataFresh = Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
+    : location.pathname === "/education" ? educationState.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
+      : additionalRouteKey ? additionalRouteState?.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
+        : false);
+  const currentRouteFailed = location.pathname === "/profile" ? profileState.kind === "error"
+    : location.pathname === "/education" ? educationState.kind === "error" || (useSectionTextRead && siteTextState.kind === "error")
+      : additionalRouteKey ? additionalRouteState?.kind === "error" || (useSectionTextRead && siteTextState.kind === "error")
+        : false;
+  const interactionLocked = !authReady || (Boolean(routeSnapshot) && !snapshotBaselineApplied && !currentRouteFailed);
+  const writeReady = authReady && snapshotFreshReady && snapshotBaselineApplied && currentRouteDataFresh;
+  useLayoutEffect(() => { writeReadyRef.current = writeReady; }, [writeReady]);
+
+  useEffect(() => {
+    if (!writeReady || !identityId || !repository) return;
+    const metadata = location.pathname === "/profile" ? profileState.kind === "loaded" ? profileState.metadata : null
+      : location.pathname === "/education" ? educationState.kind === "loaded" ? educationState.metadata : null
+        : additionalRouteKey ? additionalRouteState?.kind === "loaded" ? additionalRouteState.metadata : null
+          : null;
+    if (!metadata) return;
+    const savedAt = Date.now();
+    switch (location.pathname as SnapshotRoute) {
+      case "/profile":
+        if (profileState.kind === "loaded") writeRouteSnapshot({ schemaVersion: 1, route: "/profile", savedAt, userId: identityId, site: metadata, data: profileState.profile });
+        break;
+      case "/education":
+        if (educationState.kind === "loaded" && siteTextState.kind === "loaded") writeRouteSnapshot({ schemaVersion: 1, route: "/education", savedAt, userId: identityId, site: metadata, data: educationState.education, sectionText: siteTextState.translations });
+        break;
+      case "/introduction": case "/experience": case "/projects": case "/skills": case "/awards": case "/contact": case "/links":
+        if (additionalRouteState?.kind === "loaded") {
+          const route = location.pathname as SnapshotRoute;
+          if (routeRequiresSectionText(route) && siteTextState.kind !== "loaded") return;
+          writeRouteSnapshot({ schemaVersion: 1, route, savedAt, userId: identityId, site: metadata,
+            data: additionalRouteState.value as RouteSnapshot["data"],
+            ...(routeRequiresSectionText(route) && siteTextState.kind === "loaded" ? { sectionText: siteTextState.translations } : {}) } as RouteSnapshot);
+        }
+        break;
+      default: break;
+    }
+  }, [writeReady, identityId, repository, location.pathname, additionalRouteKey, profileState, educationState, additionalRouteState, siteTextState]);
+
   // On a document refresh, wait for the requested route's first data read before
   // mounting the editor shell. This avoids showing a transient route-loading page
   // and ensures the layout exists before App attempts to restore document scroll.
@@ -487,10 +594,10 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
             && (!initialNeedsSectionText || siteTextState.kind === "loaded" || siteTextState.kind === "error")
           : resume !== null || fullSnapshotState === "error";
 
-  if (isDocumentReload && location.pathname === initialPath && !initialRouteReady) return null;
+  if (isDocumentReload && location.pathname === initialPath && !initialRouteReady && !routeSnapshot) return null;
 
   return <App identityEmail={identityEmail} onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
-    productionMode={true} repository={repository} resume={resume} profileSection={profile} profileResumeId={profileResumeId}
+    productionMode={true} repository={guardedRepository} resume={resume} profileSection={profile} profileResumeId={profileResumeId} interactionLocked={interactionLocked} snapshotDataRevision={snapshotDataRevision}
     overviewData={overview} overviewSiteMetadata={overviewMetadata} overviewLoadState={overviewLoadState}
     overviewRouteFirst={useSectionOverview} onRetryOverview={useSectionOverview ? retryOverview : retryFullSnapshot}
     profileLoadState={profileLoadState} onRetryProfile={supportsProfileReads(repository) ? retryProfile : retryFullSnapshot}
@@ -508,5 +615,6 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, onSignOut,
     onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => { retryAdditional(additionalRouteKey); if (useSectionTextRead) retrySiteText(); } : useSectionTextRead ? retrySiteText : retryFullSnapshot}
     additionalResumeId={additionalRoute?.resumeId ?? resume?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
-    onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved} />;
+    onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved}
+    onSnapshotRebased={markSnapshotBaselineApplied} />;
 }

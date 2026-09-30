@@ -1158,6 +1158,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const preview = screen.getByTestId("resume-preview") as HTMLElement;
     const routeContent = within(editor).getAllByRole("heading", { name: heading })[0];
     const pane = layout.querySelector<HTMLElement>(".editor-preview-pane")!;
+    const writeLock = pane.querySelector<HTMLElement>(".editor-write-lock")!;
     const routeFrame = editor.closest<HTMLElement>(".editor-workspace-route");
     const footer = routeFrame?.querySelector<HTMLElement>(".editor-action-footer");
     const saveNotice = footer?.querySelector<HTMLElement>(".save-notice");
@@ -1176,6 +1177,11 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(editor).not.toBe(preview);
     expect(editor.parentElement).toBe(routeFrame);
     expect(routeFrame && pane.contains(routeFrame)).toBe(true);
+    const firstWriteLockChild = writeLock.firstElementChild;
+    expect(firstWriteLockChild).not.toBeNull();
+    expect(firstWriteLockChild?.contains(routeFrame!)).toBe(true);
+    if (path === "/profile" || path === "/education") expect(firstWriteLockChild).toBe(routeFrame);
+    else expect(firstWriteLockChild).not.toBe(routeFrame);
     expect(pane.hasAttribute("data-editor-scroll-owner")).toBe(false);
     expect(preview.closest(".resume-preview-panel")?.parentElement).toBe(layout);
     expect(layout.querySelectorAll("[data-editor-scroll-owner]")).toHaveLength(1);
@@ -1186,7 +1192,7 @@ describe("sidebar navigation and canonical preview workspace", () => {
     const css = readFileSync("src/preview/preview.css", "utf8");
     const desktopRules = css.match(/@media\(min-width:1280px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
     const paneRule = desktopRules.match(/\.editor-preview-pane\{([^}]*)\}/)?.[1] ?? "";
-    const frameRule = desktopRules.match(/\.editor-workspace-route\{([^}]*)\}/)?.[1] ?? "";
+    const frameRule = desktopRules.match(/\n\s*\.editor-workspace-route\{([^}]*)\}/)?.[1] ?? "";
     const contentRule = desktopRules.match(/\.editor-content-scroll\{([^}]*)\}/)?.[1] ?? "";
     const footerRule = desktopRules.match(/\.editor-action-footer\{([^}]*)\}/)?.[1] ?? "";
     const saveBarRule = desktopRules.match(/\.editor-action-footer \.save-bar\{([^}]*)\}/)?.[1] ?? "";
@@ -1202,7 +1208,10 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(saveBarRule).toContain("margin-top:0");
     expect(saveBarRule).toContain("padding:0");
     expect(css).toContain(".editor-form-content{display:contents}");
-    expect(css).toContain(".editor-preview-pane>:first-child{height:100%;min-height:0}");
+    expect(css).toContain(".editor-preview-pane>.editor-write-lock>:first-child{height:100%;min-height:0}");
+    expect(css).toContain(".app-main.has-preview-workspace.is-editor-only-desktop .editor-preview-layout[data-preview-view=editor] .editor-preview-pane>.editor-write-lock>:first-child{height:100%;min-height:0}");
+    expect(css).not.toContain(".editor-preview-pane>.editor-write-lock>.editor-workspace-route{height:100%;min-height:0}");
+    expect(css).toContain(".editor-write-lock{display:contents}");
     expect(css).toContain(".editor-workspace-route.editor-form{gap:0}");
     expect(css).toContain(".links-editor-scope .editor-form-content{gap:0}");
     expect(css).toContain(".links-editor-scope .editor-action-footer .save-bar{margin-top:0;padding:0}");

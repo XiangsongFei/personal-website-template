@@ -97,6 +97,68 @@ describe("startup request coalescing", () => {
     expect(app.client.isResumeAdmin).toHaveBeenCalledOnce();
   });
 
+  it("keeps explicit sign-in and sign-out working with the combined verifier", async () => {
+    const app = harness(null);
+    const verify = vi.fn()
+      .mockResolvedValueOnce({ identity: null, allowed: false })
+      .mockResolvedValue({ identity: adminA, allowed: true });
+    app.client.getIdentityAndAccess = verify;
+    app.render();
+    await screen.findByRole("heading", { name: "Welcome back" });
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@example.test" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("navigation", { name: "CMS sections" });
+    expect(verify.mock.calls.length).toBeGreaterThanOrEqual(2); // initial signed-out read and sign-in verification
+    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
+  });
+
+  it("keeps Retry working with the combined verifier after an access-check failure", async () => {
+    const app = harness();
+    const verify = vi.fn()
+      .mockRejectedValueOnce(new Error("temporary RPC failure"))
+      .mockResolvedValue({ identity: adminA, allowed: true });
+    app.client.getIdentityAndAccess = verify;
+    app.render();
+    expect(await screen.findByRole("heading", { name: "Unable to check access" })).toBeTruthy();
+    expect(app.repository.loadProfile).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("navigation", { name: "CMS sections" });
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+  });
+
+  it("denies a valid non-admin result without loading protected route data", async () => {
+    const app = harness();
+    app.client.getIdentityAndAccess = vi.fn().mockResolvedValue({ identity: adminA, allowed: false });
+    app.render();
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeTruthy();
+    expect(app.repository.loadSiteMetadata).not.toHaveBeenCalled();
+    expect(app.repository.loadProfile).not.toHaveBeenCalled();
+  });
+
+  it("shows Login when the combined verifier finds no session", async () => {
+    const app = harness(null);
+    app.client.getIdentityAndAccess = vi.fn().mockResolvedValue({ identity: null, allowed: false });
+    app.render();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
+    expect(app.repository.loadSiteMetadata).not.toHaveBeenCalled();
+    expect(app.repository.loadProfile).not.toHaveBeenCalled();
+  });
+
+  it("does not call the admin RPC when session restoration finds no session", async () => {
+    const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
+    const rpc = vi.fn();
+    const supabase = { auth: { getSession }, rpc } as unknown as SupabaseClient;
+    await expect(createAdminAuthClient(supabase).getIdentityAndAccess!()).resolves.toEqual({ identity: null, allowed: false });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("rechecks a different session and does not reuse its predecessor's authorization", async () => {
     const app = harness();
     app.render();
@@ -209,5 +271,90 @@ describe("startup request coalescing", () => {
       getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: new Error("expired") }),
     } } as unknown as SupabaseClient;
     await expect(createAdminAuthClient(supabase).getIdentity()).rejects.toThrow("expired");
+  });
+
+  it("rejects an invalid/revoked session even if the concurrent admin RPC allows it", async () => {
+    const session = { access_token: "header.eyJzZXNzaW9uX2lkIjoic2Vzc2lvbi1hIn0.signature", user: { id: "admin-a" } };
+    const supabase = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),
+        getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: new Error("revoked") }),
+      },
+      rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+    } as unknown as SupabaseClient;
+    await expect(createAdminAuthClient(supabase).getIdentityAndAccess!()).rejects.toThrow("revoked");
+  });
+
+  it("starts authenticated-user and admin-RPC validation together and rechecks the session before returning", async () => {
+    const session = {
+      access_token: "header.eyJzZXNzaW9uX2lkIjoic2Vzc2lvbi1hIn0.signature",
+      user: { id: "admin-a", email: "a@example.test" },
+    };
+    const user = deferred<{ data: { user: typeof session.user }; error: null }>();
+    const admin = deferred<{ data: boolean; error: null }>();
+    const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
+    const getUser = vi.fn(() => user.promise);
+    const rpc = vi.fn(() => admin.promise);
+    const supabase = { auth: { getSession, getUser }, rpc } as unknown as SupabaseClient;
+    const auth = createAdminAuthClient(supabase);
+    const result = auth.getIdentityAndAccess!();
+
+    await waitFor(() => {
+      expect(getUser).toHaveBeenCalledWith(session.access_token);
+      expect(rpc).toHaveBeenCalledWith("is_resume_admin");
+    });
+    expect(getSession).toHaveBeenCalledOnce();
+
+    user.resolve({ data: { user: session.user }, error: null });
+    await act(async () => { await Promise.resolve(); });
+    expect(getSession).toHaveBeenCalledOnce();
+
+    admin.resolve({ data: true, error: null });
+    await expect(result).resolves.toEqual({
+      identity: { id: "admin-a", email: "a@example.test", sessionKey: "admin-a:session-a" },
+      allowed: true,
+    });
+    expect(getSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not load protected route data until both refresh authorization checks pass", async () => {
+    const session = {
+      access_token: "header.eyJzZXNzaW9uX2lkIjoic2Vzc2lvbi1hIn0.signature",
+      user: { id: "admin-a", email: "a@example.test" },
+    };
+    const user = deferred<{ data: { user: typeof session.user }; error: null }>();
+    const admin = deferred<{ data: boolean; error: null }>();
+    const supabase = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),
+        getUser: vi.fn(() => user.promise),
+        onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
+      },
+      rpc: vi.fn(() => admin.promise),
+    } as unknown as SupabaseClient;
+    const app = harness();
+    const client = createAdminAuthClient(supabase);
+    const gate = <MemoryRouter initialEntries={["/profile"]}><AuthGate client={client} resumeRepository={app.repository} /></MemoryRouter>;
+    render(gate);
+
+    await waitFor(() => {
+      expect(supabase.auth.getUser).toHaveBeenCalledOnce();
+      expect(supabase.rpc).toHaveBeenCalledOnce();
+    });
+    expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Checking access" })).toBeNull();
+    expect(document.querySelector(".system-state-content")).toBeNull();
+    expect(app.repository.loadSiteMetadata).not.toHaveBeenCalled();
+    expect(app.repository.loadProfile).not.toHaveBeenCalled();
+
+    user.resolve({ data: { user: session.user }, error: null });
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(app.repository.loadProfile).not.toHaveBeenCalled();
+
+    admin.resolve({ data: true, error: null });
+    await screen.findByRole("navigation", { name: "CMS sections" });
+    expect(app.repository.loadSiteMetadata).toHaveBeenCalledOnce();
+    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
   });
 });

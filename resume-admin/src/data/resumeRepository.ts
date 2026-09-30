@@ -60,6 +60,22 @@ export interface ResumeSectionRepository {
 
 export type CompleteResumeRepository = ResumeRepository & ResumeSectionRepository;
 
+/** Wrap the repository boundary so no non-read operation can run before the current route is fresh and writable. */
+export function createWriteReadinessRepository(repository: ResumeRepository, canWrite: () => boolean): ResumeRepository {
+  return new Proxy(repository, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      const name = String(property);
+      if (/^(load|read)/.test(name)) return value.bind(target);
+      return (...args: unknown[]) => {
+        if (!canWrite()) return Promise.reject(new Error("Admin writes are unavailable until fresh route data is confirmed"));
+        return value.apply(target, args);
+      };
+    },
+  });
+}
+
 export type UpdatedProfileRow = {
   resumeId: string;
   shared: ProfileSection["shared"];
