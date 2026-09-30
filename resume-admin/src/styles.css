@@ -389,15 +389,19 @@ main{color:#242424}
 .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);row-gap:0}
 .awards-editor-scope .awards-fields-grid>.bilingual-column-headings{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px)}
 .awards-editor-scope .awards-name-year-pair{grid-column:1/-1;grid-template-columns:minmax(130px,.62fr) minmax(0,1fr) minmax(0,1fr) minmax(120px,140px);column-gap:clamp(14px,3.8cqi,30px);align-items:start;padding:12px 0}
-.awards-editor-scope .awards-name-year-pair>.awards-name-values{grid-column:2/4;display:block;width:100%;min-width:0;padding:0}
+.awards-editor-scope .awards-name-content{display:contents}
+.awards-editor-scope .awards-name-content>h3{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600;line-height:1.35}
+.awards-editor-scope .awards-name-year-pair>.awards-name-content>.awards-name-values{grid-column:2/4;display:block;width:100%;min-width:0;padding:0}
 .awards-editor-scope .awards-name-values .bilingual-field-values{grid-column:1;gap:clamp(14px,3.8cqi,30px)}
 .awards-editor-scope .awards-name-values .awards-name-field>label>span[aria-hidden=true]{display:none}
 .awards-editor-scope .awards-name-values .awards-name-field{min-width:0;overflow-wrap:anywhere}
 .awards-editor-scope .awards-name-field>label{margin-bottom:0}
+.awards-editor-scope .awards-input-row-control{display:contents}
 .awards-editor-scope .awards-name-field textarea{width:100%;min-width:0;max-width:100%;height:auto;min-height:40px;resize:none;overflow-x:hidden;overflow-y:hidden;overflow-wrap:anywhere;white-space:pre-wrap;border:0;border-bottom:1px solid #e2e0dc;border-radius:0;background:#fff;color:#202020;padding:9px 0;font-size:15px;font-weight:400;line-height:1.45;box-shadow:none;transition:border-color .12s}
 .awards-editor-scope .awards-name-field textarea:focus{border-color:#666}
 .awards-editor-scope .awards-year-field{grid-column:4;width:100%}
 .awards-editor-scope .awards-year-mobile-label{display:none}
+.awards-editor-scope .awards-year-locale-reserve{display:none}
 .awards-editor-scope .awards-year-field input{text-align:left}
 .education-editor-scope .field,.experience-editor-scope .field,.projects-editor-scope .field,.skills-editor-scope .field,.awards-editor-scope .field,.contact-editor-scope .field,.links-editor-scope .field{width:100%;max-width:100%;min-width:0}
 .education-editor-scope .field textarea,.experience-editor-scope .field textarea,.projects-editor-scope .field textarea,.skills-editor-scope .field textarea,.awards-editor-scope .field textarea,.contact-editor-scope .field textarea,.links-editor-scope .field textarea{width:100%;max-width:100%;min-width:0}
@@ -470,6 +474,7 @@ main{color:#242424}
   .education-editor-scope .bilingual-column-headings,.experience-editor-scope .bilingual-column-headings,.projects-editor-scope .bilingual-column-headings,.skills-editor-scope .bilingual-column-headings,.awards-editor-scope .bilingual-column-headings,.contact-editor-scope .bilingual-column-headings,.links-editor-scope .bilingual-column-headings{display:none}
   .education-editor-scope .bilingual-field-pair,.experience-editor-scope .bilingual-field-pair,.projects-editor-scope .bilingual-field-pair,.skills-editor-scope .bilingual-field-pair,.awards-editor-scope .bilingual-field-pair,.contact-editor-scope .bilingual-field-pair,.links-editor-scope .bilingual-field-pair{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
   .education-editor-scope .bilingual-field-pair>h3,.experience-editor-scope .bilingual-field-pair>h3,.projects-editor-scope .bilingual-field-pair>h3,.skills-editor-scope .bilingual-field-pair>h3,.awards-editor-scope .bilingual-field-pair>h3,.contact-editor-scope .bilingual-field-pair>h3,.links-editor-scope .bilingual-field-pair>h3{grid-column:1;padding-top:0}
+  .awards-editor-scope .awards-name-content>h3{grid-column:1;padding-top:0}
   .education-editor-scope .bilingual-field-values,.experience-editor-scope .bilingual-field-values,.projects-editor-scope .bilingual-field-values,.skills-editor-scope .bilingual-field-values,.awards-editor-scope .bilingual-field-values,.contact-editor-scope .bilingual-field-values,.links-editor-scope .bilingual-field-values{grid-column:1;grid-template-columns:minmax(0,1fr);gap:15px}
   .experience-editor-scope .experience-paired-field-heading-above{grid-template-columns:minmax(0,1fr);row-gap:7px;padding:15px 0}
   .experience-editor-scope .experience-paired-field-heading-above>h3{grid-column:1;padding-top:0}
@@ -631,3 +636,40 @@ main{color:#242424}
 .contact-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values,
 .links-editor-scope .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values{grid-template-columns:minmax(0,1fr)}
 .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
+
+@media(min-width:1281px){
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(0,1fr)}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-fields-grid>.bilingual-column-headings{display:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,5fr) minmax(96px,1fr);grid-template-rows:auto auto auto auto;column-gap:clamp(12px,2cqi,20px);row-gap:0;padding:12px 0}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-content{display:contents}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-content>h3{grid-column:1;grid-row:1}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair>.awards-name-content>.awards-name-values{grid-column:1;grid-row:2/span 3;display:grid;grid-template-rows:subgrid;min-width:0}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:not(:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked)) .awards-name-values .bilingual-field-values{row-gap:0}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .bilingual-field-values{grid-column:1;grid-row:1/span 3;grid-template-rows:subgrid;align-items:stretch}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .awards-name-field{grid-row:1/span 3;display:grid;grid-template-rows:subgrid;align-items:stretch}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-field>label{grid-row:1}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control{grid-row:2;display:grid;align-items:stretch;min-width:0;border:0;box-shadow:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control textarea{box-sizing:border-box;border:0;border-bottom:1px solid #e2e0dc;height:auto;min-height:40px;font-family:inherit;font-size:15px;font-weight:400;line-height:1.45;padding:9px 0;color:#202020;background:#fff}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control textarea:focus{border-bottom-color:#666}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-field .field-edit-status{grid-row:3}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .awards-name-field>label>span[aria-hidden=true]{display:block}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-field{grid-column:2;grid-row:1/span 4;display:grid;grid-template-rows:subgrid;align-content:stretch;min-width:0;width:100%}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-mobile-label{display:block;grid-column:1;grid-row:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600;line-height:1.35}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-locale-reserve{display:block;grid-column:1;grid-row:2;min-height:1lh;font-size:13px;line-height:normal}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control{grid-column:1;grid-row:3;display:grid;align-items:start;min-width:0;border:0;box-shadow:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control input{box-sizing:border-box;width:100%;height:40px;min-width:0;min-height:40px;align-self:start;border:0;border-bottom:1px solid #e2e0dc;padding:9px 0;font-family:inherit;font-size:15px;font-weight:400;line-height:1.45;box-shadow:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control input:focus{border-bottom-color:#666}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-field .field-edit-status{grid-column:1;grid-row:4}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked){grid-template-rows:auto;row-gap:7px}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked)>.awards-name-content>.awards-name-values{grid-column:1;grid-row:auto;display:block}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked)>.awards-year-field{grid-column:1/-1;grid-row:auto;display:block}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-values .bilingual-field-values{grid-row:auto;grid-template-rows:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-values .awards-name-field{grid-row:auto;display:block;grid-template-rows:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-field>label,.editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-control,.editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-control{grid-row:auto}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-control,.editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-control{display:contents;border:0;box-shadow:none}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-control textarea{border:0;border-bottom:1px solid #e2e0dc;height:auto;min-height:40px}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-control input{height:auto;min-height:40px;border:0;border-bottom:1px solid #e2e0dc;padding:9px 0;line-height:normal}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-name-values .awards-name-field>label>span[aria-hidden=true]{display:inline}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-mobile-label{display:block}
+  .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-locale-reserve{display:none}
+}

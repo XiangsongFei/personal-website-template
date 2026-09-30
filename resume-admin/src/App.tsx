@@ -2121,7 +2121,7 @@ function AwardNameField({ id, label, localeLabel, value, modified, reviewLabel, 
   useLayoutEffect(() => { resizeToContent(); }, [resizeToContent, value]);
   useEffect(() => {
     const textarea = textareaRef.current;
-    const field = textarea?.parentElement;
+    const field = textarea?.closest<HTMLElement>(".awards-name-field");
     if (!field || typeof ResizeObserver === "undefined") return;
     let observedWidth = field.getBoundingClientRect().width;
     const observer = new ResizeObserver(entries => {
@@ -2136,8 +2136,10 @@ function AwardNameField({ id, label, localeLabel, value, modified, reviewLabel, 
 
   return <div className="field awards-name-field">
     <label htmlFor={id} className="visually-hidden-containing-block"><span aria-hidden="true">{localeLabel}</span><span className="visually-hidden">{t(label)}</span></label>
-    <textarea ref={textareaRef} id={id} aria-label={t(label)} rows={1} value={value}
-      onChange={event => onChange(event.target.value)} />
+    <div className="awards-input-row-control awards-name-control">
+      <textarea ref={textareaRef} id={id} aria-label={t(label)} rows={1} value={value}
+        onChange={event => onChange(event.target.value)} />
+    </div>
     {(modified || reviewLabel) && <div className="field-edit-status">
       {modified && <span>{t("Modified")}</span>}
       {reviewLabel && onReviewConfirm && <><span className="field-review-warning">{t(reviewLabel)}</span><button className="field-review-dismiss" type="button" onClick={onReviewConfirm}>{t("No change needed")}</button></>}
@@ -2154,14 +2156,17 @@ function AwardYearField({ item, confirmed, onChange }: {
   const id = `award-${item.id}-year`;
   return <div className="field awards-year-field">
     <label htmlFor={id} className="awards-year-mobile-label">{t("Year")}</label>
-    <input id={id} type="text" aria-label={t("Year")} value={year}
-      onChange={event => {
-        const nextYear = event.target.value;
-        onChange({ ...item, translations: {
-          zh: { ...item.translations.zh, year: nextYear },
-          en: { ...item.translations.en, year: nextYear },
-        } });
-      }} />
+    <span className="awards-year-locale-reserve" aria-hidden="true" />
+    <div className="awards-input-row-control awards-year-control">
+      <input id={id} type="text" aria-label={t("Year")} value={year}
+        onChange={event => {
+          const nextYear = event.target.value;
+          onChange({ ...item, translations: {
+            zh: { ...item.translations.zh, year: nextYear },
+            en: { ...item.translations.en, year: nextYear },
+          } });
+        }} />
+    </div>
     {year !== confirmedYear && <div className="field-edit-status"><span>{t("Modified")}</span></div>}
   </div>;
 }
@@ -2178,7 +2183,7 @@ function AwardFields({ item, confirmed, onChange }: {
         <span lang="zh">{t("Chinese")}</span><span lang="en">English</span><span>{t("Year")}</span>
       </div>
       <section className="bilingual-field-pair awards-name-year-pair" data-editor-anchor={`award-fields:${itemId}:name-year`}>
-        <h3>{t("Award name")}</h3>
+        <div className="awards-name-content"><h3>{t("Award name")}</h3>
         <AdaptivePairedField as="div" className="awards-name-values paired-bilingual-single-line" anchor={`award-fields:${itemId}:name`} adaptive values={(["zh", "en"] as const).map(locale => item.translations[locale].name)}>
         <div className="bilingual-field-values">{(["zh", "en"] as const).map(locale => {
           const localeName = locale === "zh" ? t("Chinese") : t("English");
@@ -2196,7 +2201,7 @@ function AwardFields({ item, confirmed, onChange }: {
               onChange({ ...item, translations: { ...item.translations, [locale]: { ...item.translations[locale], name: next } } });
             }} />;
         })}</div>
-        </AdaptivePairedField>
+        </AdaptivePairedField></div>
         <AwardYearField item={item} confirmed={confirmed} onChange={onChange} />
       </section>
     </div>

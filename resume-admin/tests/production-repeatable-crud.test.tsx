@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useNavigate } from "react-router-dom";
 import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
@@ -116,7 +116,7 @@ async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextArea
   await waitFor(() => expect(document.getElementById(id)).toBeTruthy());
   return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
 }
-afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Batch 6A production repeatable CRUD", () => {
   it.each([
@@ -234,11 +234,89 @@ describe("Batch 6A production repeatable CRUD", () => {
     const awardName = await screen.findByLabelText("Chinese Award name");
     const adaptiveNames = awardName.closest(".awards-name-values")!;
     expect(adaptiveNames.classList.contains("paired-bilingual-single-line")).toBe(true);
+    expect(adaptiveNames.getAttribute("data-editor-anchor")).toContain(":name");
+    expect(adaptiveNames.closest(".awards-name-content")?.querySelector("h3")?.textContent).toBe("Award name");
     expect(adaptiveNames.querySelectorAll(".bilingual-field-values textarea")).toHaveLength(2);
+    expect(adaptiveNames.querySelectorAll(".awards-input-row-control")).toHaveLength(2);
     const sharedYear = screen.getByRole("textbox", { name: "Year" });
     expect(sharedYear.closest(".awards-name-year-pair")).toBe(awardName.closest(".awards-name-year-pair"));
     expect(sharedYear.closest(".bilingual-field-values")).toBeNull();
     expect(adaptiveNames.contains(sharedYear)).toBe(false);
+    const yearControl = sharedYear.closest(".awards-year-control");
+    expect(yearControl?.classList.contains("awards-input-row-control")).toBe(true);
+    const yearReserve = sharedYear.closest(".awards-year-field")?.querySelector<HTMLElement>(".awards-year-locale-reserve");
+    expect(yearReserve?.textContent).toBe("");
+    expect(yearReserve?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("moves the single Year field after the Award Name block as its real adaptive state stacks and recovers", async () => {
+    let valuesWidth = 500;
+    const observers: Array<{ notify: () => void }> = [];
+    class TestResizeObserver {
+      private readonly callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) { this.callback = callback; observers.push({ notify: () => this.callback([], this as unknown as ResizeObserver) }); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    vi.stubGlobal("CanvasRenderingContext2D", class {});
+    const originalGetComputedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation(element => {
+      const style = originalGetComputedStyle(element);
+      return element instanceof HTMLElement && element.classList.contains("bilingual-field-values")
+        ? { ...style, columnGap: "20px", paddingLeft: "0px", paddingRight: "0px", borderLeftWidth: "0px", borderRightWidth: "0px" } as CSSStyleDeclaration
+        : style;
+    });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
+      if (this.classList.contains("bilingual-field-values")) return { width: valuesWidth, height: 80, top: 0, bottom: 80, left: 0, right: valuesWidth, x: 0, y: 0, toJSON() {} } as DOMRect;
+      return originalRect.call(this);
+    });
+    const context = { font: "", measureText: (value: string) => ({ width: value.includes("LONG") ? 280 : value.includes("MID") ? 175 : 40 }) } as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+
+    open({ path: "/awards" }, makeRepository("awards").repository);
+    const chinese = await screen.findByLabelText("Chinese Award name") as HTMLTextAreaElement;
+    const english = screen.getByLabelText("English Award name") as HTMLTextAreaElement;
+    const year = screen.getByRole("textbox", { name: "Year" }) as HTMLInputElement;
+    const pair = chinese.closest(".awards-name-year-pair")!;
+    const adaptive = chinese.closest(".awards-name-values")!;
+    const yearField = year.closest(".awards-year-field")!;
+    fireEvent.change(year, { target: { value: "2025" } });
+    expect(adaptive.classList.contains("is-adaptive-stacked")).toBe(false);
+
+    const assertYearFollowsName = (stacked: boolean) => {
+      expect(adaptive.classList.contains("is-adaptive-stacked")).toBe(stacked);
+      expect(year.closest(".awards-name-year-pair")).toBe(pair);
+      expect(year.closest(".awards-year-field")).toBe(yearField);
+      expect(pair.querySelectorAll(".awards-year-field input")).toHaveLength(1);
+      expect(year.value).toBe("2025");
+      expect(adaptive.compareDocumentPosition(yearField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    };
+
+    for (const [field, longValue] of [[chinese, "LONG 中文奖项名称"], [english, "LONG English Award Name"]] as const) {
+      field.focus();
+      fireEvent.change(field, { target: { value: longValue } });
+      assertYearFollowsName(true);
+      expect(document.activeElement).toBe(field);
+      fireEvent.change(field, { target: { value: field === chinese ? "示例项目成果" : "Example Project Outcome" } });
+      assertYearFollowsName(false);
+      expect(document.activeElement).toBe(field);
+    }
+
+    fireEvent.change(chinese, { target: { value: "LONG 中文奖项名称" } });
+    fireEvent.change(english, { target: { value: "LONG English Award Name" } });
+    assertYearFollowsName(true);
+    fireEvent.change(chinese, { target: { value: "MID 中文奖项名称" } });
+    fireEvent.change(english, { target: { value: "MID English Award Name" } });
+    assertYearFollowsName(false);
+    valuesWidth = 350;
+    act(() => observers.at(-1)?.notify());
+    assertYearFollowsName(true);
+    valuesWidth = 500;
+    act(() => observers.at(-1)?.notify());
+    assertYearFollowsName(false);
   });
 
   it("adapts both Skills group title and the unchanged list-like Skills content string", async () => {
@@ -1051,7 +1129,57 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(css).toContain(".awards-editor-scope .awards-name-field textarea{");
     expect(css).toContain("resize:none;overflow-x:hidden;overflow-y:hidden;overflow-wrap:anywhere;white-space:pre-wrap");
     expect(css).toContain("border:0;border-bottom:1px solid #e2e0dc");
+    expect(css).toContain(".awards-editor-scope .awards-input-row-control{display:contents}");
     expect(css).toContain(".awards-editor-scope .awards-year-field input{text-align:left}");
+    expect(css).toContain(".awards-name-content>h3{grid-column:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600;line-height:1.35}");
+  });
+
+  it("limits the compact Award Name + Year layout to Split workspaces wider than 1280px", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toContain("@media(min-width:1281px)");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,5fr) minmax(96px,1fr);grid-template-rows:auto auto auto auto");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair>.awards-name-content>.awards-name-values{grid-column:1;grid-row:2/span 3;display:grid;grid-template-rows:subgrid");
+    expect(css).toContain(".awards-name-year-pair:not(:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked)) .awards-name-values .bilingual-field-values{row-gap:0}");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .bilingual-field-values{grid-column:1;grid-row:1/span 3;grid-template-rows:subgrid");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .awards-name-field{grid-row:1/span 3;display:grid;grid-template-rows:subgrid");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control{grid-row:2;display:grid");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-field{grid-column:2;grid-row:1/span 4;display:grid;grid-template-rows:subgrid");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-locale-reserve{display:block;grid-column:1;grid-row:2;min-height:1lh");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control{grid-column:1;grid-row:3;display:grid");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control textarea{box-sizing:border-box;border:0;border-bottom:1px solid #e2e0dc;height:auto;min-height:40px;font-family:inherit;font-size:15px;font-weight:400;line-height:1.45;padding:9px 0");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control input{box-sizing:border-box;width:100%;height:40px;min-width:0;min-height:40px;align-self:start;border:0;border-bottom:1px solid #e2e0dc;padding:9px 0;font-family:inherit;font-size:15px;font-weight:400;line-height:1.45");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-control textarea:focus{border-bottom-color:#666}");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-year-control input:focus{border-bottom-color:#666}");
+    expect(css).not.toContain(".awards-year-control input{width:100%;height:100%");
+    expect(css).toContain(".awards-name-control{grid-row:2;display:grid;align-items:stretch;min-width:0;border:0;box-shadow:none}");
+    expect(css).toContain(".awards-year-control{grid-column:1;grid-row:3;display:grid;align-items:start;min-width:0;border:0;box-shadow:none}");
+    expect(css).not.toContain("box-shadow:inset 0 -1px 0");
+    expect(css).not.toContain("--awards-paired-control-row-height");
+    expect(css).toContain(".awards-year-mobile-label{display:block;grid-column:1;grid-row:1;margin:0;padding-top:8px;color:#444;font-size:14px;font-weight:600;line-height:1.35}");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair:has(>.awards-name-content>.awards-name-values.is-adaptive-stacked){grid-template-rows:auto;row-gap:7px}");
+    expect(css).toContain(":has(>.awards-name-content>.awards-name-values.is-adaptive-stacked)>.awards-year-field{grid-column:1/-1;grid-row:auto;display:block}");
+    expect(css).toContain(":has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-mobile-label{display:block}");
+    expect(css).toContain(":has(>.awards-name-content>.awards-name-values.is-adaptive-stacked) .awards-year-locale-reserve{display:none}");
+    expect(css).toContain(".editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-values .awards-name-field>label>span[aria-hidden=true]{display:block}");
+    expect(css).not.toContain(".editor-preview-layout[data-workspace-view=edit] .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,5fr)");
+    expect(css).not.toContain(".editor-preview-layout[data-workspace-view=preview] .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,5fr)");
+  });
+
+  it("places paired Award Name and Year underlines on shared parent grid tracks", async () => {
+    open({ path: "/awards" }, makeRepository("awards").repository);
+    const chinese = await screen.findByLabelText("Chinese Award name");
+    const english = screen.getByLabelText("English Award name");
+    const year = screen.getByRole("textbox", { name: "Year" });
+    const controls = [chinese, english].map(field => field.closest(".awards-name-control"));
+    const yearControl = year.closest(".awards-year-control");
+
+    expect(year.className).toBe("");
+    expect(controls.every(control => control?.classList.contains("awards-input-row-control"))).toBe(true);
+    expect(yearControl?.classList.contains("awards-input-row-control")).toBe(true);
+    expect(controls.every(control => control?.parentElement?.classList.contains("awards-name-field"))).toBe(true);
+    expect(yearControl?.parentElement?.classList.contains("awards-year-field")).toBe(true);
+    expect(controls.every(control => control?.querySelector("textarea"))).toBe(true);
+    expect(yearControl?.querySelector("input")).toBe(year);
   });
 
   it("keeps the shared Awards Year value and single control when the Admin language changes", async () => {
