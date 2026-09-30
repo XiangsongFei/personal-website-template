@@ -44,14 +44,15 @@ beforeEach(() => { window.sessionStorage.clear(); window.localStorage.removeItem
 afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); });
 
 describe("Stage 4C auth gate", () => {
-  it("does not present an intermediate page while restoring a session", () => {
+  it.each([1440, 1024, 860])("keeps initial session restoration visually silent at %ipx", width => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     const auth = mockClient();
     vi.mocked(auth.client.getIdentity).mockReturnValue(deferred<AdminIdentity | null>().promise);
     show(auth.client, "/experience");
     expect(screen.getByTestId("current-path").textContent).toBe("/experience");
-    expect(document.querySelector(".auth-login-screen .auth-login-content")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Checking access" })).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Please wait while your session and admin access are verified.");
+    expect(document.querySelector(".auth-screen, .app-shell, .system-state-content")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Checking access" })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
   });
@@ -63,8 +64,8 @@ describe("Stage 4C auth gate", () => {
     show(auth.client, "/profile");
     await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
     expect(screen.getByTestId("current-path").textContent).toBe("/profile");
-    expect(document.querySelector(".auth-login-screen .auth-login-content")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Checking access" })).toBeTruthy();
+    expect(document.querySelector(".auth-screen, .app-shell, .system-state-content")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Checking access" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
     check.resolve(true);
@@ -102,15 +103,21 @@ describe("Stage 4C auth gate", () => {
     vi.mocked(auth.client.isResumeAdmin).mockReturnValue(check.promise);
     show(auth.client, "/education");
     await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
-    expect(document.querySelector(".auth-login-screen .auth-login-content")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "正在检查访问权限" })).toBeTruthy();
+    expect(document.querySelector(".auth-screen, .app-shell, .system-state-content")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "正在检查访问权限" })).toBeNull();
     expect(screen.getByTestId("current-path").textContent).toBe("/education");
     check.resolve(true);
     expect(await screen.findByRole("heading", { name: "教育经历" })).toBeTruthy();
   });
 
-  it("shows sign-in when there is no session", async () => {
-    const auth = mockClient(); show(auth.client);
+  it("shows sign-in after a silently restored invalid or expired session", async () => {
+    const auth = mockClient();
+    const identity = deferred<AdminIdentity | null>();
+    vi.mocked(auth.client.getIdentity).mockReturnValue(identity.promise);
+    show(auth.client);
+    expect(document.querySelector(".auth-screen, .app-shell, .system-state-content")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Checking access" })).toBeNull();
+    identity.resolve(null);
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(document.querySelector(".auth-login-screen .auth-login-content .auth-login-header")).toBeTruthy();
     expect(screen.getByText("EXAMPLE_CV")).toBeTruthy();
@@ -202,7 +209,11 @@ describe("Stage 4C auth gate", () => {
     expect(await screen.findByRole("heading", { name: "Unable to check access" })).toBeTruthy();
     expect(document.querySelector(".auth-login-screen .auth-login-content")).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    const retryIdentity = deferred<AdminIdentity | null>();
+    vi.mocked(auth.client.getIdentity).mockReturnValue(retryIdentity.promise);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "Checking access" })).toBeTruthy();
+    retryIdentity.resolve(admin);
     expect(await screen.findByRole("navigation", { name: "CMS sections" })).toBeTruthy();
   });
 

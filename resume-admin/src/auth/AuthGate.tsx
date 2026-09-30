@@ -23,6 +23,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   const { t, locale } = useUiLocale();
   const navigate = useNavigate();
   const [state, setState] = useState<AuthState>({ kind: "restoring" });
+  const [showCheckingAccess, setShowCheckingAccess] = useState(false);
   const [loginPending, setLoginPending] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [signOutPending, setSignOutPending] = useState(false);
@@ -45,6 +46,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       const identity = await client.getIdentity();
       if (!mounted.current || currentRequest !== request.current) return;
       if (!identity) {
+        setShowCheckingAccess(false);
         hasObservedSession.current = true;
         activeSessionKey.current = null;
         verifiedSessionKey.current = null;
@@ -68,6 +70,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       if (!preserveAuthorized) setState({ kind: "checking", identity });
       const check = client.isResumeAdmin().then(allowed => {
         if (!mounted.current || currentRequest !== request.current || activeSessionKey.current !== identity.sessionKey) return;
+        setShowCheckingAccess(false);
         verifiedSessionKey.current = allowed ? identity.sessionKey : null;
         if (allowed) sectionStore.setSession(identity.sessionKey);
         else sectionStore.invalidate();
@@ -78,6 +81,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
       finally { if (adminChecks.current.get(identity.sessionKey) === check) adminChecks.current.delete(identity.sessionKey); }
     } catch {
       if (mounted.current && currentRequest === request.current) {
+        setShowCheckingAccess(false);
         verifiedSessionKey.current = null;
         sectionStore.invalidate();
         setState({ kind: "error", identity: null });
@@ -97,6 +101,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
         hasObservedSession.current = true;
         activeSessionKey.current = null;
         verifiedSessionKey.current = null;
+        setShowCheckingAccess(false);
         adminChecks.current.clear();
         sectionStore.invalidate();
         setState({ kind: "signedOut" });
@@ -110,6 +115,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
           activeSessionKey.current = sessionKey;
           verifiedSessionKey.current = null;
           sectionStore.invalidate();
+          setShowCheckingAccess(event === "SIGNED_IN");
           setState({ kind: "restoring" });
         }
         if (sameSession && adminChecks.current.has(sessionKey)) return;
@@ -141,6 +147,7 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
     const password = (form.elements.namedItem("password") as HTMLInputElement).value;
     setLoginPending(true);
     setLoginError("");
+    setShowCheckingAccess(true);
     try {
       await client.signIn(email, password);
       if (mounted.current) {
@@ -177,7 +184,9 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   }
 
   if (!client) return <AdminSystemState title={t("Configuration required")} description={locale === "zh" ? <><span className="configuration-required-chinese-sentence">{t("Admin setup is incomplete.")}</span><span className="configuration-required-chinese-sentence">{t("Please contact the administrator.")}</span></> : t("Admin setup is incomplete. Please contact the administrator.")} className="configuration-required-state" />;
-  if (state.kind === "restoring" || state.kind === "checking") return <AdminSystemState title={t("Checking access")} description={t("Please wait while your session and admin access are verified.")} busy />;
+  if (state.kind === "restoring" || state.kind === "checking") return showCheckingAccess
+    ? <AdminSystemState title={t("Checking access")} description={t("Please wait while your session and admin access are verified.")} busy />
+    : null;
   if (state.kind === "signedOut") return <AdminSystemShell>
     <h1>{t("Welcome back")}</h1><p className="auth-login-description">{t("Sign in to continue managing your resume.")}</p>
     <form onSubmit={submit}>
@@ -190,5 +199,5 @@ export function AuthGate({ client, resumeRepository, sectionStore = resumeSectio
   if (state.kind === "authorized") return <ResumeLoader key={state.identity.sessionKey} repository={resumeRepository} sessionKey={state.identity.sessionKey} identityEmail={state.identity.email}
     onSignOut={() => void signOut()} signOutPending={signOutPending} signOutError={signOutError} sectionStore={sectionStore} />;
   if (state.kind === "denied") return <AdminSystemState title={t("Access denied")} description={`${t("This account is not authorized to edit this resume.")}${state.identity.email ? ` (${state.identity.email})` : ""}`} action={<><button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
-  return <AdminSystemState title={t("Unable to check access")} description={t("The session or administrator check failed. Please retry.")} action={<><button type="button" onClick={() => void restore()}>{t("Retry")}</button>{state.identity && <button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>}{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
+  return <AdminSystemState title={t("Unable to check access")} description={t("The session or administrator check failed. Please retry.")} action={<><button type="button" onClick={() => { setShowCheckingAccess(true); void restore(); }}>{t("Retry")}</button>{state.identity && <button type="button" onClick={() => void signOut()} disabled={signOutPending}>{t("Sign Out")}</button>}{signOutError && <p className="auth-error" role="alert">{signOutError}</p>}</>} />;
 }
