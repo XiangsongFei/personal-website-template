@@ -1019,7 +1019,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const body = expandedCard.querySelector(".item-card-body")!;
     expect(body.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     expect(Array.from(body.querySelector<HTMLElement>(".bilingual-column-headings")!.children, heading => heading.textContent)).toEqual([
-      "", locale === "zh" ? "中文" : "Chinese", "English", locale === "zh" ? "年份" : "Year",
+      "", "中文", "EN", locale === "zh" ? "年份" : "Year",
     ]);
     expect(Array.from(body.querySelectorAll<HTMLElement>(".bilingual-field-pair h3"), field => field.textContent)).toEqual([locale === "zh" ? "荣誉名称" : "Award name"]);
     const yearInput = body.querySelector<HTMLInputElement>(".awards-year-field input")!;
@@ -1539,7 +1539,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(methodsGrid.dataset.methodListLayout).toBe("paired");
     expect(methodsGrid.classList.contains("is-adaptive-stacked")).toBe(false);
     const groups = Array.from(scope.querySelectorAll<HTMLElement>(".method-group"));
-    expect(groups.map(group => group.querySelector("h4")?.textContent)).toEqual(["Chinese", "English"]);
+    expect(groups.map(group => group.querySelector("h4")?.textContent)).toEqual(["中文", "EN"]);
     expect(groups.map(group => Array.from(group.querySelectorAll(".method-row .field>label [aria-hidden=true]"), label => label.textContent))).toEqual([["01", "02"], ["01", "02"]]);
     expect(groups[0].querySelectorAll(".method-row")).toHaveLength(2);
     expect(groups[1].querySelectorAll(".method-row")).toHaveLength(2);

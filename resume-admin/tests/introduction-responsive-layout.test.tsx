@@ -61,8 +61,8 @@ describe("Introduction responsive editor layout", () => {
     expect(within(scope).getByRole("heading", { level: 2, name: "Introduction" })).toBeTruthy();
     const expanded = scope.querySelector(".item-card-body") as HTMLElement;
     expect(expanded.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
-    expect(within(expanded).getByText("Chinese", { selector: ".bilingual-column-headings [lang='zh']" })).toBeTruthy();
-    expect(within(expanded).getByText("English", { selector: ".bilingual-column-headings [lang='en']" })).toBeTruthy();
+    expect(within(expanded).getByText("中文", { selector: ".bilingual-column-headings [lang='zh']" })).toBeTruthy();
+    expect(within(expanded).getByText("EN", { selector: ".bilingual-column-headings [lang='en']" })).toBeTruthy();
     expect(within(expanded).getByLabelText("Chinese Paragraph")).toBeTruthy();
     expect(within(expanded).getByLabelText("English Paragraph")).toBeTruthy();
     const cards = Array.from(scope.querySelectorAll<HTMLElement>(".item-card"));
@@ -91,7 +91,7 @@ describe("Introduction responsive editor layout", () => {
     expect(Array.from(scope.querySelectorAll<HTMLElement>(".item-card-heading h3")).map(heading => heading.textContent)).toEqual(["简介段落 1", "简介段落 2"]);
     const expanded = scope.querySelector(".item-card-body") as HTMLElement;
     expect(within(expanded).getByText("中文", { selector: ".bilingual-column-headings [lang='zh']" })).toBeTruthy();
-    expect(within(expanded).getByText("English", { selector: ".bilingual-column-headings [lang='en']" })).toBeTruthy();
+    expect(within(expanded).getByText("EN", { selector: ".bilingual-column-headings [lang='en']" })).toBeTruthy();
   });
 
   it("expands and collapses each Introduction item independently", () => {

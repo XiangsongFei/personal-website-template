@@ -76,7 +76,7 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(screen.getByText("Last updated")).toBeTruthy();
     expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · Beijing Time");
     expect(within(screen.getByLabelText("Resume summary")).queryByText(/\d{2}:\d{2}:\d{2}/)).toBeNull();
-    expect(screen.getByText("Chinese · English")).toBeTruthy();
+    expect(screen.getByText("中文 · EN")).toBeTruthy();
     expect(screen.queryByText("Unpublished")).toBeNull();
     expect(screen.queryByText("9 editor sections")).toBeNull();
     expect(screen.queryByText("9 editable")).toBeNull();
@@ -105,7 +105,7 @@ describe("Phase 5E Overview route-first loading", () => {
     expect(screen.getByText("工作区概览")).toBeTruthy();
     expect(screen.getByText("管理并维护你的中英文简历内容。")).toBeTruthy();
     expect(screen.getByText("中文界面动态姓名")).toBeTruthy();
-    expect(screen.getByText("中文 · English")).toBeTruthy();
+    expect(screen.getByText("中文 · EN")).toBeTruthy();
     expect(document.querySelector(".overview-summary > div:last-child strong")?.textContent).toBe("2026-09-25 08:00 · 北京时间");
     expect(within(screen.getByLabelText("简历摘要")).queryByText(/\d{2}:\d{2}:\d{2}/)).toBeNull();
     const sidebar = screen.getByRole("navigation", { name: "CMS 模块" });

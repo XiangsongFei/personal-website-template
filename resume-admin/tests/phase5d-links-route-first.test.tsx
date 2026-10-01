@@ -130,7 +130,7 @@ describe("Phase 5D Links route-first loading", () => {
     expect(linkedinLocalized.querySelectorAll(".bilingual-field-pair .bilingual-field-values")).toHaveLength(1);
     expect(linkedinLocalized.querySelectorAll(".bilingual-column-headings")).toHaveLength(0);
     expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair"), row => row.firstElementChild?.nextElementSibling?.classList.contains("bilingual-field-values"))).toEqual([true]);
-    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["Chinese", "English"]);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["中文", "EN"]);
     const siteTextSection = Array.from(document.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "Footer text")!;
     expect(siteTextSection.querySelector(".links-footer-setting > h3")?.textContent).toBe("Updated-at label");
     expect(siteTextSection.querySelector(".links-footer-setting > p")?.textContent)

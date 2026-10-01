@@ -55,6 +55,7 @@ function useMediaQuery(query: string) {
 
 const clone = <T,>(value: T): T => structuredClone(value);
 const renumber = <T extends OrderedItem,>(items: T[]): T[] => items.map((item, position) => ({ ...item, position }));
+const fieldLanguageIndicator = (locale: Locale) => locale === "zh" ? "中文" : "EN";
 const UI_RESTORE_STORAGE_PREFIX = "example-cv-cms:ui:";
 const previewModeStorageKey = (section: PreviewSection) => `${UI_RESTORE_STORAGE_PREFIX}preview-mode:${section}`;
 type WorkspaceView = "edit" | "split" | "preview";
@@ -496,8 +497,8 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
     <div className={`bilingual-grid${showLocaleHeaders || matrixLayout ? " has-locale-headings" : ""}`}>
       {(showLocaleHeaders || (matrixLayout && matrixHeader && !inlineLocaleIndicators)) && <div className="bilingual-column-headings" aria-hidden="true">
         {matrixLayout
-          ? <><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>
-          : <><span /><span lang="zh">{t("Chinese")}</span><span lang="en">English</span></>}
+          ? <><span lang="zh">中文</span><span lang="en">EN</span></>
+          : <><span /><span lang="zh">中文</span><span lang="en">EN</span></>}
       </div>}
       {fields.map(field =>
       <AdaptivePairedField key={field.key} className={`bilingual-field-pair${field.multiline ? " bilingual-field-multiline" : ""}${pairedShortFields.includes(String(field.key)) && !field.multiline ? " paired-short-bilingual-field" : ""}${pairedSingleLineFields.includes(String(field.key)) && !field.multiline ? " paired-bilingual-single-line" : ""}${pairedSingleLineHeadingFields.includes(String(field.key)) && !field.multiline ? " experience-paired-field-heading-above" : ""}`} anchor={`field:${idPrefix}:${field.key}`} adaptive={pairedSingleLineFields.includes(String(field.key)) && !field.multiline} values={locales.map(locale => String(value[locale][field.key] ?? ""))}>
@@ -513,7 +514,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
           const review = identity ? context.bilingualReviews[key] : undefined;
           const reviewLabel = review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined;
           return <InputField key={locale} id={`${idPrefix}-${locale}-${field.key}`}
-            label={`${localeName} ${t(field.label)}`} compactLabel={inlineLocaleIndicators ? localeName : locale === "zh" ? "中文" : "EN"}
+            label={`${localeName} ${t(field.label)}`} compactLabel={fieldLanguageIndicator(locale)}
             value={String(value[locale][field.key] ?? "")} type={field.type} multiline={field.multiline}
             readOnly={readOnly}
             modified={modified} reviewLabel={reviewLabel}
@@ -528,7 +529,7 @@ function BilingualFields<T extends object>({ value, fields, onChange, idPrefix, 
     )}</div>
     {footer && <div className="bilingual-footer-grid">{locales.map(locale =>
       <section className="language-panel bilingual-footer-panel" key={locale}>
-        <h3><span lang={locale}>{locale === "zh" ? t("Chinese") : t("English")}</span></h3>
+        <h3><span lang={locale}>{fieldLanguageIndicator(locale)}</span></h3>
         {footer(locale)}
       </section>
     )}</div>}
@@ -1091,7 +1092,7 @@ function Overview() {
     <div className="page-heading"><p className="eyebrow">{t("Workspace Overview")}</p><h1>{t("Overview")}</h1><p>{t("Manage and maintain your bilingual resume content.")}</p></div>
     <div className="overview-summary" aria-label={t("Resume summary")}>
       <div><span>{t("Current resume")}</span><strong>{profileName}</strong></div>
-      <div><span>{t("Content languages")}</span><strong>{t("Chinese · English")}</strong></div>
+      <div><span>{t("Content languages")}</span><strong>中文 · EN</strong></div>
       <div><span>{t("Last updated")}</span><strong>{formatBeijingTimestamp(updatedAt)}<span className="overview-summary-timezone"> · {t("Beijing Time")}</span></strong></div>
     </div>
     <div className="overview-management">
@@ -2052,7 +2053,7 @@ function Experience() {
 function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPrefix, projectId }: { locale: Locale; methods: ProjectMethod[]; confirmedMethods?: ProjectMethod[]; onChange: (items: ProjectMethod[]) => void; idPrefix: string; projectId: string }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
-  const title = t(locale === "zh" ? "Chinese" : "English");
+  const title = fieldLanguageIndicator(locale);
   const methodsTitle = t(locale === "zh" ? "Chinese methods" : "English methods");
   const addLabel = locale === "zh" ? "Add Chinese method" : "Add English method";
   const move = (index: number, direction: -1 | 1) => {
@@ -2213,7 +2214,7 @@ function AwardFields({ item, confirmed, onChange }: {
   return <div className="bilingual-fields">
     <div className="bilingual-grid has-locale-headings awards-fields-grid">
       <div className="bilingual-column-headings" aria-hidden="true"><span />
-        <span lang="zh">{t("Chinese")}</span><span lang="en">English</span><span>{t("Year")}</span>
+        <span lang="zh">中文</span><span lang="en">EN</span><span>{t("Year")}</span>
       </div>
       <section className="bilingual-field-pair awards-name-year-pair" data-editor-anchor={`award-fields:${itemId}:name-year`}>
         <div className="awards-name-content"><h3>{t("Award name")}</h3>
@@ -2226,7 +2227,7 @@ function AwardFields({ item, confirmed, onChange }: {
           const baseValue = confirmed?.translations[locale].name ?? "";
           const review = context.bilingualReviews[key];
           return <AwardNameField key={locale} id={`${item.id}-${locale}-name`} label={`${localeName} ${t("Award name")}`}
-            localeLabel={locale === "zh" ? "中文" : "EN"} value={value} modified={value !== baseValue}
+            localeLabel={fieldLanguageIndicator(locale)} value={value} modified={value !== baseValue}
             reviewLabel={review ? (locale === "zh" ? "Review Chinese" : "Review English") : undefined}
             onReviewConfirm={() => context.onBilingualReviewConfirm(identity, locale)}
             onChange={next => {
@@ -2364,7 +2365,7 @@ function ResumePdfUpload({ locale, href, filename, file, error, onSelect }: {
   const language = locale === "zh" ? t("Chinese") : t("English");
   const currentName = filename || (href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "");
   return <div className="field pdf-upload-field">
-    <span className="pdf-upload-label">{t(locale === "zh" ? "Chinese resume" : "English resume")}</span>
+    <span className="pdf-upload-label">{locale === "zh" ? "中文简历" : "English Resume"}</span>
     <div className="pdf-upload-status">
       {href ? <a href={href} target="_blank" rel="noreferrer">{t("Current PDF")}: {currentName}</a> : <span>{t("No PDF uploaded")}</span>}
       {file && <span className="pdf-selected-name">{t("Selected")}: {file.name}</span>}

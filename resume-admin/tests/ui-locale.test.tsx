@@ -52,15 +52,81 @@ describe("global CMS UI locale", () => {
     expect(within(navigation).getByText("设置")).toBeTruthy();
   });
 
-  it("visually pairs Chinese and English inputs for the same semantic field", () => {
+  it("uses the fixed 中文 / EN indicators for paired fields in both Admin languages", () => {
     renderApp("/profile");
     const nameHeading = screen.getByRole("heading", { level: 3, name: "Name" });
     const namePair = nameHeading.parentElement;
     expect(namePair).toBeTruthy();
     expect(within(namePair as HTMLElement).getByLabelText("Chinese Name")).toBeTruthy();
     expect(within(namePair as HTMLElement).getByLabelText("English Name")).toBeTruthy();
-    expect(within(namePair as HTMLElement).getByText("中文", { selector: "span[aria-hidden='true']" })).toBeTruthy();
-    expect(within(namePair as HTMLElement).getByText("EN", { selector: "span[aria-hidden='true']" })).toBeTruthy();
+    const indicators = () => Array.from((namePair as HTMLElement).querySelectorAll("label span[aria-hidden='true']")).map(node => node.textContent);
+    expect(indicators()).toEqual(["中文", "EN"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(indicators()).toEqual(["中文", "EN"]);
+    expect(within(namePair as HTMLElement).getByLabelText("英文 姓名")).toBeTruthy();
+    expect(within(namePair as HTMLElement).queryByText("英文", { selector: "span[aria-hidden='true']" })).toBeNull();
+    expect(within(namePair as HTMLElement).queryByText("English", { selector: "span[aria-hidden='true']" })).toBeNull();
+  });
+
+  it("keeps locale column headings and Awards row indicators at 中文 / EN in both Admin languages", () => {
+    const { container } = renderApp("/education");
+    expect(container.querySelector(".bilingual-column-headings")?.textContent).toBe("中文EN");
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(container.querySelector(".bilingual-column-headings")?.textContent).toContain("中文EN");
+    cleanup();
+
+    const awards = renderApp("/awards");
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    const heading = awards.container.querySelector(".awards-fields-grid .bilingual-column-headings");
+    const indicators = () => Array.from(awards.container.querySelectorAll(".awards-name-values label span[aria-hidden='true']")).map(node => node.textContent);
+    expect(heading?.textContent).toContain("中文EN");
+    expect(indicators()).toEqual(["中文", "EN"]);
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(heading?.textContent).toContain("中文EN");
+    expect(indicators()).toEqual(["中文", "EN"]);
+    cleanup();
+
+    renderApp("/projects");
+    const methodHeadings = () => Array.from(document.querySelectorAll(".method-group h4"), node => node.textContent);
+    expect(methodHeadings()).toEqual(["中文", "EN"]);
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(methodHeadings()).toEqual(["中文", "EN"]);
+  });
+
+  it("uses the compact language identifiers in Overview and Preview while keeping Resume Files descriptive", () => {
+    renderApp("/overview");
+    expect(screen.getByText("中文 · EN")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(screen.getByText("中文 · EN")).toBeTruthy();
+    cleanup();
+
+    renderProductionApp("/profile");
+    const preview = screen.getByTestId("resume-preview");
+    const previewLanguage = () => preview.querySelector<HTMLButtonElement>(".resume-preview-nav-links button")!;
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(previewLanguage().textContent).toBe("EN");
+    fireEvent.click(previewLanguage());
+    expect(previewLanguage().textContent).toBe("中文");
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(previewLanguage().textContent).toBe("中文");
+    fireEvent.click(previewLanguage());
+    expect(previewLanguage().textContent).toBe("EN");
+    cleanup();
+
+    renderApp("/links");
+    const resumeHeadings = () => Array.from(document.querySelectorAll(".pdf-upload-label"), node => node.textContent);
+    expect(resumeHeadings()).toEqual(["中文简历", "English Resume"]);
+    const publicButtonZh = screen.getByLabelText("Chinese Public button label") as HTMLInputElement;
+    const publicButtonEn = screen.getByLabelText("English Public button label") as HTMLInputElement;
+    expect([publicButtonZh.value, publicButtonEn.value]).toEqual(["中文简历", "English Resume"]);
+    const publicButtonHeadings = () => document.querySelector(".links-resume-files .bilingual-column-headings")?.textContent;
+    expect(publicButtonHeadings()).toBe("中文EN");
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(resumeHeadings()).toEqual(["中文简历", "English Resume"]);
+    expect((screen.getByLabelText("中文 公开按钮文案") as HTMLInputElement).value).toBe("中文简历");
+    expect((screen.getByLabelText("英文 公开按钮文案") as HTMLInputElement).value).toBe("English Resume");
+    expect(publicButtonHeadings()).toBe("中文EN");
   });
 
   it("restores valid preference and falls back for invalid preference", () => {
@@ -105,7 +171,7 @@ describe("global CMS UI locale", () => {
     expect(screen.queryByText("中文内容")).toBeNull();
     expect(screen.queryByText("英文内容")).toBeNull();
     expect(document.querySelector(".bilingual-column-headings [lang='zh']")?.textContent).toBe("中文");
-    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("English");
+    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("EN");
     expect(screen.getByText("没有未保存修改")).toBeTruthy();
     expect(screen.getByRole("button", { name: "取消修改" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "保存个人资料修改" })).toBeTruthy();
@@ -116,8 +182,8 @@ describe("global CMS UI locale", () => {
     expect(screen.getByText("Profile content")).toBeTruthy();
     expect(screen.queryByText("Chinese content")).toBeNull();
     expect(screen.queryByText("English content")).toBeNull();
-    expect(document.querySelector(".bilingual-column-headings [lang='zh']")?.textContent).toBe("Chinese");
-    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("English");
+    expect(document.querySelector(".bilingual-column-headings [lang='zh']")?.textContent).toBe("中文");
+    expect(document.querySelector(".bilingual-column-headings [lang='en']")?.textContent).toBe("EN");
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save profile changes" })).toBeTruthy();
     expect(screen.queryByText(/production environment|database|API|separately/i)).toBeNull();
@@ -160,7 +226,7 @@ describe("global CMS UI locale", () => {
     expect(screen.getByText("当前简历")).toBeTruthy();
     expect(screen.getByText("内容语言")).toBeTruthy();
     expect(screen.getByText("最后更新")).toBeTruthy();
-    expect(screen.getByText("中文 · English")).toBeTruthy();
+    expect(screen.getByText("中文 · EN")).toBeTruthy();
     expect(screen.getByText("选择一个部分开始编辑。")).toBeTruthy();
     expect(screen.queryByText(/生产环境|生产数据|已发布|内容完整度|编辑模块/)).toBeNull();
     expect(screen.getByRole("navigation", { name: "内容管理" }).querySelectorAll("a")).toHaveLength(9);

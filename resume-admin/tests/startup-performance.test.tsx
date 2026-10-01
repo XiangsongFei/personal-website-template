@@ -66,6 +66,10 @@ describe("startup request coalescing", () => {
     const app = harness();
     app.render("/profile", true);
     await screen.findByRole("navigation", { name: "CMS sections" });
+    await waitFor(() => {
+      expect(app.repository.loadSiteMetadata).toHaveBeenCalledOnce();
+      expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+    });
     expect(app.client.isResumeAdmin).toHaveBeenCalledOnce();
     expect(app.repository.load).not.toHaveBeenCalled();
     expect(app.repository.loadSiteMetadata).toHaveBeenCalledOnce();

@@ -82,8 +82,8 @@ describe("Stage 4F repository translation boundary", () => {
     expect(screen.queryByRole("heading", { name: "Chinese content" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "English content" })).toBeNull();
     const content = screen.getByRole("heading", { name: "Profile content" }).closest("section")!;
-    expect(within(content).getByText("Chinese", { selector: ".bilingual-column-headings span[lang='zh']" })).toBeTruthy();
-    expect(within(content).getByText("English", { selector: ".bilingual-column-headings span[lang='en']" })).toBeTruthy();
+    expect(within(content).getByText("中文", { selector: ".bilingual-column-headings span[lang='zh']" })).toBeTruthy();
+    expect(within(content).getByText("EN", { selector: ".bilingual-column-headings span[lang='en']" })).toBeTruthy();
     const rows = Array.from(content.querySelectorAll<HTMLElement>(".bilingual-field-pair"));
     expect(rows.map(row => row.querySelector("h3")?.textContent)).toEqual([
       "Name", "About navigation label", "Email action label", "Graduation label", "Current Focus heading", "Current Status heading",
