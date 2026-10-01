@@ -109,6 +109,46 @@ describe("sidebar navigation and canonical preview workspace", () => {
     expect(workspaceRule).toContain("grid-template-columns:minmax(0,1fr) clamp(530px,calc(50vw - 125px),680px)");
   });
 
+  it("refines only the wide-desktop Split outer columns while preserving the preview cap", () => {
+    const css = readFileSync("src/preview/preview.css", "utf8");
+    const refinement = css.match(/@media\(min-width:1281px\)\{([\s\S]*?)\n\}/)?.[1] ?? "";
+
+    expect(refinement).toContain(".preview-route-main>.editor-preview-layout[data-workspace-view=split]");
+    expect(refinement).toContain("grid-template-columns:minmax(0,1fr) clamp(530px,max(calc(50vw - 125px),calc(100% - 572px)),680px)");
+    expect(refinement).not.toContain("data-workspace-view=edit");
+    expect(refinement).not.toContain("data-workspace-view=preview");
+    expect(refinement).toContain(".links-editor-scope{--links-split-paired-columns:minmax(280px,2fr) minmax(150px,1fr);--links-split-label-column:104px}");
+    expect(refinement).toContain(".links-section[data-editor-anchor=\"links:public-links\"] .links-object-group .links-inline-row{grid-template-columns:var(--links-split-paired-columns)}");
+    expect(refinement).toContain(".links-section[data-editor-anchor=\"links:public-links\"] .links-object-group .links-inline-field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}");
+    expect(refinement).toContain(".links-object-group[data-editor-anchor=\"links:linkedin\"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor=\"field:links-linkedin-localized:linkedInLabel\"]:not(.is-adaptive-stacked) .bilingual-field-values{grid-template-columns:var(--links-split-paired-columns)}");
+    expect(refinement).toContain(".links-linkedin-localized .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}");
+    expect(refinement).not.toContain("resume-files");
+    expect(css).toContain("@media(min-width:1280px){");
+    expect(css).toContain(".preview-route-main>.editor-preview-layout{position:relative;width:100%;max-width:1390px;min-width:0;height:100%;min-height:0;flex:1 1 auto;align-items:stretch;grid-template-areas:\"editor preview\";grid-template-columns:minmax(0,1fr) clamp(530px,calc(50vw - 125px),680px)");
+
+    const layoutWidth = (viewportWidth: number) => Math.min(1390, viewportWidth - 190 - 16 * 2);
+    const previewWidth = (viewportWidth: number) => {
+      const width = layoutWidth(viewportWidth);
+      const existingTarget = viewportWidth / 2 - 125;
+      const editorComfortTarget = width - 32 - 540;
+      return Math.min(680, Math.max(530, existingTarget, editorComfortTarget));
+    };
+
+    expect(previewWidth(1280)).toBe(530);
+    expect(previewWidth(1281)).toBe(530);
+    expect(previewWidth(1366)).toBe(572);
+    expect(previewWidth(1403)).toBe(609);
+    expect(previewWidth(1440)).toBe(646);
+    expect(previewWidth(1600)).toBe(680);
+    expect(previewWidth(2048)).toBe(680);
+    expect(layoutWidth(1281) - previewWidth(1281) - 32).toBe(497);
+    expect(layoutWidth(1366) - previewWidth(1366) - 32).toBe(540);
+    expect(layoutWidth(1403) - previewWidth(1403) - 32).toBe(540);
+    expect(layoutWidth(1440) - previewWidth(1440) - 32).toBe(540);
+    expect(layoutWidth(1600) - previewWidth(1600) - 32).toBe(666);
+    expect(layoutWidth(2048) - previewWidth(2048) - 32).toBe(678);
+  });
+
   it.each([1280, 1366, 1440, 2048])("transfers the released 30px from the desktop Sidebar to Preview at %ipx without changing the Editor track", width => {
     const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
     const oldLayout = Math.min(1360, width - 220 - 32);

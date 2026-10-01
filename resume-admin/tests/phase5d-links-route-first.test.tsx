@@ -53,11 +53,17 @@ afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); wind
 describe("Phase 5D Links route-first loading", () => {
   it("keeps Email and GitHub proportions, pairs Resume Files PDFs only in desktop Split, and applies LinkedIn ratios only to its bilingual rows", () => {
     const css = readFileSync("src/styles.css", "utf8");
+    const splitCss = readFileSync("src/preview/preview.css", "utf8");
     const desktopSplitRules = css.slice(css.indexOf("@media(min-width:1281px){"), css.indexOf("\n}", css.indexOf("@media(min-width:1281px){")));
     expect(css).toContain(".links-editor-scope .field-grid.links-inline-row{display:grid;grid-template-columns:var(--links-content-columns);column-gap:var(--links-content-gap)");
-    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:email\"] .links-inline-row,\n  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:github\"] .links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
-    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:linkedin\"]>.links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
-    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:linkedin\"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor=\"field:links-linkedin-localized:linkedInLabel\"] .bilingual-field-values{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
+    expect(splitCss).toContain(".links-editor-scope{--links-split-paired-columns:minmax(280px,2fr) minmax(150px,1fr);--links-split-label-column:104px}");
+    expect(splitCss).toContain(".links-section[data-editor-anchor=\"links:public-links\"] .links-object-group .links-inline-row{grid-template-columns:var(--links-split-paired-columns)}");
+    expect(splitCss).toContain(".links-section[data-editor-anchor=\"links:public-links\"] .links-object-group .links-inline-field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}");
+    expect(splitCss).toContain(".links-object-group[data-editor-anchor=\"links:linkedin\"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor=\"field:links-linkedin-localized:linkedInLabel\"]:not(.is-adaptive-stacked) .bilingual-field-values{grid-template-columns:var(--links-split-paired-columns)}");
+    expect(splitCss).toContain(".links-linkedin-localized .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:email\"] .links-inline-row");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:github\"] .links-inline-row");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:linkedin\"]>.links-inline-row");
     expect(desktopSplitRules).not.toContain("field:links-linkedin-localized:linkedInHref");
     expect(desktopSplitRules).not.toContain("data-workspace-view=edit");
     expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor=\"links:resume-files\"] .resume-file-grid{grid-template-columns:repeat(2,minmax(0,1fr))}");

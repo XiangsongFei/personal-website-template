@@ -121,6 +121,14 @@
   .app-main.has-preview-workspace.is-editor-only-desktop .editor-action-footer .save-bar{position:static;bottom:auto;z-index:auto;margin-top:0;padding:0}
   .app-main.has-preview-workspace.is-editor-only-desktop .links-editor-scope .editor-action-footer .save-bar{margin-top:0;padding:0}
 }
+@media(min-width:1281px){
+  .preview-route-main>.editor-preview-layout[data-workspace-view=split]{grid-template-columns:minmax(0,1fr) clamp(530px,max(calc(50vw - 125px),calc(100% - 572px)),680px)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope{--links-split-paired-columns:minmax(280px,2fr) minmax(150px,1fr);--links-split-label-column:104px}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor="links:public-links"] .links-object-group .links-inline-row{grid-template-columns:var(--links-split-paired-columns)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor="links:public-links"] .links-object-group .links-inline-field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor="links:linkedin"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor="field:links-linkedin-localized:linkedInLabel"]:not(.is-adaptive-stacked) .bilingual-field-values{grid-template-columns:var(--links-split-paired-columns)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-linkedin-localized .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:var(--links-split-label-column) minmax(0,1fr)}
+}
 @container preview-stage (min-width:500px){.resume-preview-hero{padding-right:32px;padding-left:32px}.resume-preview-hero-grid{grid-template-columns:minmax(0,1.65fr) minmax(250px,1fr);gap:16px}}
 @media(max-width:720px){.resume-preview-nav-links{gap:12px}.resume-preview-nav-links a{display:none}.resume-preview-hero-grid{grid-template-columns:1fr;gap:24px;margin-top:36px}.resume-preview-portrait{justify-self:center;order:-1;width:250px;height:260px;transform:none}.resume-preview-portrait>div{font-size:68px}.resume-preview-education-section{grid-template-columns:1fr;gap:18px;padding-top:42px;padding-bottom:42px}.resume-preview-education-list{display:block}.resume-preview-education-list article{grid-template-columns:1fr;gap:7px}.resume-preview-education-list article+article{margin-top:32px}.resume-preview-education-meta{align-items:flex-start;text-align:left}}
 .resume-preview-content-section{display:grid;max-width:980px;margin:0 auto;padding:34px 49px 36px;grid-template-columns:100px minmax(0,1fr) 120px;column-gap:18px;border-bottom:1px solid #dedede}
