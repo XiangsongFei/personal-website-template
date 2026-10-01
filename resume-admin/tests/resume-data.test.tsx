@@ -49,22 +49,38 @@ function mockSupabase(rows: ResumeRows, failTable?: string) {
   const calls: { table: string; column: string; value: string; selected: string }[] = [];
   const mutation = vi.fn(() => { throw new Error("A production mutation was attempted"); });
   const from = vi.fn((table: string) => ({
-    select: (selected: string) => ({
-      eq: (column: string, value: string) => {
+    select: (selected: string) => {
+      if (table === "resume_sites") {
+        const filters: Array<[string, string]> = [];
+        const query = {
+          eq(column: string, value: string) { filters.push([column, value]); return query; },
+          maybeSingle: async () => {
+            calls.push({ table, column: filters.at(-1)?.[0] ?? "", value: filters.at(-1)?.[1] ?? "", selected });
+            const site = rows.resume_sites.find(row => filters.every(([key, expected]) => row[key] === expected)) ?? null;
+            return { data: failTable === table ? null : site, error: failTable === table ? { message: "query failed" } : null };
+          },
+        };
+        return query;
+      }
+      return { eq: (column: string, value: string) => {
         calls.push({ table, column, value, selected });
-        const result = table === "resume_sites" ? rows.resume_sites[0] : rows[table as keyof ResumeRows];
+        const result = rows[table as keyof ResumeRows];
         const response = { data: failTable === table ? null : result, error: failTable === table ? { message: "query failed" } : null };
-        return table === "resume_sites" ? { maybeSingle: async () => response } : Promise.resolve(response);
-      },
-    }),
+        return Promise.resolve(response);
+      } };
+    },
     insert: mutation, update: mutation, upsert: mutation, delete: mutation,
   }));
-  return { client: { from } as unknown as SupabaseClient, calls, mutation };
+  const rpc = vi.fn(async (name: string) => name === "get_admin_resume_target"
+    ? { data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }
+    : { data: true, error: null });
+  return { client: { from, rpc } as unknown as SupabaseClient, calls, mutation };
 }
 
 function auth(identity: boolean, allowed = true): AdminAuthClient {
   return {
     getIdentity: vi.fn().mockResolvedValue(identity ? { id: "admin-id", email: "admin@example.test", sessionKey: "admin-session" } : null),
+    getAdminTarget: vi.fn().mockResolvedValue({ resumeId, siteKey: "example-cv", role: "owner" }),
     isResumeAdmin: vi.fn().mockResolvedValue(allowed), signIn: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined),
     subscribe: vi.fn().mockReturnValue(() => {}),
   };
@@ -173,7 +189,7 @@ describe("Stage 4D normalized read and mapping", () => {
     const loaded = await createResumeRepository(db.client).load();
     expect(loaded.resumeId).toBe(resumeId);
     expect(loaded.isPublished).toBe(false);
-    expect(db.calls[0]).toEqual({ table: "resume_sites", column: "site_key", value: "example-cv", selected: "*" });
+    expect(db.calls[0]).toEqual({ table: "resume_sites", column: "id", value: resumeId, selected: "*" });
     expect(db.calls.slice(1).map(call => call.table)).toEqual(resumeTables);
     expect(db.calls.slice(1).every(call => call.column === "resume_id" && call.value === resumeId && call.selected === "*")).toBe(true);
     expect(db.mutation).not.toHaveBeenCalled();

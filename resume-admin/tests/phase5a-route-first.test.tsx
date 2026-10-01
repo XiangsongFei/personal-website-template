@@ -89,7 +89,7 @@ describe("Phase 5A route-first section loading", () => {
       if (table === "resume_locale_content") return Promise.resolve({ data: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, locale, education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "Portfolio", portfolio_href: "", kaggle_label: "View project", updated_at_label: "Last updated", linkedin_label: "LinkedIn", linkedin_href: "" })) });
       throw new Error(`Unexpected table read ${table}`);
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
     const fullLoad = vi.spyOn(repo, "load");
     show(repo, spec.path);
     const inputName = spec.input;

@@ -66,7 +66,7 @@ describe("Phase 5C Contact route-first loading", () => {
       if (table in tables) return Promise.resolve({ data: tables[table], error: null });
       throw new Error(`Unexpected table read ${table}`);
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/contact", new ResumeSectionStore(), true);
     expect(await screen.findByLabelText("English Section label")).toBeTruthy();
@@ -150,7 +150,7 @@ describe("Phase 5C Contact route-first loading", () => {
         if (table === failedTable && !failed) { failed = true; return Promise.resolve({ data: null, error: new Error("temporary read failure") }); }
         return Promise.resolve({ data: rows[table], error: null });
       }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-      const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+      const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
       const loadContact = vi.spyOn(repo, "loadContact"); const fullLoad = vi.spyOn(repo, "load");
       const store = new ResumeSectionStore(); store.setSession("contact-session");
       await store.loadSection("contact-session", resumeId, "projects", async () => structuredClone(fixtureSections.projects));

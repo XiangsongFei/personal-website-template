@@ -76,7 +76,7 @@ describe("Phase 4 route-first Education loading", () => {
       if (table === "resume_locale_content") return Promise.resolve({ data: (["zh", "en"] as const).map(locale => ({ resume_id: resumeId, locale, education_label: "Education", experience_label: "Experience", project_heading: "Projects", skills_label: "Skills", honors_label: "Awards", portfolio_label: "Portfolio", portfolio_href: "", kaggle_label: "View project", updated_at_label: "Last updated", linkedin_label: "LinkedIn", linkedin_href: "" })), error: null });
       throw new Error(`Unexpected Data API table: ${table}`);
     }) })), update: vi.fn(), insert: vi.fn(), delete: vi.fn() }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/education", true);
     expect(await screen.findByLabelText("English Title")).toBeTruthy();

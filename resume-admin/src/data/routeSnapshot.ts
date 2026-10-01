@@ -4,8 +4,8 @@ import type {
 } from "../model";
 import type { ResumeSiteMetadata } from "./resumeMapper";
 
-export const ROUTE_SNAPSHOT_SCHEMA_VERSION = 1;
-const STORAGE_PREFIX = "example-cv-cms:route-snapshot:v1:";
+export const ROUTE_SNAPSHOT_SCHEMA_VERSION = 2;
+const STORAGE_PREFIX = "example-cv-cms:route-snapshot:v2:";
 
 export type SnapshotRoute = "/profile" | "/introduction" | "/education" | "/experience" | "/projects" | "/skills" | "/awards" | "/contact" | "/links";
 export type RouteSnapshotData = {
@@ -53,7 +53,7 @@ function isJsonValue(value: unknown, seen = new Set<object>()): boolean {
 }
 
 function isSite(value: unknown): value is ResumeSiteMetadata {
-  return isRecord(value) && isString(value.resumeId) && value.resumeId.length > 0 && value.siteKey === "example-cv"
+  return isRecord(value) && isString(value.resumeId) && value.resumeId.length > 0 && isString(value.siteKey) && value.siteKey.length > 0
     && typeof value.isPublished === "boolean" && isNullableString(value.updatedAt);
 }
 
@@ -104,13 +104,15 @@ export function isSnapshotRoute(route: string): route is SnapshotRoute {
   return routes.has(route);
 }
 
-export function readRouteSnapshot(route: string): RouteSnapshot | null {
+export function readRouteSnapshot(route: string, userId?: string, resumeId?: string): RouteSnapshot | null {
   if (!isSnapshotRoute(route) || typeof window === "undefined") return null;
-  const key = `${STORAGE_PREFIX}${route}`;
+  if (!userId || !resumeId) return null;
+  const key = `${STORAGE_PREFIX}${userId}:${resumeId}:${route}`;
   try {
     const raw = window.sessionStorage.getItem(key);
     const snapshot = parseSnapshot(route, raw);
     if (raw && !snapshot) window.sessionStorage.removeItem(key);
+    if (snapshot && ((userId && snapshot.userId !== userId) || (resumeId && snapshot.site.resumeId !== resumeId))) return null;
     return snapshot;
   } catch {
     return null;
@@ -121,7 +123,7 @@ export function writeRouteSnapshot(snapshot: RouteSnapshot): boolean {
   if (typeof window === "undefined") return false;
   try {
     if (!isJsonValue(snapshot)) return false;
-    const key = `${STORAGE_PREFIX}${snapshot.route}`;
+    const key = `${STORAGE_PREFIX}${snapshot.userId}:${snapshot.site.resumeId}:${snapshot.route}`;
     const serialized = JSON.stringify(snapshot);
     if (!parseSnapshot(snapshot.route, serialized)) return false;
     window.sessionStorage.setItem(key, serialized);
@@ -133,7 +135,13 @@ export function writeRouteSnapshot(snapshot: RouteSnapshot): boolean {
 
 export function clearRouteSnapshot(route: string): void {
   if (!isSnapshotRoute(route) || typeof window === "undefined") return;
-  try { window.sessionStorage.removeItem(`${STORAGE_PREFIX}${route}`); } catch { /* Cache cleanup is best effort. */ }
+  try {
+    const prefix = `${STORAGE_PREFIX}`;
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(prefix) && key.endsWith(`:${route}`)) window.sessionStorage.removeItem(key);
+    }
+  } catch { /* Cache cleanup is best effort. */ }
 }
 
 export function clearAllRouteSnapshots(): void {

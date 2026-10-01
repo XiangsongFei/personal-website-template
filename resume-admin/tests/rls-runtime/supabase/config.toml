@@ -1,0 +1,37 @@
+# TEST ONLY. This project is local-only and must never be linked to a remote project.
+project_id = "example-cv-admin-rls-local-test"
+
+[api]
+enabled = true
+port = 55421
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 55422
+shadow_port = 55423
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed_qa_fixture.sql", "./seed_membership.sql"]
+
+[analytics]
+port = 55427
+vector_port = 55428
+
+[studio]
+enabled = false
+
+[inbucket]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:55421"
+additional_redirect_urls = ["http://127.0.0.1:55421"]
+enable_signup = false

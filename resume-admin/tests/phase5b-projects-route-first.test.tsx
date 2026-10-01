@@ -74,7 +74,7 @@ describe("Phase 5B Projects route-first loading", () => {
       if (table in rows) return Promise.resolve({ data: rows[table], error: null });
       throw new Error(`Unexpected table read ${table}`);
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/projects", new ResumeSectionStore(), true);
     expect(await screen.findByLabelText("English Title")).toBeTruthy();

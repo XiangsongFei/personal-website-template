@@ -1420,7 +1420,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       let photoUrl = state.draft.photoUrl;
       if (photoDraft) {
         if (!repository.uploadProfilePhoto) throw new Error("Profile photo upload is unavailable.");
-        photoUrl = photoDraft.uploadedUrl ?? await repository.uploadProfilePhoto(photoDraft.file);
+        photoUrl = photoDraft.uploadedUrl ?? await repository.uploadProfilePhoto(resumeId, photoDraft.file);
         if (!photoDraft.uploadedUrl) {
           const uploadedUrl = photoUrl;
           setPhotoDraft(current => current?.file === photoDraft.file ? { ...current, uploadedUrl } : current);
@@ -2341,7 +2341,7 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     const file = pdfFiles[locale];
     if (file) {
       if (!repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
-      fields.portfolioHref = await repository.uploadResumePdf(locale, file);
+      fields.portfolioHref = await repository.uploadResumePdf(resumeId, locale, file);
       confirmed.translations[locale].portfolioHref = fields.portfolioHref;
     }
     if (Object.keys(fields).length) await repository.updateSiteText(resumeId, locale, fields);

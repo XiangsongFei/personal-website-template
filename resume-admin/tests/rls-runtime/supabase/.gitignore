@@ -1,0 +1,3 @@
+# Supabase CLI state can contain generated local-only keys and branch metadata.
+.temp/
+.branches/

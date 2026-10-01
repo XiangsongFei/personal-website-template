@@ -49,12 +49,12 @@ describe("Batch 6B scoped repository writes", () => {
     const db = database(); const repo = createResumeRepository(db.client);
     const first = new File(["photo"], "portrait.webp", { type: "image/webp" });
     const second = new File(["photo2"], "portrait.webp", { type: "image/webp" });
-    const firstUrl = await repo.uploadProfilePhoto!(first);
-    await repo.uploadProfilePhoto!(second);
+    const firstUrl = await repo.uploadProfilePhoto!(resumeId, first);
+    await repo.uploadProfilePhoto!(resumeId, second);
     expect(db.storageFrom).toHaveBeenCalledWith("profile-images");
     const paths = db.storageUpload.mock.calls.map(call => call[0]);
     expect(paths).toHaveLength(2);
-    expect(paths[0]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.webp$/i);
+    expect(paths[0]).toMatch(/^resume-id\/profile\/[0-9a-f-]{36}\.webp$/i);
     expect(paths[1]).not.toBe(paths[0]);
     expect(db.storageUpload).toHaveBeenNthCalledWith(1, paths[0], first, { upsert: false, contentType: "image/webp", cacheControl: "31536000" });
     expect(db.getPublicUrl).toHaveBeenCalledWith(paths[1]);
@@ -68,13 +68,13 @@ describe("Batch 6B scoped repository writes", () => {
       const repo = createResumeRepository(db.client);
       const file = new File(["photo"], "portrait.png", { type: "image/png" });
 
-      await expect(repo.uploadProfilePhoto!(file)).rejects.toThrow("Profile photo upload failed.");
-      const savedUrl = await repo.uploadProfilePhoto!(file);
+      await expect(repo.uploadProfilePhoto!(resumeId, file)).rejects.toThrow("Profile photo upload failed.");
+      const savedUrl = await repo.uploadProfilePhoto!(resumeId, file);
 
       const paths = db.storageUpload.mock.calls.map(([path]) => path);
       expect(paths).toHaveLength(2);
-      expect(paths[0]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.png$/i);
-      expect(paths[1]).toMatch(/^example-cv\/profile\/[0-9a-f-]{36}\.png$/i);
+      expect(paths[0]).toMatch(/^resume-id\/profile\/[0-9a-f-]{36}\.png$/i);
+      expect(paths[1]).toMatch(/^resume-id\/profile\/[0-9a-f-]{36}\.png$/i);
       expect(paths[1]).not.toBe(paths[0]);
       expect(db.storageUpload).toHaveBeenCalledTimes(2);
       expect(savedUrl).toBe(`https://storage.example.test/${paths[1]}`);
@@ -85,11 +85,11 @@ describe("Batch 6B scoped repository writes", () => {
   it("accepts only JPEG, PNG, and WebP up to 5 MB before contacting Storage", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
     for (const type of ["image/jpeg", "image/png", "image/webp"]) {
-      await expect(repo.uploadProfilePhoto!(new File(["image"], "photo", { type }))).resolves.toMatch(/storage\.example\.test/);
+      await expect(repo.uploadProfilePhoto!(resumeId, new File(["image"], "photo", { type }))).resolves.toMatch(/storage\.example\.test/);
     }
-    await expect(repo.uploadProfilePhoto!(new File(["svg"], "photo.svg", { type: "image/svg+xml" }))).rejects.toThrow("JPG, PNG, or WebP");
+    await expect(repo.uploadProfilePhoto!(resumeId, new File(["svg"], "photo.svg", { type: "image/svg+xml" }))).rejects.toThrow("JPG, PNG, or WebP");
     const tooLarge = new File([new Uint8Array(5 * 1024 * 1024 + 1)], "large.png", { type: "image/png" });
-    await expect(repo.uploadProfilePhoto!(tooLarge)).rejects.toThrow("5 MB or smaller");
+    await expect(repo.uploadProfilePhoto!(resumeId, tooLarge)).rejects.toThrow("5 MB or smaller");
     expect(db.storageUpload).toHaveBeenCalledTimes(3);
   });
   it("inserts methods with actual project identity and returns the database UUID", async () => {
@@ -135,12 +135,12 @@ describe("Batch 6B scoped repository writes", () => {
     expect(db.calls[0]).toMatchObject({ table: "resume_public_links", op: "update", payload: { github: "https://github.example.test/new" }, filters: [["resume_id", resumeId]] });
   });
   it.each([
-    ["zh", "example-cv/resume_zh.pdf"],
-    ["en", "example-cv/resume_en.pdf"],
+    ["zh", "resume-id/resume_zh.pdf"],
+    ["en", "resume-id/resume_en.pdf"],
   ] as const)("uploads the %s PDF to its stable public bucket path with replacement enabled", async (locale, path) => {
     const db = database(); const repo = createResumeRepository(db.client);
     const file = new File(["%PDF-1.7 test"], `resume-${locale}.pdf`, { type: "application/pdf" });
-    const uploadedUrl = await repo.uploadResumePdf!(locale, file);
+    const uploadedUrl = await repo.uploadResumePdf!(resumeId, locale, file);
     const parsedUrl = new URL(uploadedUrl);
     expect(parsedUrl.origin).toBe("https://storage.example.test");
     expect(parsedUrl.pathname).toBe(`/${path}`);
@@ -156,8 +156,8 @@ describe("Batch 6B scoped repository writes", () => {
     const repo = createResumeRepository(db.client);
     const file = new File(["%PDF replacement"], "replacement.pdf", { type: "application/pdf" });
 
-    const first = new URL(await repo.uploadResumePdf!("zh", file));
-    const second = new URL(await repo.uploadResumePdf!("zh", file));
+    const first = new URL(await repo.uploadResumePdf!(resumeId, "zh", file));
+    const second = new URL(await repo.uploadResumePdf!(resumeId, "zh", file));
 
     expect(first.searchParams.get("download")).toBe("1");
     expect(second.searchParams.get("download")).toBe("1");
@@ -169,7 +169,7 @@ describe("Batch 6B scoped repository writes", () => {
     expect(second.searchParams.get("cacheNonce")).not.toBe("old");
     expect(second.searchParams.get("cacheNonce")).not.toBe(first.searchParams.get("cacheNonce"));
     expect(db.storageUpload).toHaveBeenCalledTimes(2);
-    expect(db.storageUpload.mock.calls.every(([path]) => path === "example-cv/resume_zh.pdf")).toBe(true);
+    expect(db.storageUpload.mock.calls.every(([path]) => path === "resume-id/resume_zh.pdf")).toBe(true);
   });
   it("uploads PDFs with stable paths and fresh cache nonces when crypto.randomUUID is unavailable", async () => {
     vi.stubGlobal("crypto", {});
@@ -179,18 +179,18 @@ describe("Batch 6B scoped repository writes", () => {
       const repo = createResumeRepository(db.client);
       const file = new File(["%PDF test"], "费湘淞_中文简历.pdf", { type: "application/pdf" });
 
-      await expect(repo.uploadResumePdf!("zh", file)).rejects.toThrow("Resume PDF upload failed.");
-      const firstRetryUrl = new URL(await repo.uploadResumePdf!("zh", file));
-      const secondSuccessUrl = new URL(await repo.uploadResumePdf!("zh", file));
+      await expect(repo.uploadResumePdf!(resumeId, "zh", file)).rejects.toThrow("Resume PDF upload failed.");
+      const firstRetryUrl = new URL(await repo.uploadResumePdf!(resumeId, "zh", file));
+      const secondSuccessUrl = new URL(await repo.uploadResumePdf!(resumeId, "zh", file));
 
       expect(db.storageFrom).toHaveBeenCalledWith("resume-files");
       expect(db.storageUpload).toHaveBeenCalledTimes(3);
       expect(db.storageUpload.mock.calls.map(([path]) => path)).toEqual([
-        "example-cv/resume_zh.pdf",
-        "example-cv/resume_zh.pdf",
-        "example-cv/resume_zh.pdf",
+        "resume-id/resume_zh.pdf",
+        "resume-id/resume_zh.pdf",
+        "resume-id/resume_zh.pdf",
       ]);
-      expect(db.storageUpload).toHaveBeenNthCalledWith(2, "example-cv/resume_zh.pdf", file, {
+      expect(db.storageUpload).toHaveBeenNthCalledWith(2, "resume-id/resume_zh.pdf", file, {
         upsert: true,
         contentType: "application/pdf",
         cacheControl: "60",
@@ -205,15 +205,15 @@ describe("Batch 6B scoped repository writes", () => {
   });
   it("rejects invalid PDF files and files above 10 MB before contacting Storage", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
-    await expect(repo.uploadResumePdf!("zh", new File(["not pdf"], "bad.txt", { type: "text/plain" }))).rejects.toThrow("Resume PDF must be a PDF file.");
+    await expect(repo.uploadResumePdf!(resumeId, "zh", new File(["not pdf"], "bad.txt", { type: "text/plain" }))).rejects.toThrow("Resume PDF must be a PDF file.");
     const tooLarge = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.pdf", { type: "application/pdf" });
-    await expect(repo.uploadResumePdf!("en", tooLarge)).rejects.toThrow("Resume PDF must be 10 MB or smaller.");
+    await expect(repo.uploadResumePdf!(resumeId, "en", tooLarge)).rejects.toThrow("Resume PDF must be 10 MB or smaller.");
     expect(db.storageUpload).not.toHaveBeenCalled();
   });
   it("does not claim success when the Storage upload fails", async () => {
     const db = database(); db.storageUpload.mockResolvedValueOnce({ error: new Error("storage unavailable") });
     const repo = createResumeRepository(db.client);
-    await expect(repo.uploadResumePdf!("zh", new File(["pdf"], "resume.pdf", { type: "application/pdf" }))).rejects.toThrow("Resume PDF upload failed.");
+    await expect(repo.uploadResumePdf!(resumeId, "zh", new File(["pdf"], "resume.pdf", { type: "application/pdf" }))).rejects.toThrow("Resume PDF upload failed.");
     expect(db.getPublicUrl).not.toHaveBeenCalled();
   });
 });

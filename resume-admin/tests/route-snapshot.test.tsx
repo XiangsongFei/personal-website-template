@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthGate } from "../src/auth/AuthGate";
@@ -12,20 +11,12 @@ import { clearAllRouteSnapshots, readRouteSnapshot, writeRouteSnapshot, type Rou
 
 const site = { resumeId: "snapshot-resume", siteKey: "example-cv" as const, isPublished: true, updatedAt: "2026-09-30T00:00:00Z" };
 const admin: AdminIdentity = { id: "snapshot-admin", email: "admin@example.test", sessionKey: "verified-session" };
-const storageKey = "example-cv-cms:route-snapshot:v1:/profile";
+const storageKey = "example-cv-cms:route-snapshot:v2:snapshot-admin:snapshot-resume:/profile";
 const workspaceViewKey = "example-cv-cms:ui:workspace-view:profile";
 const originalLocale = window.localStorage.getItem(UI_LOCALE_KEY);
-const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
-
-function useWideDesktop() {
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: (media: string) => ({
-    matches: media === "(min-width: 1280px)", media, onchange: null,
-    addEventListener() {}, removeEventListener() {},
-  }) });
-}
 
 function makeSnapshot(route: SnapshotRoute = "/profile", userId = admin.id): RouteSnapshot {
-  const common = { schemaVersion: 1 as const, route, savedAt: Date.now(), userId, site };
+  const common = { schemaVersion: 2 as const, route, savedAt: Date.now(), userId, site };
   if (route === "/profile") return { ...common, route, data: structuredClone(fixtureSections.profile) } as RouteSnapshot;
   if (route === "/education") return { ...common, route, data: structuredClone(fixtureSections.education), sectionText: structuredClone(fixtureSections.links.translations) } as RouteSnapshot;
   if (["/experience", "/projects", "/skills", "/awards"].includes(route)) return { ...common, route, data: structuredClone(fixtureSections[route.slice(1) as "experience" | "projects" | "skills" | "awards"]), sectionText: structuredClone(fixtureSections.links.translations) } as RouteSnapshot;
@@ -38,6 +29,7 @@ function mockAuth(identity: AdminIdentity | null, allowed = true, identityPromis
   let listener: ((event: string, sessionKey: string | null) => void) | undefined;
   const client: AdminAuthClient = {
     getIdentity: vi.fn(() => identityPromise ?? Promise.resolve(identity)),
+    getAdminTarget: vi.fn(async () => ({ resumeId: site.resumeId, siteKey: "example-cv", role: "owner" as const })),
     isResumeAdmin: vi.fn(() => accessPromise ?? Promise.resolve(allowed)),
     signIn: vi.fn(),
     signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
@@ -79,7 +71,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks();
-  if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia");
   if (originalLocale !== null) window.localStorage.setItem(UI_LOCALE_KEY, originalLocale);
 });
 
@@ -88,23 +79,35 @@ describe("route-scoped refresh snapshots", () => {
     const routes: SnapshotRoute[] = ["/profile", "/introduction", "/education", "/experience", "/projects", "/skills", "/awards", "/contact", "/links"];
     for (const route of routes) {
       expect(writeRouteSnapshot(makeSnapshot(route))).toBe(true);
-      expect(readRouteSnapshot(route)?.route).toBe(route);
+      expect(readRouteSnapshot(route, admin.id, site.resumeId)?.route).toBe(route);
     }
     expect(readRouteSnapshot("/overview")).toBeNull();
     window.sessionStorage.setItem(storageKey, "{");
-    expect(readRouteSnapshot("/profile")).toBeNull();
+    expect(readRouteSnapshot("/profile", admin.id, site.resumeId)).toBeNull();
     expect(window.sessionStorage.getItem(storageKey)).toBeNull();
     const oldSchema = { ...makeSnapshot(), schemaVersion: 99 };
     window.sessionStorage.setItem(storageKey, JSON.stringify(oldSchema));
-    expect(readRouteSnapshot("/profile")).toBeNull();
+    expect(readRouteSnapshot("/profile", admin.id, site.resumeId)).toBeNull();
     const wrongRoute = { ...makeSnapshot(), route: "/education" };
     window.sessionStorage.setItem(storageKey, JSON.stringify(wrongRoute));
-    expect(readRouteSnapshot("/profile")).toBeNull();
+    expect(readRouteSnapshot("/profile", admin.id, site.resumeId)).toBeNull();
     expect(writeRouteSnapshot({ ...makeSnapshot(), fileDraft: new File(["private"], "private.pdf") } as unknown as RouteSnapshot)).toBe(false);
   });
 
-  it("renders a matching snapshot synchronously and read-only while auth is pending, then replaces it with fresh route data", async () => {
-    useWideDesktop();
+  it("keeps snapshots isolated by the server-authorized resume target", () => {
+    const official = makeSnapshot();
+    const qa = {
+      ...makeSnapshot(),
+      site: { ...site, resumeId: "qa-resume-id", siteKey: "example-cv-qa", isPublished: false },
+    } as RouteSnapshot;
+    expect(writeRouteSnapshot(official)).toBe(true);
+    expect(writeRouteSnapshot(qa)).toBe(true);
+    expect(readRouteSnapshot("/profile", admin.id, site.resumeId)?.site.siteKey).toBe("example-cv");
+    expect(readRouteSnapshot("/profile", admin.id, "qa-resume-id")?.site.siteKey).toBe("example-cv-qa");
+    expect(readRouteSnapshot("/profile")).toBeNull();
+  });
+
+  it("waits for the authorized target before rendering a cached route, then replaces it with fresh data", async () => {
     const snapshot = makeSnapshot();
     expect(writeRouteSnapshot(snapshot)).toBe(true);
     window.sessionStorage.setItem(workspaceViewKey, "edit");
@@ -116,42 +119,16 @@ describe("route-scoped refresh snapshots", () => {
     const repo = mockRepository({ loadProfile: vi.fn().mockResolvedValue(freshProfile) });
     show(auth.client, repo);
 
-    expect(screen.getByRole("heading", { name: "Profile", level: 1 })).toBeTruthy();
-    const writeLock = document.querySelector<HTMLFieldSetElement>(".editor-write-lock")!;
-    const layout = document.querySelector<HTMLElement>(".editor-preview-layout")!;
-    expect(layout.dataset.workspaceView).toBe("edit");
-    const editor = layout.querySelector<HTMLElement>(".editor-content-scroll[data-editor-scroll-owner]")!;
-    const preview = layout.querySelector<HTMLElement>("[data-preview-scroll-owner]")!;
-    expect(writeLock.disabled).toBe(true);
-    expect(editor.dataset.editorScrollMode).toBe("element");
-    expect(editor.closest(".editor-workspace-route")?.contains(editor)).toBe(true);
-    expect(editor.closest(".editor-write-lock")).toBe(writeLock);
-    expect(preview.dataset.previewScrollMode).toBe("element");
-    expect(preview.closest(".editor-write-lock")).toBeNull();
-    const workspaceCss = readFileSync("src/preview/preview.css", "utf8");
-    expect(workspaceCss).toContain(".editor-write-lock{display:contents}");
-    expect(workspaceCss).toContain(".editor-content-scroll{min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}");
-    expect(workspaceCss).not.toMatch(/\.editor-write-lock\{[^}]*pointer-events\s*:\s*none/);
-
-    editor.scrollTop = 137;
-    preview.scrollTop = 263;
-    fireEvent.scroll(editor);
-    fireEvent.scroll(preview);
-    expect(editor.scrollTop).toBe(137);
-    expect(preview.scrollTop).toBe(263);
-    expect(editor.scrollTop).not.toBe(preview.scrollTop);
-    expect((screen.getByRole("button", { name: "Save profile changes" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(repo.loadSiteMetadata).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Profile", level: 1 })).toBeNull();
+    expect(document.querySelector(".editor-write-lock")).toBeNull();
     expect(repo.loadProfile).not.toHaveBeenCalled();
-    expect(auth.client.isResumeAdmin).not.toHaveBeenCalled();
-
     resolveIdentity(admin);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Profile", level: 1 })).toBeTruthy());
     await waitFor(() => expect(repo.loadProfile).toHaveBeenCalledOnce());
     await waitFor(() => expect((document.querySelector(".editor-write-lock") as HTMLFieldSetElement).disabled).toBe(false));
-    await waitFor(() => expect((readRouteSnapshot("/profile") as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.footerName).toBe("fresh-server-confirmed-name"));
-    expect(layout.dataset.workspaceView).toBe("edit");
+    await waitFor(() => expect((readRouteSnapshot("/profile", admin.id, site.resumeId) as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.footerName).toBe("fresh-server-confirmed-name"));
     fireEvent.change(screen.getByLabelText("Graduation value"), { target: { value: "unsaved-draft-value" } });
-    expect((readRouteSnapshot("/profile") as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.graduationValue).toBe(fixtureSections.profile.shared.graduationValue);
+    expect((readRouteSnapshot("/profile", admin.id, site.resumeId) as Extract<RouteSnapshot, { route: "/profile" }> | null)?.data.shared.graduationValue).toBe(fixtureSections.profile.shared.graduationValue);
   });
 
   it("does not read route data or mount a write-capable view before both identity and admin access succeed", async () => {
@@ -167,7 +144,7 @@ describe("route-scoped refresh snapshots", () => {
     await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
     expect(repo.loadSiteMetadata).not.toHaveBeenCalled();
     expect(repo.loadProfile).not.toHaveBeenCalled();
-    expect((document.querySelector(".editor-write-lock") as HTMLFieldSetElement).disabled).toBe(true);
+    expect(document.querySelector(".editor-write-lock")).toBeNull();
     resolveAccess(true);
     await waitFor(() => expect(repo.loadProfile).toHaveBeenCalledOnce());
   });
@@ -196,12 +173,12 @@ describe("route-scoped refresh snapshots", () => {
     const repo = mockRepository();
     show(auth.client, repo);
     await waitFor(() => expect(repo.loadProfile).toHaveBeenCalledOnce());
-    await waitFor(() => expect((readRouteSnapshot("/profile") as Extract<RouteSnapshot, { route: "/profile" }> | null)?.userId).toBe("new-user"));
-    window.sessionStorage.setItem("example-cv-cms:route-snapshot:v1:/links", "placeholder");
+    await waitFor(() => expect((readRouteSnapshot("/profile", "new-user", site.resumeId) as Extract<RouteSnapshot, { route: "/profile" }> | null)?.userId).toBe("new-user"));
+    window.sessionStorage.setItem("example-cv-cms:route-snapshot:v2:snapshot-admin:snapshot-resume:/links", "placeholder");
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
     await screen.findByRole("heading", { name: "Welcome back" });
-    expect(readRouteSnapshot("/profile")).toBeNull();
-    expect(window.sessionStorage.getItem("example-cv-cms:route-snapshot:v1:/links")).toBeNull();
+    expect(readRouteSnapshot("/profile", admin.id, site.resumeId)).toBeNull();
+    expect(window.sessionStorage.getItem("example-cv-cms:route-snapshot:v2:snapshot-admin:snapshot-resume:/links")).toBeNull();
   });
 
   it("removes stale presentation when the fresh route read fails", async () => {
@@ -209,7 +186,7 @@ describe("route-scoped refresh snapshots", () => {
     const auth = mockAuth(admin, true);
     const repo = mockRepository({ loadProfile: vi.fn().mockRejectedValue(new Error("read failed")) });
     show(auth.client, repo);
-    expect(screen.getByRole("heading", { name: "Profile", level: 1 })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Profile", level: 1 })).toBeNull();
     const retry = await screen.findByRole("button", { name: "Retry" });
     expect(retry).toBeTruthy();
     expect((document.querySelector(".editor-write-lock") as HTMLFieldSetElement).disabled).toBe(false);
@@ -219,10 +196,10 @@ describe("route-scoped refresh snapshots", () => {
   });
 
   it("clears snapshots stored by this feature without touching scroll-restoration state", () => {
-    window.sessionStorage.setItem("example-cv-cms:route-snapshot:v1:/profile", "x");
+    window.sessionStorage.setItem("example-cv-cms:route-snapshot:v2:snapshot-admin:snapshot-resume:/profile", "x");
     window.sessionStorage.setItem("example-cv-cms:ui:scroll:/profile:editor", "42");
     clearAllRouteSnapshots();
-    expect(window.sessionStorage.getItem("example-cv-cms:route-snapshot:v1:/profile")).toBeNull();
+    expect(window.sessionStorage.getItem("example-cv-cms:route-snapshot:v2:snapshot-admin:snapshot-resume:/profile")).toBeNull();
     expect(window.sessionStorage.getItem("example-cv-cms:ui:scroll:/profile:editor")).toBe("42");
   });
 
@@ -238,7 +215,7 @@ describe("route-scoped refresh snapshots", () => {
     await guarded.readEditableTranslation?.("introduction", "r", "e", "zh");
     await expect(guarded.updateProfileSharedDetails("r", fixtureSections.profile.shared)).rejects.toThrow(/unavailable/);
     await expect(guarded.deleteEducationEntry?.("r", "e")).rejects.toThrow(/unavailable/);
-    await expect(guarded.uploadResumePdf?.("zh", new File(["x"], "x.pdf"))).rejects.toThrow(/unavailable/);
+    await expect(guarded.uploadResumePdf?.("r", "zh", new File(["x"], "x.pdf"))).rejects.toThrow(/unavailable/);
     expect(source.updateProfileSharedDetails).not.toHaveBeenCalled();
     expect(source.deleteEducationEntry).not.toHaveBeenCalled();
     expect(source.uploadResumePdf).not.toHaveBeenCalled();

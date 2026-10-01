@@ -91,7 +91,7 @@ describe("route-first Profile loading", () => {
       }) })),
       update: vi.fn(), insert: vi.fn(), delete: vi.fn(),
     }));
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
     const fullLoad = vi.spyOn(repo, "load");
     const app = show(repo, "/profile", new ResumeSectionStore(), true);
     await screen.findByLabelText("English Name");

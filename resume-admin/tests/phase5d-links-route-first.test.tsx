@@ -236,7 +236,7 @@ describe("Phase 5D Links route-first loading", () => {
     const storageInfo = vi.fn(async (path: string) => path.endsWith("resume_zh.pdf")
       ? { data: { metadata: { originalFilename: "费湘淞_中文简历.pdf" } }, error: null }
       : { data: null, error: new Error("metadata unavailable") });
-    const repo = createResumeRepository({ from, storage: { from: vi.fn(() => ({ info: storageInfo })) } } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }), storage: { from: vi.fn(() => ({ info: storageInfo })) } } as unknown as SupabaseClient);
     const full = vi.spyOn(repo, "load");
     show(repo, "/links", new ResumeSectionStore(), true);
     expect(await screen.findByLabelText("URL")).toBeTruthy();
@@ -364,7 +364,7 @@ describe("Phase 5D Links route-first loading", () => {
         if (table === failedTable && !failed) { failed = true; return Promise.resolve({ data: null, error: new Error("injected table failure") }); }
         return Promise.resolve({ data: rows[table], error: null });
       }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
-      const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+      const repo = createResumeRepository({ from, rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }) } as unknown as SupabaseClient);
       const full = vi.spyOn(repo, "load");
       const store = new ResumeSectionStore(); store.setSession("links-session");
       await store.loadSection("links-session", resumeId, "contact", async () => structuredClone(fixtureSections.contact));

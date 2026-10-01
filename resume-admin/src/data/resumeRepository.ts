@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readAdminTarget } from "../auth/supabase";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
@@ -108,10 +109,15 @@ function rows(value: unknown, table: string): Record<string, unknown>[] {
 }
 
 async function readSiteRow(supabase: SupabaseClient): Promise<Record<string, unknown>> {
+  const target = await readAdminTarget(supabase);
   const { data: site, error } = await supabase
-    .from("resume_sites").select("*").eq("site_key", "example-cv").maybeSingle();
+    .from("resume_sites").select("*").eq("id", target.resumeId).maybeSingle();
   if (error) throw new Error("Unable to load target resume site");
-  if (!site || typeof site.id !== "string" || site.site_key !== "example-cv") throw new Error("Target resume site not found");
+  if (!site || typeof site.id !== "string" || site.id !== target.resumeId || site.site_key !== target.siteKey
+    || (target.role === "owner" && target.siteKey !== "example-cv")
+    || (target.role === "qa" && (target.siteKey !== "example-cv-qa" || site.is_published !== false))) {
+    throw new Error("Target resume site not found or does not match the authorized Admin target");
+  }
   return site;
 }
 
@@ -122,13 +128,13 @@ async function readResumeRows(supabase: SupabaseClient, table: ResumeTable, resu
   return rows(data, table);
 }
 
-const resumePdfPath = (locale: Locale) => locale === "zh" ? "example-cv/resume_zh.pdf" : "example-cv/resume_en.pdf";
+const resumePdfPath = (resumeId: string, locale: Locale) => `${resumeId}/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
 
 function pdfFilenameFallback(href: string): string {
   return href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "";
 }
 
-async function readResumePdfFilename(supabase: SupabaseClient, locale: Locale, href: string): Promise<string> {
+async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string, siteKey: string, locale: Locale, href: string): Promise<string> {
   const fallback = pdfFilenameFallback(href);
   if (!href) return fallback;
   const storage = supabase.storage as unknown as { from?: (bucket: string) => { info?: (path: string) => Promise<{ data: unknown; error: unknown }> } } | undefined;
@@ -137,7 +143,15 @@ async function readResumePdfFilename(supabase: SupabaseClient, locale: Locale, h
   // Some lightweight repository test doubles and older SDKs may not expose info().
   if (typeof bucket.info !== "function") return fallback;
   try {
-    const { data, error } = await bucket.info(resumePdfPath(locale));
+    let path = resumePdfPath(resumeId, locale);
+    if (siteKey === "example-cv") {
+      try {
+        const url = new URL(href);
+        const legacySuffix = `/example-cv/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
+        if (url.pathname.endsWith(legacySuffix)) path = `example-cv/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
+      } catch { /* The resume link may be a relative or non-Storage URL. */ }
+    }
+    const { data, error } = await bucket.info(path);
     if (error) return fallback;
     const metadata = data && typeof data === "object" ? (data as { metadata?: unknown }).metadata : undefined;
     if (metadata && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).originalFilename === "string"
@@ -230,6 +244,8 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
       return mapContactRows(localeContent, focus, focusTranslations, status, statusTranslations, resumeId);
     },
     async loadLinks(resumeId) {
+      const target = await readAdminTarget(supabase);
+      if (target.resumeId !== resumeId) throw new Error("Links target does not match the authorized Admin resume");
       const [links, localeContent, navigation, navigationTranslations] = await Promise.all([
         readResumeRows(supabase, "resume_public_links", resumeId),
         readResumeRows(supabase, "resume_locale_content", resumeId),
@@ -238,7 +254,7 @@ export function createResumeRepository(supabase: SupabaseClient): CompleteResume
       ]);
       const mapped = mapLinksRows(links, localeContent, navigation, navigationTranslations, resumeId);
       const [zh, en] = await Promise.all(((["zh", "en"] as const).map(locale =>
-        readResumePdfFilename(supabase, locale, mapped.translations[locale].portfolioHref))));
+        readResumePdfFilename(supabase, resumeId, target.siteKey, locale, mapped.translations[locale].portfolioHref))));
       return { ...mapped, resumePdfFilenames: { zh, en } };
     },
     async loadSiteText(resumeId) {

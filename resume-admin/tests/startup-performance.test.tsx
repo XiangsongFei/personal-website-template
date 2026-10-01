@@ -25,6 +25,7 @@ function harness(initial: AdminIdentity | null = adminA, load = vi.fn().mockReso
   let listener: ((event: string, key: string | null) => void) | undefined;
   const client: AdminAuthClient = {
     getIdentity: vi.fn(async () => identity),
+    getAdminTarget: vi.fn().mockResolvedValue({ resumeId: "resume-a", siteKey: "example-cv", role: "owner" }),
     signIn: vi.fn(async () => {
       identity = adminA;
       listener?.("SIGNED_IN", adminA.sessionKey);
@@ -159,7 +160,7 @@ describe("startup request coalescing", () => {
     const getSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null });
     const rpc = vi.fn();
     const supabase = { auth: { getSession }, rpc } as unknown as SupabaseClient;
-    await expect(createAdminAuthClient(supabase).getIdentityAndAccess!()).resolves.toEqual({ identity: null, allowed: false });
+    await expect(createAdminAuthClient(supabase).getIdentityAndAccess!()).resolves.toEqual({ identity: null, allowed: false, target: null });
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -298,7 +299,8 @@ describe("startup request coalescing", () => {
     const admin = deferred<{ data: boolean; error: null }>();
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const getUser = vi.fn(() => user.promise);
-    const rpc = vi.fn(() => admin.promise);
+    const targetResult = { data: [{ resume_id: "resume-a", site_key: "example-cv", role: "owner" }], error: null };
+    const rpc = vi.fn((name: string) => name === "is_resume_admin" ? admin.promise : Promise.resolve(targetResult));
     const supabase = { auth: { getSession, getUser }, rpc } as unknown as SupabaseClient;
     const auth = createAdminAuthClient(supabase);
     const result = auth.getIdentityAndAccess!();
@@ -317,6 +319,7 @@ describe("startup request coalescing", () => {
     await expect(result).resolves.toEqual({
       identity: { id: "admin-a", email: "a@example.test", sessionKey: "admin-a:session-a" },
       allowed: true,
+      target: { resumeId: "resume-a", siteKey: "example-cv", role: "owner" },
     });
     expect(getSession).toHaveBeenCalledTimes(2);
   });
@@ -328,13 +331,14 @@ describe("startup request coalescing", () => {
     };
     const user = deferred<{ data: { user: typeof session.user }; error: null }>();
     const admin = deferred<{ data: boolean; error: null }>();
+    const targetResult = { data: [{ resume_id: "resume-a", site_key: "example-cv", role: "owner" }], error: null };
     const supabase = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),
         getUser: vi.fn(() => user.promise),
         onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       },
-      rpc: vi.fn(() => admin.promise),
+      rpc: vi.fn((name: string) => name === "is_resume_admin" ? admin.promise : Promise.resolve(targetResult)),
     } as unknown as SupabaseClient;
     const app = harness();
     const client = createAdminAuthClient(supabase);

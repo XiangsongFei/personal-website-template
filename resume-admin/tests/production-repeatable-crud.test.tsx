@@ -76,7 +76,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
-    uploadResumePdf: vi.fn(async (locale: Locale) => `https://storage.example.test/example-cv/resume_${locale}.pdf?cacheNonce=repository-version`),
+    uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => `https://storage.example.test/${targetResumeId}/resume_${locale}.pdf?cacheNonce=repository-version`),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile), loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -2064,7 +2064,7 @@ describe("Batch 6A production repeatable CRUD", () => {
 
   it("saves a PDF after SPA navigation with only the canonical resume ID available", async () => {
     const { repository, methods } = makeRepository("skills");
-    const savedPdfUrl = "https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=spa-fallback";
+    const savedPdfUrl = `https://storage.example.test/${resumeId}/resume_zh.pdf?cacheNonce=spa-fallback`;
     methods.uploadResumePdf.mockResolvedValueOnce(savedPdfUrl);
     const canonicalResume: LoadedResume = {
       resumeId,
@@ -2092,7 +2092,7 @@ describe("Batch 6A production repeatable CRUD", () => {
 
     await screen.findByText("Site & link changes saved.");
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(1);
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith("zh", file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "zh", file);
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { portfolioHref: savedPdfUrl });
     expect(screen.getByRole("link", { name: "Current PDF: spa-resume-zh.pdf" }).getAttribute("href")).toBe(savedPdfUrl);
     expect(screen.queryByText("Selected: spa-resume-zh.pdf")).toBeNull();
@@ -2104,7 +2104,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     ["en", "English Resume PDF", "Fei_XiangSong_English_Resume.pdf"],
   ] as const)("keeps a valid %s PDF selection as a draft and saves its stable public URL only on Save", async (locale, inputName, filename) => {
     const { repository, methods } = makeRepository("skills");
-    const savedPdfUrl = `https://storage.example.test/example-cv/resume_${locale}.pdf?cacheNonce=saved-version`;
+    const savedPdfUrl = `https://storage.example.test/${resumeId}/resume_${locale}.pdf?cacheNonce=saved-version`;
     methods.uploadResumePdf.mockResolvedValueOnce(savedPdfUrl);
     open({ path: "/links" }, repository);
     const input = await screen.findByLabelText(inputName);
@@ -2117,11 +2117,11 @@ describe("Batch 6A production repeatable CRUD", () => {
     save();
     await screen.findByText("Site & link changes saved.");
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith(locale, file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, locale, file);
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, locale, {
       portfolioHref: savedPdfUrl,
     });
-    expect(new URL(savedPdfUrl).pathname).toBe(`/example-cv/resume_${locale}.pdf`);
+    expect(new URL(savedPdfUrl).pathname).toBe(`/${resumeId}/resume_${locale}.pdf`);
     expect(screen.getByRole("link", { name: `Current PDF: ${filename}` }).getAttribute("href")).toBe(savedPdfUrl);
     expect(screen.queryByText(`Selected: ${filename}`)).toBeNull();
   });
@@ -2212,7 +2212,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(2);
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", {
-      portfolioHref: "https://storage.example.test/example-cv/resume_zh.pdf?cacheNonce=repository-version",
+      portfolioHref: `https://storage.example.test/${resumeId}/resume_zh.pdf?cacheNonce=repository-version`,
     });
   });
 
@@ -2234,7 +2234,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(2);
     expect(methods.updateSiteText).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("link", { name: "Current PDF: retryable-en.pdf" }).getAttribute("href")).toBe("https://storage.example.test/example-cv/resume_en.pdf?cacheNonce=repository-version");
+    expect(screen.getByRole("link", { name: "Current PDF: retryable-en.pdf" }).getAttribute("href")).toBe(`https://storage.example.test/${resumeId}/resume_en.pdf?cacheNonce=repository-version`);
   });
 
   it("retains selected PDF files across route navigation until Save or Cancel", async () => {
@@ -2249,7 +2249,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith("en", file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "en", file);
   });
 
   it("preserves existing PDF hrefs and saves unrelated Links fields without uploading", async () => {

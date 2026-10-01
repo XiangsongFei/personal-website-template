@@ -19,7 +19,7 @@ export type ResumeTable =
 export type ResumeRows = { resume_sites: Row[] } & Record<ResumeTable, Row[]>;
 export type LoadedResume = {
   resumeId: string;
-  siteKey: "example-cv";
+  siteKey: string;
   isPublished: boolean;
   updatedAt: string | null;
   sections: EditorSections;
@@ -27,7 +27,7 @@ export type LoadedResume = {
 
 export type ResumeSiteMetadata = {
   resumeId: string;
-  siteKey: "example-cv";
+  siteKey: string;
   isPublished: boolean;
   updatedAt: string | null;
 };
@@ -121,12 +121,12 @@ function assertResumeOwnership(rows: Row[], resumeId: string): void {
   for (const row of rows) if (row.resume_id !== resumeId) throw new Error("Resume table references another resume");
 }
 
-/** Validate the single site row returned by the shared example-cv lookup. */
+/** Validate the single site row returned by the authorized Admin target lookup. */
 export function mapResumeSiteMetadata(row: Row | null | undefined): ResumeSiteMetadata {
-  if (!row || typeof row.id !== "string" || row.site_key !== "example-cv" || typeof row.is_published !== "boolean") {
+  if (!row || typeof row.id !== "string" || typeof row.site_key !== "string" || !row.site_key.trim() || typeof row.is_published !== "boolean") {
     throw new Error("Invalid target resume site");
   }
-  return { resumeId: row.id, siteKey: "example-cv", isPublished: row.is_published,
+  return { resumeId: row.id, siteKey: row.site_key, isPublished: row.is_published,
     updatedAt: typeof row.updated_at === "string" ? row.updated_at : null };
 }
 
@@ -276,7 +276,7 @@ function mapSiteText(locale: Locale, text: (locale: Locale, key: string) => stri
 export function mapResumeRows(rows: ResumeRows): LoadedResume {
   const site = singleton(rows.resume_sites, "resume_sites");
   const resumeId = value(site, "id");
-  if (site.site_key !== "example-cv" || typeof site.is_published !== "boolean") throw new Error("Invalid target resume site");
+  if (typeof site.site_key !== "string" || !site.site_key.trim() || typeof site.is_published !== "boolean") throw new Error("Invalid target resume site");
   assertChildren(rows, resumeId);
   const profile = singleton(rows.resume_profile, "resume_profile");
   const links = singleton(rows.resume_public_links, "resume_public_links");
@@ -391,7 +391,7 @@ export function mapResumeRows(rows: ResumeRows): LoadedResume {
     },
   };
   return {
-    resumeId, siteKey: "example-cv", isPublished: site.is_published,
+    resumeId, siteKey: String(site.site_key), isPublished: site.is_published,
     updatedAt: typeof site.updated_at === "string" ? site.updated_at : null, sections,
   };
 

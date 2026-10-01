@@ -182,7 +182,7 @@ describe("authenticated resume section store", () => {
     expect(first).toBe(second);
     expect(loader).toHaveBeenCalledOnce();
     const source = readFileSync(resolve("src/data/ResumeLoader.tsx"), "utf8");
-    expect(source).toContain("loadOnce(repository, sessionKey)");
+    expect(source).toContain("loadOnce(repository, sessionKey, authorizedTarget?.resumeId)");
     expect(source).toContain("repository.load()");
     expect(source).toContain('"profile", () => repository.loadProfile(metadata.resumeId)');
   });

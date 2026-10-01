@@ -121,10 +121,11 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     checkedRow(data, resumeId, id);
   }
   return {
-    uploadProfilePhoto: async (file: File): Promise<string> => {
+    uploadProfilePhoto: async (resumeId: string, file: File): Promise<string> => {
+      assertIdentity(resumeId);
       const validationError = validateProfilePhoto(file);
       if (validationError) throw new Error(validationError);
-      const path = `example-cv/profile/${createUploadId()}.${profilePhotoExtension(file)}`;
+      const path = `${resumeId}/profile/${createUploadId()}.${profilePhotoExtension(file)}`;
       const bucket = client.storage.from("profile-images");
       const { error } = await bucket.upload(path, file, { upsert: false, contentType: file.type, cacheControl: "31536000" });
       if (error) throw new Error("Profile photo upload failed.");
@@ -132,11 +133,12 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
       if (!data.publicUrl || !/^https?:\/\//i.test(data.publicUrl)) throw new Error("Profile photo public URL was not returned.");
       return data.publicUrl;
     },
-    uploadResumePdf: async (locale: Locale, file: File): Promise<string> => {
+    uploadResumePdf: async (resumeId: string, locale: Locale, file: File): Promise<string> => {
+      assertIdentity(resumeId);
       validateLocale(locale);
       if (!(file instanceof File) || file.type !== "application/pdf") throw new Error("Resume PDF must be a PDF file.");
       if (file.size > 10 * 1024 * 1024) throw new Error("Resume PDF must be 10 MB or smaller.");
-      const path = locale === "zh" ? "example-cv/resume_zh.pdf" : "example-cv/resume_en.pdf";
+      const path = `${resumeId}/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
       const bucket = client.storage.from("resume-files");
       const { error } = await bucket.upload(path, file, { upsert: true, contentType: "application/pdf", cacheControl: "60", metadata: { originalFilename: file.name } });
       if (error) throw new Error("Resume PDF upload failed.");
