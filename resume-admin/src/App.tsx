@@ -2455,7 +2455,23 @@ function Links() {
           fields={[{ key: "linkedInDisplayName", label: "Display name" }, { key: "linkedInLabel", label: "Hero button label" }]} />
           <div className="links-localized-fields links-linkedin-localized"><BilingualFields matrixLayout inlineLocaleIndicators pairedShortFields={["linkedInLabel"]} pairedSingleLineFields={["linkedInLabel"]} idPrefix="links-linkedin-localized" section="links" itemId="links" confirmed={confirmed.translations} value={links.translations}
             onChange={translations => onChange({ ...links, translations })}
-            fields={[{ key: "linkedInLabel", label: "Contact label" }, { key: "linkedInHref", label: "URL", type: "url" }]} /></div>
+            fields={[{ key: "linkedInLabel", label: "Contact label" }]} />
+            <div className="links-linkedin-url-setting">
+              <InputField id="links-linkedin-url" label="LinkedIn URL" compactLabel={t("URL")} value={links.translations.zh.linkedInHref}
+                editorAnchor="field:links-linkedin-localized:linkedInHref" modified={links.translations.zh.linkedInHref !== confirmed.translations.zh.linkedInHref || links.translations.en.linkedInHref !== confirmed.translations.en.linkedInHref}
+                hint={confirmed.translations.zh.linkedInHref !== confirmed.translations.en.linkedInHref ? t("The saved Chinese and English LinkedIn URLs differ. Editing this field will synchronize them on save.") : undefined}
+                type="url" onChange={href => {
+                  const identity = { section: "links", itemId: "links", field: "linkedInHref" } as const;
+                  context.onBilingualFieldEdit(identity, "zh", false);
+                  context.onBilingualFieldEdit(identity, "en", false);
+                  onChange({ ...links, translations: {
+                    ...links.translations,
+                    zh: { ...links.translations.zh, linkedInHref: href },
+                    en: { ...links.translations.en, linkedInHref: href },
+                  } });
+                }} />
+            </div>
+          </div>
         </div>
       </section>
       <section className="links-section links-resume-files" data-editor-anchor="links:resume-files"><h2>{t("Resume files")}</h2><div className="resume-file-grid">

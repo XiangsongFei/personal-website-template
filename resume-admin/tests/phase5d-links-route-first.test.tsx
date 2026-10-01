@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -50,6 +51,20 @@ const go = (label: string) => fireEvent.click(screen.getAllByRole("link", { name
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Phase 5D Links route-first loading", () => {
+  it("keeps Email and GitHub proportions, pairs Resume Files PDFs only in desktop Split, and applies LinkedIn ratios only to its bilingual rows", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    const desktopSplitRules = css.slice(css.indexOf("@media(min-width:1281px){"), css.indexOf("\n}", css.indexOf("@media(min-width:1281px){")));
+    expect(css).toContain(".links-editor-scope .field-grid.links-inline-row{display:grid;grid-template-columns:var(--links-content-columns);column-gap:var(--links-content-gap)");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:email\"] .links-inline-row,\n  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:github\"] .links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:linkedin\"]>.links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor=\"links:linkedin\"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor=\"field:links-linkedin-localized:linkedInLabel\"] .bilingual-field-values{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}");
+    expect(desktopSplitRules).not.toContain("field:links-linkedin-localized:linkedInHref");
+    expect(desktopSplitRules).not.toContain("data-workspace-view=edit");
+    expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor=\"links:resume-files\"] .resume-file-grid{grid-template-columns:repeat(2,minmax(0,1fr))}");
+    expect(css).not.toContain(".links-object-group[data-editor-anchor=\"links:linkedin\"] .links-inline-row{grid-template-columns");
+    expect(css).toContain(".links-editor-scope .links-inline-field{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:end;gap:12px");
+  });
+
   it("uses one compact bilingual matrix header for the navigation label rows", async () => {
     const repo = repository();
     show(repo);
@@ -90,8 +105,11 @@ describe("Phase 5D Links route-first loading", () => {
     expect(screen.getAllByLabelText("Hero button label")).toHaveLength(2);
     expect(screen.getByLabelText("Chinese Contact label")).toBeTruthy();
     expect(screen.getByLabelText("English Contact label")).toBeTruthy();
-    expect(screen.getByLabelText("Chinese URL")).toBeTruthy();
-    expect(screen.getByLabelText("English URL")).toBeTruthy();
+    const linkedInUrl = screen.getByLabelText("LinkedIn URL") as HTMLInputElement;
+    expect(linkedInUrl.value).toBe(links.translations.zh.linkedInHref);
+    expect(document.querySelectorAll(".links-linkedin-url-setting input")).toHaveLength(1);
+    expect(screen.queryByLabelText("Chinese URL")).toBeNull();
+    expect(screen.queryByLabelText("English URL")).toBeNull();
     expect(screen.getByLabelText("Chinese Public button label")).toBeTruthy();
     expect(screen.getByLabelText("English Public button label")).toBeTruthy();
     expect(screen.queryByLabelText(/portfolio_href/i)).toBeNull();
@@ -102,11 +120,11 @@ describe("Phase 5D Links route-first loading", () => {
     ]);
     expect(navigationRows.filter(group => group.querySelector(".bilingual-column-headings")).length).toBe(1);
     const linkedinLocalized = document.querySelector(".links-object-group:last-child .links-localized-fields .links-translation-matrix")!;
-    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair > h3"), node => node.textContent)).toEqual(["Contact label", "URL"]);
-    expect(linkedinLocalized.querySelectorAll(".bilingual-field-pair .bilingual-field-values")).toHaveLength(2);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair > h3"), node => node.textContent)).toEqual(["Contact label"]);
+    expect(linkedinLocalized.querySelectorAll(".bilingual-field-pair .bilingual-field-values")).toHaveLength(1);
     expect(linkedinLocalized.querySelectorAll(".bilingual-column-headings")).toHaveLength(0);
-    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair"), row => row.firstElementChild?.nextElementSibling?.classList.contains("bilingual-field-values"))).toEqual([true, true]);
-    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["Chinese", "English", "Chinese", "English"]);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-pair"), row => row.firstElementChild?.nextElementSibling?.classList.contains("bilingual-field-values"))).toEqual([true]);
+    expect(Array.from(linkedinLocalized.querySelectorAll(".bilingual-field-values .field label > span[aria-hidden=true]"), node => node.textContent)).toEqual(["Chinese", "English"]);
     const siteTextSection = Array.from(document.querySelectorAll(".links-section")).find(section => section.querySelector("h2")?.textContent === "Footer text")!;
     expect(siteTextSection.querySelector(".links-footer-setting > h3")?.textContent).toBe("Updated-at label");
     expect(siteTextSection.querySelector(".links-footer-setting > p")?.textContent)
@@ -123,6 +141,10 @@ describe("Phase 5D Links route-first loading", () => {
     }
     expect(siteTextSection.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     const resumeLabelMatrix = document.querySelector(".links-resume-files .links-translation-matrix")!;
+    const resumeFiles = document.querySelector(".links-resume-files")!;
+    const resumePdfGrid = resumeFiles.querySelector(".resume-file-grid")!;
+    expect(resumePdfGrid.children).toHaveLength(2);
+    expect(resumePdfGrid.nextElementSibling?.classList.contains("links-localized-fields")).toBe(true);
     expect(resumeLabelMatrix.querySelectorAll(".bilingual-column-headings")).toHaveLength(1);
     expect(resumeLabelMatrix.querySelectorAll(".bilingual-column-headings > span")).toHaveLength(2);
     expect(resumeLabelMatrix.querySelector(".bilingual-field-pair > h3")?.textContent).toBe("Public button label");

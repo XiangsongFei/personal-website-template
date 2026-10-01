@@ -373,9 +373,10 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-short-bilingual-field")).toBe(true);
     expect(linkedinLabel.closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
     expect(linkedinLabel.closest(".bilingual-field-values")?.querySelectorAll("input")).toHaveLength(2);
-    const linkedInUrl = screen.getByLabelText("Chinese URL").closest(".bilingual-field-pair");
-    expect(linkedInUrl?.classList.contains("paired-short-bilingual-field")).toBe(false);
-    expect(linkedInUrl?.classList.contains("paired-bilingual-single-line")).toBe(false);
+    expect(screen.getByLabelText("LinkedIn URL")).toBeTruthy();
+    expect(screen.queryByLabelText("Chinese URL")).toBeNull();
+    expect(screen.queryByLabelText("English URL")).toBeNull();
+    expect(document.querySelectorAll(".links-linkedin-url-setting input")).toHaveLength(1);
     for (const label of ["Chinese Public button label", "Chinese Experience", "Chinese Updated-at label"]) {
       expect(screen.getByLabelText(label).closest(".bilingual-field-pair")?.classList.contains("paired-bilingual-single-line")).toBe(true);
     }
@@ -2003,12 +2004,13 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.change(within(linkGroups[2] as HTMLElement).getByLabelText("Display name"), { target: { value: "LinkedIn name" } });
     fireEvent.change(within(linkGroups[2] as HTMLElement).getAllByLabelText("Hero button label")[0], { target: { value: "LinkedIn hero" } });
     fireEvent.change(screen.getByLabelText("English Contact label"), { target: { value: "LinkedIn contact" } });
-    fireEvent.change(screen.getByLabelText("English URL"), { target: { value: "https://linkedin.example.test/profile" } });
+    fireEvent.change(screen.getByLabelText("LinkedIn URL"), { target: { value: "https://linkedin.example.test/profile" } });
     save();
     await screen.findByText("No unsaved changes");
     expect(links.methods.updatePublicLinks).toHaveBeenCalledWith(resumeId, {
       emailLabel: "Email contact", github: "https://github.example.test/changed", linkedInDisplayName: "LinkedIn name", linkedInLabel: "LinkedIn hero",
     });
+    expect(links.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { linkedInHref: "https://linkedin.example.test/profile" });
     expect(links.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { linkedInLabel: "LinkedIn contact", linkedInHref: "https://linkedin.example.test/profile" });
     cleanup();
     const siteText = makeRepository("skills");
@@ -2021,6 +2023,43 @@ describe("Batch 6A production repeatable CRUD", () => {
     await screen.findByText("No unsaved changes");
     expect(siteText.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "en", { portfolioLabel: "Download CV" });
     expect(siteText.methods.updateNavigationLabel).toHaveBeenCalledWith(resumeId, expect.any(String), "zh", "经历（更新）");
+  });
+
+  it("preserves differing legacy LinkedIn URLs until the single shared URL control is explicitly edited", async () => {
+    const links = makeRepository("skills");
+    const legacyLinks = structuredClone(fixtureSections.links);
+    legacyLinks.translations.zh.linkedInHref = "https://zh.example.test/profile";
+    legacyLinks.translations.en.linkedInHref = "https://en.example.test/profile";
+    links.repository.loadLinks = vi.fn().mockResolvedValue(legacyLinks);
+    open({ path: "/links" }, links.repository);
+
+    const sharedUrl = await screen.findByLabelText("LinkedIn URL") as HTMLInputElement;
+    expect(sharedUrl.value).toBe("https://zh.example.test/profile");
+    const legacyUrlNotice = "The saved Chinese and English LinkedIn URLs differ. Editing this field will synchronize them on save.";
+    expect(screen.getByText(legacyUrlNotice)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "changed@example.test" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(links.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(legacyLinks.translations.zh.linkedInHref).toBe("https://zh.example.test/profile");
+    expect(legacyLinks.translations.en.linkedInHref).toBe("https://en.example.test/profile");
+
+    fireEvent.change(screen.getByLabelText("LinkedIn URL"), { target: { value: "https://cancelled.example.test/profile" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
+    expect((screen.getByLabelText("LinkedIn URL") as HTMLInputElement).value).toBe("https://zh.example.test/profile");
+    expect(screen.getByText(legacyUrlNotice)).toBeTruthy();
+    expect(links.methods.updateSiteText).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("LinkedIn URL"), { target: { value: "https://shared.example.test/profile" } });
+    expect(screen.getByText(legacyUrlNotice)).toBeTruthy();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(screen.queryByText(legacyUrlNotice)).toBeNull();
+    expect(links.methods.updateSiteText.mock.calls).toEqual([
+      [resumeId, "zh", { linkedInHref: "https://shared.example.test/profile" }],
+      [resumeId, "en", { linkedInHref: "https://shared.example.test/profile" }],
+    ]);
   });
 
   it("saves a PDF after SPA navigation with only the canonical resume ID available", async () => {

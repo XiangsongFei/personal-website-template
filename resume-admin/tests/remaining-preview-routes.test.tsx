@@ -155,8 +155,11 @@ describe("Awards, Contact, and Links live preview", () => {
     expect(previewNode().querySelector('.resume-preview-actions a[href="mailto:preview@example.test"]')).toBeTruthy();
     fireEvent.change(screen.getByLabelText("English Public button label"), { target: { value: "Updated resume button" } });
     expect(preview().getByRole("link", { name: /Updated resume button/ })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("English URL"), { target: { value: "https://linkedin.example.test/profile" } });
+    fireEvent.change(screen.getByLabelText("LinkedIn URL"), { target: { value: "https://linkedin.example.test/profile" } });
     expect(previewNode().querySelector('.resume-preview-actions a[href="https://linkedin.example.test/profile"]')).toBeTruthy();
+    setPreviewLocale("Chinese");
+    expect(previewNode().querySelector('.resume-preview-actions a[href="https://linkedin.example.test/profile"]')).toBeTruthy();
+    setPreviewLocale("English");
     fireEvent.change(screen.getByLabelText("English Contact label"), { target: { value: "LinkedIn Profile" } });
     const englishContactLink = previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) a");
     expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) > span")?.textContent).toBe("LinkedIn Profile");
@@ -172,11 +175,12 @@ describe("Awards, Contact, and Links live preview", () => {
     expect(preview().getByRole("link", { name: "Resume preview 职业经历" })).toBeTruthy();
     expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) > span")?.textContent).toBe("领英");
     expect(previewNode().querySelector(".resume-preview-contact-links > div:nth-child(2) a")?.getAttribute("aria-label")).toBe("领英: Demo profile");
-    expect(previewNode().querySelector('.resume-preview-actions a[href="https://www.linkedin.com/"]')?.textContent).toContain("LinkedIn Action");
+    expect(previewNode().querySelector('.resume-preview-actions a[href="https://linkedin.example.test/profile"]')?.textContent).toContain("LinkedIn Action");
     expect(screen.getByRole("heading", { name: "Public links" })).toBeTruthy();
     expect(write).not.toHaveBeenCalled();
     setPreviewLocale("English");
     expect(preview().getByRole("link", { name: "Resume preview Career" })).toBeTruthy();
+    expect(previewNode().querySelector('.resume-preview-actions a[href="https://linkedin.example.test/profile"]')).toBeTruthy();
     expect(write).not.toHaveBeenCalled();
   });
 });

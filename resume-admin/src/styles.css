@@ -452,6 +452,8 @@ main{color:#242424}
 .links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>label>span[aria-hidden=true]{min-width:0;color:#888;font-weight:400}
 .links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>input{width:100%;min-width:0;max-width:100%}
 .links-editor-scope .links-inline-locale-fields .field-edit-status,.links-editor-scope .links-inline-locale-fields .field-hint{grid-column:1/-1}
+.links-editor-scope .links-linkedin-url-setting .field{margin:5px 0;padding:5px 0}
+.links-editor-scope .links-linkedin-url-setting .field>label{margin:0 0 2px;color:#888;font-size:12px;font-weight:500}
 .links-editor-scope .resume-file-grid{display:grid;grid-template-columns:var(--links-content-columns);gap:var(--links-content-gap)}
 .links-editor-scope .pdf-upload-field{min-width:0;margin:0}
 .links-editor-scope .pdf-upload-label{margin:0 0 8px;color:#444;font-size:14px;font-weight:600}
@@ -638,6 +640,11 @@ main{color:#242424}
 .paired-bilingual-single-line.is-adaptive-stacked .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
 
 @media(min-width:1281px){
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor="links:resume-files"] .resume-file-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor="links:email"] .links-inline-row,
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor="links:github"] .links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor="links:linkedin"]>.links-inline-row{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+  .editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-object-group[data-editor-anchor="links:linkedin"] .links-linkedin-localized .bilingual-field-pair[data-editor-anchor="field:links-linkedin-localized:linkedInLabel"] .bilingual-field-values{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
   .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .bilingual-grid.awards-fields-grid.has-locale-headings{grid-template-columns:minmax(0,1fr)}
   .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-fields-grid>.bilingual-column-headings{display:none}
   .editor-preview-layout[data-workspace-view=split] .awards-editor-scope .awards-name-year-pair{grid-template-columns:minmax(0,5fr) minmax(96px,1fr);grid-template-rows:auto auto auto auto;column-gap:clamp(12px,2cqi,20px);row-gap:0;padding:12px 0}
