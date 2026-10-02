@@ -306,6 +306,11 @@ main{color:#242424}
 .introduction-editor-scope .item-actions button:focus:not(:focus-visible){outline:none}
 .introduction-editor-scope .field textarea{width:100%;min-width:0;max-width:100%}
 @container (max-width:560px){.introduction-editor-scope .bilingual-column-headings{display:none}.introduction-editor-scope .bilingual-field-values{grid-template-columns:minmax(0,1fr);gap:16px}.introduction-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}}
+.editor-preview-layout:is([data-workspace-view=edit],[data-preview-view=editor]:not([data-workspace-view])) .introduction-editor-scope>.page-section{max-width:800px}
+.editor-preview-layout:is([data-workspace-view=edit],[data-preview-view=editor]:not([data-workspace-view])) .introduction-editor-scope .bilingual-column-headings{display:none}
+.editor-preview-layout:is([data-workspace-view=edit],[data-preview-view=editor]:not([data-workspace-view])) .introduction-editor-scope .bilingual-field-values .field label>span[aria-hidden=true]{display:inline}
+@media(max-width:860px){.editor-preview-layout:is([data-workspace-view=edit],[data-preview-view=editor]:not([data-workspace-view])) .introduction-editor-scope>.page-section{max-width:760px}}
+@media(max-width:640px){.editor-preview-layout:is([data-workspace-view=edit],[data-preview-view=editor]:not([data-workspace-view])) .introduction-editor-scope>.page-section{max-width:none}}
 
 /* Overview: editorial summary and direct section navigation. */
 .overview-page{margin-top:-12px}
