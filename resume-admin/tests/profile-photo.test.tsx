@@ -13,6 +13,7 @@ const snapshot = (photoUrl: string | null = null): LoadedResume => {
   return { resumeId, siteKey: "example-cv", isPublished: true, updatedAt: null, sections };
 };
 const persistedUrl = "https://storage.example.test/profile-images/example-cv/profile/version-1.webp";
+const replacementUrl = "https://storage.example.test/profile-images/example-cv/profile/version-2.webp";
 
 function show(repository: ResumeRepository, photoUrl: string | null = null) {
   return render(<MemoryRouter initialEntries={["/profile"]}><App identityEmail="admin@example.test" onSignOut={() => {}}
@@ -200,6 +201,139 @@ describe("Profile photo draft lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
     await waitFor(() => expect(repository.updateProfileSharedDetails).toHaveBeenCalledWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: persistedUrl }));
     expect(upload).toHaveBeenCalledTimes(2);
+  });
+
+  it("deletes the old managed image only after replacement upload and database save succeed", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:replacement-cleanup");
+    const order: string[] = [];
+    const upload = vi.fn(async () => { order.push("upload"); return replacementUrl; });
+    const update = vi.fn(async (_id: string, shared: UpdatedProfileRow["shared"]) => {
+      order.push("database");
+      return { resumeId, shared, updatedAt: null };
+    });
+    const remove = vi.fn(async () => { order.push("delete"); return true; });
+    const repository = repo({ uploadProfilePhoto: upload, updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    selectPhoto();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    expect(order).toEqual(["upload", "database", "delete"]);
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: replacementUrl });
+  });
+
+  it("preserves the old image and retryable uploaded URL when replacement database save fails", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:replacement-retry-cleanup");
+    const order: string[] = [];
+    const upload = vi.fn(async () => { order.push("upload"); return replacementUrl; });
+    const update = vi.fn()
+      .mockImplementationOnce(async () => { order.push("database-failed"); throw new Error("database unavailable"); })
+      .mockImplementation(async (_id: string, shared: UpdatedProfileRow["shared"]) => { order.push("database"); return { resumeId, shared, updatedAt: null }; });
+    const remove = vi.fn(async () => { order.push("delete"); return true; });
+    const repository = repo({ uploadProfilePhoto: upload, updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    selectPhoto();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(remove).not.toHaveBeenCalled();
+    expect((screen.getByTestId("resume-preview").querySelector("img") as HTMLImageElement).src).toBe("blob:replacement-retry-cleanup");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    expect(upload).toHaveBeenCalledOnce();
+    expect(order).toEqual(["upload", "database-failed", "database", "delete"]);
+    expect(update).toHaveBeenLastCalledWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: replacementUrl });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+  });
+
+  it("deletes the old image only after a saved removal is confirmed", async () => {
+    const order: string[] = [];
+    const update = vi.fn(async (_id: string, shared: UpdatedProfileRow["shared"]) => { order.push("database"); return { resumeId, shared, updatedAt: null }; });
+    const remove = vi.fn(async () => { order.push("delete"); return true; });
+    const repository = repo({ updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    expect(order).toEqual(["database", "delete"]);
+    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: null });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+    expect(screen.getByText("No profile photo")).toBeTruthy();
+  });
+
+  it("does not delete the old image when removal persistence fails", async () => {
+    const update = vi.fn().mockRejectedValue(new Error("database unavailable"));
+    const remove = vi.fn();
+    const repository = repo({ updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps a successful replacement save successful when old-image cleanup fails", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:replacement-cleanup-warning");
+    const remove = vi.fn().mockRejectedValue(new Error("storage unavailable"));
+    const repository = repo({ uploadProfilePhoto: vi.fn().mockResolvedValue(replacementUrl), deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    selectPhoto();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved, but the previous profile photo could not be removed.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+  });
+
+  it("keeps a successful removal saved when old-image cleanup fails", async () => {
+    const remove = vi.fn().mockRejectedValue(new Error("storage unavailable"));
+    const repository = repo({ deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved, but the previous profile photo could not be removed.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("No profile photo")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(repository.updateProfileSharedDetails).toHaveBeenCalledExactlyOnceWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: null });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+  });
+
+  it("warns when replacement is saved but managed-image cleanup is safely skipped", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:replacement-cleanup-skipped");
+    const update = vi.fn(async (_id: string, shared: UpdatedProfileRow["shared"]) => ({ resumeId, shared, updatedAt: null }));
+    const remove = vi.fn().mockResolvedValue(false);
+    const repository = repo({ uploadProfilePhoto: vi.fn().mockResolvedValue(replacementUrl), updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    selectPhoto();
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved, but the previous profile photo could not be removed.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: replacementUrl });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
+  });
+
+  it("warns when removal is saved but managed-image cleanup is safely skipped", async () => {
+    const update = vi.fn(async (_id: string, shared: UpdatedProfileRow["shared"]) => ({ resumeId, shared, updatedAt: null }));
+    const remove = vi.fn().mockResolvedValue(false);
+    const repository = repo({ updateProfileSharedDetails: update, deleteManagedProfilePhoto: remove });
+    show(repository, persistedUrl);
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+
+    expect(await screen.findByText("Profile changes saved, but the previous profile photo could not be removed.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("No profile photo")).toBeTruthy();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, { ...fixtureSections.profile.shared, photoUrl: null });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(resumeId, persistedUrl);
   });
 
   it("does not repeat a confirmed photo upload when a localized save partially fails", async () => {

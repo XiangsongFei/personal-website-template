@@ -154,6 +154,7 @@ Object.assign(dictionary, {
   "JPG, PNG, or WebP; maximum 5 MB.": "仅支持 JPG、PNG 或 WebP，最大 5 MB。",
   "Save profile changes": "保存个人资料修改",
   "Profile changes saved.": "个人资料修改已保存。",
+  "Profile changes saved, but the previous profile photo could not be removed.": "个人资料修改已保存，但无法删除之前的个人照片。",
   "Some Profile changes could not be saved. Saved changes are kept; remaining changes are still unsaved.": "部分个人资料修改未能保存。已保存的修改已保留，其余修改仍未保存。",
   "Profile changes were not saved. Your edits remain; please retry.": "个人资料修改未能保存。修改已保留，请重试。",
 });

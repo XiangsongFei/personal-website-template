@@ -9,7 +9,7 @@ import { UiLocaleProvider } from "./uiLocale";
 
 const supabase = createAdminSupabaseClient();
 const authClient = supabase ? createAdminAuthClient(supabase) : null;
-const resumeRepository = supabase ? createResumeRepository(supabase) : null;
+const resumeRepository = supabase ? createResumeRepository(supabase, import.meta.env.VITE_SUPABASE_URL) : null;
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -612,7 +612,7 @@ function useSectionText(page: SectionTextPage | null) {
 
 const inlineFooterFeedback = new Set([
   "Local changes reverted.", "Introduction changes reverted.",
-  "Profile changes saved.", "Introduction changes saved.", "Project changes saved.",
+  "Profile changes saved.", "Profile changes saved, but the previous profile photo could not be removed.", "Introduction changes saved.", "Project changes saved.",
   "Skill changes saved.", "Award changes saved.", "Contact changes saved.",
   "Site & link changes saved.", "Changes saved to production.",
   "Education changes saved to production.",
@@ -1404,6 +1404,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
   const [saveInFlight, setSaveInFlight] = useState(false);
   const saveLock = useRef(false);
   const [profileStatus, setProfileStatus] = useState<{ message: string; error: boolean } | null>(null);
+  const photoCleanupFailed = useRef(false);
 
   useEffect(() => {
     if (!dirty && !translationDirty.zh && !translationDirty.en) return;
@@ -1417,6 +1418,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
     requests.shared = true;
     setState(current => current ? { ...current, saving: true, notice: "", saveError: false } : current);
     try {
+      const previousPhotoUrl = state.baseline.photoUrl;
       let photoUrl = state.draft.photoUrl;
       if (photoDraft) {
         if (!repository.uploadProfilePhoto) throw new Error("Profile photo upload is unavailable.");
@@ -1429,6 +1431,14 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       const confirmed = await repository.updateProfileSharedDetails(resumeId, { ...state.draft, photoUrl });
       setState(current => current ? { ...current, baseline: clone(confirmed.shared), draft: clone(confirmed.shared), notice: "Shared profile details saved to production.", saveError: false } : current);
       onSaved(confirmed);
+      if (previousPhotoUrl && previousPhotoUrl !== confirmed.shared.photoUrl && repository.deleteManagedProfilePhoto) {
+        try {
+          const deleted = await repository.deleteManagedProfilePhoto(resumeId, previousPhotoUrl);
+          if (!deleted) photoCleanupFailed.current = true;
+        } catch {
+          photoCleanupFailed.current = true;
+        }
+      }
       if (photoDraft) {
         URL.revokeObjectURL(photoDraft.objectUrl);
         onPhotoUrlChanged(null);
@@ -1480,6 +1490,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
   async function saveProfileChanges() {
     if (!dirty || saving || saveLock.current || !repository || !onSaved || !onTranslationSaved) return;
     saveLock.current = true;
+    photoCleanupFailed.current = false;
     setSaveInFlight(true);
     setProfileStatus(null);
     const operations: Promise<boolean>[] = [];
@@ -1490,7 +1501,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       const results = await Promise.all(operations);
       const savedCount = results.filter(Boolean).length;
       const failedCount = results.length - savedCount;
-      if (failedCount === 0) setProfileStatus({ message: "Profile changes saved.", error: false });
+      if (failedCount === 0) setProfileStatus({ message: photoCleanupFailed.current ? "Profile changes saved, but the previous profile photo could not be removed." : "Profile changes saved.", error: false });
       else if (savedCount > 0) setProfileStatus({ message: "Some Profile changes could not be saved. Saved changes are kept; remaining changes are still unsaved.", error: true });
       else setProfileStatus({ message: "Profile changes were not saved. Your edits remain; please retry.", error: true });
     } finally {

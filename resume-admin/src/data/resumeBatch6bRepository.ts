@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FocusItem, LinksSection, Locale, ProjectItem, StatusItem } from "../model";
 import { profilePhotoExtension, validateProfilePhoto } from "./profilePhoto";
+import { managedProfilePhotoObjectPath } from "./profilePhotoStorage";
 
 type Row = Record<string, unknown>;
 type OrderedParent = { resumeId: string; entryId: string; position: number; sourceKey: string | null; statusType?: StatusItem["statusType"] };
@@ -88,7 +89,7 @@ async function persistTranslation(client: SupabaseClient, section: "projects" | 
   return parseTranslation(section, checkedRow(data, resumeId), resumeId, id, locale);
 }
 
-export function createBatch6BRepositoryWrites(client: SupabaseClient) {
+export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUrl?: string) {
   async function updatePosition(kind: "projects" | ContactEntryKind, resumeId: string, id: string, position: number): Promise<OrderedParent> {
     assertIdentity(resumeId, id); if (!Number.isInteger(position) || position < 0) throw new Error("Invalid position");
     const table = kind === "projects" ? "resume_project_entries" : tableSpec[kind].parent;
@@ -121,6 +122,14 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient) {
     checkedRow(data, resumeId, id);
   }
   return {
+    deleteManagedProfilePhoto: async (resumeId: string, photoUrl: string): Promise<boolean> => {
+      assertIdentity(resumeId);
+      const objectPath = managedProfilePhotoObjectPath(supabaseUrl, resumeId, photoUrl);
+      if (!objectPath) return false;
+      const { data, error } = await client.storage.from("profile-images").remove([objectPath]);
+      if (error || !Array.isArray(data) || data.length !== 1) throw new Error("Profile photo cleanup was not confirmed.");
+      return true;
+    },
     uploadProfilePhoto: async (resumeId: string, file: File): Promise<string> => {
       assertIdentity(resumeId);
       const validationError = validateProfilePhoto(file);

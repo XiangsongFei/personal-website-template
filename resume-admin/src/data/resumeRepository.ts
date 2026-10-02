@@ -165,10 +165,10 @@ async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string,
 }
 
 /** Site-scoped reads plus the explicitly allowlisted Profile and Education write paths. */
-export function createResumeRepository(supabase: SupabaseClient): CompleteResumeRepository {
+export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: string): CompleteResumeRepository {
   return {
     ...createEditableSectionWrites(supabase),
-    ...createBatch6BRepositoryWrites(supabase),
+    ...createBatch6BRepositoryWrites(supabase, supabaseUrl),
     async load() {
       const site = await readSiteRow(supabase);
       const resumeId = site.id as string;
