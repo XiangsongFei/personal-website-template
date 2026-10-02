@@ -3,6 +3,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(resolve("migrations/20261003_activity_log_phase1_introduction.sql"), "utf8");
+const correctiveMigration = readFileSync(resolve("migrations/20261004_activity_log_phase1_introduction_conflict_target.sql"), "utf8");
+const runtimeBootstrap = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20260930000000_test_only_schema_bootstrap.sql"), "utf8");
+
+function saveIntroductionFunction(source: string): string {
+  return source.match(/CREATE(?: OR REPLACE)? FUNCTION public\.save_resume_introduction\([\s\S]*?\$function\$;/)?.[0] ?? "";
+}
 
 describe("Phase 1 Introduction Activity Log migration contract", () => {
   it("adds a fixed typed RPC with server authorization, target, and mode checks", () => {
@@ -90,5 +96,21 @@ describe("Phase 1 Introduction Activity Log migration contract", () => {
     const phase0b = readFileSync(resolve("migrations/20261002_activity_log_foundation.sql"), "utf8");
     expect(phase0b).toContain("CREATE TABLE cms_private.activity_log_events");
     expect(migration).not.toBe(phase0b);
+  });
+
+  it("corrects only the Introduction conflict target to match the production key", () => {
+    const originalFunction = saveIntroductionFunction(migration);
+    const correctedFunction = saveIntroductionFunction(correctiveMigration);
+    expect(originalFunction).not.toBe("");
+    expect(correctedFunction).toBe(originalFunction
+      .replace("CREATE FUNCTION public.save_resume_introduction(", "CREATE OR REPLACE FUNCTION public.save_resume_introduction(")
+      .replace("ON CONFLICT(paragraph_id,resume_id,locale)", "ON CONFLICT(paragraph_id,locale)"));
+    expect(correctiveMigration).toContain("ON CONFLICT(paragraph_id,locale)");
+    expect(correctiveMigration).not.toContain("ON CONFLICT(paragraph_id,resume_id,locale)");
+  });
+
+  it("models the verified production Introduction translation primary key", () => {
+    expect(runtimeBootstrap).toMatch(/CREATE TABLE public\.resume_intro_paragraph_translations\s*\([\s\S]*?PRIMARY KEY \(paragraph_id,locale\)/);
+    expect(runtimeBootstrap).not.toContain("PRIMARY KEY (paragraph_id,resume_id,locale)");
   });
 });

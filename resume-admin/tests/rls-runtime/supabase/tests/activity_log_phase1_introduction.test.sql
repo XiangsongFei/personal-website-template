@@ -218,6 +218,7 @@ BEGIN
   result := public.save_resume_introduction('ea111111-1111-4111-8111-111111111111',
     '[{"id":"ea000000-0000-4000-8000-000000000006","zh":"QA 修改后的第一段","en":"Synthetic introduction paragraph 1 for editing and reorder checks."},{"id":"ea000000-0000-4000-8000-000000000007","zh":"这是用于测试第 2 段介绍编辑与排序的合成内容。","en":"Synthetic introduction paragraph 2 for editing and reorder checks."}]'::jsonb);
   PERFORM public.rls_test_assert(result->0->'translations'->'zh'->>'text'='QA 修改后的第一段', 'RPC returns canonical persisted AFTER state');
+  PERFORM public.rls_test_assert(result->0->'translations'->'en'->>'text'='Synthetic introduction paragraph 1 for editing and reorder checks.', 'Chinese-only save preserves the canonical English translation');
   SELECT * INTO event_row FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',100)
     WHERE entity_id='introduction';
   PERFORM public.rls_test_assert((SELECT count(*)=before_count+1 FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',100)), 'one changed paragraph appends exactly one event');

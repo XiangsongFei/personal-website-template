@@ -64,7 +64,7 @@ CREATE UNIQUE INDEX resume_intro_source_key_unique ON public.resume_intro_paragr
 CREATE TABLE public.resume_intro_paragraph_translations (
   paragraph_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   text text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (paragraph_id,resume_id,locale),
+  PRIMARY KEY (paragraph_id,locale),
   FOREIGN KEY (paragraph_id,resume_id) REFERENCES public.resume_intro_paragraphs(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );
@@ -194,7 +194,8 @@ GRANT EXECUTE ON FUNCTION public.rls_test_assert(boolean,text) TO anon, authenti
 GRANT EXECUTE ON FUNCTION public.is_resume_admin() TO authenticated;
 
 INSERT INTO public.resume_sites(id,site_key,is_published) VALUES
- ('20000000-0000-4000-8000-000000000001','example-cv',true);
+ ('20000000-0000-4000-8000-000000000001','example-cv',true),
+ ('ea111111-1111-4111-8111-111111111111','example-cv-qa',false);
 INSERT INTO public.cms_admins(user_id) VALUES ('10000000-0000-4000-8000-000000000001');
 INSERT INTO public.resume_locale_content(resume_id,locale,education_label,experience_label,project_heading,skills_label,
   honors_label,contact_label,availability,portfolio_label,portfolio_href,kaggle_label,updated_at_label,linkedin_label,linkedin_href)

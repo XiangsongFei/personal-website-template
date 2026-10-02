@@ -179,7 +179,7 @@ BEGIN
   denied := false;
   BEGIN
     INSERT INTO public.resume_intro_paragraph_translations(paragraph_id,resume_id,locale,text)
-    VALUES ('ea000000-0000-4000-8000-000000000006','20000000-0000-4000-8000-000000000001','en','cross-resume');
+    VALUES ('b4000000-0000-4000-8000-000000000006','20000000-0000-4000-8000-000000000001','en','cross-resume');
   EXCEPTION WHEN foreign_key_violation THEN denied := true;
   END;
   PERFORM public.rls_test_assert(denied, 'cross-resume translation FK rejected');
