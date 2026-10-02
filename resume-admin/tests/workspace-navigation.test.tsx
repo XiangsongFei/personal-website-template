@@ -83,14 +83,31 @@ function RouteButtons() {
     {destinations.map(([path]) => <button key={path} type="button" onClick={() => navigate(path)}>{path}</button>)}</nav>;
 }
 
-function renderApp(path: string, historyControls = false, initialEntries = [path]) {
+function renderApp(path: string, historyControls = false, initialEntries = [path], activityLogEnabled = false) {
   return render(<UiLocaleProvider><MemoryRouter initialEntries={initialEntries} initialIndex={initialEntries.length - 1}>{historyControls && <RouteButtons />}<LocationProbe /><App
-    identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+    identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} activityLogEnabled={activityLogEnabled} /></MemoryRouter></UiLocaleProvider>);
 }
 
 afterEach(() => { cleanup(); const root = (document.scrollingElement as HTMLElement | null) ?? document.documentElement; root.scrollTop = 0; document.documentElement.scrollTop = 0; document.body.scrollTop = 0; restoreGeometry.splice(0).forEach(restore => restore()); mediaListeners.clear(); window.sessionStorage.clear(); window.localStorage.clear(); vi.restoreAllMocks(); if (originalMatchMedia) Object.defineProperty(window, "matchMedia", originalMatchMedia); else Reflect.deleteProperty(window, "matchMedia"); if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth); if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight); });
 
 describe("sidebar navigation and canonical preview workspace", () => {
+  it("shows Activity Log only when the server-provided target capability is enabled", () => {
+    const { unmount } = renderApp("/overview", false, ["/overview"], false);
+    expect(within(screen.getByRole("navigation", { name: "CMS sections" })).queryByRole("link", { name: "Activity Log" })).toBeNull();
+    unmount();
+
+    renderApp("/overview", false, ["/overview"], true);
+    expect(within(screen.getByRole("navigation", { name: "CMS sections" })).getByRole("link", { name: "Activity Log" })).toBeTruthy();
+  });
+
+  it("keeps Activity Log as its own route without Editor/Preview workspace controls", async () => {
+    renderApp("/activity-log", false, ["/activity-log"], true);
+    expect(screen.getByTestId("current-route").textContent).toBe("/activity-log");
+    expect(screen.getByRole("heading", { name: "Activity Log", level: 1 })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Workspace view" })).toBeNull();
+    expect(screen.queryByTestId("resume-preview")).toBeNull();
+  });
+
   it("gives the common desktop route and workspace wrappers explicit full-width sizing", () => {
     const css = readFileSync("src/preview/preview.css", "utf8");
     const shellCss = readFileSync("src/styles.css", "utf8");

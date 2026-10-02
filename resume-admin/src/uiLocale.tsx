@@ -47,6 +47,16 @@ Object.assign(dictionary, {
   "Skills content": "技能内容",
 });
 
+Object.assign(dictionary, {
+  "Activity Log": "活动记录", "Admin tools": "管理工具", "Review recorded changes to this resume.": "查看此简历的已记录修改。",
+  "Loading Activity Log…": "正在加载活动记录……", "Unable to load Activity Log.": "无法加载活动记录。",
+  "No activity has been recorded yet.": "暂时没有活动记录。", Introduction: "个人简介",
+  Created: "已创建", Updated: "已更新", Deleted: "已删除", Reordered: "已调整顺序", by: "操作人：",
+  QA: "QA", Owner: "所有者", "Unknown account": "未知账户", "View changed fields": "查看变更字段",
+  "Chinese text": "中文内容", "English text": "英文内容", Order: "顺序", Paragraph: "段落", Before: "修改前", After: "修改后", Empty: "空",
+  "Load more": "加载更多", "Loading…": "正在加载……",
+});
+
 const dynamicMessagePrefixes = [
   "Reorder was only partially applied and production order could not be refreshed. Retry after checking the current order.",
   "Reorder was only partially applied; the displayed order was refreshed from production.",

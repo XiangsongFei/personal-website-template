@@ -37,11 +37,11 @@ BEGIN
   DELETE FROM public.resume_intro_paragraphs WHERE id='a1000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
   PERFORM public.rls_test_assert(affected=1, 'owner deletes official content');
 
-  INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VALUES ('a1000000-0000-4000-8000-000000000002','ea111111-1111-4111-8111-111111111111',50,'rls-owner-qa');
-  UPDATE public.resume_intro_paragraphs SET position=51 WHERE id='a1000000-0000-4000-8000-000000000002'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'owner updates QA content');
-  DELETE FROM public.resume_intro_paragraphs WHERE id='a1000000-0000-4000-8000-000000000002'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'owner deletes QA content');
+  BEGIN
+    INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VALUES ('a1000000-0000-4000-8000-000000000002','ea111111-1111-4111-8111-111111111111',50,'rls-owner-qa-stale-direct');
+    RAISE EXCEPTION 'owner Introduction direct insert unexpectedly succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('profile-images','example-cv/profile/owner-legacy.png','{"fixture":"owner"}');
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('resume-files','example-cv/resume_en.pdf','{"fixture":"owner"}');
@@ -64,11 +64,18 @@ BEGIN
   PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.get_admin_resume_target() WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND site_key='example-cv-qa' AND role='qa'), 'QA target RPC resolves bound QA site');
   PERFORM public.rls_test_assert((SELECT count(*)>0 FROM public.resume_intro_paragraphs WHERE resume_id='ea111111-1111-4111-8111-111111111111'), 'QA can read QA content');
 
-  INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VALUES ('a2000000-0000-4000-8000-000000000001','ea111111-1111-4111-8111-111111111111',50,'rls-qa-crud');
-  UPDATE public.resume_intro_paragraphs SET position=51 WHERE id='a2000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'QA updates its content');
-  DELETE FROM public.resume_intro_paragraphs WHERE id='a2000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'QA deletes its content');
+  denied := false;
+  BEGIN
+    INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VALUES ('a2000000-0000-4000-8000-000000000001','ea111111-1111-4111-8111-111111111111',50,'rls-qa-stale-direct');
+  EXCEPTION WHEN insufficient_privilege THEN denied := true;
+  END;
+  PERFORM public.rls_test_assert(denied, 'QA cannot bypass Introduction RPC mode with direct INSERT');
+  UPDATE public.resume_intro_paragraphs SET position=51 WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND id='ea000000-0000-4000-8000-000000000006'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA stale direct UPDATE is blocked for Introduction');
+  DELETE FROM public.resume_intro_paragraphs WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND id='ea000000-0000-4000-8000-000000000006'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA stale direct DELETE is blocked for Introduction');
+  UPDATE public.resume_profile SET footer_name=footer_name || ' tested' WHERE resume_id='ea111111-1111-4111-8111-111111111111'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=1, 'QA retains direct writes for non-converted domains');
 
   denied := false;
   BEGIN

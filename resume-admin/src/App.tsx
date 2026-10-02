@@ -20,6 +20,7 @@ import { AdaptiveMethodsGrid } from "./AdaptiveMethodsGrid";
 import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNavigation, isScrollSnapshotFrozen, observeUserScroll, readDocumentScrollPosition, readStoredScrollPosition, resumeScrollSnapshotAfterBfcache, writeStoredScrollPosition } from "./refreshState";
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { SystemStateContent } from "./SystemState";
+import { ActivityLogPage } from "./ActivityLogPage";
 
 const navigation = [
   { label: "Overview", path: "/overview" },
@@ -855,6 +856,9 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     const methods = repository.updateEditableEntryPosition && repository.insertEditableEntry && repository.updateEditableTranslation
       && repository.insertEditableTranslation && repository.readEditableTranslation && repository.deleteEditableTranslation && repository.deleteEditableEntry;
     if (!methods) { stateUpdate(current => ({ ...current, notice: section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production writes are unavailable for this section.", error: true })); return; }
+    if (section === "introduction" && (!repository.loadAdminFeatureState || !repository.saveIntroductionAtomically)) {
+      stateUpdate(current => ({ ...current, notice: "Introduction changes could not be saved. Please retry.", error: true })); return;
+    }
     saving.current = true;
     let working: ProductionListState = { ...clone(editor), saving: true, notice: "", error: false };
     const commit = (next: ProductionListState) => { working = next; drafts.set(section, clone(next)); setEditor(next); };
@@ -862,6 +866,19 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     commit(working);
     try {
       const sectionTextSaved = sectionText ? await sectionText.save() : true;
+      if (section === "introduction") {
+        const featureState = await repository.loadAdminFeatureState!(resumeId);
+        if (featureState.introductionWriteMode === "rpc") {
+          const changedKeys = collectChangedBilingualFieldKeys(section, working.draft, editor.baseline);
+          const canonical = await repository.saveIntroductionAtomically!(resumeId, working.draft as IntroItem[]);
+          contextOnSave(changedKeys);
+          working = { ...working, baseline: clone(canonical), draft: clone(canonical), saving: false,
+            notice: sectionTextSaved ? "Introduction changes saved." : "Section content saved. Some section text remains unsaved; retry to finish.",
+            error: !sectionTextSaved };
+          commit(working); patchCache();
+          return;
+        }
+      }
       // Explicitly remove child translations first so parent deletion never depends on FK cascade behavior.
       for (const oldItem of [...working.baseline]) {
         if (working.draft.some(item => item.id === oldItem.id)) continue;
@@ -2523,7 +2540,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
   siteTextTranslations = null, siteTextResumeId = null, onSiteTextChanged = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
-  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {} }: {
+  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false }: {
   identityEmail: string | null;
   onSignOut: () => void;
   signOutPending: boolean;
@@ -2566,6 +2583,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   interactionLocked?: boolean;
   snapshotDataRevision?: number;
   onSnapshotRebased?: () => void;
+  activityLogEnabled?: boolean;
 }) {
   const { t } = useUiLocale();
   const location = useLocation();
@@ -2743,9 +2761,10 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     return () => document.removeEventListener("keydown", onEscape);
   }, [menuOpen]);
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
+  const isActivityLogRoute = location.pathname === "/activity-log";
   const needsSectionTextRoute = ["/education", "/experience", "/projects", "/skills", "/awards"].includes(location.pathname);
   const showOverviewRouteState = productionMode && overviewRouteFirst && isOverviewRoute && !resume && !overviewData;
-  const showFullSnapshotState = productionMode && !resume && location.pathname !== "/profile" && location.pathname !== "/education" && !additionalRouteFirst && !(isOverviewRoute && overviewRouteFirst);
+  const showFullSnapshotState = productionMode && !resume && !isActivityLogRoute && location.pathname !== "/profile" && location.pathname !== "/education" && !additionalRouteFirst && !(isOverviewRoute && overviewRouteFirst);
   const showEducationTextState = productionMode && location.pathname === "/education" && !resume
     && educationSection !== null && additionalRouteLoadState !== "loaded";
   const showAdditionalRouteState = productionMode && additionalRouteFirst && additionalRouteKey !== null && !resume
@@ -2758,6 +2777,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const headerWorkspaceSwitcher = isPreviewRoute && (wideDesktop || desktopEditorOnlyViewport);
   const editorOnlyDesktop = Boolean(!wideDesktop && desktopEditorOnlyViewport && previewSection && previewModes[previewSection] === "editor");
   const routeDataReady = !productionMode || resume !== null || fullSnapshotState === "error"
+    || isActivityLogRoute
     || (isOverviewRoute && (overviewData !== null || overviewLoadState === "error"))
     || (location.pathname === "/profile" && (profileEditor !== null || profileLoadState === "error"))
     || (location.pathname === "/education" && (educationEditor !== null || educationLoadState === "error"))
@@ -3235,6 +3255,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
             onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
+        {activityLogEnabled && <NavLink to="/activity-log" className={({ isActive }) => `sidebar-link activity-log-nav-link${isActive ? " is-active" : ""}`}>{t("Activity Log")}</NavLink>}
         <PublicSiteLink className="sidebar-link sidebar-public-site-link" />
       </nav>
     </aside>
@@ -3261,6 +3282,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
           description={t(fullSnapshotState === "error" ? "The production resume could not be loaded. No fixture content has been substituted." : "Reading the current example-cv content.")}
           busy={fullSnapshotState !== "error"} action={fullSnapshotState === "error" ? <button type="button" className="button secondary" onClick={onRetryFullSnapshot ?? undefined}>{t("Retry")}</button> : undefined} />
         : <Routes>
+        <Route path="/activity-log" element={activityLogEnabled
+          ? <ActivityLogPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository} />
+          : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />
         <Route path="/profile" element={<PreviewWorkspace section="profile"><Profile /></PreviewWorkspace>} /><Route path="/introduction" element={<PreviewWorkspace section="introduction"><Introduction /></PreviewWorkspace>} />
         <Route path="/education" element={<PreviewWorkspace section="education"><Education /></PreviewWorkspace>} /><Route path="/experience" element={<PreviewWorkspace section="experience"><Experience /></PreviewWorkspace>} />

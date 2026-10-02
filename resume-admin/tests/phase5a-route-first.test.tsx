@@ -112,7 +112,7 @@ describe("Phase 5A route-first section loading", () => {
       pending.reject(new Error("offline"));
       expect((await screen.findByRole("alert")).textContent).toContain(locale === "en" ? `Unable to load ${spec.title}.` : ({ introduction: "无法加载个人简介。", experience: "无法加载工作经历。", skills: "无法加载技能。", awards: "无法加载荣誉奖项。" } as const)[key]);
       fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Retry" : "重试" }));
-      expect(await screen.findByLabelText(locale === "en" ? spec.input : ({ introduction: "中文 Paragraph", experience: "中文 组织", skills: "中文 名称", awards: "中文 荣誉名称" } as const)[key])).toBeTruthy();
+      expect(await screen.findByLabelText(locale === "en" ? spec.input : ({ introduction: "中文 段落", experience: "中文 组织", skills: "中文 名称", awards: "中文 荣誉名称" } as const)[key])).toBeTruthy();
       expect(repo.load).not.toHaveBeenCalled();
       expect(repo.loadSiteMetadata).toHaveBeenCalledOnce();
       for (const other of Object.keys(specs) as Key[]) if (other !== key) expect(repo[specs[other].loader]).not.toHaveBeenCalled();

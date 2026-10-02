@@ -26,6 +26,10 @@ export const resumeTables = [
 
 export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
+  loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
+  saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
+  loadActivityLogAuthorizedTargets?(): Promise<ActivityLogAuthorizedTarget[]>;
+  loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -42,6 +46,16 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   deleteEditableTranslation?<K extends EditableRepeatableSection>(section: K, resumeId: string, entryId: string, locale: Locale): Promise<void>;
   deleteEditableEntry?<K extends EditableRepeatableSection>(section: K, resumeId: string, entryId: string): Promise<void>;
 }
+
+export type AdminFeatureState = { activityLogEnabled: boolean; introductionWriteMode: "direct" | "rpc" };
+export type ActivityLogCursor = { occurredAt: string; id: string };
+export type ActivityLogAuthorizedTarget = { resumeId: string; siteKey: "example-cv" | "example-cv-qa"; role: "owner" | "qa" };
+export type ActivityLogEvent = {
+  id: string; occurredAt: string; actorEmail: string | null; actorRole: "owner" | "qa";
+  operation: "create" | "update" | "delete" | "reorder" | "upload" | "remove";
+  section: string; entityType: string; entityId: string | null;
+  entitySnapshot: Record<string, unknown>; changes: Record<string, { before: unknown; after: unknown }>;
+};
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
 export interface ResumeSectionRepository {
@@ -179,6 +193,70 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     },
     async loadSiteMetadata() {
       return mapResumeSiteMetadata(await readSiteRow(supabase));
+    },
+    async loadAdminFeatureState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_feature_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Admin feature state");
+      const row = Array.isArray(data) ? data.length === 1 ? data[0] : null : data;
+      if (!row || typeof row !== "object") throw new Error("Invalid Admin feature state");
+      const value = row as Record<string, unknown>;
+      if (typeof value.activity_log_enabled !== "boolean" || (value.introduction_write_mode !== "direct" && value.introduction_write_mode !== "rpc")) throw new Error("Invalid Admin feature state");
+      return { activityLogEnabled: value.activity_log_enabled, introductionWriteMode: value.introduction_write_mode };
+    },
+    async saveIntroductionAtomically(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
+        throw new Error("Invalid Introduction save");
+      }
+      const input = items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text }));
+      const { data, error } = await supabase.rpc("save_resume_introduction", { target_resume_id: resumeId, target_items: input });
+      if (error) throw new Error("Introduction changes could not be saved. Please retry.");
+      if (!Array.isArray(data)) throw new Error("Invalid Introduction save response");
+      return data.map(entry => {
+        if (!entry || typeof entry !== "object") throw new Error("Invalid Introduction save response");
+        const row = entry as Record<string, unknown>;
+        const translations = row.translations as Record<string, unknown> | undefined;
+        const zh = translations?.zh as Record<string, unknown> | undefined;
+        const en = translations?.en as Record<string, unknown> | undefined;
+        if (typeof row.id !== "string" || !Number.isInteger(row.position) || typeof zh?.text !== "string" || typeof en?.text !== "string") throw new Error("Invalid Introduction save response");
+        return { id: row.id, position: row.position as number, translations: { zh: { text: zh.text }, en: { text: en.text } } };
+      });
+    },
+    async loadActivityLogPage(resumeId, pageSize, cursor) {
+      const { data, error } = await supabase.rpc("read_activity_log_events", {
+        target_resume_id: resumeId, page_limit: pageSize,
+        before_occurred_at: cursor?.occurredAt ?? null, before_id: cursor?.id ?? null,
+      });
+      if (error) throw new Error("Unable to load Activity Log");
+      return rows(data, "Activity Log event").map(row => {
+        if (typeof row.id !== "string" || typeof row.occurred_at !== "string"
+          || (row.actor_role_snapshot !== "owner" && row.actor_role_snapshot !== "qa")
+          || !["create", "update", "delete", "reorder", "upload", "remove"].includes(String(row.operation))
+          || typeof row.section_key !== "string" || typeof row.entity_type !== "string"
+          || (row.actor_email_snapshot !== null && typeof row.actor_email_snapshot !== "string")
+          || (row.entity_id !== null && typeof row.entity_id !== "string")
+          || !row.entity_snapshot || typeof row.entity_snapshot !== "object" || Array.isArray(row.entity_snapshot)
+          || !row.changes || typeof row.changes !== "object" || Array.isArray(row.changes)) throw new Error("Invalid Activity Log response");
+        const changes: ActivityLogEvent["changes"] = {};
+        for (const [key, raw] of Object.entries(row.changes as Record<string, unknown>)) {
+          if (!raw || typeof raw !== "object" || !("before" in raw) || !("after" in raw)) throw new Error("Invalid Activity Log response");
+          const change = raw as { before: unknown; after: unknown };
+          changes[key] = { before: change.before, after: change.after };
+        }
+        return { id: row.id, occurredAt: row.occurred_at, actorEmail: row.actor_email_snapshot as string | null,
+          actorRole: row.actor_role_snapshot, operation: row.operation as ActivityLogEvent["operation"], section: row.section_key,
+          entityType: row.entity_type, entityId: row.entity_id as string | null,
+          entitySnapshot: row.entity_snapshot as Record<string, unknown>, changes };
+      });
+    },
+    async loadActivityLogAuthorizedTargets() {
+      const { data, error } = await supabase.rpc("activity_log_authorized_targets");
+      if (error) throw new Error("Unable to load Activity Log targets");
+      return rows(data, "Activity Log target").map(row => {
+        if (typeof row.resume_id !== "string" || (row.site_key !== "example-cv" && row.site_key !== "example-cv-qa")
+          || (row.role !== "owner" && row.role !== "qa")) throw new Error("Invalid Activity Log target response");
+        return { resumeId: row.resume_id, siteKey: row.site_key, role: row.role };
+      });
     },
     async loadOverview(resumeId) {
       return mapOverviewRows(await readResumeRows(supabase, "resume_profile_translations", resumeId), resumeId);

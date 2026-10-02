@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; failIntroductionRpc?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -76,6 +76,12 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
+    loadAdminFeatureState: vi.fn(async () => ({ activityLogEnabled: options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct" })),
+    loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
+    saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
+      if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
+      return structuredClone(draft);
+    }),
     uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => `https://storage.example.test/${targetResumeId}/resume_${locale}.pdf?cacheNonce=repository-version`),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
@@ -605,7 +611,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     window.localStorage.setItem(UI_LOCALE_KEY, "zh");
     const { repository } = makeRepository("introduction");
     open({ path: "/introduction" }, repository);
-    const paragraph = await screen.findByLabelText("中文 Paragraph");
+    const paragraph = await screen.findByLabelText("中文 段落");
     fireEvent.change(paragraph, { target: { value: "更新后的中文简介" } });
     expect(screen.getAllByRole("button", { name: "保存个人简介修改" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "取消修改" })).toHaveLength(1);
@@ -1277,6 +1283,37 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel changes" }));
     expect((chinese as HTMLInputElement | HTMLTextAreaElement).value).toBe(spec.changed);
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it("routes QA Introduction RPC mode through one atomic save and accepts its canonical result", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc" });
+    methods.saveIntroductionAtomically.mockImplementation(async (_targetResumeId, draft) => draft.map((item, index) => ({ ...item, id: `canonical-intro-${index}`, position: index + 10 })));
+    const store = new ResumeSectionStore(); open({ path: "/introduction" }, repository, store);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "atomic QA edit" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.loadAdminFeatureState).toHaveBeenCalledWith(resumeId);
+    expect(methods.saveIntroductionAtomically).toHaveBeenCalledOnce();
+    expect(methods.saveIntroductionAtomically).toHaveBeenCalledWith(resumeId, expect.arrayContaining([
+      expect.objectContaining({ translations: expect.objectContaining({ zh: { text: "atomic QA edit" } }) }),
+    ]));
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+    const cached = store.getSectionState("batch6a-session", resumeId, "introduction");
+    expect(cached.status).toBe("loaded");
+    if (cached.status === "loaded") expect((cached.value as IntroItem[])[0]).toMatchObject({ id: "canonical-intro-0", position: 10, translations: { zh: { text: "atomic QA edit" } } });
+  });
+
+  it("does not fall back to direct Introduction writes when the atomic RPC fails", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", failIntroductionRpc: true });
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "must remain unsaved" } });
+    save();
+    await screen.findByRole("alert");
+    expect(methods.saveIntroductionAtomically).toHaveBeenCalledOnce();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect((field as HTMLTextAreaElement).value).toBe("must remain unsaved");
   });
 
   it.each(cases)("$title creates a parent and both translations, replacing the temporary identity", async spec => {
