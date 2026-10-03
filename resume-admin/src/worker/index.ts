@@ -1,0 +1,486 @@
+const API_ROOT = "/api/admin/v1";
+const SAVE_PATH = `${API_ROOT}/introduction/save`;
+const REQUEST_BODY_LIMIT = 512 * 1024;
+const CANONICAL_BODY_LIMIT = 256 * 1024;
+const UPSTREAM_BODY_LIMIT = 512 * 1024;
+const UPSTREAM_TIMEOUT_MS = 10_000;
+const SIGNATURE_LIFETIME_SECONDS = 180;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL_ID_PATTERN = /^local-[0-9]+-[0-9]+$/;
+const UTF8 = new TextEncoder();
+
+export interface WorkerEnv {
+  ASSETS: { fetch(request: Request): Promise<Response> };
+  SUPABASE_URL?: string;
+  SUPABASE_PUBLISHABLE_KEY?: string;
+  ACTIVITY_LOG_HMAC_KEY?: string;
+  ACTIVITY_LOG_HMAC_KEY_ID?: string;
+}
+
+interface IntroductionItem {
+  id: string | null;
+  zh: string;
+  en: string;
+}
+
+interface SignedContext {
+  context_version: number;
+  key_id: string;
+  actor_user_id: string;
+  resume_id: string;
+  domain: "introduction";
+  operation: "update";
+  request_id: string;
+  mutation_digest: string;
+  issued_at: number;
+  expires_at: number;
+  ip_network: string | null;
+  country_code: string | null;
+  region: string | null;
+  city: string | null;
+}
+
+class ApiError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+function errorResponse(error: ApiError): Response {
+  return Response.json({ error: { code: error.code, message: error.message } }, {
+    status: error.status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+function apiError(status: number, code: string, message: string): ApiError {
+  return new ApiError(status, code, message);
+}
+
+async function readBoundedBody(request: Request, limit: number): Promise<Uint8Array> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      throw apiError(400, "invalid_content_length", "Invalid Content-Length header.");
+    }
+    if (Number(contentLength) > limit) {
+      throw apiError(413, "payload_too_large", "Request body exceeds the allowed size.");
+    }
+  }
+  if (!request.body) return new Uint8Array();
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        throw apiError(413, "payload_too_large", "Request body exceeds the allowed size.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateItems(value: unknown): IntroductionItem[] {
+  if (!Array.isArray(value)) {
+    throw apiError(422, "invalid_items", "Introduction items must be an array.");
+  }
+  if (value.length > 200) {
+    throw apiError(422, "invalid_items", "Introduction contains too many items.");
+  }
+
+  const items: IntroductionItem[] = [];
+  const persistedIds = new Set<string>();
+  for (const entry of value) {
+    if (!isPlainObject(entry)) {
+      throw apiError(422, "invalid_item", "Each Introduction item must be an object.");
+    }
+    const keys = Object.keys(entry);
+    if (keys.length !== 3 || !keys.includes("id") || !keys.includes("zh") || !keys.includes("en")) {
+      throw apiError(422, "invalid_item", "Each Introduction item must contain only id, zh, and en.");
+    }
+    const id = entry.id;
+    if (id !== null && (typeof id !== "string" || UTF8.encode(id).byteLength > 64 || (!UUID_PATTERN.test(id) && !LOCAL_ID_PATTERN.test(id)))) {
+      throw apiError(422, "invalid_item_id", "Introduction item ID is invalid.");
+    }
+    if (typeof entry.zh !== "string" || typeof entry.en !== "string"
+      || entry.zh.includes("\0") || entry.en.includes("\0")
+      || hasUnpairedSurrogate(entry.zh) || hasUnpairedSurrogate(entry.en)
+      || Array.from(entry.zh).length > 12_000 || Array.from(entry.en).length > 12_000) {
+      throw apiError(422, "invalid_item_text", "Introduction text is invalid or too long.");
+    }
+    if (typeof id === "string" && !id.startsWith("local-")) {
+      const normalizedId = id.toLowerCase();
+      if (persistedIds.has(normalizedId)) {
+        throw apiError(422, "duplicate_item_id", "Introduction contains a duplicate item ID.");
+      }
+      persistedIds.add(normalizedId);
+    }
+    items.push({ id, zh: entry.zh, en: entry.en });
+  }
+  return items;
+}
+
+export function canonicalizeIntroduction(items: IntroductionItem[]): string {
+  return JSON.stringify(items.map((item) => ({ id: item.id, zh: item.zh, en: item.en })));
+}
+
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", UTF8.encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function compareUtf8Keys(left: string, right: string): number {
+  const leftBytes = UTF8.encode(left);
+  const rightBytes = UTF8.encode(right);
+  if (leftBytes.length !== rightBytes.length) return leftBytes.length - rightBytes.length;
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    if (leftBytes[index] !== rightBytes[index]) return leftBytes[index] - rightBytes[index];
+  }
+  return 0;
+}
+
+/** PostgreSQL jsonb text output: keys sorted by byte length then byte order. */
+export function serializePostgresJsonbObject(value: object): string {
+  const fields = value as Record<string, string | number | null>;
+  return `{${Object.keys(value).sort(compareUtf8Keys).map((key) =>
+    `${JSON.stringify(key)}: ${JSON.stringify(fields[key])}`
+  ).join(", ")}}`;
+}
+
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
+function decodeHex(value: string): Uint8Array {
+  if (value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) {
+    throw apiError(503, "signing_unavailable", "Signing configuration is unavailable.");
+  }
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < value.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(value.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+function getSigningConfig(env: WorkerEnv): { keyId: string; key: Uint8Array } {
+  const keyId = env.ACTIVITY_LOG_HMAC_KEY_ID;
+  const keyHex = env.ACTIVITY_LOG_HMAC_KEY;
+  if (!keyId || !/^[A-Za-z0-9._-]{1,64}$/.test(keyId) || !keyHex || !/^(?:[a-f0-9]{2}){32,512}$/i.test(keyHex)) {
+    throw apiError(503, "signing_unavailable", "Signing configuration is unavailable.");
+  }
+  return { keyId, key: decodeHex(keyHex) };
+}
+
+export async function signContext(context: SignedContext, key: Uint8Array): Promise<{ serialized: string; signatureHex: string }> {
+  const serialized = serializePostgresJsonbObject(context);
+  const cryptoKey = await crypto.subtle.importKey("raw", copyToArrayBuffer(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, copyToArrayBuffer(UTF8.encode(serialized)));
+  const signatureHex = [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return { serialized, signatureHex };
+}
+
+function parseIPv4(value: string): number[] | null {
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts.some((part) => !/^(?:0|[1-9]\d{0,2})$/.test(part))) return null;
+  const octets = parts.map(Number);
+  if (octets.some((octet) => octet > 255)) return null;
+  return octets;
+}
+
+function parseIPv6(value: string): number[] | null {
+  if (!value.includes(":") || value.includes("%")) return null;
+  let input = value.toLowerCase();
+  const dotted = input.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) {
+    const octets = parseIPv4(dotted[1]);
+    if (!octets) return null;
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    input = input.slice(0, input.length - dotted[1].length) + `${high}:${low}`;
+  }
+  if ((input.match(/::/g) ?? []).length > 1) return null;
+  const hasCompression = input.includes("::");
+  const [leftPart, rightPart = ""] = hasCompression ? input.split("::") : [input, ""];
+  const left = leftPart ? leftPart.split(":") : [];
+  const right = rightPart ? rightPart.split(":") : [];
+  const groups = [...left, ...right];
+  if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  if (hasCompression ? groups.length >= 8 : groups.length !== 8) return null;
+  const zeros = hasCompression ? 8 - groups.length : 0;
+  return [...left.map((group) => Number.parseInt(group, 16)), ...Array(zeros).fill(0), ...right.map((group) => Number.parseInt(group, 16))];
+}
+
+function formatIPv6(groups: number[]): string {
+  let bestStart = -1;
+  let bestLength = 1;
+  for (let index = 0; index < groups.length;) {
+    if (groups[index] !== 0) { index += 1; continue; }
+    let end = index;
+    while (end < groups.length && groups[end] === 0) end += 1;
+    if (end - index > bestLength) { bestStart = index; bestLength = end - index; }
+    index = end;
+  }
+  if (bestStart < 0) return groups.map((group) => group.toString(16)).join(":");
+  const before = groups.slice(0, bestStart).map((group) => group.toString(16)).join(":");
+  const after = groups.slice(bestStart + bestLength).map((group) => group.toString(16)).join(":");
+  return `${before}::${after}`;
+}
+
+export function normalizeClientNetwork(value: string | null): string | null {
+  if (!value || value.trim() !== value || value.includes("/")) return null;
+  const ipv4 = parseIPv4(value);
+  if (ipv4) return `${ipv4[0]}.${ipv4[1]}.${ipv4[2]}.0/24`;
+  const ipv6 = parseIPv6(value);
+  if (!ipv6) return null;
+  ipv6[3] = 0;
+  ipv6[4] = 0;
+  ipv6[5] = 0;
+  ipv6[6] = 0;
+  ipv6[7] = 0;
+  return `${formatIPv6(ipv6)}/48`;
+}
+
+function optionalGeoString(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0 || UTF8.encode(value).byteLength > 128 || hasUnpairedSurrogate(value)) return null;
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit <= 0x1f || (unit >= 0x7f && unit <= 0x9f)) return null;
+  }
+  return value;
+}
+
+export function getTrustedNetworkContext(request: Request): Pick<SignedContext, "ip_network" | "country_code" | "region" | "city"> {
+  const cloudflareRequest = request as Request & { cf?: { country?: unknown; region?: unknown; city?: unknown } };
+  const rawCountry = cloudflareRequest.cf?.country;
+  const country = typeof rawCountry === "string" ? rawCountry.toUpperCase() : "";
+  return {
+    ip_network: normalizeClientNetwork(request.headers.get("CF-Connecting-IP")),
+    country_code: /^[A-Z]{2}$/.test(country) ? country : null,
+    region: optionalGeoString(cloudflareRequest.cf?.region),
+    city: optionalGeoString(cloudflareRequest.cf?.city),
+  };
+}
+
+function decodeBase64Url(segment: string): string {
+  if (!segment || !/^[A-Za-z0-9_-]+$/.test(segment) || segment.length % 4 === 1) {
+    throw apiError(401, "invalid_authorization", "A valid user access token is required.");
+  }
+  const base64 = segment.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(segment.length / 4) * 4, "=");
+  try {
+    return atob(base64);
+  } catch {
+    throw apiError(401, "invalid_authorization", "A valid user access token is required.");
+  }
+}
+
+function tokenActor(authorization: string | null): { header: string; token: string; actorId: string } {
+  const match = authorization?.match(/^Bearer ([^\s]+)$/i);
+  if (!match) throw apiError(401, "invalid_authorization", "A Bearer user access token is required.");
+  const token = match[1];
+  const segments = token.split(".");
+  if (segments.length !== 3) throw apiError(401, "invalid_authorization", "A valid user access token is required.");
+  try {
+    const header = JSON.parse(decodeBase64Url(segments[0])) as unknown;
+    const payloadText = new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(decodeBase64Url(segments[1]), (character) => character.charCodeAt(0)),
+    );
+    const payload = JSON.parse(payloadText) as unknown;
+    if (!isPlainObject(header) || typeof header.alg !== "string" || !isPlainObject(payload)
+      || typeof payload.sub !== "string" || !UUID_PATTERN.test(payload.sub)) {
+      throw new Error("invalid token shape");
+    }
+    return { header: `Bearer ${token}`, token, actorId: payload.sub.toLowerCase() };
+  } catch {
+    throw apiError(401, "invalid_authorization", "A valid user access token is required.");
+  }
+}
+
+async function readJsonResponse(response: Response, limit: number): Promise<unknown> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await readBoundedBody(response as unknown as Request, limit);
+  } catch {
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid response.");
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch {
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid response.");
+  }
+}
+
+function upstreamError(response: Response, body: unknown): ApiError {
+  if (isPlainObject(body)) {
+    const code = typeof body.code === "string" ? body.code : "";
+    const message = typeof body.message === "string" ? body.message : "";
+    if (code === "23505" && message === "Idempotency key conflicts with a different request") {
+      return apiError(409, "idempotency_conflict", "This save request conflicts with an earlier request.");
+    }
+    if (code === "22023" && message === "Idempotency request has expired; use a new request ID") {
+      return apiError(409, "idempotency_expired", "This save request has expired. Submit it with a new request ID.");
+    }
+  }
+  return apiError(502, "upstream_failure", `The data service could not save the Introduction (HTTP ${response.status}).`);
+}
+
+function validateSupabaseConfig(env: WorkerEnv): { baseUrl: string; publishableKey: string } {
+  if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
+    throw apiError(503, "upstream_unavailable", "The data service is not configured.");
+  }
+  try {
+    const parsed = new URL(env.SUPABASE_URL);
+    if (parsed.protocol !== "https:" || !/^https:\/\//i.test(env.SUPABASE_URL)
+      || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+    return { baseUrl: parsed.toString().replace(/\/$/, ""), publishableKey: env.SUPABASE_PUBLISHABLE_KEY };
+  } catch {
+    throw apiError(503, "upstream_unavailable", "The data service is not configured.");
+  }
+}
+
+async function saveIntroduction(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown;
+  } catch {
+    throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON.");
+  }
+  if (!isPlainObject(parsed)) throw apiError(400, "invalid_request", "Request body must be a JSON object.");
+  const bodyKeys = Object.keys(parsed);
+  if (bodyKeys.length !== 3 || !bodyKeys.includes("request_id") || !bodyKeys.includes("resume_id") || !bodyKeys.includes("items")) {
+    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and items.");
+  }
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)) {
+    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  }
+  const items = validateItems(parsed.items);
+  const canonical = canonicalizeIntroduction(items);
+  const canonicalBytes = UTF8.encode(canonical);
+  if (canonicalBytes.byteLength > CANONICAL_BODY_LIMIT) {
+    throw apiError(413, "canonical_payload_too_large", "Canonical Introduction exceeds the allowed size.");
+  }
+
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env);
+  const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const network = getTrustedNetworkContext(request);
+  const context: SignedContext = {
+    context_version: 1,
+    key_id: keyId,
+    actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(),
+    domain: "introduction",
+    operation: "update",
+    request_id: parsed.request_id.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical),
+    issued_at: issuedAt,
+    expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS,
+    ...network,
+  };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) {
+    throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_introduction_v11`, {
+      method: "POST",
+      headers: {
+        "Authorization": authorization,
+        "apikey": supabase.publishableKey,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({
+        target_resume_id: parsed.resume_id,
+        canonical_items: canonical,
+        signed_context: signed.serialized,
+        signature_hex: signed.signatureHex,
+      }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same request ID.");
+    }
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+
+  const upstreamBody = await readJsonResponse(upstream, UPSTREAM_BODY_LIMIT);
+  if (!upstream.ok) throw upstreamError(upstream, upstreamBody);
+  return Response.json(upstreamBody, { headers: { "Cache-Control": "no-store" } });
+}
+
+function isApiPath(pathname: string): boolean {
+  return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
+}
+
+export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
+  const url = new URL(request.url);
+  if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
+  if (url.pathname !== SAVE_PATH) {
+    return errorResponse(apiError(404, "not_found", "API endpoint not found."));
+  }
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ error: { code: "method_not_allowed", message: "Only POST is allowed." } }), {
+      status: 405,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Allow": "POST" },
+    });
+  }
+  try {
+    return await saveIntroduction(request, env);
+  } catch (error) {
+    if (error instanceof ApiError) return errorResponse(error);
+    return errorResponse(apiError(502, "request_failed", "The Introduction request could not be completed."));
+  }
+}
+
+const worker = {
+  fetch(request: Request, env: WorkerEnv): Promise<Response> {
+    return handleWorkerRequest(request, env);
+  },
+};
+
+export default worker;
