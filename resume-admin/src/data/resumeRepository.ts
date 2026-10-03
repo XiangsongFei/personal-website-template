@@ -28,6 +28,9 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
   loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
+  saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
+  hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
+  discardPendingIntroductionSave?(resumeId?: string): void;
   loadActivityLogAuthorizedTargets?(): Promise<ActivityLogAuthorizedTarget[]>;
   loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
@@ -47,7 +50,16 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   deleteEditableEntry?<K extends EditableRepeatableSection>(section: K, resumeId: string, entryId: string): Promise<void>;
 }
 
-export type AdminFeatureState = { activityLogEnabled: boolean; introductionWriteMode: "direct" | "rpc" };
+export type AdminFeatureState = {
+  resumeId: string;
+  activityLogEnabled: boolean;
+  introductionWriteMode: "direct" | "rpc";
+  introductionTrustedContextRequired: boolean;
+};
+
+export class IntroductionWorkerSaveError extends Error {
+  constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
+}
 export type ActivityLogCursor = { occurredAt: string; id: string };
 export type ActivityLogAuthorizedTarget = { resumeId: string; siteKey: "example-cv" | "example-cv-qa"; role: "owner" | "qa" };
 export type ActivityLogEvent = {
@@ -82,7 +94,7 @@ export function createWriteReadinessRepository(repository: ResumeRepository, can
       const value = Reflect.get(target, property, receiver) as unknown;
       if (typeof value !== "function") return value;
       const name = String(property);
-      if (/^(load|read)/.test(name)) return value.bind(target);
+      if (/^(load|read|hasPending|discardPending)/.test(name)) return value.bind(target);
       return (...args: unknown[]) => {
         if (!canWrite()) return Promise.reject(new Error("Admin writes are unavailable until fresh route data is confirmed"));
         return value.apply(target, args);
@@ -180,6 +192,7 @@ async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string,
 
 /** Site-scoped reads plus the explicitly allowlisted Profile and Education write paths. */
 export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: string): CompleteResumeRepository {
+  let pendingIntroductionRequest: { resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
   return {
     ...createEditableSectionWrites(supabase),
     ...createBatch6BRepositoryWrites(supabase, supabaseUrl),
@@ -196,13 +209,17 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     },
     async loadAdminFeatureState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
-      const { data, error } = await supabase.rpc("load_admin_feature_state", { target_resume_id: resumeId });
+      const { data, error } = await supabase.rpc("load_admin_feature_state_v11", { target_resume_id: resumeId });
       if (error) throw new Error("Unable to load Admin feature state");
-      const row = Array.isArray(data) ? data.length === 1 ? data[0] : null : data;
+      const row = Array.isArray(data) && data.length === 1 ? data[0] : null;
       if (!row || typeof row !== "object") throw new Error("Invalid Admin feature state");
       const value = row as Record<string, unknown>;
-      if (typeof value.activity_log_enabled !== "boolean" || (value.introduction_write_mode !== "direct" && value.introduction_write_mode !== "rpc")) throw new Error("Invalid Admin feature state");
-      return { activityLogEnabled: value.activity_log_enabled, introductionWriteMode: value.introduction_write_mode };
+      if (typeof value.activity_log_enabled !== "boolean"
+        || (value.introduction_write_mode !== "direct" && value.introduction_write_mode !== "rpc")
+        || typeof value.introduction_trusted_context_required !== "boolean") throw new Error("Invalid Admin feature state");
+      if (value.introduction_write_mode === "direct" && value.introduction_trusted_context_required) throw new Error("Invalid Admin feature state");
+      return { resumeId, activityLogEnabled: value.activity_log_enabled, introductionWriteMode: value.introduction_write_mode,
+        introductionTrustedContextRequired: value.introduction_trusted_context_required };
     },
     async saveIntroductionAtomically(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
@@ -221,6 +238,114 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         if (typeof row.id !== "string" || !Number.isInteger(row.position) || typeof zh?.text !== "string" || typeof en?.text !== "string") throw new Error("Invalid Introduction save response");
         return { id: row.id, position: row.position as number, translations: { zh: { text: zh.text }, en: { text: en.text } } };
       });
+    },
+    async saveIntroductionWithWorker(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.some(item => !item
+        || !(item.id === null || (typeof item.id === "string"
+          && (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id) || /^local-[0-9]+-[0-9]+$/.test(item.id))))
+        || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
+        throw new IntroductionWorkerSaveError("Introduction changes could not be saved. Please review the content and retry.");
+      }
+      const requestItems = items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text }));
+      const fingerprint = JSON.stringify(requestItems);
+      if (pendingIntroductionRequest?.inFlight) {
+        if (pendingIntroductionRequest.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint) return pendingIntroductionRequest.inFlight;
+        throw new IntroductionWorkerSaveError("A save is already in progress. Wait for it to finish before changing targets or content.");
+      }
+      if (!pendingIntroductionRequest || pendingIntroductionRequest.resumeId !== resumeId || pendingIntroductionRequest.fingerprint !== fingerprint) {
+        if (!globalThis.crypto?.randomUUID) throw new IntroductionWorkerSaveError("The secure save service is unavailable. Refresh the Admin and try again.");
+        let requestId: string;
+        try { requestId = globalThis.crypto.randomUUID(); }
+        catch { throw new IntroductionWorkerSaveError("The secure save service is unavailable. Refresh the Admin and try again."); }
+        pendingIntroductionRequest = { resumeId, fingerprint, requestId };
+      }
+      const request = pendingIntroductionRequest;
+      const execute = async (): Promise<IntroItem[]> => {
+        let data: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>["data"];
+        let error: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>["error"];
+        try { ({ data, error } = await supabase.auth.getSession()); } catch {
+          throw new IntroductionWorkerSaveError("Your session could not be verified. Sign in again before saving.");
+        }
+        const token = data.session?.access_token;
+        const expiresAt = data.session?.expires_at;
+        if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000) {
+          throw new IntroductionWorkerSaveError("Your session could not be verified. Sign in again before saving.");
+        }
+        let response: Response;
+        try {
+          response = await fetch("/api/admin/v1/introduction/save", {
+            method: "POST",
+            credentials: "omit",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ request_id: request.requestId, resume_id: resumeId, items: requestItems }),
+            signal: AbortSignal.timeout(20_000),
+          });
+        } catch {
+          throw new IntroductionWorkerSaveError("The save result is uncertain because the service could not be reached. Retry without changing the content.");
+        }
+        if (!response.ok) {
+          const message = response.status === 401 ? "Your session has expired. Sign in again, then retry the unchanged content."
+            : response.status === 409 ? "The save could not be confirmed because the retry request conflicts. Refresh the Admin before trying again."
+              : response.status === 413 || response.status === 422 ? "The Introduction content could not be accepted. Review it and try again."
+                : response.status >= 500 ? "The save result is uncertain because the service is temporarily unavailable. Retry without changing the content."
+                  : "The Introduction could not be saved. Refresh the Admin before trying again.";
+          throw new IntroductionWorkerSaveError(message);
+        }
+        let payload: unknown;
+        try { payload = await response.json(); } catch {
+          throw new IntroductionWorkerSaveError("The save result is uncertain. Retry without changing the content.");
+        }
+        const rows = Array.isArray(payload) ? payload : null;
+        const seenIds = new Set<string>();
+        if (!rows || rows.length !== requestItems.length || rows.some((entry, index) => {
+          if (!entry || typeof entry !== "object") return true;
+          const row = entry as Record<string, unknown>;
+          const keys = Object.keys(row).sort();
+          const translations = row.translations as Record<string, unknown> | null;
+          const zh = translations?.zh as Record<string, unknown> | null;
+          const en = translations?.en as Record<string, unknown> | null;
+          if (keys.join(",") !== "id,position,translations" || typeof row.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id)
+            || seenIds.has(row.id.toLowerCase()) || row.position !== index
+            || !translations || Object.keys(translations).sort().join(",") !== "en,zh"
+            || !zh || Object.keys(zh).join(",") !== "text" || !en || Object.keys(en).join(",") !== "text"
+            || typeof zh?.text !== "string" || typeof en?.text !== "string") return true;
+          const submitted = requestItems[index];
+          const submittedPersistedId = typeof submitted.id === "string"
+            && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(submitted.id);
+          if ((submittedPersistedId && row.id.toLowerCase() !== submitted.id.toLowerCase())
+            || zh.text !== submitted.zh || en.text !== submitted.en) return true;
+          seenIds.add(row.id.toLowerCase());
+          return false;
+        })) throw new IntroductionWorkerSaveError("The save result could not be confirmed. Retry without changing the content.");
+        return rows.map(entry => {
+          const row = entry as Record<string, unknown>;
+          const translations = row.translations as { zh: { text: string }; en: { text: string } };
+          return { id: row.id as string, position: row.position as number,
+            translations: { zh: { text: translations.zh.text }, en: { text: translations.en.text } } };
+        });
+      };
+      const inFlight = execute();
+      request.inFlight = inFlight;
+      try {
+        const canonical = await inFlight;
+        if (pendingIntroductionRequest === request) pendingIntroductionRequest = null;
+        return canonical;
+      } finally {
+        if (request.inFlight === inFlight) request.inFlight = undefined;
+        if (request.discardWhenSettled && pendingIntroductionRequest === request) pendingIntroductionRequest = null;
+      }
+    },
+    hasPendingIntroductionWorkerSave(resumeId, items) {
+      if (!resumeId || !Array.isArray(items)) return false;
+      const fingerprint = JSON.stringify(items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text })));
+      return pendingIntroductionRequest?.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint;
+    },
+    discardPendingIntroductionSave(resumeId) {
+      if (!resumeId || pendingIntroductionRequest?.resumeId === resumeId) {
+        if (pendingIntroductionRequest?.inFlight) pendingIntroductionRequest.discardWhenSettled = true;
+        else pendingIntroductionRequest = null;
+      }
     },
     async loadActivityLogPage(resumeId, pageSize, cursor) {
       const { data, error } = await supabase.rpc("read_activity_log_events", {

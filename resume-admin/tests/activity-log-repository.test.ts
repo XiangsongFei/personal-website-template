@@ -8,9 +8,9 @@ function repository(rpc: ReturnType<typeof vi.fn>) {
 
 describe("Activity Log repository RPC boundary", () => {
   it("loads target-scoped server-owned capability and Introduction mode", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ activity_log_enabled: true, introduction_write_mode: "rpc" }], error: null });
-    await expect(repository(rpc).loadAdminFeatureState!("qa-target")).resolves.toEqual({ activityLogEnabled: true, introductionWriteMode: "rpc" });
-    expect(rpc).toHaveBeenCalledWith("load_admin_feature_state", { target_resume_id: "qa-target" });
+    const rpc = vi.fn().mockResolvedValue({ data: [{ activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: false }], error: null });
+    await expect(repository(rpc).loadAdminFeatureState!("qa-target")).resolves.toEqual({ resumeId: "qa-target", activityLogEnabled: true, introductionWriteMode: "rpc", introductionTrustedContextRequired: false });
+    expect(rpc).toHaveBeenCalledWith("load_admin_feature_state_v11", { target_resume_id: "qa-target" });
   });
 
   it("obtains Activity Log targets only through the existing authorization RPC", async () => {

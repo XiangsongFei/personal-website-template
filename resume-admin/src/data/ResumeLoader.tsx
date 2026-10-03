@@ -6,7 +6,7 @@ import type {
   ResumeRepository, ResumeSectionRepository, UpdatedProfileRow, UpdatedProfileTranslationRow,
 } from "./resumeRepository";
 import type { AdminTarget } from "../auth/supabase";
-import { createWriteReadinessRepository } from "./resumeRepository";
+import { createWriteReadinessRepository, type AdminFeatureState } from "./resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "./resumeSectionStore";
 import { isDocumentReloadNavigation } from "../refreshState";
 import type { Bilingual, EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections, SiteTextTranslation } from "../model";
@@ -188,8 +188,10 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   const [resume, setResume] = useState<LoadedResume | null>(null);
   const [fullSnapshotState, setFullSnapshotState] = useState<"idle" | "loading" | "error">("idle");
   const [fullAttempt, setFullAttempt] = useState(0);
-  const [activityLogFeatureState, setActivityLogFeatureState] = useState<"loading" | "ready">("loading");
-  const [activityLogEnabled, setActivityLogEnabled] = useState(false);
+  const [featureStateResult, setFeatureStateResult] = useState<{ status: "loading" } | { status: "error" } | { status: "ready"; state: AdminFeatureState }>({ status: "loading" });
+  const featureTargetId = useRef<string | null>(null);
+  const activeFeatureState = authorizedTarget && featureStateResult.status === "ready"
+    && featureStateResult.state.resumeId === authorizedTarget.resumeId ? featureStateResult.state : null;
   const [canonicalPreviewRequested, setCanonicalPreviewRequested] = useState(false);
   const requestCanonicalPreview = useCallback(() => setCanonicalPreviewRequested(true), []);
   const [profileState, setProfileState] = useState<ProfileLoadState>(() => routeSnapshot?.route === "/profile"
@@ -241,15 +243,21 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   useEffect(() => {
     if (!authReady) return;
     let active = true;
+    const nextTargetId = authorizedTarget?.resumeId ?? null;
+    if (featureTargetId.current !== nextTargetId) {
+      repository?.discardPendingIntroductionSave?.();
+      featureTargetId.current = nextTargetId;
+    }
     if (!repository || !authorizedTarget || !repository.loadAdminFeatureState) {
-      setActivityLogEnabled(false); setActivityLogFeatureState("ready");
+      setFeatureStateResult({ status: "error" });
       return () => { active = false; };
     }
-    setActivityLogFeatureState("loading");
+    setFeatureStateResult({ status: "loading" });
     repository.loadAdminFeatureState(authorizedTarget.resumeId).then(state => {
-      if (active) { setActivityLogEnabled(state.activityLogEnabled); setActivityLogFeatureState("ready"); }
+      if (active && state.resumeId === authorizedTarget.resumeId) setFeatureStateResult({ status: "ready", state });
+      else if (active) setFeatureStateResult({ status: "error" });
     }, () => {
-      if (active) { setActivityLogEnabled(false); setActivityLogFeatureState("ready"); }
+      if (active) setFeatureStateResult({ status: "error" });
     });
     return () => { active = false; };
   }, [authReady, repository, authorizedTarget]);
@@ -436,6 +444,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 
   async function reloadAdditional(key: AdditionalRouteKey): Promise<AdditionalRouteResult> {
     if (!repository || !supportsAdditionalReads(repository, key)) throw new Error("Section reload is unavailable");
+    if (key === "introduction") repository.discardPendingIntroductionSave?.(authorizedTarget?.resumeId);
     const value = await loadAdditionalFromStore(sessionKey, repository, sectionStore, key, true, authorizedTarget);
     setAdditionalStates(current => ({ ...current, [key]: { kind: "loaded", ...value } }));
     setResume(current => current?.resumeId === value.resumeId ? { ...current, sections: { ...current.sections, [key]: value.value } } : current);
@@ -622,7 +631,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   const initialUsesAdditionalRead = supportsAdditionalReads(repository, initialAdditionalKey);
   const initialNeedsSectionText = sectionTextPaths.has(initialPath) && supportsSiteTextReads(repository);
   const initialRouteReady = initialPath === "/activity-log"
-    ? activityLogFeatureState === "ready"
+    ? featureStateResult.status !== "loading"
     : initialUsesProfileRead
     ? profileState.kind === "loaded" || profileState.kind === "error"
     : initialUsesEducationRead
@@ -656,7 +665,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => { retryAdditional(additionalRouteKey); if (useSectionTextRead) retrySiteText(); } : useSectionTextRead ? retrySiteText : retryFullSnapshot}
     additionalResumeId={additionalRoute?.resumeId ?? resume?.resumeId ?? authorizedTarget?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
-    activityLogEnabled={activityLogEnabled}
+    activityLogEnabled={activeFeatureState?.activityLogEnabled ?? false}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved}
     onSnapshotRebased={markSnapshotBaselineApplied} />;
 }

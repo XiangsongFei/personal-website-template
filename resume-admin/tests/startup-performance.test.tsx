@@ -37,6 +37,7 @@ function harness(initial: AdminIdentity | null = adminA, load = vi.fn().mockReso
   const repository: ResumeRepository & ResumeSectionRepository = {
     load: load as ResumeRepository["load"],
     loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId: "resume-a", siteKey: "example-cv", isPublished: true, updatedAt: null }),
+    loadAdminFeatureState: vi.fn(async (targetResumeId = "resume-a") => ({ resumeId: targetResumeId, activityLogEnabled: false, introductionWriteMode: "direct" as const, introductionTrustedContextRequired: false })),
     loadOverview: vi.fn().mockResolvedValue({ profileName: "Demo User" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile),
     loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -135,7 +136,9 @@ describe("startup request coalescing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByRole("navigation", { name: "CMS sections" });
     expect(verify).toHaveBeenCalledTimes(2);
-    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+    expect(app.client.getAdminTarget).toHaveBeenCalledOnce();
+    await waitFor(() => expect(app.repository.loadAdminFeatureState).toHaveBeenCalledWith("resume-a"));
+    await waitFor(() => expect(app.repository.loadProfile).toHaveBeenCalledOnce());
   });
 
   it("denies a valid non-admin result without loading protected route data", async () => {

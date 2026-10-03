@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; failIntroductionRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -76,12 +76,13 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
-    loadAdminFeatureState: vi.fn(async () => ({ activityLogEnabled: options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct" })),
+    loadAdminFeatureState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct", introductionTrustedContextRequired: options.introductionTrustedContextRequired ?? false })),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
       return structuredClone(draft);
     }),
+    saveIntroductionWithWorker: vi.fn(async (_resumeId: string, draft: IntroItem[]) => structuredClone(draft)),
     uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => `https://storage.example.test/${targetResumeId}/resume_${locale}.pdf?cacheNonce=repository-version`),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
@@ -1314,6 +1315,139 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(methods.saveIntroductionAtomically).toHaveBeenCalledOnce();
     expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
     expect((field as HTMLTextAreaElement).value).toBe("must remain unsaved");
+  });
+
+  it("routes only an enabled trusted-context Introduction state through the Worker", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", introductionTrustedContextRequired: true, activityLogEnabled: false });
+    open({ path: "/introduction" }, repository);
+    expect(screen.queryByRole("link", { name: "Activity Log" })).toBeNull();
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "trusted-context edit" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.saveIntroductionWithWorker).toHaveBeenCalledOnce();
+    expect(methods.saveIntroductionWithWorker).toHaveBeenCalledWith(resumeId, expect.arrayContaining([
+      expect.objectContaining({ translations: expect.objectContaining({ zh: { text: "trusted-context edit" } }) }),
+    ]));
+    expect(methods.saveIntroductionAtomically).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("locks Introduction mutations during save and unlocks after adopting the canonical result", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", introductionTrustedContextRequired: true });
+    let resolveSave!: (items: IntroItem[]) => void;
+    methods.saveIntroductionWithWorker.mockImplementation(() => new Promise(resolve => { resolveSave = resolve; }));
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph") as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "snapshot A" } });
+    save();
+    await waitFor(() => expect(methods.saveIntroductionWithWorker).toHaveBeenCalledOnce());
+
+    const mutationFieldset = field.closest("fieldset")!;
+    expect(mutationFieldset.disabled).toBe(true);
+    expect(Array.from(mutationFieldset.querySelectorAll("button,input,textarea,select")).every(control => control.matches(":disabled"))).toBe(true);
+    const itemCount = document.querySelectorAll(".item-card").length;
+    fireEvent.change(field, { target: { value: "attempted edit B" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add paragraph" }));
+    expect(field.value).toBe("snapshot A");
+    expect(document.querySelectorAll(".item-card")).toHaveLength(itemCount);
+    expect(methods.saveIntroductionWithWorker).toHaveBeenCalledOnce();
+
+    const submitted = methods.saveIntroductionWithWorker.mock.calls[0][1] as IntroItem[];
+    await act(async () => { resolveSave(structuredClone(submitted)); });
+    await screen.findByText("No unsaved changes");
+    expect(field.matches(":disabled")).toBe(false);
+    fireEvent.change(field, { target: { value: "edit C after settlement" } });
+    expect(field.value).toBe("edit C after settlement");
+  });
+
+  it("unlocks Introduction editing after a failed in-flight save", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", introductionTrustedContextRequired: true });
+    let rejectSave!: (error: Error) => void;
+    methods.saveIntroductionWithWorker.mockImplementation(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph") as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "failed save draft" } });
+    save();
+    await waitFor(() => expect(methods.saveIntroductionWithWorker).toHaveBeenCalledOnce());
+    expect(field.matches(":disabled")).toBe(true);
+    await act(async () => { rejectSave(new Error("The save result is uncertain. Retry without changing the content.")); });
+    await screen.findByRole("alert");
+    expect(field.matches(":disabled")).toBe(false);
+    expect(field.value).toBe("failed save draft");
+    fireEvent.change(field, { target: { value: "edit after failure" } });
+    expect(field.value).toBe("edit after failure");
+  });
+
+  it("keeps a semantically mismatched Worker result from confirming or replacing the Introduction draft", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", introductionTrustedContextRequired: true });
+    methods.saveIntroductionWithWorker.mockRejectedValue(new Error("The save result could not be confirmed. Retry without changing the content."));
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph") as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "keep this draft" } });
+    save();
+    await screen.findByRole("alert");
+    expect(field.value).toBe("keep this draft");
+    expect(screen.queryByText("No unsaved changes")).toBeNull();
+    expect(methods.saveIntroductionAtomically).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when fresh feature state is bound to another resume", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "direct" });
+    methods.loadAdminFeatureState.mockResolvedValue({ resumeId: "different-resume", activityLogEnabled: false, introductionWriteMode: "direct", introductionTrustedContextRequired: false });
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "must not cross target" } });
+    save();
+    await screen.findByRole("alert");
+    expect(methods.saveIntroductionAtomically).not.toHaveBeenCalled();
+    expect(methods.saveIntroductionWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when feature-state loading errors without attempting any Introduction write", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "direct" });
+    methods.loadAdminFeatureState.mockRejectedValue(new Error("feature state unavailable"));
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "must stay local" } });
+    save();
+    await screen.findByRole("alert");
+    expect(methods.saveIntroductionAtomically).not.toHaveBeenCalled();
+    expect(methods.saveIntroductionWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for the impossible direct-mode plus trusted-context-required combination", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "direct", introductionTrustedContextRequired: true });
+    open({ path: "/introduction" }, repository);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "invalid route state" } });
+    save();
+    await screen.findByRole("alert");
+    expect(methods.saveIntroductionAtomically).not.toHaveBeenCalled();
+    expect(methods.saveIntroductionWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+  });
+
+  it("uses persisted Worker paragraph UUIDs in the confirmed Introduction state", async () => {
+    const { repository, methods } = makeRepository("introduction", { introductionMode: "rpc", introductionTrustedContextRequired: true });
+    methods.saveIntroductionWithWorker.mockImplementation(async (_targetResumeId, draft) => draft.map((item, index) => ({
+      ...item, id: `11111111-1111-4111-8111-11111111111${index}`, position: index,
+    })));
+    const store = new ResumeSectionStore(); open({ path: "/introduction" }, repository, store);
+    const field = await screen.findByLabelText("Chinese Paragraph");
+    fireEvent.change(field, { target: { value: "canonical Worker result" } });
+    save();
+    await waitFor(() => expect(methods.saveIntroductionWithWorker).toHaveBeenCalledOnce());
+    const cached = store.getSectionState("batch6a-session", resumeId, "introduction");
+    expect(cached.status).toBe("loaded");
+    if (cached.status === "loaded") expect((cached.value as IntroItem[])[0]).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111110", position: 0,
+      translations: { zh: { text: "canonical Worker result" } },
+    });
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
   });
 
   it.each(cases)("$title creates a parent and both translations, replacing the temporary identity", async spec => {

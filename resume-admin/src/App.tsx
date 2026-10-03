@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
-import type { EditableRepeatableSection, EditableTranslation, ResumeRepository, UpdatedEducationEntryRow, UpdatedEducationTranslationRow, UpdatedProfileRow, UpdatedProfileTranslationRow } from "./data/resumeRepository";
+import type { AdminFeatureState, EditableRepeatableSection, EditableTranslation, ResumeRepository, UpdatedEducationEntryRow, UpdatedEducationTranslationRow, UpdatedProfileRow, UpdatedProfileTranslationRow } from "./data/resumeRepository";
 import type {
   AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
@@ -850,7 +850,11 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       onPreviewDraftChanged(section as PreviewSection, draft as PreviewDraftValue);
   }, [onPreviewDraftChanged, draft, section]);
 
-  const patchDraft = (next: EditableSectionItem[]) => stateUpdate(current => ({ ...current, draft: clone(next), notice: "", error: false }));
+  const patchDraft = (next: EditableSectionItem[]) => {
+    if (section === "introduction" && saving.current) return;
+    if (section === "introduction" && JSON.stringify(next) !== JSON.stringify(editor.draft)) repository.discardPendingIntroductionSave?.(resumeId);
+    stateUpdate(current => ({ ...current, draft: clone(next), notice: "", error: false }));
+  };
   const saveChanges = async () => {
     if (saving.current || !dirty || hasBlocked) return;
     const methods = repository.updateEditableEntryPosition && repository.insertEditableEntry && repository.updateEditableTranslation
@@ -865,12 +869,31 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     const patchCache = () => onChanged?.(section, resumeId, clone(working.baseline));
     commit(working);
     try {
+      let introductionFeatureState: AdminFeatureState | null = null;
+      let pendingWorkerRetry = false;
+      if (section === "introduction") {
+        try { introductionFeatureState = await repository.loadAdminFeatureState!(resumeId); }
+        catch { throw new Error("Introduction save routing could not be verified. Refresh the Admin before trying again."); }
+        pendingWorkerRetry = repository.hasPendingIntroductionWorkerSave?.(resumeId, working.draft as IntroItem[]) ?? false;
+        if (introductionFeatureState.resumeId !== resumeId
+          || (introductionFeatureState.introductionWriteMode === "direct" && introductionFeatureState.introductionTrustedContextRequired)) {
+          throw new Error("Introduction save routing is unavailable or outdated. Refresh the Admin before trying again.");
+        }
+        if (pendingWorkerRetry && !(introductionFeatureState.introductionWriteMode === "rpc" && introductionFeatureState.introductionTrustedContextRequired)) {
+          throw new Error("Introduction save configuration changed while a save was pending. Refresh the Admin before trying again.");
+        }
+        if (introductionFeatureState.introductionWriteMode === "rpc" && introductionFeatureState.introductionTrustedContextRequired
+          && !repository.saveIntroductionWithWorker) {
+          throw new Error("The secure Introduction save service is unavailable. Refresh the Admin before trying again.");
+        }
+      }
       const sectionTextSaved = sectionText ? await sectionText.save() : true;
       if (section === "introduction") {
-        const featureState = await repository.loadAdminFeatureState!(resumeId);
-        if (featureState.introductionWriteMode === "rpc") {
+        if (introductionFeatureState?.introductionWriteMode === "rpc") {
           const changedKeys = collectChangedBilingualFieldKeys(section, working.draft, editor.baseline);
-          const canonical = await repository.saveIntroductionAtomically!(resumeId, working.draft as IntroItem[]);
+          const canonical = introductionFeatureState.introductionTrustedContextRequired || pendingWorkerRetry
+            ? await repository.saveIntroductionWithWorker!(resumeId, working.draft as IntroItem[])
+            : await repository.saveIntroductionAtomically!(resumeId, working.draft as IntroItem[]);
           contextOnSave(changedKeys);
           working = { ...working, baseline: clone(canonical), draft: clone(canonical), saving: false,
             notice: sectionTextSaved ? "Introduction changes saved." : "Section content saved. Some section text remains unsaved; retry to finish.",
@@ -1060,6 +1083,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   };
   const cancel = () => {
     if (hasRecovery || editor.saving) return;
+    if (section === "introduction") repository.discardPendingIntroductionSave?.(resumeId);
     contextOnCancel?.(collectChangedBilingualFieldKeys(section, draft, baseline));
     sectionText?.cancel();
     stateUpdate(current => ({ ...current, draft: clone(current.baseline), notice: section === "introduction" ? "Introduction changes reverted." : "", error: false }));
@@ -1067,13 +1091,16 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const groupLabel = section === "introduction" ? locale === "zh" ? "简介内容" : "Introduction" : section === "experience" || section === "projects" || section === "skills" || section === "awards" ? "" : `${title} items`;
   const addLabel = section === "introduction" ? "Add paragraph" : section === "experience" ? "Add experience" : section === "projects" ? "Add project" : section === "skills" ? "Add skill group" : section === "awards" ? "Add award" : "Add item";
   const useActionHeading = section === "experience" || section === "projects" || section === "skills" || section === "awards";
+  const repeatableList = <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
+    onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
+    headerIdentity={headerIdentity}
+    sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />;
   return <section className="page-section editor-workspace-route" aria-busy={editor.saving}>
     <EditorContentScroll>
       {!useActionHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-      <RepeatableList items={draft} confirmedItems={baseline as EditableSectionItem[]} onChange={patchDraft} create={create} label={label} render={render} groupLabel={groupLabel} addLabel={addLabel} allowMultipleOpen={section === "introduction" || section === "experience" || section === "projects" || section === "skills" || section === "awards"} hideLabelWhenExpanded={hideLabelWhenExpanded}
-        onConfirmedDelete={id => patchDraft(draft.filter(item => item.id !== id))} deleteDisabled={id => Boolean(editor.partialCreates[id]?.blocked)}
-        headerIdentity={headerIdentity}
-        sectionHeading={useActionHeading ? { title, description, anchorId: `heading:${section}` } : undefined} sectionTextContent={sectionText?.rendered} anchorScope={section} />
+      {section === "introduction"
+        ? <fieldset disabled={editor.saving} aria-disabled={editor.saving} style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>{repeatableList}</fieldset>
+        : repeatableList}
     </EditorContentScroll>
     <EditorActionFooter>
       {editor.notice && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
