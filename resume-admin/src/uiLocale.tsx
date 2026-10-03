@@ -59,6 +59,12 @@ Object.assign(dictionary, {
   "IP location: ": "IP 位置：",
   "Approximate IP-derived location": "根据事件发生时 IP 推算的大致位置，并非精确或 GPS 定位。",
   "Approximate IP-derived location from the event-time network; not precise or GPS location.": "根据事件发生时的 IP 网段推算的大致位置，并非精确或 GPS 定位。",
+  Section: "模块", Operation: "操作", Actor: "操作人", From: "开始日期", Through: "结束日期", Search: "搜索",
+  Apply: "应用", Clear: "清除", "All sections": "全部模块", "All operations": "全部操作",
+  "No activity matches these filters.": "没有符合这些筛选条件的活动记录。", "Invalid date range.": "日期范围无效。",
+  "Unknown section": "其他模块", Education: "教育经历", Experience: "工作经历", Awards: "荣誉奖项", Skills: "技能",
+  Projects: "项目经历", "Website & Links": "网站与链接", Profile: "个人资料", Files: "文件",
+  Create: "创建", Update: "更新", Delete: "删除", Reorder: "调整顺序", Upload: "上传", Remove: "移除",
 });
 
 const dynamicMessagePrefixes = [

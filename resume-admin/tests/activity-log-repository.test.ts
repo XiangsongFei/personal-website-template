@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createResumeRepository } from "../src/data/resumeRepository";
+import { createResumeRepository, type ActivityLogFilters } from "../src/data/resumeRepository";
 
 function repository(rpc: ReturnType<typeof vi.fn>) {
   return createResumeRepository({ rpc, from: vi.fn() } as unknown as SupabaseClient);
@@ -57,5 +57,19 @@ describe("Activity Log repository RPC boundary", () => {
     await expect(repository(rpc).loadActivityLogPage!("qa-target", 25)).resolves.toMatchObject([
       { ipNetwork: null, countryCode: null, region: null, city: null },
     ]);
+  });
+
+  it("calls the V1.2 RPC with explicit filter and cursor argument mapping", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ id: "v12", occurred_at: "2026-10-02T10:00:00Z", actor_email_snapshot: "qa@example.test", actor_role_snapshot: "qa", operation: "upload", section_key: "files", entity_type: "resume_file", entity_id: "resume.pdf", entity_snapshot: {}, changes: {}, ip_network: null, country_code: null, region: null, city: null }], error: null });
+    const filters: ActivityLogFilters = { section: "files", operation: "upload", actorEmail: " qa@example.test ", dateFrom: "2026-10-01T16:00:00.000Z", dateToExclusive: "2026-10-02T16:00:00.000Z", search: "report%_\\" };
+    const cursor = { occurredAt: "2026-10-01T12:00:00Z", id: "event-cursor" };
+    await expect(repository(rpc).loadActivityLogPageV12!("qa-target", 25, filters, cursor)).resolves.toMatchObject([
+      { id: "v12", section: "files", operation: "upload", ipNetwork: null, city: null },
+    ]);
+    expect(rpc).toHaveBeenCalledWith("read_activity_log_events_v12", {
+      target_resume_id: "qa-target", page_limit: 25, before_occurred_at: cursor.occurredAt, before_id: cursor.id,
+      section_filter: "files", operation_filter: "upload", actor_email_filter: "qa@example.test",
+      date_from: filters.dateFrom, date_to_exclusive: filters.dateToExclusive, search_query: "report%_\\",
+    });
   });
 });

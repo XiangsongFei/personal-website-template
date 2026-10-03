@@ -33,6 +33,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   discardPendingIntroductionSave?(resumeId?: string): void;
   loadActivityLogAuthorizedTargets?(): Promise<ActivityLogAuthorizedTarget[]>;
   loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
+  loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -61,6 +62,14 @@ export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
 }
 export type ActivityLogCursor = { occurredAt: string; id: string };
+export type ActivityLogFilters = {
+  section: string;
+  operation: ActivityLogEvent["operation"] | "";
+  actorEmail: string;
+  dateFrom: string | null;
+  dateToExclusive: string | null;
+  search: string;
+};
 export type ActivityLogAuthorizedTarget = { resumeId: string; siteKey: "example-cv" | "example-cv-qa"; role: "owner" | "qa" };
 export type ActivityLogEvent = {
   id: string; occurredAt: string; actorEmail: string | null; actorRole: "owner" | "qa";
@@ -133,6 +142,34 @@ function rows(value: unknown, table: string): Record<string, unknown>[] {
     throw new Error(`Invalid ${table} response`);
   }
   return value as Record<string, unknown>[];
+}
+
+function mapActivityLogRows(value: unknown): ActivityLogEvent[] {
+  return rows(value, "Activity Log event").map(row => {
+    if (typeof row.id !== "string" || typeof row.occurred_at !== "string"
+      || (row.actor_role_snapshot !== "owner" && row.actor_role_snapshot !== "qa")
+      || !["create", "update", "delete", "reorder", "upload", "remove"].includes(String(row.operation))
+      || typeof row.section_key !== "string" || typeof row.entity_type !== "string"
+      || (row.actor_email_snapshot !== null && typeof row.actor_email_snapshot !== "string")
+      || (row.entity_id !== null && typeof row.entity_id !== "string")
+      || ([row.ip_network, row.country_code, row.region, row.city].some(item => item !== undefined && item !== null && typeof item !== "string"))
+      || !row.entity_snapshot || typeof row.entity_snapshot !== "object" || Array.isArray(row.entity_snapshot)
+      || !row.changes || typeof row.changes !== "object" || Array.isArray(row.changes)) throw new Error("Invalid Activity Log response");
+    const changes: ActivityLogEvent["changes"] = {};
+    for (const [key, raw] of Object.entries(row.changes as Record<string, unknown>)) {
+      if (!raw || typeof raw !== "object" || !("before" in raw) || !("after" in raw)) throw new Error("Invalid Activity Log response");
+      const change = raw as { before: unknown; after: unknown };
+      changes[key] = { before: change.before, after: change.after };
+    }
+    return { id: row.id, occurredAt: row.occurred_at, actorEmail: row.actor_email_snapshot as string | null,
+      actorRole: row.actor_role_snapshot, operation: row.operation as ActivityLogEvent["operation"], section: row.section_key,
+      entityType: row.entity_type, entityId: row.entity_id as string | null,
+      entitySnapshot: row.entity_snapshot as Record<string, unknown>, changes,
+      ipNetwork: typeof row.ip_network === "string" ? row.ip_network : null,
+      countryCode: typeof row.country_code === "string" ? row.country_code : null,
+      region: typeof row.region === "string" ? row.region : null,
+      city: typeof row.city === "string" ? row.city : null };
+  });
 }
 
 async function readSiteRow(supabase: SupabaseClient): Promise<Record<string, unknown>> {
@@ -354,31 +391,23 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         before_occurred_at: cursor?.occurredAt ?? null, before_id: cursor?.id ?? null,
       });
       if (error) throw new Error("Unable to load Activity Log");
-      return rows(data, "Activity Log event").map(row => {
-        if (typeof row.id !== "string" || typeof row.occurred_at !== "string"
-          || (row.actor_role_snapshot !== "owner" && row.actor_role_snapshot !== "qa")
-          || !["create", "update", "delete", "reorder", "upload", "remove"].includes(String(row.operation))
-          || typeof row.section_key !== "string" || typeof row.entity_type !== "string"
-          || (row.actor_email_snapshot !== null && typeof row.actor_email_snapshot !== "string")
-          || (row.entity_id !== null && typeof row.entity_id !== "string")
-          || ([row.ip_network, row.country_code, row.region, row.city].some(value => value !== undefined && value !== null && typeof value !== "string"))
-          || !row.entity_snapshot || typeof row.entity_snapshot !== "object" || Array.isArray(row.entity_snapshot)
-          || !row.changes || typeof row.changes !== "object" || Array.isArray(row.changes)) throw new Error("Invalid Activity Log response");
-        const changes: ActivityLogEvent["changes"] = {};
-        for (const [key, raw] of Object.entries(row.changes as Record<string, unknown>)) {
-          if (!raw || typeof raw !== "object" || !("before" in raw) || !("after" in raw)) throw new Error("Invalid Activity Log response");
-          const change = raw as { before: unknown; after: unknown };
-          changes[key] = { before: change.before, after: change.after };
-        }
-        return { id: row.id, occurredAt: row.occurred_at, actorEmail: row.actor_email_snapshot as string | null,
-          actorRole: row.actor_role_snapshot, operation: row.operation as ActivityLogEvent["operation"], section: row.section_key,
-          entityType: row.entity_type, entityId: row.entity_id as string | null,
-          entitySnapshot: row.entity_snapshot as Record<string, unknown>, changes,
-          ipNetwork: typeof row.ip_network === "string" ? row.ip_network : null,
-          countryCode: typeof row.country_code === "string" ? row.country_code : null,
-          region: typeof row.region === "string" ? row.region : null,
-          city: typeof row.city === "string" ? row.city : null };
+      return mapActivityLogRows(data);
+    },
+    async loadActivityLogPageV12(resumeId, pageSize, filters, cursor) {
+      const { data, error } = await supabase.rpc("read_activity_log_events_v12", {
+        target_resume_id: resumeId,
+        page_limit: pageSize,
+        before_occurred_at: cursor?.occurredAt ?? null,
+        before_id: cursor?.id ?? null,
+        section_filter: filters.section || null,
+        operation_filter: filters.operation || null,
+        actor_email_filter: filters.actorEmail.trim() || null,
+        date_from: filters.dateFrom,
+        date_to_exclusive: filters.dateToExclusive,
+        search_query: filters.search.trim() || null,
       });
+      if (error) throw new Error("Unable to load Activity Log");
+      return mapActivityLogRows(data);
     },
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");
