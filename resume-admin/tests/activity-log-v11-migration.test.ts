@@ -7,6 +7,9 @@ const migrationPath = "migrations/20261005_activity_log_v11_context.sql";
 const migration = readFileSync(resolve(migrationPath), "utf8");
 const mirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261005000000_activity_log_v11_context.sql"), "utf8");
 const testProvider = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261005000001_test_only_v11_key_provider.sql"), "utf8");
+const vaultAdapter = readFileSync(resolve("migrations/20261006_activity_log_v11_vault_key_adapter.sql"), "utf8");
+const vaultAdapterMirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261006000000_activity_log_v11_vault_key_adapter.sql"), "utf8");
+const vaultTestSeed = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261006000001_test_only_v11_vault_key.sql"), "utf8");
 const phase1Corrective = readFileSync(resolve("migrations/20261004_activity_log_phase1_introduction_conflict_target.sql"), "utf8");
 
 function migrationFunction(source: string, name: string): string {
@@ -20,6 +23,7 @@ describe("Activity Log V1.1 additive local foundation", () => {
       ["20261002_activity_log_foundation.sql", "643b04a5ca134d5be41d73af118a72886320965e6f2b59b04754d9bef098471d"],
       ["20261003_activity_log_phase1_introduction.sql", "824f28533336505b5a60c2ecd6bae5ab2234e0a2ca7b5afadd64db781cc797be"],
       ["20261004_activity_log_phase1_introduction_conflict_target.sql", "cf5bab463a6e964004f230e5b5b40f16d802eeb7327cf8637c554de41d8c4671"],
+      ["20261005_activity_log_v11_context.sql", "a26835c1a05c06c339a14f6b521fc2548be685d09f814233296c009e4daae794"],
     ]);
     for (const [name, hash] of expected) {
       const contents = readFileSync(resolve(`migrations/${name}`));
@@ -106,8 +110,36 @@ describe("Activity Log V1.1 additive local foundation", () => {
     expect(provider).toContain("RAISE EXCEPTION 'Invalid signed context'");
     expect(provider).not.toContain("vault.decrypted_secrets");
     expect(testProvider).toContain("TEST ONLY");
-    expect(testProvider).toContain("local-test-v1");
+    expect(testProvider).toContain("target_key_id text DEFAULT 'activity_log_v11_hmac_v1'");
     expect(testProvider).toContain("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+    const signer = migrationFunction(testProvider, "public.test_only_sign_activity_log_v11_context");
+    expect(signer).not.toContain("cms_private.activity_log_v11_key");
+    expect(signer).toContain("pg_catalog.decode(");
+    expect(signer).toContain("'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'");
+  });
+
+  it("adds a Vault-backed adapter without changing the frozen foundation and mirrors it exactly", () => {
+    expect(vaultAdapterMirror).toBe(vaultAdapter);
+    expect(vaultAdapter).toContain("CREATE OR REPLACE FUNCTION cms_private.activity_log_v11_key(target_key_id text)");
+    expect(vaultAdapter).toContain("RETURNS bytea");
+    expect(vaultAdapter).toContain("LANGUAGE plpgsql");
+    expect(vaultAdapter).toContain("SECURITY DEFINER");
+    expect(vaultAdapter).toContain("SET search_path = ''");
+    expect(vaultAdapter).toContain("target_key_id IS DISTINCT FROM 'activity_log_v11_hmac_v1'");
+    expect(vaultAdapter).toContain("INTO STRICT decrypted_value");
+    expect(vaultAdapter).toContain("FROM vault.decrypted_secrets");
+    expect(vaultAdapter).toContain("pg_catalog.char_length(decrypted_value) <> 64");
+    expect(vaultAdapter).toContain("'^[0-9a-f]{64}$'");
+    expect(vaultAdapter).toContain("pg_catalog.decode(decrypted_value, 'hex')");
+    expect(vaultAdapter).toContain("pg_catalog.octet_length(decoded_value) <> 32");
+    expect(vaultAdapter.match(/RAISE EXCEPTION 'Invalid signed context' USING ERRCODE = '22023';/g)).toHaveLength(4);
+    expect(vaultAdapter).toContain("WHEN OTHERS THEN");
+    expect(vaultAdapter).toContain("FROM PUBLIC, anon, authenticated, service_role");
+    expect(vaultAdapter).not.toContain("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+    expect(vaultTestSeed).toContain("TEST ONLY");
+    expect(vaultTestSeed).toContain("vault.create_secret");
+    expect(vaultTestSeed).toContain("activity_log_v11_hmac_v1");
+    expect(testProvider).not.toContain("cms_private.activity_log_v11_key(target_key_id)");
   });
 
   it("adds only authenticated public RPCs and keeps all private helpers inaccessible", () => {

@@ -6,7 +6,7 @@ SECURITY DEFINER
 SET search_path = ''
 AS $function$
 BEGIN
-  IF target_key_id <> 'local-test-v1' THEN
+  IF target_key_id <> 'activity_log_v11_hmac_v1' THEN
     RAISE EXCEPTION 'Invalid signed context' USING ERRCODE = '22023';
   END IF;
   RETURN pg_catalog.decode(
@@ -34,7 +34,7 @@ CREATE FUNCTION public.test_only_sign_activity_log_v11_context(
   target_domain text DEFAULT 'introduction',
   target_operation text DEFAULT 'update',
   target_version integer DEFAULT 1,
-  target_key_id text DEFAULT 'local-test-v1',
+  target_key_id text DEFAULT 'activity_log_v11_hmac_v1',
   target_digest text DEFAULT NULL
 )
 RETURNS TABLE (signed_context text, signature_hex text)
@@ -81,7 +81,10 @@ AS $function$
   SELECT context.value,
     pg_catalog.encode(extensions.hmac(
       pg_catalog.convert_to(context.value, 'UTF8'),
-      pg_catalog.decode('00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff', 'hex'),
+      pg_catalog.decode(
+        '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
+        'hex'
+      ),
       'sha256'
     ), 'hex')
   FROM context

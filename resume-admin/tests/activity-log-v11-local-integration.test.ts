@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
 
 const enabled = process.env.V11_LOCAL_INTEGRATION === "1";
 const apiBase = process.env.V11_LOCAL_API_URL;
@@ -21,6 +21,7 @@ const originalFetch = globalThis.fetch;
 const expectedLocalApiOrigin = "http://127.0.0.1:55421";
 const workerUpstreamOrigin = "https://local.supabase.invalid";
 const localUuid = randomUUID;
+let mutateNextRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
 
 if (enabled) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -29,7 +30,13 @@ if (enabled) {
     url.protocol = "http:";
     url.hostname = "127.0.0.1";
     url.port = "55421";
-    return originalFetch(url, init);
+    let forwardedInit = init;
+    if (url.pathname === "/rest/v1/rpc/save_resume_introduction_v11" && typeof init?.body === "string" && mutateNextRpcPayload) {
+      const mutate = mutateNextRpcPayload;
+      mutateNextRpcPayload = undefined;
+      forwardedInit = { ...init, body: JSON.stringify(mutate(JSON.parse(init.body) as Record<string, unknown>)) };
+    }
+    return originalFetch(url, forwardedInit);
   }) as typeof fetch;
 }
 
@@ -41,13 +48,13 @@ function assertLocalConfiguration(): void {
   }
 }
 
-function workerEnv(): WorkerEnv {
+function workerEnv(keyId = "activity_log_v11_hmac_v1"): WorkerEnv {
   assertLocalConfiguration();
   return {
     ASSETS: { fetch: async () => new Response("not used", { status: 404 }) },
     SUPABASE_URL: workerSupabaseUrl,
     SUPABASE_PUBLISHABLE_KEY: publishableKey,
-    ACTIVITY_LOG_HMAC_KEY_ID: "local-test-v1",
+    ACTIVITY_LOG_HMAC_KEY_ID: keyId,
     ACTIVITY_LOG_HMAC_KEY: testKeyHex,
   };
 }
@@ -105,9 +112,14 @@ function makeRequest(items: Array<{ id: string | null; zh: string; en: string }>
   return request;
 }
 
-async function invoke(items: Array<{ id: string | null; zh: string; en: string }>, requestId?: string, token?: string, target = targetId, clientIp?: string): Promise<{ response: Response; body: unknown }> {
-  const response = await handleWorkerRequest(makeRequest(items, requestId, token, target, clientIp), workerEnv());
-  return { response, body: await response.json() };
+async function invoke(items: Array<{ id: string | null; zh: string; en: string }>, requestId?: string, token?: string, target = targetId, clientIp?: string, signingKeyId?: string, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
+  mutateNextRpcPayload = mutateRpcPayload;
+  try {
+    const response = await handleWorkerRequest(makeRequest(items, requestId, token, target, clientIp), workerEnv(signingKeyId));
+    return { response, body: await response.json() };
+  } finally {
+    mutateNextRpcPayload = undefined;
+  }
 }
 
 function rpcRows(body: unknown): Array<{ id: string; position: number; translations: { zh: { text: string }; en: { text: string } } }> {
@@ -244,6 +256,44 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     const ordered = [...baseline].reverse();
     const added = { id: `local-${Date.now()}-0`, zh: "D integration local item", en: "D integration local item" };
     const requested = [...ordered.map(({ id, zh, en }) => ({ id, zh, en })), added];
+    const rejectedMutation = [...(await readItems()).map(({ id, zh, en }) => ({ id, zh: `${zh} must be rejected`, en }))];
+    const beforeRejectedItems = await readItems();
+    const beforeRejectedEvents = (await readEvents()).length;
+
+    const invalidKeyId = await invoke(rejectedMutation, localUuid(), undefined, targetId, undefined, "wrong-local-test-key-id");
+    expect(invalidKeyId.response.status).toBe(502);
+    expect(await readItems()).toEqual(beforeRejectedItems);
+    expect((await readEvents()).length).toBe(beforeRejectedEvents);
+
+    const tamperedSignature = await invoke(rejectedMutation, undefined, undefined, targetId, undefined, undefined, (payload) => ({
+      ...payload,
+      signature_hex: `${String(payload.signature_hex).startsWith("0") ? "1" : "0"}${String(payload.signature_hex).slice(1)}`,
+    }));
+    expect(tamperedSignature.response.status).toBe(502);
+    expect(await readItems()).toEqual(beforeRejectedItems);
+    expect((await readEvents()).length).toBe(beforeRejectedEvents);
+
+    const signedFields: Array<[string, (value: unknown) => unknown]> = [
+      ["actor_user_id", () => ownerId],
+      ["resume_id", () => officialId],
+      ["domain", () => "projects"],
+      ["operation", () => "delete"],
+      ["request_id", () => localUuid()],
+      ["mutation_digest", () => "0".repeat(64)],
+      ["issued_at", (value) => Number(value) + 1],
+      ["expires_at", (value) => Number(value) + 1],
+    ];
+    for (const [field, replace] of signedFields) {
+      const result = await invoke(rejectedMutation, undefined, undefined, targetId, undefined, undefined, (payload) => {
+        const context = JSON.parse(String(payload.signed_context)) as Record<string, unknown>;
+        context[field] = replace(context[field]);
+        return { ...payload, signed_context: serializePostgresJsonbObject(context) };
+      });
+      expect(result.response.status, `${field} binding`).toBe(502);
+      expect(await readItems()).toEqual(beforeRejectedItems);
+      expect((await readEvents()).length).toBe(beforeRejectedEvents);
+    }
+
     const requestId = localUuid();
     const first = await invoke(requested, requestId);
     expect(first.response.status).toBe(200);
