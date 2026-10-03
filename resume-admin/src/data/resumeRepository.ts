@@ -67,6 +67,7 @@ export type ActivityLogEvent = {
   operation: "create" | "update" | "delete" | "reorder" | "upload" | "remove";
   section: string; entityType: string; entityId: string | null;
   entitySnapshot: Record<string, unknown>; changes: Record<string, { before: unknown; after: unknown }>;
+  ipNetwork: string | null; countryCode: string | null; region: string | null; city: string | null;
 };
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
@@ -360,6 +361,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           || typeof row.section_key !== "string" || typeof row.entity_type !== "string"
           || (row.actor_email_snapshot !== null && typeof row.actor_email_snapshot !== "string")
           || (row.entity_id !== null && typeof row.entity_id !== "string")
+          || ([row.ip_network, row.country_code, row.region, row.city].some(value => value !== undefined && value !== null && typeof value !== "string"))
           || !row.entity_snapshot || typeof row.entity_snapshot !== "object" || Array.isArray(row.entity_snapshot)
           || !row.changes || typeof row.changes !== "object" || Array.isArray(row.changes)) throw new Error("Invalid Activity Log response");
         const changes: ActivityLogEvent["changes"] = {};
@@ -371,7 +373,11 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         return { id: row.id, occurredAt: row.occurred_at, actorEmail: row.actor_email_snapshot as string | null,
           actorRole: row.actor_role_snapshot, operation: row.operation as ActivityLogEvent["operation"], section: row.section_key,
           entityType: row.entity_type, entityId: row.entity_id as string | null,
-          entitySnapshot: row.entity_snapshot as Record<string, unknown>, changes };
+          entitySnapshot: row.entity_snapshot as Record<string, unknown>, changes,
+          ipNetwork: typeof row.ip_network === "string" ? row.ip_network : null,
+          countryCode: typeof row.country_code === "string" ? row.country_code : null,
+          region: typeof row.region === "string" ? row.region : null,
+          city: typeof row.city === "string" ? row.city : null };
       });
     },
     async loadActivityLogAuthorizedTargets() {

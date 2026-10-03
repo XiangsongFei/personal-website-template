@@ -14,6 +14,16 @@ function fieldValues(value: unknown, t: (text: string) => string) {
   }).filter(Boolean).join("; ");
 }
 
+function approximateIpLocation(event: ActivityLogEvent): string | null {
+  const geographicParts = [event.city, event.region, event.countryCode]
+    .map(value => value?.trim() ?? "")
+    .filter(Boolean);
+  const network = event.ipNetwork?.trim() ?? "";
+  const location = geographicParts.join(", ");
+  if (location && network) return `${location} · ${network}`;
+  return location || network || null;
+}
+
 export function ActivityLogPage({ resumeId, repository }: { resumeId: string | null; repository: ResumeRepository | null }) {
   const { t } = useUiLocale();
   const [events, setEvents] = useState<ActivityLogEvent[]>([]);
@@ -61,6 +71,10 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
             <ol className="activity-log-list">{events.map(event => <li className="activity-log-event" key={event.id}>
               <div className="activity-log-event-heading"><div><h2>{t("Introduction")}</h2><p>{t(event.operation === "create" ? "Created" : event.operation === "delete" ? "Deleted" : event.operation === "reorder" ? "Reordered" : "Updated")} {t("by")} {t(event.actorRole === "qa" ? "QA" : "Owner")} · {event.actorEmail ?? t("Unknown account")}</p></div>
                 <time dateTime={event.occurredAt}>{formatBeijingTimestamp(event.occurredAt)}</time></div>
+              {approximateIpLocation(event) && <p className="activity-log-location" title={t("Approximate IP-derived location from the event-time network; not precise or GPS location.")}>
+                <span>{t("IP location: ")}</span>{approximateIpLocation(event)}
+                <span className="visually-hidden"> {t("Approximate IP-derived location")}</span>
+              </p>}
               {Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
                   <dt>{t(fields[key] ?? key)}</dt><dd><span>{t("Before")}: {fieldValues(change.before, t)}</span><span>{t("After")}: {fieldValues(change.after, t)}</span></dd>

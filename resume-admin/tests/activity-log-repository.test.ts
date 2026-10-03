@@ -43,12 +43,19 @@ describe("Activity Log repository RPC boundary", () => {
   });
 
   it("uses only the existing read RPC for keyset-paginated events", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ id: "event-1", occurred_at: "2026-10-02T10:00:00Z", actor_email_snapshot: "qa@example.test", actor_role_snapshot: "qa", operation: "update", section_key: "introduction", entity_type: "introduction_paragraph", entity_id: "introduction", entity_snapshot: { paragraphs: [] }, changes: { text_zh: { before: [{ id: "p1", value: "前" }], after: [{ id: "p1", value: "后" }] } } }], error: null });
+    const rpc = vi.fn().mockResolvedValue({ data: [{ id: "event-1", occurred_at: "2026-10-02T10:00:00Z", actor_email_snapshot: "qa@example.test", actor_role_snapshot: "qa", operation: "update", section_key: "introduction", entity_type: "introduction_paragraph", entity_id: "introduction", entity_snapshot: { paragraphs: [] }, changes: { text_zh: { before: [{ id: "p1", value: "前" }], after: [{ id: "p1", value: "后" }] } }, ip_network: "188.253.112.0/24", country_code: "HK", region: null, city: "Hong Kong" }], error: null });
     const cursor = { occurredAt: "2026-10-01T10:00:00Z", id: "event-0" };
     const events = await repository(rpc).loadActivityLogPage!("qa-target", 25, cursor);
-    expect(events[0]).toMatchObject({ id: "event-1", actorRole: "qa", actorEmail: "qa@example.test", changes: { text_zh: { before: [{ id: "p1", value: "前" }], after: [{ id: "p1", value: "后" }] } } });
+    expect(events[0]).toMatchObject({ id: "event-1", actorRole: "qa", actorEmail: "qa@example.test", ipNetwork: "188.253.112.0/24", countryCode: "HK", region: null, city: "Hong Kong", changes: { text_zh: { before: [{ id: "p1", value: "前" }], after: [{ id: "p1", value: "后" }] } } });
     expect(rpc).toHaveBeenCalledWith("read_activity_log_events", {
       target_resume_id: "qa-target", page_limit: 25, before_occurred_at: cursor.occurredAt, before_id: cursor.id,
     });
+  });
+
+  it("normalizes absent optional metadata from an older RPC response to null", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ id: "event-legacy", occurred_at: "2026-10-02T10:00:00Z", actor_email_snapshot: null, actor_role_snapshot: "owner", operation: "update", section_key: "introduction", entity_type: "introduction_paragraph", entity_id: null, entity_snapshot: {}, changes: {} }], error: null });
+    await expect(repository(rpc).loadActivityLogPage!("qa-target", 25)).resolves.toMatchObject([
+      { ipNetwork: null, countryCode: null, region: null, city: null },
+    ]);
   });
 });

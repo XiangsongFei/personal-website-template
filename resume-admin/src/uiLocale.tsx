@@ -56,6 +56,9 @@ Object.assign(dictionary, {
   QA: "QA", Owner: "所有者", "Unknown account": "未知账户", "View changed fields": "查看变更字段",
   "Chinese text": "中文内容", "English text": "英文内容", Order: "顺序", Paragraph: "段落", Before: "修改前", After: "修改后", Empty: "空",
   "Load more": "加载更多", "Loading…": "正在加载……",
+  "IP location: ": "IP 位置：",
+  "Approximate IP-derived location": "根据事件发生时 IP 推算的大致位置，并非精确或 GPS 定位。",
+  "Approximate IP-derived location from the event-time network; not precise or GPS location.": "根据事件发生时的 IP 网段推算的大致位置，并非精确或 GPS 定位。",
 });
 
 const dynamicMessagePrefixes = [

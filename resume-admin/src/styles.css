@@ -705,6 +705,7 @@ main{color:#242424}
 .activity-log-event-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
 .activity-log-event-heading h2{margin:0 0 6px;font-size:16px;font-weight:650}
 .activity-log-event-heading p,.activity-log-event-heading time{margin:0;color:#778294;font-size:12px;line-height:1.5}
+.activity-log-location{margin:4px 0 0;color:#778294;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .activity-log-event details{margin-top:12px}
 .activity-log-event summary{cursor:pointer;color:#44536a;font-size:13px}
 .activity-log-event dl{display:grid;gap:10px;margin:12px 0 0}
