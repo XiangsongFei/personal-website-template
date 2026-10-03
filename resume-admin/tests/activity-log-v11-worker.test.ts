@@ -444,9 +444,11 @@ describe("Activity Log V1.1 Worker upstream failures and configuration", () => {
     expect(await response.text()).not.toContain("private endpoint details");
   });
 
-  it("does not place service-role credentials or logging of request secrets in the Worker", async () => {
+  it("does not place service-role credentials or log request secrets in the Worker", async () => {
     const source = readFileSync(resolve("src/worker/index.ts"), "utf8");
     expect(source).not.toMatch(/service[_-]?role/i);
-    expect(source).not.toMatch(/console\.(?:log|info|warn|error)\s*\(/);
+    expect(source).not.toMatch(/console\.(?:log|info|error)\s*\(/);
+    expect(source.match(/console\.warn\s*\(/g)).toHaveLength(1);
+    expect(source).toContain('console.warn("activity_log_v13_reporter", category);');
   });
 });

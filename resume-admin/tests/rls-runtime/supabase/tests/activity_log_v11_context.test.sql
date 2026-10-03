@@ -1,6 +1,6 @@
 -- TEST ONLY: Activity Log V1.1 contract in the isolated local RLS lab.
 BEGIN;
-SELECT extensions.plan(10);
+SELECT extensions.plan(11);
 
 -- TEST ONLY: narrowly bounded observation helpers for this rolled-back test.
 CREATE FUNCTION public.test_only_v11_event_count(target_resume uuid)
@@ -38,6 +38,16 @@ BEGIN
       AND request_id=target_request);
 END
 $function$;
+CREATE FUNCTION public.test_only_v11_mark_idempotency_incomplete(target_resume uuid, target_request uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
+BEGIN
+  IF target_resume <> 'ea111111-1111-4111-8111-111111111111'::uuid THEN RAISE EXCEPTION 'TEST ONLY target rejected'; END IF;
+  UPDATE cms_private.activity_log_idempotency
+  SET completed_at=NULL,result_payload=NULL
+  WHERE actor_user_id=(SELECT auth.uid()) AND resume_id=target_resume AND domain_key='introduction'
+    AND request_id=target_request;
+END
+$function$;
 CREATE FUNCTION public.test_only_v11_expire_idempotency(target_resume uuid, target_request uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $function$
 DECLARE expired_created_at timestamptz := pg_catalog.clock_timestamp() - interval '8 days';
@@ -54,11 +64,13 @@ REVOKE ALL ON FUNCTION public.test_only_v11_event_count(uuid),
   public.test_only_v11_latest_event_context(uuid),
   public.test_only_v11_idempotency_exists(uuid,uuid),
   public.test_only_v11_idempotency_payload(uuid,uuid),
+  public.test_only_v11_mark_idempotency_incomplete(uuid,uuid),
   public.test_only_v11_expire_idempotency(uuid,uuid) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.test_only_v11_event_count(uuid),
   public.test_only_v11_latest_event_context(uuid),
   public.test_only_v11_idempotency_exists(uuid,uuid),
   public.test_only_v11_idempotency_payload(uuid,uuid),
+  public.test_only_v11_mark_idempotency_incomplete(uuid,uuid),
   public.test_only_v11_expire_idempotency(uuid,uuid) TO authenticated;
 
 DO $foundation$
@@ -520,7 +532,7 @@ BEGIN
   FROM public.test_only_sign_activity_log_v11_context('ea111111-1111-4111-8111-111111111111',other_canonical,auth.uid(),same_request);
   denied := false;
   BEGIN PERFORM public.save_resume_introduction_v11('ea111111-1111-4111-8111-111111111111',other_canonical,context_value,signature_value);
-  EXCEPTION WHEN unique_violation THEN denied := SQLERRM='Idempotency key conflicts with a different request'; END;
+  EXCEPTION WHEN SQLSTATE 'P13B1' THEN denied := SQLERRM='Idempotency key conflicts with a different request'; END;
   PERFORM public.rls_test_assert(denied, 'same idempotency key with a different digest is rejected');
 
   SELECT public.test_only_v11_event_count('ea111111-1111-4111-8111-111111111111') INTO event_count;
@@ -535,8 +547,21 @@ BEGIN
       AND public.test_only_v11_event_count('ea111111-1111-4111-8111-111111111111')=event_count,
     'semantic no-op stores and replays its original result without creating an event');
 
+  PERFORM public.test_only_v11_mark_idempotency_incomplete(
+    'ea111111-1111-4111-8111-111111111111',no_op_request);
+  denied := false;
+  BEGIN
+    PERFORM public.save_resume_introduction_v11(
+      'ea111111-1111-4111-8111-111111111111',canonical,context_value,signature_value);
+  EXCEPTION WHEN SQLSTATE '23505' THEN
+    denied := SQLERRM='Idempotency key conflicts with a different request';
+  END;
+  PERFORM public.rls_test_assert(denied,
+    'an incomplete reservation retains generic conflict SQLSTATE instead of the V1.3B proof code');
+
 END
 $idempotency_conflict_and_noop$;
+SELECT extensions.pass('incomplete idempotency reservations keep the generic conflict SQLSTATE');
 SELECT extensions.pass('idempotency conflicts, no-op result replay, and expiry semantics hold');
 
 DO $failure_rollback_and_isolation$

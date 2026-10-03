@@ -1,3 +1,10 @@
+import {
+  decodeActivityLogV13Key,
+  deriveActivityLogV13FailureEventId,
+  signActivityLogV13,
+  type ActivityLogV13Fields,
+} from "./activityLogV13";
+
 const API_ROOT = "/api/admin/v1";
 const SAVE_PATH = `${API_ROOT}/introduction/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
@@ -5,6 +12,11 @@ const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const SIGNATURE_LIFETIME_SECONDS = 180;
+const V13B_RECORDER_TIMEOUT_MS = 1_500;
+const V13B_QA_RESUME_ID = "ea111111-1111-4111-8111-111111111111";
+const V13B_OFFICIAL_RESUME_ID = "10000000-0000-4000-8000-000000000001";
+const V13_PURPOSE = "activity_log_system_event_v13";
+const V13_KEY_ID = "activity_log_v13_failure_v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCAL_ID_PATTERN = /^local-[0-9]+-[0-9]+$/;
 const UTF8 = new TextEncoder();
@@ -15,6 +27,8 @@ export interface WorkerEnv {
   SUPABASE_PUBLISHABLE_KEY?: string;
   ACTIVITY_LOG_HMAC_KEY?: string;
   ACTIVITY_LOG_HMAC_KEY_ID?: string;
+  ACTIVITY_LOG_V13_HMAC_KEY?: string;
+  ACTIVITY_LOG_V13B_FAILURE_REPORTING?: string;
 }
 
 interface IntroductionItem {
@@ -348,6 +362,9 @@ function upstreamError(response: Response, body: unknown): ApiError {
   if (isPlainObject(body)) {
     const code = typeof body.code === "string" ? body.code : "";
     const message = typeof body.message === "string" ? body.message : "";
+    if (response.status === 400 && code === "P13B1") {
+      return apiError(409, "idempotency_conflict", "This save request conflicts with an earlier request.");
+    }
     if (code === "23505" && message === "Idempotency key conflicts with a different request") {
       return apiError(409, "idempotency_conflict", "This save request conflicts with an earlier request.");
     }
@@ -356,6 +373,135 @@ function upstreamError(response: Response, body: unknown): ApiError {
     }
   }
   return apiError(502, "upstream_failure", `The data service could not save the Introduction (HTTP ${response.status}).`);
+}
+
+function reporterLog(category: string): void {
+  console.warn("activity_log_v13_reporter", category);
+}
+
+function isV13BIdempotencyConflict(response: Response, body: unknown): boolean {
+  return response.status === 400 && isPlainObject(body) && body.code === "P13B1";
+}
+
+async function reportV13BFailure(input: {
+  env: WorkerEnv;
+  supabase: { baseUrl: string; publishableKey: string };
+  authorization: string;
+  actorId: string;
+  resumeId: string;
+  requestId: string;
+  network: Pick<SignedContext, "ip_network" | "country_code" | "region" | "city">;
+}): Promise<void> {
+  if (input.env.ACTIVITY_LOG_V13B_FAILURE_REPORTING !== "true") {
+    reporterLog("reporter_disabled");
+    return;
+  }
+  if (input.resumeId.toLowerCase() === V13B_OFFICIAL_RESUME_ID || input.resumeId.toLowerCase() !== V13B_QA_RESUME_ID) {
+    reporterLog("reporter_target_blocked");
+    return;
+  }
+
+  let key: Uint8Array;
+  try {
+    const keyHex = input.env.ACTIVITY_LOG_V13_HMAC_KEY;
+    if (!keyHex) throw new TypeError("missing");
+    key = decodeActivityLogV13Key(keyHex);
+  } catch {
+    reporterLog("signing_configuration_missing");
+    return;
+  }
+
+  try {
+    const issuedAtEpoch = Math.floor(Date.now() / 1000);
+    const fields: ActivityLogV13Fields = {
+      protocolVersion: 1,
+      purpose: V13_PURPOSE,
+      keyId: V13_KEY_ID,
+      eventId: await deriveActivityLogV13FailureEventId({
+        resumeId: input.resumeId,
+        actorUserId: input.actorId,
+        requestId: input.requestId,
+        failureStage: "idempotency",
+        failureCode: "idempotency_conflict",
+      }),
+      requestId: input.requestId.toLowerCase(),
+      actorUserId: input.actorId.toLowerCase(),
+      resumeId: input.resumeId.toLowerCase(),
+      eventKind: "operation_failure",
+      outcome: "rejected",
+      sectionKey: "introduction",
+      operation: "update",
+      failureStage: "idempotency",
+      failureCode: "idempotency_conflict",
+      issuedAtEpoch,
+      ipNetwork: input.network.ip_network,
+      countryCode: input.network.country_code,
+      region: input.network.region,
+      city: input.network.city,
+    };
+    const signatureHex = await signActivityLogV13(fields, key);
+    const body = JSON.stringify({
+      target_resume_id: fields.resumeId,
+      target_event_id: fields.eventId,
+      target_request_id: fields.requestId,
+      target_actor_user_id: fields.actorUserId,
+      target_protocol_version: fields.protocolVersion,
+      target_purpose: fields.purpose,
+      target_key_id: fields.keyId,
+      target_event_kind: fields.eventKind,
+      target_outcome: fields.outcome,
+      target_section_key: fields.sectionKey,
+      target_operation: fields.operation,
+      target_failure_stage: fields.failureStage,
+      target_failure_code: fields.failureCode,
+      target_issued_at_epoch: fields.issuedAtEpoch,
+      target_ip_network: fields.ipNetwork,
+      target_country_code: fields.countryCode,
+      target_region: fields.region,
+      target_city: fields.city,
+      target_signature_hex: signatureHex,
+    });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(`${input.supabase.baseUrl}/rest/v1/rpc/record_activity_log_system_failure`, {
+          method: "POST",
+          headers: {
+            "Authorization": input.authorization,
+            "apikey": input.supabase.publishableKey,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body,
+          signal: AbortSignal.timeout(V13B_RECORDER_TIMEOUT_MS),
+        });
+        if (response.ok) {
+          reporterLog("reporter_success");
+          return;
+        }
+        if (response.status === 401) {
+          reporterLog("recorder_unauthorized");
+          return;
+        }
+        if (response.status === 403 || response.status < 500) {
+          reporterLog("recorder_rejected");
+          return;
+        }
+        if (attempt === 1) {
+          reporterLog("recorder_upstream_failure");
+          return;
+        }
+      } catch (error) {
+        if (attempt === 1) {
+          reporterLog(error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
+            ? "recorder_timeout" : "recorder_upstream_failure");
+          return;
+        }
+      }
+    }
+  } catch {
+    reporterLog("signing_failure");
+  }
 }
 
 function validateSupabaseConfig(env: WorkerEnv): { baseUrl: string; publishableKey: string } {
@@ -449,7 +595,21 @@ async function saveIntroduction(request: Request, env: WorkerEnv): Promise<Respo
   }
 
   const upstreamBody = await readJsonResponse(upstream, UPSTREAM_BODY_LIMIT);
-  if (!upstream.ok) throw upstreamError(upstream, upstreamBody);
+  if (!upstream.ok) {
+    const saveFailure = upstreamError(upstream, upstreamBody);
+    if (isV13BIdempotencyConflict(upstream, upstreamBody)) {
+      await reportV13BFailure({
+        env,
+        supabase,
+        authorization,
+        actorId,
+        resumeId: parsed.resume_id,
+        requestId: parsed.request_id,
+        network,
+      }).catch(() => reporterLog("recorder_upstream_failure"));
+    }
+    throw saveFailure;
+  }
   return Response.json(upstreamBody, { headers: { "Cache-Control": "no-store" } });
 }
 

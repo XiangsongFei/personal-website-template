@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { canonicalizeV13, normalizeV13Cidr, signV13 } from "./activity-log-v13-canonical";
+import { canonicalizeV13, normalizeV13Cidr, signV13, V13_TEST_KEY_HEX } from "./activity-log-v13-canonical";
 import { v13GoldenVectors } from "./activity-log-v13-vectors";
+import {
+  bytesToHex,
+  canonicalizeActivityLogV13,
+  decodeActivityLogV13Key,
+  deriveActivityLogV13FailureEventId,
+  normalizeActivityLogV13Cidr,
+  signActivityLogV13,
+} from "../src/worker/activityLogV13";
 
 describe("Activity Log V1.3 canonical byte protocol", () => {
   it.each(v13GoldenVectors)("matches the independent fixed golden vector: $name", ({ fields, canonicalHex, hmacHex }) => {
@@ -58,5 +66,55 @@ describe("Activity Log V1.3 canonical byte protocol", () => {
     for (const change of changes) {
       expect(signV13({ ...base, ...change })).not.toBe(originalSignature);
     }
+  });
+});
+
+describe("production Worker V1.3 canonical interoperability", () => {
+  it.each(v13GoldenVectors)("matches frozen bytes and HMAC for $name", async ({ fields, canonicalHex, hmacHex }) => {
+    const workerFields = {
+      protocolVersion: fields.protocolVersion,
+      purpose: fields.purpose,
+      keyId: fields.keyId,
+      eventId: fields.eventId,
+      requestId: fields.requestId,
+      actorUserId: fields.actorUserId,
+      resumeId: fields.resumeId,
+      eventKind: fields.eventKind,
+      outcome: fields.outcome,
+      sectionKey: fields.sectionKey,
+      operation: fields.operation,
+      failureStage: fields.failureStage,
+      failureCode: fields.failureCode,
+      issuedAtEpoch: fields.issuedAtEpoch,
+      ipNetwork: fields.ipNetwork,
+      countryCode: fields.countryCode,
+      region: fields.region,
+      city: fields.city,
+    };
+    expect(bytesToHex(canonicalizeActivityLogV13(workerFields))).toBe(canonicalHex);
+    expect(await signActivityLogV13(workerFields, decodeActivityLogV13Key(V13_TEST_KEY_HEX))).toBe(hmacHex);
+  });
+
+  it("normalizes both address families to the frozen network representation", () => {
+    expect(normalizeActivityLogV13Cidr("188.253.112.99/24")).toBe("188.253.112.0/24");
+    expect(normalizeActivityLogV13Cidr("2001:0DB8:0001:abcd::1/48"))
+      .toBe("2001:0db8:0001:0000:0000:0000:0000:0000/48");
+    expect(() => normalizeActivityLogV13Cidr("203.0.113.0/32")).toThrow();
+    expect(() => normalizeActivityLogV13Cidr("2001:db8::/64")).toThrow();
+  });
+
+  it("derives stable namespaced UUIDv8 event IDs without payload inputs", async () => {
+    const identity = {
+      resumeId: "ea111111-1111-4111-8111-111111111111",
+      actorUserId: "10000000-0000-4000-8000-000000000002",
+      requestId: "bbbbbbbb-0000-4000-8000-000000000903",
+      failureStage: "idempotency",
+      failureCode: "idempotency_conflict",
+    };
+    const first = await deriveActivityLogV13FailureEventId(identity);
+    expect(first).toBe(await deriveActivityLogV13FailureEventId(identity));
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(await deriveActivityLogV13FailureEventId({ ...identity, requestId: "bbbbbbbb-0000-4000-8000-000000000904" }))
+      .not.toBe(first);
   });
 });

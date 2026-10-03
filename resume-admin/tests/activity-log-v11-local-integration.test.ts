@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
+import { deriveActivityLogV13FailureEventId } from "../src/worker/activityLogV13";
 
 const enabled = process.env.V11_LOCAL_INTEGRATION === "1";
 const apiBase = process.env.V11_LOCAL_API_URL;
@@ -12,6 +13,7 @@ const publishableKey = process.env.V11_LOCAL_PUBLISHABLE_KEY;
 const userJwt = process.env.V11_LOCAL_USER_JWT;
 const ownerJwt = process.env.V11_LOCAL_OWNER_JWT;
 const testKeyHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+const testV13KeyHex = "a4c8f16d2b9037e5a1c6d8f04b2e9a73c5d1f8064a2e9b7c3d5f1086a2c4e9b7";
 const targetId = "ea111111-1111-4111-8111-111111111111";
 const officialId = "20000000-0000-4000-8000-000000000001";
 const actorId = "10000000-0000-4000-8000-000000000002";
@@ -22,6 +24,8 @@ const expectedLocalApiOrigin = "http://127.0.0.1:55421";
 const workerUpstreamOrigin = "https://local.supabase.invalid";
 const localUuid = randomUUID;
 let mutateNextRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
+let dropNextV13RecorderResponseAfterCommit = false;
+const v13RecorderBodies: string[] = [];
 
 if (enabled) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -36,6 +40,15 @@ if (enabled) {
       mutateNextRpcPayload = undefined;
       forwardedInit = { ...init, body: JSON.stringify(mutate(JSON.parse(init.body) as Record<string, unknown>)) };
     }
+    if (url.pathname === "/rest/v1/rpc/record_activity_log_system_failure" && typeof init?.body === "string") {
+      v13RecorderBodies.push(init.body);
+      const response = await originalFetch(url, forwardedInit);
+      if (dropNextV13RecorderResponseAfterCommit) {
+        dropNextV13RecorderResponseAfterCommit = false;
+        return Response.json({ code: "synthetic_response_lost_after_commit" }, { status: 503 });
+      }
+      return response;
+    }
     return originalFetch(url, forwardedInit);
   }) as typeof fetch;
 }
@@ -48,7 +61,7 @@ function assertLocalConfiguration(): void {
   }
 }
 
-function workerEnv(keyId = "activity_log_v11_hmac_v1"): WorkerEnv {
+function workerEnv(keyId = "activity_log_v11_hmac_v1", enableV13B = false): WorkerEnv {
   assertLocalConfiguration();
   return {
     ASSETS: { fetch: async () => new Response("not used", { status: 404 }) },
@@ -56,6 +69,8 @@ function workerEnv(keyId = "activity_log_v11_hmac_v1"): WorkerEnv {
     SUPABASE_PUBLISHABLE_KEY: publishableKey,
     ACTIVITY_LOG_HMAC_KEY_ID: keyId,
     ACTIVITY_LOG_HMAC_KEY: testKeyHex,
+    ACTIVITY_LOG_V13_HMAC_KEY: testV13KeyHex,
+    ACTIVITY_LOG_V13B_FAILURE_REPORTING: enableV13B ? "true" : "false",
   };
 }
 
@@ -112,10 +127,10 @@ function makeRequest(items: Array<{ id: string | null; zh: string; en: string }>
   return request;
 }
 
-async function invoke(items: Array<{ id: string | null; zh: string; en: string }>, requestId?: string, token?: string, target = targetId, clientIp?: string, signingKeyId?: string, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
+async function invoke(items: Array<{ id: string | null; zh: string; en: string }>, requestId?: string, token?: string, target = targetId, clientIp?: string, signingKeyId?: string, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>, enableV13B = false): Promise<{ response: Response; body: unknown }> {
   mutateNextRpcPayload = mutateRpcPayload;
   try {
-    const response = await handleWorkerRequest(makeRequest(items, requestId, token, target, clientIp), workerEnv(signingKeyId));
+    const response = await handleWorkerRequest(makeRequest(items, requestId, token, target, clientIp), workerEnv(signingKeyId, enableV13B));
     return { response, body: await response.json() };
   } finally {
     mutateNextRpcPayload = undefined;
@@ -253,6 +268,56 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       method: "POST", body: JSON.stringify({ target_resume_id: targetId }),
     }) as Array<{ activity_log_enabled: boolean; introduction_write_mode: string; introduction_trusted_context_required: boolean }>;
     expect(qaV11State).toEqual([{ activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: true }]);
+
+    // V1.3B is a local-only proof that a valid semantic no-op can reserve an
+    // idempotency key, then a different payload with that key is rejected
+    // before Introduction DML while its separately signed failure event is
+    // recorded exactly once. The first recorder response is deliberately lost
+    // after commit to prove the bounded retry reuses the exact envelope.
+    localSql(`INSERT INTO cms_private.resume_capabilities(resume_id,capability_key,enabled) VALUES ('${targetId}'::uuid,'activity_log_system_events',true) ON CONFLICT (resume_id,capability_key) DO UPDATE SET enabled=true`);
+    const v13BeforeItems = await readItems();
+    const v13BeforeActivityEvents = (await readEvents()).length;
+    const v13RequestId = localUuid();
+    const noOpSeed = await invoke(v13BeforeItems.map(({ id, zh, en }) => ({ id, zh, en })), v13RequestId);
+    expect(noOpSeed.response.status).toBe(200);
+    expect(await readItems()).toEqual(v13BeforeItems);
+    expect((await readEvents()).length).toBe(v13BeforeActivityEvents);
+
+    const v13BeforeFailureCount = Number(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`));
+    const v13ChangedItems = v13BeforeItems.map(({ id, zh, en }) => ({ id, zh: `${zh} different digest`, en }));
+    v13RecorderBodies.length = 0;
+    dropNextV13RecorderResponseAfterCommit = true;
+    const v13Conflict = await invoke(v13ChangedItems, v13RequestId, undefined, targetId, undefined, undefined, undefined, true);
+    expect(v13Conflict.response.status).toBe(409);
+    expect((v13Conflict.body as { error: { code: string } }).error.code).toBe("idempotency_conflict");
+    expect(await readItems()).toEqual(v13BeforeItems);
+    expect((await readEvents()).length).toBe(v13BeforeActivityEvents);
+    expect(v13RecorderBodies).toHaveLength(2);
+    expect(v13RecorderBodies[0]).toBe(v13RecorderBodies[1]);
+    const failurePayload = JSON.parse(v13RecorderBodies[0]!) as Record<string, unknown>;
+    const expectedFailureEventId = await deriveActivityLogV13FailureEventId({
+      resumeId: targetId,
+      actorUserId: actorId,
+      requestId: v13RequestId,
+      failureStage: "idempotency",
+      failureCode: "idempotency_conflict",
+    });
+    expect(failurePayload.target_event_id).toBe(expectedFailureEventId);
+    expect(failurePayload.target_request_id).toBe(v13RequestId);
+    expect(Number(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`)))
+      .toBe(v13BeforeFailureCount + 1);
+    expect(localSql(`SELECT count(*) || ':' || bool_and(actor_user_id='${actorId}'::uuid AND request_id='${v13RequestId}'::uuid AND event_kind='operation_failure' AND outcome='rejected' AND section_key='introduction' AND operation='update' AND failure_stage='idempotency' AND failure_code='idempotency_conflict' AND ip_network='203.0.113.0/24'::cidr) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid AND event_id='${expectedFailureEventId}'::uuid`))
+      .toBe("1:true");
+
+    const replayedConflict = await invoke(v13ChangedItems, v13RequestId, undefined, targetId, undefined, undefined, undefined, true);
+    expect(replayedConflict.response.status).toBe(409);
+    expect((await readItems())).toEqual(v13BeforeItems);
+    expect(v13RecorderBodies).toHaveLength(3);
+    const replayPayload = JSON.parse(v13RecorderBodies[2]!) as Record<string, unknown>;
+    expect(replayPayload.target_event_id).toBe(expectedFailureEventId);
+    expect(Number(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`)))
+      .toBe(v13BeforeFailureCount + 1);
+
     const ordered = [...baseline].reverse();
     const added = { id: `local-${Date.now()}-0`, zh: "D integration local item", en: "D integration local item" };
     const requested = [...ordered.map(({ id, zh, en }) => ({ id, zh, en })), added];
