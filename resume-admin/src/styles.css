@@ -706,6 +706,12 @@ main{color:#242424}
 .activity-log-event-heading h2{margin:0 0 6px;font-size:16px;font-weight:650}
 .activity-log-event-heading p,.activity-log-event-heading time{margin:0;color:#778294;font-size:12px;line-height:1.5}
 .activity-log-location{margin:4px 0 0;color:#778294;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.activity-log-outcome{margin:8px 0 0;color:#69788c;font-size:12px;font-weight:650}
+.activity-log-failure-metadata{display:flex;flex-wrap:wrap;gap:4px 18px;margin:6px 0 0;color:#69788c;font-size:12px;line-height:1.5}
+.activity-log-failure-metadata>div{display:flex;gap:5px;min-width:0;overflow-wrap:anywhere}
+.activity-log-failure-metadata dt{font-weight:600}
+.activity-log-failure-metadata dd{margin:0;overflow-wrap:anywhere}
+.activity-log-failure-metadata code{font:inherit;color:#536176;overflow-wrap:anywhere}
 .activity-log-event details{margin-top:12px}
 .activity-log-event summary{cursor:pointer;color:#44536a;font-size:13px}
 .activity-log-event dl{display:grid;gap:10px;margin:12px 0 0}

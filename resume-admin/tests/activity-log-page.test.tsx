@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ActivityLogPage, beijingDateRange, beijingDateStartUtc } from "../src/ActivityLogPage";
-import type { ActivityLogEvent, ResumeRepository } from "../src/data/resumeRepository";
+import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
 const resumeId = "qa-resume";
@@ -9,6 +9,16 @@ function event(id: string, changes: ActivityLogEvent["changes"] = {}): ActivityL
   return { id, occurredAt: "2026-10-02T10:00:00Z", actorEmail: "qa@example.test", actorRole: "qa", operation: "update",
     section: "introduction", entityType: "introduction_paragraph", entityId: "introduction", entitySnapshot: { paragraphs: [] }, changes,
     ipNetwork: null, countryCode: null, region: null, city: null };
+}
+function v13cActivity(base: ActivityLogEvent): ActivityLogV13CEvent {
+  return { ...base, eventSource: "activity", sourceRank: 1 };
+}
+function rejectedEvent(id = "rejected-event"): ActivityLogV13CRejectedEvent {
+  return { id, occurredAt: "2026-10-02T10:00:00Z", actorEmail: "qa@example.test", actorRole: "qa", operation: "update",
+    section: "introduction", ipNetwork: null, countryCode: null, region: null, city: null,
+    eventSource: "system", sourceRank: 2, eventKind: "operation_failure", outcome: "rejected",
+    failureStage: "idempotency", failureCode: "idempotency_conflict", requestId: "request-qa-1",
+    entityType: null, entityId: null, entitySnapshot: null, changes: null, payloadVersion: null };
 }
 function withLocation(base: ActivityLogEvent, location: Partial<Pick<ActivityLogEvent, "ipNetwork" | "countryCode" | "region" | "city">>): ActivityLogEvent {
   return { ...base, ...location };
@@ -18,7 +28,13 @@ function visibleLocationText(): string {
   return row ? Array.from(row.childNodes).slice(0, 2).map(node => node.textContent ?? "").join("").trim() : "";
 }
 function renderPage(repository: ResumeRepository) {
-  const compatible = { ...repository, loadActivityLogPageV12: vi.fn((id: string, size: number, _filters: unknown, cursor?: { occurredAt: string; id: string }) => repository.loadActivityLogPage!(id, size, cursor)) } as ResumeRepository;
+  const loadV13C = vi.fn(async (id: string, size: number, filters: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[2], cursor?: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[3]) => {
+    const page = repository.loadActivityLogPageV13C
+      ? await repository.loadActivityLogPageV13C(id, size, filters, cursor)
+      : await repository.loadActivityLogPage!(id, size, cursor && { occurredAt: cursor.occurredAt, id: cursor.id });
+    return page.map(row => "eventSource" in row ? row as ActivityLogV13CEvent : v13cActivity(row as ActivityLogEvent));
+  });
+  const compatible = { ...repository, loadActivityLogPageV13C: loadV13C } as ResumeRepository;
   return { ...render(<UiLocaleProvider><ActivityLogPage resumeId={resumeId} repository={compatible} /></UiLocaleProvider>), repository: compatible };
 }
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
@@ -38,7 +54,78 @@ describe("Activity Log page", () => {
     const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([]) } as unknown as ResumeRepository;
     const view = renderPage(repository);
     expect(await screen.findByText("No activity has been recorded yet.")).toBeTruthy();
-    expect(view.repository.loadActivityLogPageV12).toHaveBeenCalledWith(resumeId, 25, expect.objectContaining({ section: "", search: "" }), undefined);
+    expect(view.repository.loadActivityLogPageV13C).toHaveBeenCalledWith(resumeId, 25, expect.objectContaining({ eventFilter: "all", section: "", search: "" }), undefined);
+  });
+
+  it.each([["All events", "all"], ["Successful activity", "successful"], ["Rejected operations", "rejected"]] as const)(
+    "applies the %s event filter and starts a fresh page chain", async (_label, eventFilter) => {
+      const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([]) } as unknown as ResumeRepository;
+      const view = renderPage(repository);
+      await screen.findByText("No activity has been recorded yet.");
+      fireEvent.change(screen.getByLabelText("Event type"), { target: { value: eventFilter } });
+      fireEvent.click(screen.getByText("Apply"));
+      await waitFor(() => expect(view.repository.loadActivityLogPageV13C).toHaveBeenCalledTimes(2));
+      expect(view.repository.loadActivityLogPageV13C).toHaveBeenLastCalledWith(resumeId, 25, expect.objectContaining({ eventFilter }), undefined);
+    },
+  );
+
+  it("renders rejected system metadata without a changed-fields or entity presentation", async () => {
+    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "HK", city: "Hong Kong" };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValue([rejected]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    expect(await screen.findByText("Rejected operation")).toBeTruthy();
+    expect(screen.getByText("Idempotency")).toBeTruthy();
+    expect(screen.getByText("idempotency_conflict")).toBeTruthy();
+    expect(screen.getByText("request-qa-1")).toBeTruthy();
+    expect(visibleLocationText()).toBe("Approximate IP location: Hong Kong, HK · 188.253.112.0/24");
+    expect(screen.queryByText("View changed fields")).toBeNull();
+    expect(screen.queryByText("introduction_paragraph")).toBeNull();
+    expect(screen.queryByText("undefined")).toBeNull();
+  });
+
+  it("localizes rejected-event labels and the approximate-location label in Chinese", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "HK", city: "Hong Kong" };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValue([rejected]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    expect(await screen.findByText("操作被拒绝")).toBeTruthy();
+    expect(screen.getByText("失败阶段")).toBeTruthy();
+    expect(screen.getByText("幂等性")).toBeTruthy();
+    expect(screen.getByText("失败代码")).toBeTruthy();
+    expect(screen.getByText("请求 ID")).toBeTruthy();
+    expect(visibleLocationText()).toBe("IP 大致位置：Hong Kong, HK · 188.253.112.0/24");
+  });
+
+  it("continues a mixed-source page using source rank and preserves same-ID rows", async () => {
+    const system = rejectedEvent("collision-id");
+    const activity = v13cActivity({ ...event("collision-id", { text: { before: "before", after: "after" } }), occurredAt: system.occurredAt });
+    const firstPage: ActivityLogV13CEvent[] = [
+      ...Array.from({ length: 24 }, (_, index) => v13cActivity(event(`first-${index}`))),
+      system,
+    ];
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValueOnce(firstPage).mockResolvedValueOnce([activity]) } as unknown as ResumeRepository;
+    const view = renderPage(repository);
+    await screen.findByText("Load more");
+    fireEvent.click(screen.getByText("Load more"));
+    await waitFor(() => expect(view.repository.loadActivityLogPageV13C).toHaveBeenCalledTimes(2));
+    expect(view.repository.loadActivityLogPageV13C).toHaveBeenNthCalledWith(2, resumeId, 25, expect.objectContaining({ eventFilter: "all" }), {
+      occurredAt: system.occurredAt, id: system.id, sourceRank: 2,
+    });
+    await waitFor(() => expect(document.querySelectorAll(".activity-log-event")).toHaveLength(26));
+    expect(document.querySelectorAll(".activity-log-event")[24].textContent).toContain("Rejected operation");
+    expect(document.querySelectorAll(".activity-log-event")[25].querySelector("details")).toBeTruthy();
+  });
+
+  it("uses source-aware row identity for equal IDs from separate sources", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const rejected = rejectedEvent("same-id");
+    const activity = v13cActivity({ ...event("same-id", { text: { before: "before", after: "after" } }), occurredAt: rejected.occurredAt });
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValue([rejected, activity]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    await screen.findByText("Rejected operation");
+    await screen.findByText("View changed fields (1)");
+    expect(document.querySelectorAll(".activity-log-event")).toHaveLength(2);
+    expect(errors.mock.calls.flat().join(" ")).not.toContain("same key");
   });
 
   it("shows actor snapshots and only field-level before/after changes in Chinese", async () => {
@@ -63,7 +150,7 @@ describe("Activity Log page", () => {
     await screen.findByText("Load more");
     fireEvent.click(screen.getByText("Load more"));
     await waitFor(() => expect(repository.loadActivityLogPage).toHaveBeenCalledTimes(2));
-    expect(view.repository.loadActivityLogPageV12).toHaveBeenNthCalledWith(2, resumeId, 25, expect.objectContaining({ section: "", operation: "" }), { occurredAt: firstPage[24].occurredAt, id: firstPage[24].id });
+    expect(view.repository.loadActivityLogPageV13C).toHaveBeenNthCalledWith(2, resumeId, 25, expect.objectContaining({ eventFilter: "all", section: "", operation: "" }), { occurredAt: firstPage[24].occurredAt, id: firstPage[24].id, sourceRank: 1 });
   });
 
   it("offers retry after read failure without displaying the raw error", async () => {
@@ -91,7 +178,7 @@ describe("Activity Log page", () => {
     })]) } as unknown as ResumeRepository;
     renderPage(repository);
     await screen.findByText(/San Francisco, California, US/);
-    expect(visibleLocationText()).toBe("IP location: San Francisco, California, US · 203.0.113.0/24");
+    expect(visibleLocationText()).toBe("Approximate IP location: San Francisco, California, US · 203.0.113.0/24");
     expect(document.querySelector(".activity-log-location")?.getAttribute("title")).toContain("not precise or GPS");
     expect(document.querySelector(".activity-log-location")?.closest("details")).toBeNull();
   });
@@ -103,7 +190,7 @@ describe("Activity Log page", () => {
     })]) } as unknown as ResumeRepository;
     renderPage(repository);
     await screen.findByText(/Hong Kong, HK/);
-    expect(visibleLocationText()).toBe("IP 位置：Hong Kong, HK · 188.253.112.0/24");
+    expect(visibleLocationText()).toBe("IP 大致位置：Hong Kong, HK · 188.253.112.0/24");
   });
 
   it("shows geo-only metadata when there is no IP network", async () => {
@@ -112,7 +199,7 @@ describe("Activity Log page", () => {
     })]) } as unknown as ResumeRepository;
     renderPage(repository);
     await screen.findByText(/San Francisco, California, US/);
-    expect(visibleLocationText()).toBe("IP location: San Francisco, California, US");
+    expect(visibleLocationText()).toBe("Approximate IP location: San Francisco, California, US");
   });
 
   it("shows only the IP network when geographic metadata is absent", async () => {
@@ -121,7 +208,7 @@ describe("Activity Log page", () => {
     })]) } as unknown as ResumeRepository;
     renderPage(repository);
     await screen.findByText("188.253.112.0/24");
-    expect(visibleLocationText()).toBe("IP location: 188.253.112.0/24");
+    expect(visibleLocationText()).toBe("Approximate IP location: 188.253.112.0/24");
   });
 
   it("renders no location row for historical events whose four metadata fields are NULL", async () => {
@@ -146,7 +233,7 @@ describe("Activity Log page", () => {
     const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValueOnce(firstPage).mockResolvedValueOnce(firstPage).mockResolvedValueOnce([event("filtered-next")]) } as unknown as ResumeRepository;
     const view = renderPage(repository);
     await screen.findByText("Load more");
-    const reader = vi.mocked(view.repository.loadActivityLogPageV12!);
+    const reader = vi.mocked(view.repository.loadActivityLogPageV13C!);
     const callsBeforeDraft = reader.mock.calls.length;
     fireEvent.change(screen.getByLabelText("Section"), { target: { value: "files" } });
     fireEvent.change(screen.getByLabelText("Operation"), { target: { value: "upload" } });
@@ -169,7 +256,7 @@ describe("Activity Log page", () => {
     await screen.findByText("No activity matches these filters.");
     fireEvent.click(screen.getByText("Clear"));
     await screen.findByText("No activity has been recorded yet.");
-    expect(view.repository.loadActivityLogPageV12).toHaveBeenLastCalledWith(resumeId, 25, expect.objectContaining({ actorEmail: "", dateFrom: null, dateToExclusive: null }), undefined);
+    expect(view.repository.loadActivityLogPageV13C).toHaveBeenLastCalledWith(resumeId, 25, expect.objectContaining({ eventFilter: "all", actorEmail: "", dateFrom: null, dateToExclusive: null }), undefined);
   });
 
   it("validates dates and converts Beijing calendar dates independently of browser timezone", async () => {
@@ -187,10 +274,10 @@ describe("Activity Log page", () => {
     await screen.findByText("No activity has been recorded yet.");
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-03" } });
     fireEvent.change(screen.getByLabelText("Through"), { target: { value: "2026-10-02" } });
-    const callsBefore = vi.mocked(view.repository.loadActivityLogPageV12!).mock.calls.length;
+    const callsBefore = vi.mocked(view.repository.loadActivityLogPageV13C!).mock.calls.length;
     fireEvent.click(screen.getByText("Apply"));
     expect(screen.getByRole("alert").textContent).toBe("Invalid date range.");
-    expect(view.repository.loadActivityLogPageV12).toHaveBeenCalledTimes(callsBefore);
+    expect(view.repository.loadActivityLogPageV13C).toHaveBeenCalledTimes(callsBefore);
   });
 
   it("renders the event section and operation instead of a hardcoded Introduction heading", async () => {

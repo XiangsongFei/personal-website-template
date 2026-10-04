@@ -34,6 +34,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadActivityLogAuthorizedTargets?(): Promise<ActivityLogAuthorizedTarget[]>;
   loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
+  loadActivityLogPageV13C?(resumeId: string, pageSize: number, filters: ActivityLogV13CFilters, cursor?: ActivityLogV13CCursor): Promise<ActivityLogV13CEvent[]>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -70,6 +71,9 @@ export type ActivityLogFilters = {
   dateToExclusive: string | null;
   search: string;
 };
+export type ActivityLogV13CCursor = { occurredAt: string; id: string; sourceRank: 1 | 2 };
+export type ActivityLogEventFilter = "all" | "successful" | "rejected";
+export type ActivityLogV13CFilters = ActivityLogFilters & { eventFilter: ActivityLogEventFilter };
 export type ActivityLogAuthorizedTarget = { resumeId: string; siteKey: "example-cv" | "example-cv-qa"; role: "owner" | "qa" };
 export type ActivityLogEvent = {
   id: string; occurredAt: string; actorEmail: string | null; actorRole: "owner" | "qa";
@@ -78,6 +82,33 @@ export type ActivityLogEvent = {
   entitySnapshot: Record<string, unknown>; changes: Record<string, { before: unknown; after: unknown }>;
   ipNetwork: string | null; countryCode: string | null; region: string | null; city: string | null;
 };
+type ActivityLogV13CCommon = Pick<ActivityLogEvent,
+  "id" | "occurredAt" | "actorEmail" | "actorRole" | "operation" | "section" |
+  "ipNetwork" | "countryCode" | "region" | "city"
+>;
+export type ActivityLogV13CSuccessEvent = ActivityLogV13CCommon & {
+  eventSource: "activity";
+  sourceRank: 1;
+  entityType: string;
+  entityId: string | null;
+  entitySnapshot: Record<string, unknown>;
+  changes: ActivityLogEvent["changes"];
+};
+export type ActivityLogV13CRejectedEvent = ActivityLogV13CCommon & {
+  eventSource: "system";
+  sourceRank: 2;
+  eventKind: "operation_failure";
+  outcome: "rejected";
+  failureStage: string;
+  failureCode: string;
+  requestId: string;
+  entityType: null;
+  entityId: null;
+  entitySnapshot: null;
+  changes: null;
+  payloadVersion: null;
+};
+export type ActivityLogV13CEvent = ActivityLogV13CSuccessEvent | ActivityLogV13CRejectedEvent;
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
 export interface ResumeSectionRepository {
@@ -169,6 +200,88 @@ function mapActivityLogRows(value: unknown): ActivityLogEvent[] {
       countryCode: typeof row.country_code === "string" ? row.country_code : null,
       region: typeof row.region === "string" ? row.region : null,
       city: typeof row.city === "string" ? row.city : null };
+  });
+}
+
+function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
+  const nullableStrings = ["actor_email_snapshot", "ip_network", "country_code", "region", "city"] as const;
+  return rows(value, "Activity Log event").map(row => {
+    if (typeof row.id !== "string" || typeof row.occurred_at !== "string"
+      || (row.actor_role_snapshot !== "owner" && row.actor_role_snapshot !== "qa")
+      || !["create", "update", "delete", "reorder", "upload", "remove"].includes(String(row.operation))
+      || typeof row.section_key !== "string"
+      || nullableStrings.some(key => row[key] !== null && typeof row[key] !== "string")) {
+      throw new Error("Invalid Activity Log response");
+    }
+
+    const common: ActivityLogV13CCommon = {
+      id: row.id,
+      occurredAt: row.occurred_at,
+      actorEmail: row.actor_email_snapshot as string | null,
+      actorRole: row.actor_role_snapshot,
+      operation: row.operation as ActivityLogEvent["operation"],
+      section: row.section_key,
+      ipNetwork: row.ip_network as string | null,
+      countryCode: row.country_code as string | null,
+      region: row.region as string | null,
+      city: row.city as string | null,
+    };
+
+    if (row.event_source === "activity") {
+      if (row.source_rank !== 1 || row.event_kind !== null || row.outcome !== null
+        || row.failure_stage !== null || row.failure_code !== null || row.request_id !== null
+        || typeof row.entity_type !== "string"
+        || (row.entity_id !== null && typeof row.entity_id !== "string")
+        || !row.entity_snapshot || typeof row.entity_snapshot !== "object" || Array.isArray(row.entity_snapshot)
+        || !row.changes || typeof row.changes !== "object" || Array.isArray(row.changes)
+        || typeof row.payload_version !== "number") {
+        throw new Error("Invalid Activity Log response");
+      }
+      const changes: ActivityLogEvent["changes"] = {};
+      for (const [key, raw] of Object.entries(row.changes as Record<string, unknown>)) {
+        if (!raw || typeof raw !== "object" || !("before" in raw) || !("after" in raw)) {
+          throw new Error("Invalid Activity Log response");
+        }
+        const change = raw as { before: unknown; after: unknown };
+        changes[key] = { before: change.before, after: change.after };
+      }
+      return {
+        ...common,
+        eventSource: "activity",
+        sourceRank: 1,
+        entityType: row.entity_type,
+        entityId: row.entity_id as string | null,
+        entitySnapshot: row.entity_snapshot as Record<string, unknown>,
+        changes,
+      };
+    }
+
+    if (row.event_source === "system") {
+      if (row.source_rank !== 2 || row.event_kind !== "operation_failure" || row.outcome !== "rejected"
+        || typeof row.failure_stage !== "string" || typeof row.failure_code !== "string"
+        || typeof row.request_id !== "string"
+        || row.entity_type !== null || row.entity_id !== null || row.entity_snapshot !== null
+        || row.changes !== null || row.payload_version !== null) {
+        throw new Error("Invalid Activity Log response");
+      }
+      return {
+        ...common,
+        eventSource: "system",
+        sourceRank: 2,
+        eventKind: "operation_failure",
+        outcome: "rejected",
+        failureStage: row.failure_stage,
+        failureCode: row.failure_code,
+        requestId: row.request_id,
+        entityType: null,
+        entityId: null,
+        entitySnapshot: null,
+        changes: null,
+        payloadVersion: null,
+      };
+    }
+
+    throw new Error("Invalid Activity Log response");
   });
 }
 
@@ -408,6 +521,24 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       });
       if (error) throw new Error("Unable to load Activity Log");
       return mapActivityLogRows(data);
+    },
+    async loadActivityLogPageV13C(resumeId, pageSize, filters, cursor) {
+      const { data, error } = await supabase.rpc("read_activity_log_events_v13c", {
+        target_resume_id: resumeId,
+        page_limit: pageSize,
+        before_occurred_at: cursor?.occurredAt ?? null,
+        before_id: cursor?.id ?? null,
+        before_source_rank: cursor?.sourceRank ?? null,
+        event_filter: filters.eventFilter,
+        section_filter: filters.section || null,
+        operation_filter: filters.operation || null,
+        actor_email_filter: filters.actorEmail.trim() || null,
+        date_from: filters.dateFrom,
+        date_to_exclusive: filters.dateToExclusive,
+        search_query: filters.search.trim() || null,
+      });
+      if (error) throw new Error("Unable to load Activity Log");
+      return mapActivityLogV13CRows(data);
     },
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");
