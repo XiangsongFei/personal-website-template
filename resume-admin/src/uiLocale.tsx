@@ -68,6 +68,16 @@ Object.assign(dictionary, {
   "Unknown section": "其他模块", Education: "教育经历", Experience: "工作经历", Awards: "荣誉奖项", Skills: "技能",
   Projects: "项目经历", "Website & Links": "网站与链接", Profile: "个人资料", Files: "文件",
   Create: "创建", Update: "更新", Delete: "删除", Reorder: "调整顺序", Upload: "上传", Remove: "移除",
+  Added: "已添加", Removed: "已移除", "Award": "奖项", "Chinese": "中文", "English": "英文",
+  "Award name": "荣誉名称", Year: "年份", "Retry exact Awards save": "重试同一荣誉奖项保存",
+  "Awards may contain no more than 32 entries.": "荣誉奖项最多包含 32 项。",
+  "Awards content could not be saved. The Awards section title also remains unsaved.": "荣誉奖项内容未能保存，荣誉奖项标题也仍未保存。",
+  "The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry.": "无法安全保存待重试的荣誉奖项请求。请勿更改内容后重试；请保持页面打开并重试。",
+  "The save result is uncertain. Retry the exact pending Awards request.": "保存结果尚未确认。请使用原有请求重试荣誉奖项保存。",
+  "The save result could not be confirmed. Retry the exact pending Awards request.": "无法确认保存结果。请使用原有请求重试荣誉奖项保存。",
+  "The canonical saved Awards do not match the request.": "服务器确认的荣誉奖项与提交内容不一致。",
+  "A pending Awards request could not be verified safely. Do not save a different payload until it is resolved.": "无法安全验证待处理的荣誉奖项请求。解决该请求前，请勿保存其他内容。",
+  "The Awards request ID conflicts with a different request. Keep the pending draft and contact an administrator.": "荣誉奖项请求 ID 与其他请求冲突。请保留待处理草稿并联系管理员。",
 });
 
 const dynamicMessagePrefixes = [

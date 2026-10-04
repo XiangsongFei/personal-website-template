@@ -1,6 +1,6 @@
 -- TEST ONLY: V1.3C unified successful/rejected Activity Log read contract.
 BEGIN;
-SELECT extensions.plan(43);
+SELECT extensions.plan(44);
 
 INSERT INTO cms_private.activity_log_events (
   id, occurred_at, actor_user_id, actor_email_snapshot, actor_role_snapshot,
@@ -15,7 +15,11 @@ INSERT INTO cms_private.activity_log_events (
    '{"position":2,"text":"collision snapshot"}','{"text":{"before":"old","after":"collision activity"}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a03','2026-10-11T09:00:00Z','10000000-0000-4000-8000-000000000002',
    'other@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','create','profile','profile_settings','success-3',
-   '{"avatar_initials":"QA"}','{}',1,NULL,NULL,NULL,NULL);
+   '{"avatar_initials":"QA"}','{}',1,NULL,NULL,NULL,NULL),
+  ('aaaaaaaa-0000-4000-8000-000000000a07','2026-10-11T06:00:00Z','10000000-0000-4000-8000-000000000002',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   '{"awards":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","position":0,"zh":{"name":"奖项","year":"2025"},"en":{"name":"Award","year":"2025"}}]}',
+   '{"awards":{"before":[],"after":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","position":0,"zh":{"name":"奖项","year":"2025"},"en":{"name":"Award","year":"2025"}}]}}',2,NULL,NULL,NULL,NULL);
 
 INSERT INTO cms_private.activity_log_system_events (
   event_id, occurred_at, resume_id, site_key_snapshot, actor_user_id,
@@ -96,11 +100,16 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100)),
-  6, 'all includes three successful and three rejected events but excludes system_change'
+  7, 'all includes four successful and three rejected events but excludes system_change'
+);
+SELECT extensions.is(
+  (SELECT count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,event_filter=>'successful')
+   WHERE payload_version=2 AND section_key='awards' AND entity_type='award_list' AND entity_id IS NULL),
+  1, 'unified V1.3C read returns the additive V2 Awards collection variant'
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,event_filter=>'successful')),
-  3, 'successful filter returns activity rows only'
+  4, 'successful filter returns activity rows only'
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,event_filter=>'rejected')),
@@ -164,7 +173,7 @@ SELECT extensions.is(
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,actor_email_filter=>' QA@EXAMPLE.TEST ')),
-  5, 'actor filter preserves trimmed, case-insensitive exact-match semantics for both sources'
+  6, 'actor filter preserves trimmed, case-insensitive exact-match semantics for both sources'
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,date_from=>'2026-10-11T10:00:00Z',date_to_exclusive=>'2026-10-11T11:00:00Z')),
@@ -204,7 +213,7 @@ SELECT extensions.is(
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,event_filter=>'all',section_filter=>' ',operation_filter=>'   ')),
-  6, 'blank section and operation filters retain V1.2 normalization'
+  7, 'blank section and operation filters retain V1.2 normalization'
 );
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100,event_filter=>'all',operation_filter=>'update',date_from=>'2026-10-11T10:00:00Z',date_to_exclusive=>'2026-10-11T11:00:00Z',search_query=>'trusted_context_rejected')),
@@ -267,7 +276,7 @@ SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000004'
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000004","role":"authenticated"}',true);
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100)),
-  6, 'global owner can read QA only because the existing target helper explicitly authorizes owner scope'
+  7, 'global owner can read QA only because the existing target helper explicitly authorizes owner scope'
 );
 
 RESET ROLE;

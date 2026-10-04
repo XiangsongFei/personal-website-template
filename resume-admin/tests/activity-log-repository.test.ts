@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createResumeRepository, type ActivityLogFilters, type ActivityLogV13CFilters } from "../src/data/resumeRepository";
 
 function repository(rpc: ReturnType<typeof vi.fn>) {
   return createResumeRepository({ rpc, from: vi.fn() } as unknown as SupabaseClient);
 }
+
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Activity Log repository RPC boundary", () => {
   const v13cFilters: ActivityLogV13CFilters = {
@@ -150,5 +152,51 @@ describe("Activity Log repository RPC boundary", () => {
   ])("fails closed for unexpected %s", async (_description, row) => {
     const rpc = vi.fn().mockResolvedValue({ data: [row], error: null });
     await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+
+  it("accepts only the frozen Awards payload-v2 entity combination", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const award = { id, position: 0, zh: { name: "奖项", year: "2025" }, en: { name: "Award", year: "2025" } };
+    const rpc = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: "awards", entity_type: "award_list", entity_id: null,
+      entity_snapshot: { awards: [award] }, changes: { awards: { before: [], after: [award] } }, payload_version: 2 })], error: null });
+    await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).resolves.toMatchObject([{ payloadVersion: 2, entityType: "award_list" }]);
+    const invalid = vi.fn().mockResolvedValue({ data: [activityRow({ entity_type: "award_list", payload_version: 1 })], error: null });
+    await expect(repository(invalid).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+});
+
+describe("Awards repository signed write routing", () => {
+  const resumeId = "ea111111-1111-4111-8111-111111111111";
+  const draft = [{ id: "local-1-1", position: 0, sourceKey: null,
+    translations: { zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } } }];
+  it("loads only target-scoped server write state", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "rpc", awards_trusted_context_required: true }], error: null });
+    await expect(repository(rpc).loadAdminAwardsWriteState!(resumeId)).resolves.toEqual({ resumeId, activityLogEnabled: true, awardsWriteMode: "rpc", awardsTrustedContextRequired: true });
+    expect(rpc).toHaveBeenCalledWith("load_admin_awards_write_state", { target_resume_id: resumeId });
+  });
+
+  it("posts only to the Worker, returns canonical IDs, and retains the exact request for explicit retry after ambiguity", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const response = [{ id, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }];
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let failOnce = true;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      if (failOnce) { failOnce = false; throw new Error("lost response"); }
+      return Response.json(response);
+    }));
+    const repo = createResumeRepository(supabase as unknown as SupabaseClient);
+    await expect(repo.saveAwardsWithWorker!(resumeId, draft)).rejects.toThrow("save result is uncertain");
+    expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(true);
+    const changedDraft = [{ ...draft[0]!, translations: { ...draft[0]!.translations, zh: { name: "changed after ambiguity", year: "2025" } } }];
+    await expect(repo.saveAwardsWithWorker!(resumeId, changedDraft)).resolves.toMatchObject([{ id, position: 0 }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toBe("/api/admin/v1/awards/save");
+    expect(calls[0]!.body.request_id).toBe(calls[1]!.body.request_id);
+    expect(calls[0]!.body.awards).toEqual(calls[1]!.body.awards);
+    expect(calls[0]!.body.awards).toEqual([{ id: null, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }]);
+    expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(false);
+    expect(supabase.from).not.toHaveBeenCalled();
   });
 });

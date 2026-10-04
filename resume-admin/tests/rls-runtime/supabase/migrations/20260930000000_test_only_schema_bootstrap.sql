@@ -140,16 +140,16 @@ CREATE TABLE public.resume_skill_group_translations (
 CREATE TABLE public.resume_award_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), resume_id uuid NOT NULL REFERENCES public.resume_sites(id) ON DELETE CASCADE,
   source_key text NULL, position integer NOT NULL CHECK (position >= 0), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (id,resume_id), UNIQUE (resume_id,position)
+  UNIQUE (id,resume_id), UNIQUE (resume_id,position), UNIQUE (resume_id,source_key)
 );
-CREATE UNIQUE INDEX resume_award_source_key_unique ON public.resume_award_entries(resume_id,source_key) WHERE source_key IS NOT NULL;
 CREATE TABLE public.resume_award_translations (
   award_entry_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   name text NOT NULL, year text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (award_entry_id,resume_id,locale),
+  PRIMARY KEY (award_entry_id,locale),
   FOREIGN KEY (award_entry_id,resume_id) REFERENCES public.resume_award_entries(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );
+CREATE INDEX resume_award_translations_resume_locale_idx ON public.resume_award_translations(resume_id,locale);
 
 CREATE TABLE public.resume_contact_focus_items (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), resume_id uuid NOT NULL REFERENCES public.resume_sites(id) ON DELETE CASCADE,

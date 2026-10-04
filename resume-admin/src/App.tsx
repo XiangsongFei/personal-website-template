@@ -841,7 +841,8 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const draft = editor.draft as EditableSectionItem[];
   const contentDirty = JSON.stringify(draft) !== JSON.stringify(baseline)
     || baseline.some(item => !draft.some(value => value.id === item.id));
-  const dirty = contentDirty || Boolean(sectionText?.dirty);
+  const pendingAwardsRetry = section === "awards" && (repository.hasPendingAwardsWorkerSave?.(resumeId) ?? false);
+  const dirty = contentDirty || Boolean(sectionText?.dirty) || pendingAwardsRetry;
   const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked);
   const hasRecovery = Object.keys(editor.partialCreates).length > 0;
 
@@ -864,6 +865,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       stateUpdate(current => ({ ...current, notice: "Introduction changes could not be saved. Please retry.", error: true })); return;
     }
     saving.current = true;
+    let sectionTextSaveFailed = false;
     let working: ProductionListState = { ...clone(editor), saving: true, notice: "", error: false };
     const commit = (next: ProductionListState) => { working = next; drafts.set(section, clone(next)); setEditor(next); };
     const patchCache = () => onChanged?.(section, resumeId, clone(working.baseline));
@@ -871,6 +873,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     try {
       let introductionFeatureState: AdminFeatureState | null = null;
       let pendingWorkerRetry = false;
+      let awardsWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminAwardsWriteState"]>>> | null = null;
       if (section === "introduction") {
         try { introductionFeatureState = await repository.loadAdminFeatureState!(resumeId); }
         catch { throw new Error("Introduction save routing could not be verified. Refresh the Admin before trying again."); }
@@ -887,7 +890,23 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
           throw new Error("The secure Introduction save service is unavailable. Refresh the Admin before trying again.");
         }
       }
+      if (section === "awards") {
+        if (!repository.loadAdminAwardsWriteState || !repository.saveAwardsWithWorker) {
+          throw new Error("Awards save routing could not be verified. Refresh the Admin before trying again.");
+        }
+        try { awardsWriteState = await repository.loadAdminAwardsWriteState(resumeId); }
+        catch { throw new Error("Awards save routing could not be verified. Refresh the Admin before trying again."); }
+        if (awardsWriteState.resumeId !== resumeId
+          || (awardsWriteState.awardsWriteMode === "direct" && awardsWriteState.awardsTrustedContextRequired)
+          || (pendingAwardsRetry && !(awardsWriteState.awardsWriteMode === "rpc" && awardsWriteState.awardsTrustedContextRequired))) {
+          throw new Error("Awards save routing is unavailable or outdated. Refresh the Admin before trying again.");
+        }
+        if (awardsWriteState.awardsWriteMode === "rpc" && (!awardsWriteState.activityLogEnabled || !awardsWriteState.awardsTrustedContextRequired)) {
+          throw new Error("Secure Awards saving is not fully enabled for this target.");
+        }
+      }
       const sectionTextSaved = sectionText ? await sectionText.save() : true;
+      sectionTextSaveFailed = !sectionTextSaved;
       if (section === "introduction") {
         if (introductionFeatureState?.introductionWriteMode === "rpc") {
           const changedKeys = collectChangedBilingualFieldKeys(section, working.draft, editor.baseline);
@@ -901,6 +920,15 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
           commit(working); patchCache();
           return;
         }
+      }
+      if (section === "awards" && awardsWriteState?.awardsWriteMode === "rpc") {
+        const canonical = await repository.saveAwardsWithWorker!(resumeId, working.draft as AwardItem[]);
+        contextOnSave(collectChangedBilingualFieldKeys(section, working.draft, editor.baseline));
+        working = { ...working, baseline: clone(canonical), draft: clone(canonical), saving: false,
+          notice: sectionTextSaved ? "Award changes saved." : "Section content saved. Some section text remains unsaved; retry to finish.",
+          error: !sectionTextSaved };
+        commit(working); patchCache();
+        return;
       }
       // Explicitly remove child translations first so parent deletion never depends on FK cascade behavior.
       for (const oldItem of [...working.baseline]) {
@@ -1076,7 +1104,10 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       commit(working); patchCache();
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production save failed. Your changes remain unsaved; please retry.";
-      if (!working.error) working = { ...working, notice: detail, error: true };
+      if (!working.error) working = { ...working,
+        notice: section === "awards" && sectionTextSaveFailed
+          ? "Awards content could not be saved. The Awards section title also remains unsaved." : detail,
+        error: true };
       working = { ...working, saving: false };
       commit(working);
     } finally { saving.current = false; }
@@ -1098,15 +1129,15 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   return <section className="page-section editor-workspace-route" aria-busy={editor.saving}>
     <EditorContentScroll>
       {!useActionHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-      {section === "introduction"
-        ? <fieldset disabled={editor.saving} aria-disabled={editor.saving} style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>{repeatableList}</fieldset>
+      {section === "introduction" || (section === "awards" && pendingAwardsRetry)
+        ? <fieldset disabled={editor.saving || pendingAwardsRetry} aria-disabled={editor.saving || pendingAwardsRetry} style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>{repeatableList}</fieldset>
         : repeatableList}
     </EditorContentScroll>
     <EditorActionFooter>
       {editor.notice && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
       <div className="save-bar"><EditorFooterState dirty={dirty} message={editor.notice} error={editor.error} />
         <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
-          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
+          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : section === "awards" && pendingAwardsRetry ? t("Retry exact Awards save") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
       </div>
     </EditorActionFooter>
   </section>;

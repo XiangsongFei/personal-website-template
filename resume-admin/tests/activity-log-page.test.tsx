@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -11,7 +11,7 @@ function event(id: string, changes: ActivityLogEvent["changes"] = {}): ActivityL
     ipNetwork: null, countryCode: null, region: null, city: null };
 }
 function v13cActivity(base: ActivityLogEvent): ActivityLogV13CEvent {
-  return { ...base, eventSource: "activity", sourceRank: 1 };
+  return { ...base, eventSource: "activity", sourceRank: 1, payloadVersion: 1 };
 }
 function rejectedEvent(id = "rejected-event"): ActivityLogV13CRejectedEvent {
   return { id, occurredAt: "2026-10-02T10:00:00Z", actorEmail: "qa@example.test", actorRole: "qa", operation: "update",
@@ -40,6 +40,32 @@ function renderPage(repository: ResumeRepository) {
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Activity Log page", () => {
+  it("derives collection additions/removals/translation edits and relative reorder without UUID labels", () => {
+    const item = (id: string, position: number, zhName: string, enName = "Award") => ({ id, position,
+      zh: { name: zhName, year: "2025" }, en: { name: enName, year: "2025" } });
+    const first = item("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 0, "甲");
+    const second = item("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", 1, "乙");
+    const inserted = item("cccccccc-cccc-4ccc-8ccc-cccccccccccc", 2, "丙");
+    const base = event("award-v2");
+    const v2: ActivityLogV13CEvent = { ...base, section: "awards", entityType: "award_list", entityId: null,
+      entitySnapshot: { awards: [first, second, inserted] }, changes: { awards: { before: [first, second], after: [first, second, inserted] } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeAwardsActivity(v2)).toEqual([{ kind: "Added", label: "丙" }]);
+    expect(describeAwardsActivity({ ...v2, changes: { awards: { before: [first, second], after: [first] } } }))
+      .toEqual([{ kind: "Removed", label: "乙" }]);
+    expect(describeAwardsActivity({ ...v2, changes: { awards: { before: [first], after: [] } } }))
+      .toEqual([{ kind: "Removed", label: "甲" }]);
+    expect(describeAwardsActivity({ ...v2, changes: { awards: { before: [], after: [item("cccccccc-cccc-4ccc-8ccc-cccccccccccc", 0, "丙")] } } }))
+      .toEqual([{ kind: "Added", label: "丙" }]);
+    const editedAndMoved: ActivityLogV13CEvent = { ...v2, changes: { awards: { before: [first, second], after: [
+      { ...second, position: 0, zh: { ...second.zh, year: "2026" } }, { ...first, position: 1 },
+    ] } } };
+    expect(describeAwardsActivity(editedAndMoved)).toEqual([
+      { kind: "Updated", label: "乙", locale: "Chinese", field: "Year", before: "2025", after: "2026" },
+      { kind: "Reordered", label: "Awards" },
+    ]);
+  });
+
   it.each([
     ["create", "Create"], ["update", "Update"], ["delete", "Delete"],
     ["reorder", "Reorder"], ["upload", "Upload"], ["remove", "Remove"],

@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -77,6 +77,11 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
     loadAdminFeatureState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct", introductionTrustedContextRequired: options.introductionTrustedContextRequired ?? false })),
+    loadAdminAwardsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId,
+      activityLogEnabled: options.activityLogEnabled ?? options.awardsWriteMode === "rpc",
+      awardsWriteMode: options.awardsWriteMode ?? "direct", awardsTrustedContextRequired: options.awardsTrustedContextRequired ?? false })),
+    saveAwardsWithWorker: vi.fn(async (_resumeId: string, draft: AwardItem[]) => draft.map((item, index) => ({ ...item,
+      id: item.id.startsWith("local-") ? `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, "0")}` : item.id, position: index }))),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
@@ -254,6 +259,20 @@ describe("Batch 6A production repeatable CRUD", () => {
     const yearReserve = sharedYear.closest(".awards-year-field")?.querySelector<HTMLElement>(".awards-year-locale-reserve");
     expect(yearReserve?.textContent).toBe("");
     expect(yearReserve?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("routes Awards RPC-mode Save only through the trusted Worker and never falls back to direct DML", async () => {
+    const { repository, methods } = makeRepository("awards", { awardsWriteMode: "rpc", awardsTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/awards" }, repository);
+    const name = await screen.findByLabelText("Chinese Award name");
+    fireEvent.change(name, { target: { value: "QA award change" } });
+    save();
+    await waitFor(() => expect(methods.saveAwardsWithWorker).toHaveBeenCalledOnce());
+    expect(methods.loadAdminAwardsWriteState).toHaveBeenCalledWith(resumeId);
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(methods.insertEditableEntry).not.toHaveBeenCalled();
+    expect(methods.deleteEditableEntry).not.toHaveBeenCalled();
+    expect(await screen.findByText("Award changes saved.")).toBeTruthy();
   });
 
   it("moves the single Year field after the Award Name block as its real adaptive state stacks and recovers", async () => {

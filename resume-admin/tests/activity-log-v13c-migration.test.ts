@@ -12,7 +12,7 @@ describe("Activity Log V1.3C unified read migration", () => {
     expect(mirror).toBe(migration);
   });
 
-  it("preserves frozen Activity Log migrations through V1.3B", () => {
+  it("preserves frozen Activity Log migrations through V1.3C", () => {
     const frozen: Record<string, string> = {
       "20261002_activity_log_foundation.sql": "643b04a5ca134d5be41d73af118a72886320965e6f2b59b04754d9bef098471d",
       "20261003_activity_log_phase1_introduction.sql": "824f28533336505b5a60c2ecd6bae5ab2234e0a2ca7b5afadd64db781cc797be",
@@ -23,6 +23,7 @@ describe("Activity Log V1.3C unified read migration", () => {
       "20261008_activity_log_v12_filters.sql": "7825a23eb22f66839e781ec0c39855471fc0174ae6db3f8443321f42a7c67104",
       "20261009_activity_log_v13_system_events.sql": "7d69bf41628fa9dd2a4a5bea20a79a49ba667c226c57bc17048b71edb8a6e79a",
       "20261010_activity_log_v13b_failure_contract.sql": "562afba0812d85f3a22e0c206a498bb02dc8deb9fff558c2ba696d7320d3ede5",
+      "20261011_activity_log_v13c_unified_read.sql": "413a29050b1bfdcd909174f37a485681f8a7dc44db5826bd5cf5a8bfaf05bf34",
     };
     for (const [file, expected] of Object.entries(frozen)) {
       expect(createHash("sha256").update(readFileSync(resolve(`migrations/${file}`))).digest("hex"), file).toBe(expected);
@@ -62,7 +63,8 @@ describe("Activity Log V1.3C unified read migration", () => {
   });
 
   it("contains runtime coverage for cursor ties, filters, isolation, ACLs, and capture-gate independence", () => {
-    expect(runtimeTest).toContain("extensions.plan(43)");
+    expect(runtimeTest).toContain("extensions.plan(44)");
+    expect(runtimeTest).toContain("'unified V1.3C read returns the additive V2 Awards collection variant'");
     expect(runtimeTest).toContain("same timestamp and UUID collision");
     expect(runtimeTest).toContain("second keyset page has no duplicate or skipped row");
     expect(runtimeTest).toContain("partial cursor is rejected");

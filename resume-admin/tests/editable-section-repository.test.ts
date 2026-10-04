@@ -97,4 +97,16 @@ describe("Batch 6A writable repository schema mapping", () => {
     expect((Object.keys(shapes) as EditableRepeatableSection[])).toEqual(["introduction", "experience", "skills", "awards"]);
     expect(db.from).not.toHaveBeenCalled();
   });
+
+  it("retains the existing explicit Awards direct-mode table path for a target whose server mode is direct", async () => {
+    const db = fakeDatabase();
+    const repository = createResumeRepository(db.client);
+    const parent = await repository.insertEditableEntry!("awards", resumeId, 0);
+    await repository.insertEditableTranslation!("awards", resumeId, parent.entryId, "zh", { name: "Direct-mode award", year: "2025" });
+    expect(db.calls.map(call => [call.table, call.operation])).toEqual([
+      ["resume_award_entries", "insert"], ["resume_award_translations", "insert"],
+    ]);
+    expect(db.calls[0].payload).toEqual({ resume_id: resumeId, position: 0, source_key: null });
+    expect(db.calls[1].payload).toEqual({ resume_id: resumeId, award_entry_id: parent.entryId, locale: "zh", name: "Direct-mode award", year: "2025" });
+  });
 });

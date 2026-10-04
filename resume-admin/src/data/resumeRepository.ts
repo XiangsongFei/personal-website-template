@@ -27,6 +27,10 @@ export const resumeTables = [
 export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
   loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
+  loadAdminAwardsWriteState?(resumeId: string): Promise<AdminAwardsWriteState>;
+  saveAwardsWithWorker?(resumeId: string, items: AwardItem[]): Promise<AwardItem[]>;
+  hasPendingAwardsWorkerSave?(resumeId: string): boolean;
+  discardPendingAwardsSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -58,10 +62,12 @@ export type AdminFeatureState = {
   introductionWriteMode: "direct" | "rpc";
   introductionTrustedContextRequired: boolean;
 };
+export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
 
 export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
 }
+export class AwardsWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AwardsWorkerSaveError"; } }
 export type ActivityLogCursor = { occurredAt: string; id: string };
 export type ActivityLogFilters = {
   section: string;
@@ -93,6 +99,7 @@ export type ActivityLogV13CSuccessEvent = ActivityLogV13CCommon & {
   entityId: string | null;
   entitySnapshot: Record<string, unknown>;
   changes: ActivityLogEvent["changes"];
+  payloadVersion: 1 | 2;
 };
 export type ActivityLogV13CRejectedEvent = ActivityLogV13CCommon & {
   eventSource: "system";
@@ -237,6 +244,10 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         || typeof row.payload_version !== "number") {
         throw new Error("Invalid Activity Log response");
       }
+      if (!((row.payload_version === 1 && row.entity_type !== "award_list")
+        || (row.payload_version === 2 && row.section_key === "awards" && row.entity_type === "award_list" && row.entity_id === null && row.operation === "update"))) {
+        throw new Error("Invalid Activity Log response");
+      }
       const changes: ActivityLogEvent["changes"] = {};
       for (const [key, raw] of Object.entries(row.changes as Record<string, unknown>)) {
         if (!raw || typeof raw !== "object" || !("before" in raw) || !("after" in raw)) {
@@ -244,6 +255,30 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         }
         const change = raw as { before: unknown; after: unknown };
         changes[key] = { before: change.before, after: change.after };
+      }
+      if (row.payload_version === 2) {
+        const snapshot = row.entity_snapshot as Record<string, unknown>;
+        const awardChange = changes.awards;
+        const validArray = (raw: unknown): boolean => {
+          if (!Array.isArray(raw) || raw.length > 32) return false;
+          const ids = new Set<string>();
+          return raw.every((entry, position) => {
+            if (!entry || typeof entry !== "object") return false;
+            const award = entry as Record<string, unknown>;
+            const validTranslation = (value: unknown) => Boolean(value && typeof value === "object"
+              && Object.keys(value).sort().join(",") === "name,year"
+              && typeof (value as Record<string, unknown>).name === "string"
+              && typeof (value as Record<string, unknown>).year === "string");
+            if (Object.keys(award).sort().join(",") !== "en,id,position,zh" || typeof award.id !== "string"
+              || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(award.id)
+              || ids.has(award.id) || award.position !== position || !validTranslation(award.zh) || !validTranslation(award.en)) return false;
+            ids.add(award.id); return true;
+          });
+        };
+        if (Object.keys(snapshot).sort().join(",") !== "awards" || Object.keys(changes).join(",") !== "awards"
+          || !awardChange || !Array.isArray(awardChange.before) || !Array.isArray(awardChange.after)
+          || JSON.stringify(snapshot.awards) !== JSON.stringify(awardChange.after)
+          || !validArray(awardChange.before) || !validArray(awardChange.after)) throw new Error("Invalid Activity Log response");
       }
       return {
         ...common,
@@ -253,6 +288,7 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         entityId: row.entity_id as string | null,
         entitySnapshot: row.entity_snapshot as Record<string, unknown>,
         changes,
+        payloadVersion: row.payload_version,
       };
     }
 
@@ -344,6 +380,39 @@ async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string,
 /** Site-scoped reads plus the explicitly allowlisted Profile and Education write paths. */
 export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: string): CompleteResumeRepository {
   let pendingIntroductionRequest: { resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
+  type AwardsRequest = { requestId: string; resumeId: string; fingerprint: string; awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }> };
+  const awardsStorageKey = (resumeId: string) => `admin-awards-rpc-pending-v1:${resumeId}`;
+  const readAwardsPending = (resumeId: string): AwardsRequest | null => {
+    try {
+      const raw = globalThis.sessionStorage?.getItem(awardsStorageKey(resumeId));
+      if (!raw) return null;
+      if (new TextEncoder().encode(raw).byteLength > 8192) throw new Error("oversize");
+      const value = JSON.parse(raw) as AwardsRequest;
+      const validAwards = Array.isArray(value?.awards) && value.awards.length <= 32 && value.awards.every((award, position) => {
+        if (!award || Object.keys(award).sort().join(",") !== "en,id,position,zh" || award.position !== position
+          || !(award.id === null || (typeof award.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(award.id)))) return false;
+        const validTranslation = (translation: unknown) => Boolean(translation && typeof translation === "object"
+          && Object.keys(translation).sort().join(",") === "name,year"
+          && typeof (translation as { name?: unknown }).name === "string" && typeof (translation as { year?: unknown }).year === "string");
+        return validTranslation(award.zh) && validTranslation(award.en);
+      });
+      const serializedAwards = validAwards ? JSON.stringify(value.awards) : "";
+      if (value && value.resumeId === resumeId && typeof value.requestId === "string"
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+        && typeof value.fingerprint === "string" && value.fingerprint === serializedAwards
+        && new TextEncoder().encode(serializedAwards).byteLength <= 4096) return value;
+      throw new Error("invalid");
+    } catch { throw new AwardsWorkerSaveError("A pending Awards request could not be verified safely. Do not save a different payload until it is resolved."); }
+  };
+  const writeAwardsPending = (request: AwardsRequest) => {
+    try {
+      const raw = JSON.stringify(request);
+      if (new TextEncoder().encode(raw).byteLength > 8192) throw new Error("oversize");
+      if (!globalThis.sessionStorage) throw new Error("unavailable");
+      globalThis.sessionStorage.setItem(awardsStorageKey(request.resumeId), raw);
+    } catch { throw new AwardsWorkerSaveError("The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry."); }
+  };
+  const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
   return {
     ...createEditableSectionWrites(supabase),
     ...createBatch6BRepositoryWrites(supabase, supabaseUrl),
@@ -372,6 +441,86 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return { resumeId, activityLogEnabled: value.activity_log_enabled, introductionWriteMode: value.introduction_write_mode,
         introductionTrustedContextRequired: value.introduction_trusted_context_required };
     },
+    async loadAdminAwardsWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_awards_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Awards write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.awards_write_mode !== "direct" && row.awards_write_mode !== "rpc")
+        || typeof row.awards_trusted_context_required !== "boolean"
+        || (row.awards_write_mode === "direct" && row.awards_trusted_context_required)) throw new Error("Invalid Awards write state");
+      return { resumeId, activityLogEnabled: row.activity_log_enabled, awardsWriteMode: row.awards_write_mode,
+        awardsTrustedContextRequired: row.awards_trusted_context_required };
+    },
+    async saveAwardsWithWorker(resumeId, items) {
+      const persistedItems = items.map((item, position) => {
+        if (!item || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id))
+          || typeof item.translations?.zh?.name !== "string" || typeof item.translations?.zh?.year !== "string"
+          || typeof item.translations?.en?.name !== "string" || typeof item.translations?.en?.year !== "string") throw new AwardsWorkerSaveError("Awards content is invalid. Review and retry.");
+        return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+          zh: { name: item.translations.zh.name, year: item.translations.zh.year },
+          en: { name: item.translations.en.name, year: item.translations.en.year } };
+      });
+      if (persistedItems.length > 32) throw new AwardsWorkerSaveError("Awards may contain no more than 32 entries.");
+      const fingerprint = JSON.stringify(persistedItems);
+      if (new TextEncoder().encode(fingerprint).byteLength > 4096) throw new AwardsWorkerSaveError("Awards content exceeds the allowed request size.");
+      let request = readAwardsPending(resumeId);
+      if (!request) {
+        if (!globalThis.crypto?.randomUUID) throw new AwardsWorkerSaveError("Secure Awards saving is unavailable. Refresh the Admin and try again.");
+        request = { requestId: globalThis.crypto.randomUUID(), resumeId, fingerprint, awards: persistedItems };
+        writeAwardsPending(request);
+      }
+      // Any stored request is retried verbatim even if a later reload shows a new server baseline.
+      const pending = request;
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
+        if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now()/1000)
+          throw new AwardsWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
+        let response: Response;
+        try { response = await fetch("/api/admin/v1/awards/save", { method: "POST", credentials: "omit",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, awards: pending.awards }), signal: AbortSignal.timeout(20_000) }); }
+        catch { throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request without changing it."); }
+        if (!response.ok) {
+          if (response.status >= 400 && response.status < 500 && response.status !== 409) clearAwardsPending(resumeId);
+          throw new AwardsWorkerSaveError(response.status === 409
+            ? "The Awards request ID conflicts with a different request. Keep the pending draft and contact an administrator."
+            : response.status >= 500 ? "The save result is uncertain. Retry the exact pending Awards request."
+              : "Awards could not be saved. Your draft remains available for correction and retry.");
+        }
+        let value: unknown;
+        try { value = await response.json(); } catch { throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request."); }
+        if (!Array.isArray(value) || value.length !== pending.awards.length || new TextEncoder().encode(JSON.stringify(value)).byteLength > 8192)
+          throw new AwardsWorkerSaveError("The save result could not be confirmed. Retry the exact pending Awards request.");
+        const seen = new Set<string>();
+        const canonical = value.map((raw, position) => {
+          if (!raw || typeof raw !== "object") throw new AwardsWorkerSaveError("The save result could not be confirmed. Retry the exact pending Awards request.");
+          const row = raw as Record<string, unknown>; const zh = row.zh as Record<string, unknown> | undefined; const en = row.en as Record<string, unknown> | undefined;
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
+            || seen.has(row.id) || row.position !== position || !zh || !en
+            || Object.keys(zh).sort().join(",") !== "name,year" || Object.keys(en).sort().join(",") !== "name,year"
+            || typeof zh.name !== "string" || typeof zh.year !== "string" || typeof en.name !== "string" || typeof en.year !== "string")
+            throw new AwardsWorkerSaveError("The save result could not be confirmed. Retry the exact pending Awards request.");
+          const requested = pending.awards[position];
+          if ((requested.id && requested.id !== row.id) || requested.zh.name !== zh.name || requested.zh.year !== zh.year
+            || requested.en.name !== en.name || requested.en.year !== en.year) throw new AwardsWorkerSaveError("The canonical saved Awards do not match the request.");
+          seen.add(row.id);
+          const old = items.find(item => item.id.toLowerCase() === row.id);
+          return { id: row.id, position, sourceKey: old?.sourceKey ?? null, translations: {
+            zh: { name: zh.name as string, year: zh.year as string }, en: { name: en.name as string, year: en.year as string } } } satisfies AwardItem;
+        });
+        clearAwardsPending(resumeId);
+        return canonical;
+      } catch (error) {
+        if (error instanceof AwardsWorkerSaveError) throw error;
+        throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request.");
+      }
+    },
+    hasPendingAwardsWorkerSave(resumeId) { try { return Boolean(readAwardsPending(resumeId)); } catch { return true; } },
+    discardPendingAwardsSave() { /* An ambiguous request cannot be discarded safely. */ },
     async saveIntroductionAtomically(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
         throw new Error("Invalid Introduction save");

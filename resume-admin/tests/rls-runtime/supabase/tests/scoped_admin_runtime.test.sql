@@ -1,6 +1,14 @@
 -- TEST ONLY. Executed by `supabase test db --local` against the dedicated local project.
 BEGIN;
 SELECT extensions.plan(6);
+-- TEST ONLY: establish the RPC Awards state and a disposable QA record. This
+-- transaction rolls back, and the production migration itself activates none.
+UPDATE cms_private.resume_write_modes SET write_mode='rpc'
+ WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='awards';
+INSERT INTO public.resume_award_entries(id,resume_id,position,source_key)
+ VALUES ('a3000000-0000-4000-8000-000000000001','ea111111-1111-4111-8111-111111111111',50,NULL);
+INSERT INTO public.resume_award_translations(award_entry_id,resume_id,locale,name,year)
+ VALUES ('a3000000-0000-4000-8000-000000000001','ea111111-1111-4111-8111-111111111111','zh','Disposable','2025');
 -- TEST ONLY: mirror the transaction-local flag set by Supabase Storage API
 -- before its object DELETE statements. RLS still runs as each synthetic role.
 SELECT set_config('storage.allow_delete_query','true',true);
@@ -23,13 +31,33 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 DO $$
-DECLARE affected integer;
+DECLARE affected integer; award_position integer;
 BEGIN
   PERFORM public.rls_test_assert(auth.uid()='10000000-0000-4000-8000-000000000001'::uuid, 'auth.uid resolves synthetic owner JWT subject');
   PERFORM public.rls_test_assert(public.is_resume_admin(), 'owner remains an admin');
   PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.get_admin_resume_target() WHERE resume_id='20000000-0000-4000-8000-000000000001' AND site_key='example-cv' AND role='owner'), 'owner target RPC resolves official site');
   PERFORM public.rls_test_assert((SELECT count(*)>0 FROM public.resume_profile WHERE resume_id='20000000-0000-4000-8000-000000000001'), 'owner reads official content');
   PERFORM public.rls_test_assert((SELECT count(*)>0 FROM public.resume_intro_paragraphs WHERE resume_id='ea111111-1111-4111-8111-111111111111'), 'owner reads QA content');
+  PERFORM public.rls_test_assert(public.can_direct_write_awards('20000000-0000-4000-8000-000000000001'), 'Official Awards remain direct-mode writable');
+
+  SELECT COALESCE(max(position),-1)+1000 INTO award_position FROM public.resume_award_entries WHERE resume_id='20000000-0000-4000-8000-000000000001';
+  INSERT INTO public.resume_award_entries(id,resume_id,position,source_key)
+    VALUES ('a4000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',award_position,'rls-direct-awards-proof');
+  INSERT INTO public.resume_award_translations(award_entry_id,resume_id,locale,name,year) VALUES
+    ('a4000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','zh','Direct Awards proof','2025'),
+    ('a4000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','en','Direct Awards proof','2025');
+  PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.resume_award_entries WHERE id='a4000000-0000-4000-8000-000000000001')
+    AND (SELECT count(*)=2 FROM public.resume_award_translations WHERE award_entry_id='a4000000-0000-4000-8000-000000000001'),
+    'authorized direct-mode Awards INSERT and reads succeed for parent and translations');
+  UPDATE public.resume_award_entries SET position=award_position+1 WHERE id='a4000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=1, 'authorized direct-mode Awards parent UPDATE succeeds');
+  UPDATE public.resume_award_translations SET name='Direct Awards proof updated'
+    WHERE award_entry_id='a4000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=2, 'authorized direct-mode Awards translation UPDATE succeeds');
+  DELETE FROM public.resume_award_translations WHERE award_entry_id='a4000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=2, 'authorized direct-mode Awards translation DELETE succeeds');
+  DELETE FROM public.resume_award_entries WHERE id='a4000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=1, 'authorized direct-mode Awards parent DELETE succeeds');
 
   INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VALUES ('a1000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',50,'rls-owner-official');
   UPDATE public.resume_intro_paragraphs SET position=51 WHERE id='a1000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
@@ -63,6 +91,7 @@ BEGIN
   PERFORM public.rls_test_assert(public.is_resume_admin(), 'QA membership passes existing Admin gate');
   PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.get_admin_resume_target() WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND site_key='example-cv-qa' AND role='qa'), 'QA target RPC resolves bound QA site');
   PERFORM public.rls_test_assert((SELECT count(*)>0 FROM public.resume_intro_paragraphs WHERE resume_id='ea111111-1111-4111-8111-111111111111'), 'QA can read QA content');
+  PERFORM public.rls_test_assert(EXISTS (SELECT 1 FROM public.resume_award_entries WHERE id='a3000000-0000-4000-8000-000000000001'), 'QA can still read Awards in RPC mode');
 
   denied := false;
   BEGIN
@@ -70,6 +99,27 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN denied := true;
   END;
   PERFORM public.rls_test_assert(denied, 'QA cannot bypass Introduction RPC mode with direct INSERT');
+  denied := false;
+  BEGIN
+    INSERT INTO public.resume_award_entries(id,resume_id,position,source_key) VALUES ('a2000000-0000-4000-8000-000000000004','ea111111-1111-4111-8111-111111111111',10,NULL);
+  EXCEPTION WHEN insufficient_privilege THEN denied := true;
+  END;
+  PERFORM public.rls_test_assert(denied, 'QA cannot bypass Awards RPC mode with direct INSERT');
+  denied := false;
+  BEGIN
+    INSERT INTO public.resume_award_translations(award_entry_id,resume_id,locale,name,year)
+      VALUES ('a3000000-0000-4000-8000-000000000001','ea111111-1111-4111-8111-111111111111','en','Blocked direct insert','2025');
+  EXCEPTION WHEN insufficient_privilege THEN denied := true;
+  END;
+  PERFORM public.rls_test_assert(denied, 'QA cannot bypass Awards RPC mode with direct translation INSERT');
+  UPDATE public.resume_award_entries SET position=position+1 WHERE id='a3000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA direct Awards parent UPDATE is blocked in RPC mode');
+  UPDATE public.resume_award_translations SET name='Blocked direct update' WHERE award_entry_id='a3000000-0000-4000-8000-000000000001' AND locale='zh'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA direct Awards UPDATE is blocked in RPC mode');
+  DELETE FROM public.resume_award_translations WHERE award_entry_id='a3000000-0000-4000-8000-000000000001' AND locale='zh'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA direct Awards translation DELETE is blocked in RPC mode');
+  DELETE FROM public.resume_award_entries WHERE id='a3000000-0000-4000-8000-000000000001'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'QA direct Awards DELETE is blocked in RPC mode');
   UPDATE public.resume_intro_paragraphs SET position=51 WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND id='ea000000-0000-4000-8000-000000000006'; GET DIAGNOSTICS affected=ROW_COUNT;
   PERFORM public.rls_test_assert(affected=0, 'QA stale direct UPDATE is blocked for Introduction');
   DELETE FROM public.resume_intro_paragraphs WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND id='ea000000-0000-4000-8000-000000000006'; GET DIAGNOSTICS affected=ROW_COUNT;

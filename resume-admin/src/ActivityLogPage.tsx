@@ -59,6 +59,38 @@ function fieldValues(value: unknown, t: (text: string) => string) {
   }).filter(Boolean).join("; ");
 }
 
+type AwardV2 = { id: string; position: number; zh: { name: string; year: string }; en: { name: string; year: string } };
+export type AwardActivityLine = { kind: "Added" | "Updated" | "Removed" | "Reordered"; label: string; locale?: "Chinese" | "English"; field?: "Award name" | "Year"; before?: string; after?: string };
+function awardRows(value: unknown): AwardV2[] | null {
+  if (!Array.isArray(value)) return null;
+  return value as AwardV2[];
+}
+export function describeAwardsActivity(event: ActivityLogV13CEvent): AwardActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.entityType !== "award_list") return [];
+  const raw = event.changes.awards as { before?: unknown; after?: unknown } | undefined;
+  const before = awardRows(raw?.before); const after = awardRows(raw?.after);
+  if (!before || !after) return [];
+  const beforeById = new Map(before.map(item => [item.id, item])); const afterById = new Map(after.map(item => [item.id, item]));
+  const label = (item: AwardV2) => item.zh.name || item.en.name || "Award";
+  const lines: AwardActivityLine[] = [];
+  for (const item of after) if (!beforeById.has(item.id)) lines.push({ kind: "Added", label: label(item) });
+  for (const item of before) if (!afterById.has(item.id)) lines.push({ kind: "Removed", label: label(item) });
+  for (const item of after) {
+    const old = beforeById.get(item.id);
+    if (!old) continue;
+    for (const locale of ["zh", "en"] as const) for (const field of ["name", "year"] as const) {
+      if (old[locale][field] !== item[locale][field]) lines.push({ kind: "Updated",
+        label: label(item), locale: locale === "zh" ? "Chinese" : "English", field: field === "name" ? "Award name" : "Year",
+        before: old[locale][field], after: item[locale][field] });
+    }
+  }
+  const shared = new Set([...beforeById.keys()].filter(id => afterById.has(id)));
+  const priorSequence = before.filter(item => shared.has(item.id)).map(item => item.id);
+  const nextSequence = after.filter(item => shared.has(item.id)).map(item => item.id);
+  if (priorSequence.some((id, index) => id !== nextSequence[index])) lines.push({ kind: "Reordered", label: "Awards" });
+  return lines;
+}
+
 function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
   const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
   const network = event.ipNetwork?.trim() ?? "";
@@ -178,9 +210,11 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
                 <span>{t("Approximate IP location: ")}</span>{approximateIpLocation(event)}<span className="visually-hidden"> {t("Approximate IP-derived location")}</span>
               </p>}
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
-                <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
+                {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                  <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
+                </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
                   <dt>{t(fields[key] ?? key)}</dt><dd><span>{t("Before")}: {fieldValues(change.before, t)}</span><span>{t("After")}: {fieldValues(change.after, t)}</span></dd>
-                </div>)}</dl></details>}
+                </div>)}</dl>}</details>}
             </li>)}</ol>
             {hasMore && <button className="button secondary activity-log-more" type="button" disabled={loadingMore} onClick={() => void load(true)}>{loadingMore ? t("Loading…") : t("Load more")}</button>}
           </>}

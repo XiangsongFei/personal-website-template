@@ -7,6 +7,7 @@ import {
 
 const API_ROOT = "/api/admin/v1";
 const SAVE_PATH = `${API_ROOT}/introduction/save`;
+const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -37,12 +38,14 @@ interface IntroductionItem {
   en: string;
 }
 
+interface AwardsItem { id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }
+
 interface SignedContext {
   context_version: number;
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction";
+  domain: "introduction" | "awards";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -226,6 +229,38 @@ export async function signContext(context: SignedContext, key: Uint8Array): Prom
   const signature = await crypto.subtle.sign("HMAC", cryptoKey, copyToArrayBuffer(UTF8.encode(serialized)));
   const signatureHex = [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return { serialized, signatureHex };
+}
+
+function validateAwards(value: unknown): AwardsItem[] {
+  if (!Array.isArray(value) || value.length > 32) throw apiError(422, "invalid_awards", "Awards must contain no more than 32 entries.");
+  const ids = new Set<string>();
+  return value.map((entry, index) => {
+    if (!isPlainObject(entry) || Object.keys(entry).sort().join(",") !== "en,id,position,zh")
+      throw apiError(422, "invalid_award", "Each Award must contain only id, position, zh, and en.");
+    if (!(entry.id === null || (typeof entry.id === "string" && UUID_PATTERN.test(entry.id))))
+      throw apiError(422, "invalid_award_id", "Award ID must be null or a UUID.");
+    if (entry.id !== null) {
+      const id = String(entry.id).toLowerCase();
+      if (ids.has(id)) throw apiError(422, "duplicate_award_id", "Awards contain a duplicate ID.");
+      ids.add(id);
+    }
+    if (entry.position !== index) throw apiError(422, "invalid_award_position", "Award positions must be contiguous and ordered.");
+    const translation = (raw: unknown): { name: string; year: string } => {
+      if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "name,year"
+        || typeof raw.name !== "string" || typeof raw.year !== "string"
+        || raw.name.includes("\0") || raw.year.includes("\0") || hasUnpairedSurrogate(raw.name) || hasUnpairedSurrogate(raw.year)
+        || Array.from(raw.name).length > 200 || Array.from(raw.year).length > 64)
+        throw apiError(422, "invalid_award_translation", "Award translation is invalid or too long.");
+      return { name: raw.name, year: raw.year };
+    };
+    return { id: entry.id === null ? null : String(entry.id).toLowerCase(), position: index,
+      zh: translation(entry.zh), en: translation(entry.en) };
+  });
+}
+
+export function canonicalizeAwards(items: AwardsItem[]): string {
+  return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
+    zh: { name: item.zh.name, year: item.zh.year }, en: { name: item.en.name, year: item.en.year } })));
 }
 
 function parseIPv4(value: string): number[] | null {
@@ -613,6 +648,55 @@ async function saveIntroduction(request: Request, env: WorkerEnv): Promise<Respo
   return Response.json(upstreamBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 16 * 1024);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "awards,request_id,resume_id")
+    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and awards.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
+    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  const awards = validateAwards(parsed.awards);
+  const canonical = canonicalizeAwards(awards);
+  if (UTF8.encode(canonical).byteLength > 4096) throw apiError(413, "canonical_payload_too_large", "Awards exceed the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(), domain: "awards", operation: "update",
+    request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_awards_v1`, {
+      method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
+        "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_awards: canonical,
+        signed_context: signed.serialized, signature_hex: signed.signatureHex }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const responseBody = await readJsonResponse(upstream, 8192);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody))
+      throw apiError(409, "idempotency_conflict", "The Awards retry conflicts with a different request. Refresh before trying again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save Awards (HTTP ${upstream.status}).`);
+  }
+  if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 8192)
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Awards result.");
+  return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
 function isApiPath(pathname: string): boolean {
   return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
 }
@@ -620,7 +704,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -630,7 +714,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     });
   }
   try {
-    return await saveIntroduction(request, env);
+    return await (url.pathname === SAVE_PATH ? saveIntroduction(request, env) : saveAwards(request, env));
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);
     return errorResponse(apiError(502, "request_failed", "The Introduction request could not be completed."));

@@ -3,7 +3,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { createHmac, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
+import { canonicalizeAwards, handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
 import { deriveActivityLogV13FailureEventId } from "../src/worker/activityLogV13";
 
 const enabled = process.env.V11_LOCAL_INTEGRATION === "1";
@@ -24,7 +24,10 @@ const expectedLocalApiOrigin = "http://127.0.0.1:55421";
 const workerUpstreamOrigin = "https://local.supabase.invalid";
 const localUuid = randomUUID;
 let mutateNextRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
+let mutateNextAwardsRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
 let dropNextV13RecorderResponseAfterCommit = false;
+let dropNextAwardsRpcResponseAfterCommit = false;
+let lastAwardsRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 const v13RecorderBodies: string[] = [];
 
 if (enabled) {
@@ -39,6 +42,23 @@ if (enabled) {
       const mutate = mutateNextRpcPayload;
       mutateNextRpcPayload = undefined;
       forwardedInit = { ...init, body: JSON.stringify(mutate(JSON.parse(init.body) as Record<string, unknown>)) };
+    }
+    if (url.pathname === "/rest/v1/rpc/save_resume_awards_v1" && typeof init?.body === "string") {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      const forwarded = mutateNextAwardsRpcPayload ? { ...init, body: JSON.stringify(mutateNextAwardsRpcPayload(body)) } : init;
+      mutateNextAwardsRpcPayload = undefined;
+      lastAwardsRpcFailure = null;
+      const response = await originalFetch(url, forwarded);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown; message?: unknown } | null;
+        lastAwardsRpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null,
+          message: typeof failure?.message === "string" ? failure.message : null };
+      }
+      if (dropNextAwardsRpcResponseAfterCommit && response.ok) {
+        dropNextAwardsRpcResponseAfterCommit = false;
+        return Response.json({ code: "synthetic_response_lost_after_commit" }, { status: 503 });
+      }
+      return response;
     }
     if (url.pathname === "/rest/v1/rpc/record_activity_log_system_failure" && typeof init?.body === "string") {
       v13RecorderBodies.push(init.body);
@@ -108,8 +128,49 @@ async function readEvents(target = targetId, bearer = userJwt!): Promise<Array<R
   }, bearer) as Array<Record<string, unknown>>;
 }
 
+type LocalAward = { id: string; position: number; zh: { name: string; year: string }; en: { name: string; year: string } };
+async function readAwards(target = targetId, bearer = userJwt!): Promise<LocalAward[]> {
+  const parents = await rest(`/rest/v1/resume_award_entries?select=id,position&resume_id=eq.${target}&order=position.asc`, {}, bearer) as Array<{ id: string; position: number }>;
+  const translations = await rest(`/rest/v1/resume_award_translations?select=award_entry_id,locale,name,year&resume_id=eq.${target}`, {}, bearer) as Array<{ award_entry_id: string; locale: string; name: string; year: string }>;
+  return parents.map(parent => {
+    const zh = translations.find(row => row.award_entry_id === parent.id && row.locale === "zh");
+    const en = translations.find(row => row.award_entry_id === parent.id && row.locale === "en");
+    return { id: parent.id, position: parent.position,
+      zh: { name: zh?.name ?? "", year: zh?.year ?? "" }, en: { name: en?.name ?? "", year: en?.year ?? "" } };
+  });
+}
+async function readUnifiedEvents(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
+  return await rest("/rest/v1/rpc/read_activity_log_events_v13c", { method: "POST", body: JSON.stringify({ target_resume_id: target, page_limit: 100, event_filter: "successful" }) }, bearer) as Array<Record<string, unknown>>;
+}
+
 function localSql(sql: string): string {
   return execFileSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0];
+}
+
+function nearLimitAwards(): Array<{ id: null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }> {
+  const items: Array<{ id: null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }> = [];
+  const full = (position: number, zhNameLength = 200) => ({ id: null as null, position,
+    zh: { name: "x".repeat(zhNameLength), year: "2".repeat(64) },
+    en: { name: "A".repeat(200), year: "2".repeat(64) } });
+  const encoder = new TextEncoder();
+  for (let position = 0; position < 32; position += 1) {
+    const complete = [...items, full(position)];
+    if (encoder.encode(canonicalizeAwards(complete)).byteLength <= 4096) {
+      items.push(full(position));
+      continue;
+    }
+    let low = 0; let high = 200; let best: ReturnType<typeof full> | undefined;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = full(position, middle);
+      if (encoder.encode(canonicalizeAwards([...items, candidate])).byteLength <= 4096) {
+        best = candidate; low = middle + 1;
+      } else high = middle - 1;
+    }
+    if (best) items.push(best);
+    break;
+  }
+  return items;
 }
 
 function makeRequest(items: Array<{ id: string | null; zh: string; en: string }>, requestId: string = localUuid(), token = userJwt!, target = targetId, clientIp = "203.0.113.89"): Request {
@@ -126,6 +187,13 @@ function makeRequest(items: Array<{ id: string | null; zh: string; en: string }>
   Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
   return request;
 }
+function makeAwardsRequest(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId: string = localUuid(), token = userJwt!, target = targetId): Request {
+  const request = new Request("https://admin.local.test/api/admin/v1/awards/save", { method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89" },
+    body: JSON.stringify({ request_id: requestId, resume_id: target, awards }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  return request;
+}
 
 async function invoke(items: Array<{ id: string | null; zh: string; en: string }>, requestId?: string, token?: string, target = targetId, clientIp?: string, signingKeyId?: string, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>, enableV13B = false): Promise<{ response: Response; body: unknown }> {
   mutateNextRpcPayload = mutateRpcPayload;
@@ -136,13 +204,20 @@ async function invoke(items: Array<{ id: string | null; zh: string; en: string }
     mutateNextRpcPayload = undefined;
   }
 }
+async function invokeAwards(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId?: string, token?: string, target = targetId, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
+  mutateNextAwardsRpcPayload = mutateRpcPayload;
+  try {
+    const response = await handleWorkerRequest(makeAwardsRequest(awards, requestId, token, target), workerEnv());
+    return { response, body: await response.json() };
+  } finally { mutateNextAwardsRpcPayload = undefined; }
+}
 
 function rpcRows(body: unknown): Array<{ id: string; position: number; translations: { zh: { text: string }; en: { text: string } } }> {
   if (!Array.isArray(body)) throw new Error("Worker returned a non-array canonical Introduction result");
   return body as ReturnType<typeof rpcRows>;
 }
 
-async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: () => Promise<T>): Promise<T> {
+async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: () => Promise<T>, rpcName = "save_resume_introduction_v11"): Promise<T> {
   if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer) throw new Error("Concurrency test refused an unexpected database container");
   const blocker = spawn("docker", ["exec", "-i", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1"]);
   let output = "";
@@ -173,7 +248,7 @@ async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: (
     const waitDeadline = Date.now() + 8000;
     while (Date.now() < waitDeadline) {
       const count = execFileSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-c",
-        "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%save_resume_introduction_v11%'"], { encoding: "utf8" }).trim();
+        `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%${rpcName}%'`], { encoding: "utf8" }).trim();
       blockedSessions = Number(count);
       if (blockedSessions >= 2) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -538,5 +613,196 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(ownerQaSave.response.status).toBe(200);
     expect(ownerOfficialSave.response.status).toBe(200);
     expect((await readEvents(targetId, ownerJwt!)).some((row) => row.actor_user_id === ownerId)).toBe(true);
+  });
+
+  it("integrates Awards Worker saves with local PostgREST/RPC, replay, conflict, no-op, rollback, and RLS", async () => {
+    assertLocalConfiguration();
+    const officialBefore = await readAwards(officialId, ownerJwt!);
+    const initialState = await rest("/rest/v1/rpc/load_admin_awards_write_state", {
+      method: "POST", body: JSON.stringify({ target_resume_id: targetId }),
+    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean }>;
+    expect(initialState).toEqual([{ resume_id: targetId, awards_write_mode: "direct", activity_log_enabled: true, awards_trusted_context_required: false }]);
+
+    // This opt-in harness mutates only its isolated local QA fixture. Its launcher
+    // resets the local Supabase database after the integration process exits.
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='awards';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'awards','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
+    const rpcState = await rest("/rest/v1/rpc/load_admin_awards_write_state", {
+      method: "POST", body: JSON.stringify({ target_resume_id: targetId }),
+    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean }>;
+    expect(rpcState).toEqual([{ resume_id: targetId, awards_write_mode: "rpc", activity_log_enabled: true, awards_trusted_context_required: true }]);
+
+    const baseline = await readAwards();
+    expect(baseline).toHaveLength(2);
+    const eventsBefore = await readUnifiedEvents();
+    const directWrite = await originalFetch(`${apiBase}/rest/v1/resume_award_entries`, {
+      method: "POST", headers: { apikey: publishableKey!, Authorization: `Bearer ${userJwt}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ resume_id: targetId, position: 20, source_key: null }),
+    });
+    expect(directWrite.ok).toBe(false);
+
+    const requestId = localUuid();
+    const mixedSave = [
+      { ...baseline[1], position: 0 },
+      { ...baseline[0], position: 1, zh: { ...baseline[0].zh, name: `${baseline[0].zh.name} translation edit` } },
+      { id: null, position: 2, zh: { name: "Synthetic local creation", year: "2099" }, en: { name: "Synthetic local creation", year: "2099" } },
+    ];
+    dropNextAwardsRpcResponseAfterCommit = true;
+    const lostResponse = await invokeAwards(mixedSave, requestId);
+    expect(lostResponse.response.status, JSON.stringify({ rpc: lastAwardsRpcFailure, worker: lostResponse.body })).toBe(502);
+    const committedOnce = await readAwards();
+    expect(committedOnce).toHaveLength(3);
+    expect(committedOnce.map(({ position }) => position)).toEqual([0, 1, 2]);
+    expect(committedOnce[0].id).toBe(baseline[1].id);
+    expect(committedOnce[1].zh.name).toBe(`${baseline[0].zh.name} translation edit`);
+    expect(committedOnce[2].id).toMatch(/^[0-9a-f-]{36}$/);
+    const eventAfterFirst = await readUnifiedEvents();
+    expect(eventAfterFirst).toHaveLength(eventsBefore.length + 1);
+    expect(eventAfterFirst[0]).toMatchObject({ event_source: "activity", section_key: "awards", entity_type: "award_list", entity_id: null, payload_version: 2 });
+    expect(eventAfterFirst[0].changes).toMatchObject({ awards: { before: baseline, after: committedOnce } });
+
+    const replay = await invokeAwards(mixedSave, requestId);
+    expect(replay.response.status).toBe(200);
+    expect(replay.body).toMatchObject(committedOnce);
+    expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 1);
+    const conflicting = mixedSave.map((item, index) => index === 0 ? { ...item, en: { ...item.en, name: "different payload" } } : item);
+    const conflict = await invokeAwards(conflicting, requestId);
+    expect(conflict.response.status).toBe(409);
+    expect(await readAwards()).toEqual(committedOnce);
+    expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 1);
+
+    const tampered = await invokeAwards(mixedSave, localUuid(), undefined, targetId, payload => ({
+      ...payload, canonical_awards: `${String(payload.canonical_awards)} `,
+    }));
+    expect(tampered.response.ok).toBe(false);
+    expect(await readAwards()).toEqual(committedOnce);
+    expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 1);
+
+    const noOp = await invokeAwards(committedOnce.map(({ id, position, zh, en }) => ({ id, position, zh, en })));
+    expect(noOp.response.status).toBe(200);
+    expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 1);
+
+    const deleteAndReorder = [
+      { ...committedOnce[2], position: 0 },
+      { ...committedOnce[0], position: 1 },
+    ];
+    const secondChangedSave = await invokeAwards(deleteAndReorder);
+    expect(secondChangedSave.response.status).toBe(200);
+    const committedTwice = await readAwards();
+    expect(committedTwice.map(row => row.id)).toEqual([committedOnce[2].id, committedOnce[0].id]);
+    expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 2);
+
+    const concurrentRequestId = localUuid();
+    const concurrentPayload = committedTwice.map((item, position) => ({ ...item, position,
+      en: { ...item.en, year: `${item.en.year} concurrent` } }));
+    const beforeConcurrentEvents = await readUnifiedEvents();
+    const concurrentResults = await runWithTwoDatabaseSessionsBlocked(targetId, () => Promise.all([
+      invokeAwards(concurrentPayload, concurrentRequestId), invokeAwards(concurrentPayload, concurrentRequestId),
+    ]), "save_resume_awards_v1");
+    expect(concurrentResults.map(result => result.response.status)).toEqual([200, 200]);
+    expect(concurrentResults[0].body).toEqual(concurrentResults[1].body);
+    expect(await readUnifiedEvents()).toHaveLength(beforeConcurrentEvents.length + 1);
+    const committedConcurrent = await readAwards();
+
+    localSql(`CREATE FUNCTION public.test_only_fail_awards_audit_insert() RETURNS trigger LANGUAGE plpgsql SET search_path='' AS $$
+      BEGIN IF NEW.payload_version=2 THEN RAISE EXCEPTION 'TEST ONLY Awards audit rollback'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER test_only_fail_awards_audit_insert BEFORE INSERT ON cms_private.activity_log_events
+      FOR EACH ROW EXECUTE FUNCTION public.test_only_fail_awards_audit_insert()`);
+    try {
+      const shouldRollback = committedConcurrent.map((item, position) => ({ ...item, position,
+        en: { ...item.en, year: `${item.en.year} rollback` } }));
+      const rollback = await invokeAwards(shouldRollback);
+      expect(rollback.response.ok).toBe(false);
+      expect(await readAwards()).toEqual(committedConcurrent);
+      expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 3);
+    } finally {
+      localSql("DROP TRIGGER IF EXISTS test_only_fail_awards_audit_insert ON cms_private.activity_log_events; DROP FUNCTION IF EXISTS public.test_only_fail_awards_audit_insert()");
+    }
+
+    const crossTarget = await invokeAwards(committedTwice.map(({ id, position, zh, en }) => ({ id, position, zh, en })), localUuid(), userJwt!, officialId);
+    expect(crossTarget.response.ok).toBe(false);
+    expect(await readAwards(officialId, ownerJwt!)).toEqual(officialBefore);
+  });
+
+  const contextMutation = (change: (context: Record<string, unknown>) => void) => (payload: Record<string, unknown>) => {
+    const context = JSON.parse(String(payload.signed_context)) as Record<string, unknown>;
+    change(context);
+    return { ...payload, signed_context: JSON.stringify(context) };
+  };
+  const awardsAdversarialCases: Array<{ name: string; mutate: (payload: Record<string, unknown>) => Record<string, unknown> }> = [
+    { name: "actor/authenticated-user binding", mutate: contextMutation(context => { context.actor_user_id = ownerId; }) },
+    { name: "target resume binding", mutate: contextMutation(context => { context.resume_id = officialId; }) },
+    { name: "domain binding", mutate: contextMutation(context => { context.domain = "introduction"; }) },
+    { name: "operation binding", mutate: contextMutation(context => { context.operation = "delete"; }) },
+    { name: "request_id binding", mutate: contextMutation(context => { context.request_id = "20000000-0000-4000-8000-000000000099"; }) },
+    { name: "mutation digest binding", mutate: contextMutation(context => { context.mutation_digest = "f".repeat(64); }) },
+    { name: "canonical payload digest binding", mutate: payload => ({ ...payload, canonical_awards: `${String(payload.canonical_awards)} ` }) },
+    { name: "issued timestamp future bound", mutate: contextMutation(context => {
+      const issued = Math.floor(Date.now() / 1000) + 120; context.issued_at = issued; context.expires_at = issued + 180;
+    }) },
+    { name: "expired context", mutate: contextMutation(context => {
+      const issued = Math.floor(Date.now() / 1000) - 600; context.issued_at = issued; context.expires_at = issued + 300;
+    }) },
+    { name: "expiry maximum lifetime", mutate: contextMutation(context => {
+      const issued = Math.floor(Date.now() / 1000) - 10; context.issued_at = issued; context.expires_at = issued + 301;
+    }) },
+    { name: "signature_hex integrity", mutate: payload => {
+      const signature = String(payload.signature_hex);
+      return { ...payload, signature_hex: `${signature.startsWith("0") ? "1" : "0"}${signature.slice(1)}` };
+    } },
+    { name: "key ID allowlist", mutate: contextMutation(context => { context.key_id = "activity_log_v11_wrong_key"; }) },
+    { name: "required signed network-context fields", mutate: contextMutation(context => { delete context.city; }) },
+  ];
+
+  it.each(awardsAdversarialCases)("rejects independently tampered Awards $name before content or audit writes", async ({ mutate }) => {
+    assertLocalConfiguration();
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='awards';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'awards','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
+    const beforeAwards = await readAwards();
+    const beforeEvents = await readUnifiedEvents();
+    const beforeEventCount = localSql(`SELECT count(*) FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND section_key='awards' AND payload_version=2`);
+    const beforeSystemCount = localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`);
+    const recorderCount = v13RecorderBodies.length;
+    const requestId = localUuid();
+    const changedPayload = beforeAwards.map(({ id, position, zh, en }, index) => ({ id, position,
+      zh: { ...zh, name: index === 0 ? `${zh.name} rejected probe` : zh.name }, en }));
+
+    const result = await invokeAwards(changedPayload, requestId, userJwt!, targetId, mutate);
+    expect(result.response.ok).toBe(false);
+    expect(lastAwardsRpcFailure).toMatchObject({ status: 400, code: "22023" });
+    expect(await readAwards()).toEqual(beforeAwards);
+    expect(await readUnifiedEvents()).toEqual(beforeEvents);
+    expect(localSql(`SELECT count(*) FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND section_key='awards' AND payload_version=2`)).toBe(beforeEventCount);
+    expect(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`)).toBe(beforeSystemCount);
+    expect(localSql(`SELECT count(*) FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid AND resume_id='${targetId}'::uuid AND domain_key='awards' AND request_id='${requestId}'::uuid`)).toBe("0");
+    expect(v13RecorderBodies).toHaveLength(recorderCount);
+  });
+
+  it("accepts a valid request at the 4096-byte canonical boundary and stores a result within 8192 bytes", async () => {
+    assertLocalConfiguration();
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='awards';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'awards','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
+    const payload = nearLimitAwards();
+    const canonicalBytes = new TextEncoder().encode(canonicalizeAwards(payload)).byteLength;
+    expect(canonicalBytes).toBe(4096);
+    expect(payload.length).toBeGreaterThan(0);
+    expect(payload.length).toBeLessThanOrEqual(32);
+    const beforeEvents = await readUnifiedEvents();
+    const requestId = localUuid();
+    const result = await invokeAwards(payload, requestId);
+    expect(result.response.status).toBe(200);
+    expect(Array.isArray(result.body)).toBe(true);
+    const stored = localSql(`SELECT octet_length(result_payload::text) || ':' || (completed_at IS NOT NULL)::text
+      FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid AND resume_id='${targetId}'::uuid AND domain_key='awards' AND request_id='${requestId}'::uuid`);
+    const [resultBytes, completed] = stored.split(":");
+    expect(Number(resultBytes)).toBeLessThanOrEqual(8192);
+    expect(completed).toBe("true");
+    expect(await readUnifiedEvents()).toHaveLength(beforeEvents.length + 1);
   });
 });
