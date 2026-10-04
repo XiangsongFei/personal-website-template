@@ -1,0 +1,16 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "example-cv-admin-qa",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-18",
+  "workers_dev": true,
+  "vars": {
+    "ACTIVITY_LOG_V13B_FAILURE_REPORTING": "false"
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/admin/v1", "/api/admin/v1/*"]
+  }
+}
