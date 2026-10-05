@@ -5,6 +5,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { canonicalizeAwards, handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
 import { deriveActivityLogV13FailureEventId } from "../src/worker/activityLogV13";
+import type { ProfileAggregate } from "../src/data/profileAggregate";
 
 const enabled = process.env.V11_LOCAL_INTEGRATION === "1";
 const apiBase = process.env.V11_LOCAL_API_URL;
@@ -28,7 +29,9 @@ let mutateNextAwardsRpcPayload: ((payload: Record<string, unknown>) => Record<st
 let dropNextV13RecorderResponseAfterCommit = false;
 let dropNextAwardsRpcResponseAfterCommit = false;
 let lastAwardsRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
+let lastProfileRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 const v13RecorderBodies: string[] = [];
+let profileRpcCalls = 0;
 
 if (enabled) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -57,6 +60,17 @@ if (enabled) {
       if (dropNextAwardsRpcResponseAfterCommit && response.ok) {
         dropNextAwardsRpcResponseAfterCommit = false;
         return Response.json({ code: "synthetic_response_lost_after_commit" }, { status: 503 });
+      }
+      return response;
+    }
+    if (url.pathname === "/rest/v1/rpc/save_resume_profile_v1") {
+      profileRpcCalls += 1;
+      lastProfileRpcFailure = null;
+      const response = await originalFetch(url, forwardedInit);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown; message?: unknown } | null;
+        lastProfileRpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null,
+          message: typeof failure?.message === "string" ? failure.message : null };
       }
       return response;
     }
@@ -195,6 +209,31 @@ async function readContact(target = targetId, bearer = userJwt!): Promise<LocalC
     return { id: parent.id, position, status_type: parent.status_type, zh: text("zh"), en: text("en") };
   });
   return { translations: { zh: locale("zh"), en: locale("en") }, focus, status };
+}
+
+async function readProfile(target = targetId, bearer = userJwt!): Promise<ProfileAggregate> {
+  const sharedRows = await rest(`/rest/v1/resume_profile?select=graduation_value,avatar_initials,footer_name,copyright,photo_url&resume_id=eq.${target}`, {}, bearer) as Array<ProfileAggregate["shared"]>;
+  const translations = await rest(`/rest/v1/resume_profile_translations?select=locale,name,nav_about_label,email_action_label,graduation_label,avatar_label,contact_focus_heading,contact_status_heading&resume_id=eq.${target}`, {}, bearer) as Array<Record<string, string>>;
+  const shared = sharedRows[0];
+  const locale = (key: "zh" | "en") => {
+    const row = translations.find(value => value.locale === key);
+    if (!row) throw new Error("Local Profile fixture lacks a required locale");
+    return { name: row.name!, nav_about_label: row.nav_about_label!, email_action_label: row.email_action_label!,
+      graduation_label: row.graduation_label!, avatar_label: row.avatar_label!, contact_focus_heading: row.contact_focus_heading!, contact_status_heading: row.contact_status_heading! };
+  };
+  if (!shared || translations.length !== 2) throw new Error("Local Profile fixture is incomplete");
+  return { shared, translations: { zh: locale("zh"), en: locale("en") } };
+}
+async function readProfileWriteState(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
+  return await rest("/rest/v1/rpc/load_admin_profile_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+}
+async function invokeProfile(profile: ProfileAggregate, requestId = localUuid(), baselinePhotoUrl = profile.shared.photo_url, target = targetId): Promise<{ response: Response; body: unknown }> {
+  const request = new Request("https://admin.local.test/api/admin/v1/profile/save", { method: "POST", headers: {
+    Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89",
+  }, body: JSON.stringify({ request_id: requestId, resume_id: target, baseline_photo_url: baselinePhotoUrl, profile }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  const response = await handleWorkerRequest(request, workerEnv());
+  return { response, body: await response.json() };
 }
 async function readContactWriteState(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
   return await rest("/rest/v1/rpc/load_admin_contact_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
@@ -994,6 +1033,86 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     } finally {
       localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key='contact';
         DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='contact' AND requirement_key='trusted_network_context_v11'`);
+    }
+  });
+
+  it("integrates Profile read, no-op, one changed aggregate, replay/conflict, direct-DML denial, and photo-origin fail-closed through Worker → PostgREST → RPC", async () => {
+    assertLocalConfiguration();
+    const baseline = await readProfile();
+    const initialEvents = await readUnifiedEvents();
+    const direct = await readProfileWriteState();
+    expect(direct).toHaveLength(1);
+    expect(direct[0]).toMatchObject({ resume_id: targetId, profile_write_mode: "direct", profile_trusted_context_required: false, activity_log_enabled: true });
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='profile';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'profile','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true;
+      INSERT INTO cms_private.profile_photo_origin_config(singleton,origin) VALUES (true,'https://local.supabase.invalid')`);
+    try {
+      expect(await readProfileWriteState()).toMatchObject([{ resume_id: targetId, profile_write_mode: "rpc", profile_trusted_context_required: true, activity_log_enabled: true }]);
+      const noOp = await invokeProfile(baseline);
+      expect(noOp.response.status, JSON.stringify(noOp.body)).toBe(200);
+      expect(noOp.body).toEqual(baseline);
+      expect(await readProfile()).toEqual(baseline);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length);
+
+      const directUpdate = await originalFetch(`${apiBase}/rest/v1/resume_profile?resume_id=eq.${targetId}`, {
+        method: "PATCH", headers: { apikey: publishableKey!, Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ footer_name: "forbidden direct Profile edit" }),
+      });
+      expect(directUpdate.ok).toBe(true);
+      expect(await directUpdate.json()).toEqual([]);
+      expect(await readProfile()).toEqual(baseline);
+
+      const changed = structuredClone(baseline);
+      changed.shared.graduation_value = `${changed.shared.graduation_value} integration`;
+      changed.translations.zh.name += " 测试";
+      changed.translations.en.name += " integration";
+      const requestId = localUuid();
+      const callsBefore = profileRpcCalls;
+      const saved = await invokeProfile(changed, requestId);
+      expect(saved.response.status, JSON.stringify(saved.body)).toBe(200);
+      expect(saved.body).toEqual(changed);
+      expect(profileRpcCalls).toBe(callsBefore + 1);
+      const committed = await readProfile();
+      expect(committed).toEqual(changed);
+      const afterSave = await readUnifiedEvents();
+      expect(afterSave).toHaveLength(initialEvents.length + 1);
+      expect(afterSave[0]).toMatchObject({ resume_id: targetId, section_key: "profile", entity_type: "profile_settings", entity_id: null, operation: "update", payload_version: 2 });
+      expect((afterSave[0]!.changes as Record<string, { before: unknown; after: unknown }>).profile).toEqual({ before: baseline, after: committed });
+
+      const replay = await invokeProfile(changed, requestId);
+      expect(replay.response.status).toBe(200);
+      expect(replay.body).toEqual(saved.body);
+      expect(await readProfile()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 1);
+      const conflict = structuredClone(changed);
+      conflict.translations.en.name += " conflict";
+      const conflictingSave = await invokeProfile(conflict, requestId);
+      expect(conflictingSave.response.status).toBe(409);
+      expect(conflictingSave.body).toMatchObject({ error: { code: "idempotency_conflict" } });
+      expect(await readProfile()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 1);
+
+      localSql("DELETE FROM cms_private.profile_photo_origin_config WHERE singleton");
+      const validPhoto = `https://local.supabase.invalid/storage/v1/object/public/profile-images/${targetId}/profile/${localUuid()}.webp`;
+      const missingOrigin = structuredClone(committed);
+      missingOrigin.shared.photo_url = validPhoto;
+      const photoRequestId = localUuid();
+      const rejectedPhoto = await invokeProfile(missingOrigin, photoRequestId, committed.shared.photo_url);
+      expect(rejectedPhoto.response.status).toBe(422);
+      expect(lastProfileRpcFailure?.code).toBe("22023");
+      expect(await readProfile()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 1);
+      localSql("INSERT INTO cms_private.profile_photo_origin_config(singleton,origin) VALUES (true,'https://local.supabase.invalid')");
+      const acceptedPhoto = await invokeProfile(missingOrigin, photoRequestId, committed.shared.photo_url);
+      expect(acceptedPhoto.response.status, JSON.stringify({ worker: acceptedPhoto.body, upstream: lastProfileRpcFailure })).toBe(200);
+      expect(await readProfile()).toEqual(missingOrigin);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 2);
+    } finally {
+      localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key='profile';
+        DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='profile' AND requirement_key='trusted_network_context_v11';
+        DELETE FROM cms_private.profile_photo_origin_config WHERE singleton`);
     }
   });
 

@@ -29,6 +29,7 @@ function snapshot(): LoadedResume {
 function repository(overrides: Partial<ResumeRepository & ResumeSectionRepository> = {}): ResumeRepository & ResumeSectionRepository {
   return {
     load: vi.fn().mockResolvedValue(snapshot()),
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     loadSiteMetadata: vi.fn().mockResolvedValue(metadata),
     loadOverview: vi.fn().mockResolvedValue({ profileName: fixtureSections.profile.translations.en.name }),
     loadProfile: vi.fn().mockResolvedValue(structuredClone(fixtureSections.profile)),

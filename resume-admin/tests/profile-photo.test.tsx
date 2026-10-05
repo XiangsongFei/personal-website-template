@@ -24,6 +24,7 @@ function show(repository: ResumeRepository, photoUrl: string | null = null) {
 function repo(overrides: Partial<ResumeRepository> = {}): ResumeRepository {
   return {
     load: vi.fn().mockResolvedValue(snapshot()),
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     uploadProfilePhoto: vi.fn().mockResolvedValue(persistedUrl),
     updateProfileSharedDetails: vi.fn(async (_id, shared) => ({ resumeId, shared, updatedAt: null })),
     updateProfileTranslation: vi.fn(),

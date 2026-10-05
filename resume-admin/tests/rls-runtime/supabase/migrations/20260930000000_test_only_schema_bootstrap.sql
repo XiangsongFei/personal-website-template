@@ -30,8 +30,33 @@ CREATE TABLE public.resume_profile_translations (
   name text NOT NULL, nav_about_label text NOT NULL, email_action_label text NOT NULL,
   graduation_label text NOT NULL, avatar_label text NOT NULL, contact_focus_heading text NOT NULL,
   contact_status_heading text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (resume_id, locale), FOREIGN KEY (resume_id, locale) REFERENCES public.resume_locale_content(resume_id, locale) ON DELETE CASCADE
+  PRIMARY KEY (resume_id, locale), FOREIGN KEY (resume_id) REFERENCES public.resume_profile(resume_id) ON DELETE CASCADE
 );
+-- Synthetic Profile timestamp triggers mirror the live content-table contract.
+CREATE OR REPLACE FUNCTION public.test_only_profile_touch_updated_at()
+RETURNS trigger LANGUAGE plpgsql SET search_path='' AS $$
+BEGIN NEW.updated_at := pg_catalog.transaction_timestamp(); RETURN NEW; END;
+$$;
+CREATE TRIGGER test_only_profile_updated_at BEFORE UPDATE ON public.resume_profile
+FOR EACH ROW EXECUTE FUNCTION public.test_only_profile_touch_updated_at();
+CREATE TRIGGER test_only_profile_translation_updated_at BEFORE UPDATE ON public.resume_profile_translations
+FOR EACH ROW EXECUTE FUNCTION public.test_only_profile_touch_updated_at();
+CREATE OR REPLACE FUNCTION public.test_only_profile_parent_rollup()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    UPDATE public.resume_sites SET updated_at=pg_catalog.clock_timestamp() WHERE id=OLD.resume_id;
+    RETURN OLD;
+  END IF;
+  UPDATE public.resume_sites SET updated_at=pg_catalog.clock_timestamp() WHERE id=NEW.resume_id;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER test_only_profile_parent_rollup AFTER INSERT OR UPDATE OR DELETE ON public.resume_profile
+FOR EACH ROW EXECUTE FUNCTION public.test_only_profile_parent_rollup();
+CREATE TRIGGER test_only_profile_translation_parent_rollup AFTER INSERT OR UPDATE OR DELETE ON public.resume_profile_translations
+FOR EACH ROW EXECUTE FUNCTION public.test_only_profile_parent_rollup();
+
 CREATE TABLE public.resume_public_links (
   resume_id uuid PRIMARY KEY REFERENCES public.resume_sites(id) ON DELETE CASCADE,
   email text NOT NULL, github text NOT NULL, github_label text NOT NULL, linkedin_display_name text NOT NULL,

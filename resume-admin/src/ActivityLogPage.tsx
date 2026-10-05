@@ -220,6 +220,26 @@ export function describeContactActivity(event: ActivityLogV13CEvent): Collection
   return lines;
 }
 
+export function describeProfileActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "profile" || event.entityType !== "profile_settings") return [];
+  const change = event.changes.profile as { before?: unknown; after?: unknown } | undefined;
+  if (!change?.before || typeof change.before !== "object" || !change.after || typeof change.after !== "object") return [];
+  const before = change.before as { shared?: Record<string, unknown>; translations?: Record<string, Record<string, unknown>> };
+  const after = change.after as typeof before;
+  if (!before.shared || !after.shared || !before.translations || !after.translations) return [];
+  const lines: CollectionActivityLine[] = [];
+  const labels: Record<string, string> = { graduation_value: "Graduation value", avatar_initials: "Avatar initials", footer_name: "Footer name", copyright: "Copyright", photo_url: "Profile photo" };
+  for (const field of Object.keys(labels)) if (before.shared[field] !== after.shared[field]) {
+    lines.push({ kind: "Updated", label: "Profile", field: labels[field], before: before.shared[field] === null ? "null" : String(before.shared[field] ?? ""), after: after.shared[field] === null ? "null" : String(after.shared[field] ?? "") });
+  }
+  const translationLabels: Record<string, string> = { name: "Name", nav_about_label: "About navigation label", email_action_label: "Email action label", graduation_label: "Graduation label", avatar_label: "Avatar label", contact_focus_heading: "Contact focus heading", contact_status_heading: "Contact status heading" };
+  for (const locale of ["zh", "en"] as const) for (const field of Object.keys(translationLabels)) {
+    const oldValue = before.translations[locale]?.[field]; const newValue = after.translations[locale]?.[field];
+    if (oldValue !== newValue) lines.push({ kind: "Updated", label: "Profile", locale: locale === "zh" ? "Chinese" : "English", field: translationLabels[field], before: String(oldValue ?? ""), after: String(newValue ?? "") });
+  }
+  return lines;
+}
+
 function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
   const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
   const network = event.ipNetwork?.trim() ?? "";
@@ -339,7 +359,10 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
                 <span>{t("Approximate IP location: ")}</span>{approximateIpLocation(event)}<span className="visually-hidden"> {t("Approximate IP-derived location")}</span>
               </p>}
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
-                {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                {event.payloadVersion === 2 && event.entityType === "profile_settings" ? <dl>{describeProfileActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                  <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.field ?? "Profile")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
+                </div>)}</dl> :
+                event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
               </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "contact_section" ? <dl>{describeContactActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.field ? `${line.locale ? `${t(line.locale)} · ` : ""}${t(line.field)} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before}` : ""}{line.after !== undefined ? ` · ${t("After")}: ${line.after}` : ""}</span></dd>

@@ -21,6 +21,7 @@ const resume: LoadedResume = {
 function repository() {
   const rows = structuredClone(fixtureSections.education);
   const repo = {
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     updateProfileSharedDetails: vi.fn(async (_id: string, shared: typeof fixtureSections.profile.shared) => ({ resumeId, updatedAt: null, shared })),
     updateProfileTranslation: vi.fn(async (_id: string, locale: "zh" | "en", translation: typeof fixtureSections.profile.translations.en) => ({ resumeId, locale, translation })),
     updateEducationEntry: vi.fn(async (_id: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>) => {

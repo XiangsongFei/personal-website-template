@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { App } from "../src/App";
@@ -21,7 +21,8 @@ const confirmed = (graduationValue: string): UpdatedProfileRow => ({
 });
 
 function mockRepository(update = vi.fn().mockResolvedValue(confirmed("2030"))): ResumeRepository {
-  return { load: vi.fn().mockResolvedValue(snapshot()), updateProfileSharedDetails: update, updateProfileTranslation: vi.fn() };
+  return { load: vi.fn().mockResolvedValue(snapshot()), updateProfileSharedDetails: update, updateProfileTranslation: vi.fn(),
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }) };
 }
 
 function showProfile(repository: ResumeRepository, onProfileSaved = vi.fn()) {
@@ -99,9 +100,9 @@ describe("Stage 4E Profile editor", () => {
     const form = screen.getByRole("button", { name: "Save profile changes" }).closest("form")!;
     fireEvent.submit(form);
     fireEvent.submit(form);
-    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, {
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, {
       graduationValue: "2030", avatarInitials: "DU", photoUrl: null, footerName: "Demo User", copyright: "© 2026 Demo User",
-    });
+    }));
     expect(screen.getByRole("button", { name: "Saving…" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(screen.queryByText("Profile changes saved.")).toBeNull();
@@ -129,6 +130,51 @@ describe("Stage 4E Profile editor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
     expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
     expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves one complete Profile aggregate through the Worker when the target is in rpc mode", async () => {
+    const update = vi.fn();
+    const repository = mockRepository(update);
+    const writeState = vi.mocked(repository.loadAdminProfileWriteState!);
+    writeState.mockResolvedValue({ resumeId, activityLogEnabled: true, profileWriteMode: "rpc", profileTrustedContextRequired: true });
+    const confirmedProfile = structuredClone(fixtureSections.profile);
+    confirmedProfile.shared.graduationValue = "2031";
+    confirmedProfile.translations.en.name = "Changed name";
+    const save = vi.fn().mockResolvedValue(confirmedProfile);
+    repository.saveProfileWithWorker = save;
+    repository.updateProfileTranslation = vi.fn();
+    showProfile(repository);
+    editGraduation("2031");
+    fireEvent.change(screen.getByLabelText("English Name"), { target: { value: "Changed name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByText("Profile changes saved.")).toBeTruthy();
+    expect(writeState).toHaveBeenCalledExactlyOnceWith(resumeId);
+    expect(save).toHaveBeenCalledExactlyOnceWith(resumeId, expect.objectContaining({
+      shared: expect.objectContaining({ graduationValue: "2031" }),
+      translations: expect.objectContaining({
+        zh: expect.objectContaining({ avatarLabel: fixtureSections.profile.translations.zh.avatarLabel }),
+        en: expect.objectContaining({ name: "Changed name", avatarLabel: fixtureSections.profile.translations.en.avatarLabel }),
+      }),
+    }), fixtureSections.profile.shared.photoUrl);
+    expect(update).not.toHaveBeenCalled();
+    expect(repository.updateProfileTranslation).not.toHaveBeenCalled();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it("does not fall back to direct Profile writes when the rpc request fails", async () => {
+    const update = vi.fn();
+    const repository = mockRepository(update);
+    vi.mocked(repository.loadAdminProfileWriteState!).mockResolvedValue({ resumeId, activityLogEnabled: true, profileWriteMode: "rpc", profileTrustedContextRequired: true });
+    repository.saveProfileWithWorker = vi.fn().mockRejectedValue(new Error("upstream"));
+    const directTranslation = vi.fn();
+    repository.updateProfileTranslation = directTranslation;
+    showProfile(repository);
+    editGraduation("2031");
+    fireEvent.click(screen.getByRole("button", { name: "Save profile changes" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(update).not.toHaveBeenCalled();
+    expect(directTranslation).not.toHaveBeenCalled();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
   it("keeps the confirmed production baseline after navigating away and back", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { MemoryRouter } from "react-router-dom";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -29,6 +29,7 @@ function deferred<T>() {
 
 function mockRepository(update: ResumeRepository["updateProfileTranslation"] = vi.fn().mockResolvedValue(confirmed("zh", "新名字"))): ResumeRepository {
   return { load: vi.fn().mockResolvedValue(snapshot()),
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     updateProfileSharedDetails: vi.fn(async (_id, shared) => ({ resumeId, shared, updatedAt: null })),
     updateProfileTranslation: update };
 }
@@ -153,7 +154,7 @@ describe("unified Profile save", () => {
     editName(locale, changed);
     fireEvent.click(button());
     fireEvent.click(screen.getByRole("button", { name: "Saving…" }));
-    expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, locale, { ...fixtureSections.profile.translations[locale], name: changed });
+    await waitFor(() => expect(update).toHaveBeenCalledExactlyOnceWith(resumeId, locale, { ...fixtureSections.profile.translations[locale], name: changed }));
     expect(screen.getByRole("button", { name: "Saving…" }).hasAttribute("disabled")).toBe(true);
     pending.resolve(confirmed(locale, changed));
     expect(await screen.findByText("Profile changes saved.")).toBeTruthy();

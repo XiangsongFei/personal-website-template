@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeProjectsActivity } from "../src/ActivityLogPage";
-import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeProfileActivity, describeProjectsActivity } from "../src/ActivityLogPage";
+import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ActivityLogV13CSuccessEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
 const resumeId = "qa-resume";
@@ -223,6 +223,28 @@ describe("Activity Log page", () => {
     expect(screen.queryByText("View changed fields")).toBeNull();
     expect(screen.queryByText("introduction_paragraph")).toBeNull();
     expect(screen.queryByText("undefined")).toBeNull();
+  });
+
+  it("renders Profile V2 translation and shared-field changes from the complete aggregate", async () => {
+    const profile = (name: string, graduation: string) => ({
+      shared: { graduation_value: graduation, avatar_initials: "DU", footer_name: "Demo", copyright: "© Demo", photo_url: null },
+      translations: Object.fromEntries(["zh", "en"].map(locale => [locale, { name, nav_about_label: "About", email_action_label: "Email",
+        graduation_label: "Graduation", avatar_label: "Avatar", contact_focus_heading: "Focus", contact_status_heading: "Status" }])),
+    });
+    const before = profile("Old name", "2025"); const after = profile("New name", "2026");
+    const row = { ...event("profile-v2", { profile: { before, after } }), section: "profile", entityType: "profile_settings", entityId: null,
+      entitySnapshot: { profile: after } } as ActivityLogEvent;
+    const activity = { ...v13cActivity(row), payloadVersion: 2 as const } as ActivityLogV13CSuccessEvent;
+    expect(describeProfileActivity(activity).map(line => [line.locale, line.field, line.before, line.after])).toEqual([
+      [undefined, "Graduation value", "2025", "2026"], ["Chinese", "Name", "Old name", "New name"], ["English", "Name", "Old name", "New name"],
+    ]);
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([activity]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    expect(await screen.findByText(/Update by QA/)).toBeTruthy();
+    fireEvent.click(screen.getByText(/View changed fields/));
+    expect(await screen.findByText(/Graduation value/)).toBeTruthy();
+    expect(screen.getByText(/English.*Name.*Before: Old name.*After: New name/)).toBeTruthy();
   });
 
   it("localizes rejected-event labels and the approximate-location label in Chinese", async () => {

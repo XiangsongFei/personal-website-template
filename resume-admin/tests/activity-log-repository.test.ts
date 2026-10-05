@@ -221,6 +221,25 @@ describe("Activity Log repository RPC boundary", () => {
     await expect(repository(malformed).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
   });
 
+  it("decodes the exact Profile V2 aggregate and rejects malformed Profile snapshots", async () => {
+    const profile = (name: string) => ({
+      shared: { graduation_value: "2026", avatar_initials: "DU", footer_name: "Demo", copyright: "© Demo", photo_url: null },
+      translations: Object.fromEntries(["zh", "en"].map(locale => [locale, {
+        name, nav_about_label: "About", email_action_label: "Email", graduation_label: "Graduation", avatar_label: "Avatar",
+        contact_focus_heading: "Focus", contact_status_heading: "Status",
+      }])),
+    });
+    const before = profile("Old name"); const after = profile("New name");
+    const row = activityRow({ section_key: "profile", entity_type: "profile_settings", entity_id: null,
+      entity_snapshot: { profile: after }, changes: { profile: { before, after } }, payload_version: 2 });
+    const rpc = vi.fn().mockResolvedValue({ data: [row], error: null });
+    await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).resolves.toMatchObject([
+      { payloadVersion: 2, section: "profile", entityType: "profile_settings", changes: { profile: { before, after } } },
+    ]);
+    const malformed = vi.fn().mockResolvedValue({ data: [{ ...row, entity_snapshot: { profile: after, extra: true } }], error: null });
+    await expect(repository(malformed).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+
   it("fails closed for malformed Education V2 snapshots", async () => {
     const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const item = { id, position: 0, entry_type: "summerSchool", education_category: null,

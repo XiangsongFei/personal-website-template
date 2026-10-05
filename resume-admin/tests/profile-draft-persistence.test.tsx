@@ -17,6 +17,7 @@ const sharedRow = (graduationValue: string): UpdatedProfileRow => ({
 function makeRepository(): ResumeRepository {
   return {
     load: vi.fn().mockResolvedValue(snapshot()),
+    loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     updateProfileSharedDetails: vi.fn(async (_id, value) => sharedRow(value.graduationValue)),
     updateProfileTranslation: vi.fn(async (_id, locale, value) => ({ resumeId, locale, updatedAt: null, translation: value })),
   };

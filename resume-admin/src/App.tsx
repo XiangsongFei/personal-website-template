@@ -1640,17 +1640,74 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
     photoCleanupFailed.current = false;
     setSaveInFlight(true);
     setProfileStatus(null);
-    const operations: Promise<boolean>[] = [];
-    if (sharedDirty) operations.push(saveShared());
-    if (translationDirty.zh) operations.push(saveTranslation("zh"));
-    if (translationDirty.en) operations.push(saveTranslation("en"));
     try {
+      if (!repository.loadAdminProfileWriteState) throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again.");
+      let writeState;
+      try { writeState = await repository.loadAdminProfileWriteState(resumeId); }
+      catch { throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again."); }
+      const pendingRpcRetry = repository.hasPendingProfileWorkerSave?.(resumeId) ?? false;
+      if (writeState.resumeId !== resumeId || (writeState.profileWriteMode === "direct" && writeState.profileTrustedContextRequired)
+        || (pendingRpcRetry && !(writeState.profileWriteMode === "rpc" && writeState.profileTrustedContextRequired && writeState.activityLogEnabled))) {
+        throw new Error("Profile save routing is unavailable or outdated. Refresh the Admin before trying again.");
+      }
+      if (writeState.profileWriteMode === "rpc") {
+        if (!writeState.activityLogEnabled || !writeState.profileTrustedContextRequired || !repository.saveProfileWithWorker) {
+          throw new Error("Secure Profile saving is not fully enabled for this target.");
+        }
+        let photoUrl = state.draft.photoUrl;
+        if (photoDraft) {
+          if (!repository.uploadProfilePhoto) throw new Error("Profile photo upload is unavailable.");
+          photoUrl = photoDraft.uploadedUrl ?? await repository.uploadProfilePhoto(resumeId, photoDraft.file);
+          if (!photoDraft.uploadedUrl) {
+            const uploadedUrl = photoUrl;
+            setPhotoDraft(current => current?.file === photoDraft.file ? { ...current, uploadedUrl } : current);
+          }
+        }
+        const nextProfile: ProfileSection = {
+          shared: { ...state.draft, photoUrl },
+          translations: clone(state.translationDraft),
+        };
+        const confirmed = await repository.saveProfileWithWorker(resumeId, nextProfile, state.baseline.photoUrl);
+        const changedLocales = (["zh", "en"] as const).filter(locale =>
+          JSON.stringify(state.translationDraft[locale]) !== JSON.stringify(state.translationBaseline[locale]));
+        if (changedLocales.length) context.onBilingualSave(collectChangedBilingualFieldKeys("profile", state.translationDraft, state.translationBaseline, [...changedLocales]));
+        setState(current => current ? {
+          ...current,
+          baseline: clone(confirmed.shared), draft: clone(confirmed.shared),
+          translationBaseline: clone(confirmed.translations), translationDraft: clone(confirmed.translations),
+          notice: "Profile changes saved to production.", saveError: false,
+          translationNotices: { zh: null, en: null },
+        } : current);
+        onSaved({ resumeId, shared: confirmed.shared, updatedAt: null });
+        for (const locale of changedLocales) onTranslationSaved({ resumeId, locale, translation: confirmed.translations[locale], updatedAt: null });
+        const previousPhotoUrl = state.baseline.photoUrl;
+        if (previousPhotoUrl && previousPhotoUrl !== confirmed.shared.photoUrl && repository.deleteManagedProfilePhoto) {
+          try {
+            const deleted = await repository.deleteManagedProfilePhoto(resumeId, previousPhotoUrl);
+            if (!deleted) photoCleanupFailed.current = true;
+          } catch { photoCleanupFailed.current = true; }
+        }
+        if (photoDraft) {
+          URL.revokeObjectURL(photoDraft.objectUrl);
+          onPhotoUrlChanged(null);
+          setPhotoDraft(null);
+          setPhotoError("");
+        }
+        setProfileStatus({ message: photoCleanupFailed.current ? "Profile changes saved, but the previous profile photo could not be removed." : "Profile changes saved.", error: false });
+        return;
+      }
+      const operations: Promise<boolean>[] = [];
+      if (sharedDirty) operations.push(saveShared());
+      if (translationDirty.zh) operations.push(saveTranslation("zh"));
+      if (translationDirty.en) operations.push(saveTranslation("en"));
       const results = await Promise.all(operations);
       const savedCount = results.filter(Boolean).length;
       const failedCount = results.length - savedCount;
       if (failedCount === 0) setProfileStatus({ message: photoCleanupFailed.current ? "Profile changes saved, but the previous profile photo could not be removed." : "Profile changes saved.", error: false });
       else if (savedCount > 0) setProfileStatus({ message: "Some Profile changes could not be saved. Saved changes are kept; remaining changes are still unsaved.", error: true });
       else setProfileStatus({ message: "Profile changes were not saved. Your edits remain; please retry.", error: true });
+    } catch (error) {
+      setProfileStatus({ message: error instanceof Error && error.message.startsWith("Profile ") ? error.message : "Profile changes were not saved. Your edits remain; please retry.", error: true });
     } finally {
       saveLock.current = false;
       setSaveInFlight(false);
@@ -1659,6 +1716,10 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
 
   function cancelProfileChanges() {
     if (saving || saveInFlight) return;
+    if (repository?.hasPendingProfileWorkerSave?.(resumeId)) {
+      setProfileStatus({ message: "A Profile save result is still pending. Retry the unchanged request before cancelling.", error: true });
+      return;
+    }
     context.onBilingualCancel(collectChangedBilingualFieldKeys("profile", state.translationDraft, state.translationBaseline, ["zh", "en"]));
     setState(current => current ? {
       ...current,

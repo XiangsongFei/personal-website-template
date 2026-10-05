@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAdminTarget } from "../auth/supabase";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
+import { canonicalizeProfile, profileAggregateFromSection, profileSectionFromAggregate, validateProfileAggregate, type ProfileAggregate } from "./profileAggregate";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
   mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
@@ -51,6 +52,10 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveContactWithWorker?(resumeId: string, contact: ContactSection): Promise<ContactSection>;
   hasPendingContactWorkerSave?(resumeId: string): boolean;
   discardPendingContactSave?(resumeId?: string): void;
+  loadAdminProfileWriteState?(resumeId: string): Promise<AdminProfileWriteState>;
+  saveProfileWithWorker?(resumeId: string, profile: ProfileSection, baselinePhotoUrl: string | null): Promise<ProfileSection>;
+  hasPendingProfileWorkerSave?(resumeId: string): boolean;
+  discardPendingProfileSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -86,6 +91,7 @@ export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: bool
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
+export type AdminProfileWriteState = { resumeId: string; activityLogEnabled: boolean; profileWriteMode: "direct" | "rpc"; profileTrustedContextRequired: boolean };
 
 export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
@@ -275,7 +281,8 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
               || (row.section_key === "skills" && row.entity_type === "skill_group_list")
               || (row.section_key === "education" && row.entity_type === "education_list")
               || (row.section_key === "projects" && row.entity_type === "project_list")
-              || (row.section_key === "contact" && row.entity_type === "contact_section"))))) {
+              || (row.section_key === "contact" && row.entity_type === "contact_section")
+              || (row.section_key === "profile" && row.entity_type === "profile_settings"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -288,7 +295,7 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile";
         const change = changes[key];
         const validContact = (raw: unknown, requireDensePositions: boolean): boolean => {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
@@ -403,6 +410,30 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         if (key === "contact") {
           if (Object.keys(snapshot).sort().join(",") !== "contact" || Object.keys(changes).sort().join(",") !== "contact"
             || !validContact(change.before, false) || !validContact(change.after, true)) throw new Error("Invalid Activity Log response");
+        } else if (key === "profile") {
+          const validProfile = (raw: unknown): boolean => {
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+            const profile = raw as Record<string, unknown>;
+            if (Object.keys(profile).sort().join(",") !== "shared,translations") return false;
+            const shared = profile.shared as Record<string, unknown> | null;
+            const translations = profile.translations as Record<string, unknown> | null;
+            if (!shared || typeof shared !== "object" || Array.isArray(shared)
+              || Object.keys(shared).sort().join(",") !== "avatar_initials,copyright,footer_name,graduation_value,photo_url"
+              || !["graduation_value", "avatar_initials", "footer_name", "copyright"].every(field => typeof shared[field] === "string")
+              || !(shared.photo_url === null || (typeof shared.photo_url === "string" && shared.photo_url.length > 0))
+              || !translations || typeof translations !== "object" || Array.isArray(translations)
+              || Object.keys(translations).sort().join(",") !== "en,zh") return false;
+            const fields = "avatar_label,contact_focus_heading,contact_status_heading,email_action_label,graduation_label,name,nav_about_label";
+            return (["zh", "en"] as const).every(locale => {
+              const value = translations[locale];
+              return Boolean(value && typeof value === "object" && !Array.isArray(value)
+                && Object.keys(value).sort().join(",") === fields
+                && Object.values(value as Record<string, unknown>).every(field => typeof field === "string"));
+            });
+          };
+          if (Object.keys(snapshot).sort().join(",") !== "profile" || Object.keys(changes).sort().join(",") !== "profile"
+            || JSON.stringify(snapshot.profile) !== JSON.stringify(change.after)
+            || !validProfile(change.before) || !validProfile(change.after)) throw new Error("Invalid Activity Log response");
         } else if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
           || !Array.isArray(change.before) || !Array.isArray(change.after)
           || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
@@ -595,6 +626,68 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     } catch (cause) {
       if (cause instanceof AggregateWorkerSaveError) throw cause;
       throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
+    }
+  };
+  const profilePendingKey = (resumeId: string) => `admin-profile-rpc-pending-v1:${resumeId}`;
+  const saveSignedProfile = async (resumeId: string, rawProfile: ProfileAggregate, baselinePhotoUrl: string | null): Promise<ProfileSection> => {
+    const profile = validateProfileAggregate(rawProfile);
+    const canonical = canonicalizeProfile(profile);
+    if (new TextEncoder().encode(canonical).byteLength > 196608) throw new AggregateWorkerSaveError("Profile content exceeds the allowed request size.");
+    const storageKey = profilePendingKey(resumeId);
+    let pending: { requestId: string; resumeId: string; profile: ProfileAggregate; baselinePhotoUrl: string | null } | null = null;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(storageKey);
+      if (raw) {
+        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
+        const value = JSON.parse(raw) as Record<string, unknown>;
+        if (Object.keys(value).sort().join(",") !== "baselinePhotoUrl,profile,requestId,resumeId" || value.resumeId !== resumeId
+          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+          || (value.baselinePhotoUrl !== null && typeof value.baselinePhotoUrl !== "string")
+          || canonicalizeProfile(value.profile) !== canonical || value.baselinePhotoUrl !== baselinePhotoUrl) throw new Error("invalid");
+        pending = { requestId: value.requestId, resumeId, profile: validateProfileAggregate(value.profile), baselinePhotoUrl: value.baselinePhotoUrl as string | null };
+      }
+    } catch { throw new AggregateWorkerSaveError("A pending Profile request cannot be verified safely. Keep the draft unchanged and retry."); }
+    if (!pending) {
+      if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError("Secure Profile saving is unavailable. Refresh the Admin and try again.");
+      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, profile, baselinePhotoUrl };
+      try {
+        const raw = JSON.stringify(pending);
+        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
+        globalThis.sessionStorage.setItem(storageKey, raw);
+      } catch { throw new AggregateWorkerSaveError("The exact pending Profile request could not be stored safely. Keep the draft unchanged and retry."); }
+    }
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
+      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
+        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
+      let response: Response;
+      try {
+        response = await fetch("/api/admin/v1/profile/save", { method: "POST", credentials: "omit",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, baseline_photo_url: pending.baselinePhotoUrl, profile: pending.profile }),
+          signal: AbortSignal.timeout(30_000) });
+      } catch { throw new AggregateWorkerSaveError("The Profile save result is uncertain. Retry the exact pending request."); }
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500 && response.status !== 409) {
+          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* A rejected request remains visible in the draft. */ }
+        }
+        throw new AggregateWorkerSaveError(response.status === 409
+          ? "The Profile request ID conflicts with a different payload. Keep the draft and contact an administrator."
+          : response.status >= 500 ? "The Profile save result is uncertain. Retry the exact pending request."
+            : "Profile could not be saved. Your draft remains available for correction and retry.");
+      }
+      let raw: unknown;
+      try { raw = await response.json(); } catch { throw new AggregateWorkerSaveError("The Profile save result is uncertain. Retry the exact pending request."); }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) || new TextEncoder().encode(JSON.stringify(raw)).byteLength > 212992)
+        throw new AggregateWorkerSaveError("The Profile save result could not be confirmed. Retry the exact pending request.");
+      const canonicalResult = canonicalizeProfile(raw);
+      if (canonicalResult !== canonical) throw new AggregateWorkerSaveError("The Profile save result did not match the submitted aggregate. Retry the exact pending request.");
+      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Exact replay remains safe after a confirmed response. */ }
+      return profileSectionFromAggregate(raw);
+    } catch (cause) {
+      if (cause instanceof AggregateWorkerSaveError) throw cause;
+      throw new AggregateWorkerSaveError("The Profile save result could not be confirmed. Retry the exact pending request.");
     }
   };
   const contactPendingKey = (resumeId: string) => `admin-contact-rpc-pending-v1:${resumeId}`;
@@ -1332,6 +1425,27 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       const localeContent = await readResumeRows(supabase, "resume_locale_content", resumeId);
       return mapSiteTextRows(localeContent, resumeId);
     },
+    async loadAdminProfileWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_profile_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Profile write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.profile_write_mode !== "direct" && row.profile_write_mode !== "rpc")
+        || typeof row.profile_trusted_context_required !== "boolean"
+        || (row.profile_write_mode === "direct" && row.profile_trusted_context_required)) throw new Error("Invalid Profile write state");
+      return { resumeId, activityLogEnabled: row.activity_log_enabled,
+        profileWriteMode: row.profile_write_mode, profileTrustedContextRequired: row.profile_trusted_context_required };
+    },
+    async saveProfileWithWorker(resumeId, profile, baselinePhotoUrl) {
+      if (!resumeId || (baselinePhotoUrl !== null && typeof baselinePhotoUrl !== "string"))
+        throw new AggregateWorkerSaveError("Profile content is invalid.");
+      return await saveSignedProfile(resumeId, profileAggregateFromSection(profile), baselinePhotoUrl);
+    },
+    hasPendingProfileWorkerSave(resumeId) {
+      try { return Boolean(globalThis.sessionStorage?.getItem(profilePendingKey(resumeId))); } catch { return true; }
+    },
+    discardPendingProfileSave() { /* Ambiguous requests are retained for exact replay. */ },
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");
       if (!shared || typeof shared.graduationValue !== "string" || typeof shared.avatarInitials !== "string"
