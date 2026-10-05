@@ -163,6 +163,20 @@ describe("Activity Log repository RPC boundary", () => {
     const invalid = vi.fn().mockResolvedValue({ data: [activityRow({ entity_type: "award_list", payload_version: 1 })], error: null });
     await expect(repository(invalid).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
   });
+
+  it.each([
+    ["experience", "experience_list", { organization: "Org", title: "Role", period: "2025", description: "Work", location: null }],
+    ["skills", "skill_group_list", { title: "Languages", items: "English" }],
+  ] as const)("accepts only the exact %s V2 collection projection", async (domain, entityType, locale) => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const row = { id, position: 0, zh: locale, en: locale };
+    const rpc = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: domain, entity_type: entityType, entity_id: null,
+      entity_snapshot: { [domain]: [row] }, changes: { [domain]: { before: [], after: [row] } }, payload_version: 2 })], error: null });
+    await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).resolves.toMatchObject([{ payloadVersion: 2, entityType }]);
+    const malformed = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: domain, entity_type: entityType, entity_id: null,
+      entity_snapshot: { [domain]: [row] }, changes: { [domain]: { before: [], after: [{ ...row, extra: true }] } }, payload_version: 2 })], error: null });
+    await expect(repository(malformed).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
 });
 
 describe("Awards repository signed write routing", () => {
@@ -197,6 +211,51 @@ describe("Awards repository signed write routing", () => {
     expect(calls[0]!.body.awards).toEqual(calls[1]!.body.awards);
     expect(calls[0]!.body.awards).toEqual([{ id: null, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }]);
     expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(false);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+});
+
+describe("Experience and Skills repository signed write routing", () => {
+  const resumeId = "ea111111-1111-4111-8111-111111111111";
+  const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+  it.each([
+    ["experience", "load_admin_experience_write_state", "experience_write_mode", "experience_trusted_context_required"],
+    ["skills", "load_admin_skills_write_state", "skills_write_mode", "skills_trusted_context_required"],
+  ] as const)("loads target-scoped %s state and rejects mismatched target data", async (domain, rpcName, modeKey, requirementKey) => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    const repo = repository(rpc);
+    const load = domain === "experience" ? repo.loadAdminExperienceWriteState! : repo.loadAdminSkillsWriteState!;
+    await expect(load(resumeId)).resolves.toMatchObject({ resumeId, domain, activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    expect(rpc).toHaveBeenCalledWith(rpcName, { target_resume_id: resumeId });
+    const invalid = vi.fn().mockResolvedValue({ data: [{ resume_id: "other-target", activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    await expect((domain === "experience" ? repository(invalid).loadAdminExperienceWriteState! : repository(invalid).loadAdminSkillsWriteState!)(resumeId)).rejects.toThrow("Invalid");
+  });
+
+  it.each(["experience", "skills"] as const)("uses only the typed %s Worker endpoint and accepts canonical generated IDs", async domain => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const draft = domain === "experience"
+      ? [{ id: "local-1-1", position: 0, sourceKey: null, translations: {
+          zh: { organization: "机构", title: "职位", period: "2025", description: "描述", location: null },
+          en: { organization: "Org", title: "Role", period: "2025", description: "Work", location: "" },
+        } }]
+      : [{ id: "local-1-1", position: 0, sourceKey: null, translations: { zh: { title: "语言", items: "中文" }, en: { title: "Languages", items: "English" } } }];
+    const response = domain === "experience"
+      ? [{ id, position: 0, en: { location: "", description: "Work", period: "2025", title: "Role", organization: "Org" },
+          zh: { location: null, description: "描述", period: "2025", title: "职位", organization: "机构" } }]
+      : [{ id, position: 0, en: { items: "English", title: "Languages" }, zh: { items: "中文", title: "语言" } }];
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth };
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return Response.json(response);
+    }));
+    const repo = createResumeRepository(supabase as unknown as SupabaseClient);
+    const save = domain === "experience" ? repo.saveExperienceWithWorker! : repo.saveSkillsWithWorker!;
+    const result = await save(resumeId, draft as never[]);
+    expect(result).toMatchObject([{ id, position: 0 }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(`/api/admin/v1/${domain}/save`);
+    expect(calls[0]!.body[domain]).toMatchObject([{ id: null, position: 0 }]);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });

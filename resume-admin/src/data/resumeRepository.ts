@@ -31,6 +31,14 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveAwardsWithWorker?(resumeId: string, items: AwardItem[]): Promise<AwardItem[]>;
   hasPendingAwardsWorkerSave?(resumeId: string): boolean;
   discardPendingAwardsSave?(resumeId?: string): void;
+  loadAdminExperienceWriteState?(resumeId: string): Promise<AdminDomainWriteState<"experience">>;
+  saveExperienceWithWorker?(resumeId: string, items: ExperienceItem[]): Promise<ExperienceItem[]>;
+  hasPendingExperienceWorkerSave?(resumeId: string): boolean;
+  discardPendingExperienceSave?(resumeId?: string): void;
+  loadAdminSkillsWriteState?(resumeId: string): Promise<AdminDomainWriteState<"skills">>;
+  saveSkillsWithWorker?(resumeId: string, items: SkillItem[]): Promise<SkillItem[]>;
+  hasPendingSkillsWorkerSave?(resumeId: string): boolean;
+  discardPendingSkillsSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -63,11 +71,13 @@ export type AdminFeatureState = {
   introductionTrustedContextRequired: boolean;
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
+export type AdminDomainWriteState<D extends "experience" | "skills"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 
 export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
 }
 export class AwardsWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AwardsWorkerSaveError"; } }
+export class AggregateWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AggregateWorkerSaveError"; } }
 export type ActivityLogCursor = { occurredAt: string; id: string };
 export type ActivityLogFilters = {
   section: string;
@@ -245,7 +255,10 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         throw new Error("Invalid Activity Log response");
       }
       if (!((row.payload_version === 1 && row.entity_type !== "award_list")
-        || (row.payload_version === 2 && row.section_key === "awards" && row.entity_type === "award_list" && row.entity_id === null && row.operation === "update"))) {
+        || (row.payload_version === 2 && row.entity_id === null && row.operation === "update"
+          && ((row.section_key === "awards" && row.entity_type === "award_list")
+            || (row.section_key === "experience" && row.entity_type === "experience_list")
+            || (row.section_key === "skills" && row.entity_type === "skill_group_list"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -258,27 +271,36 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const awardChange = changes.awards;
-        const validArray = (raw: unknown): boolean => {
-          if (!Array.isArray(raw) || raw.length > 32) return false;
+        const key = row.section_key as "awards" | "experience" | "skills";
+        const change = changes[key];
+        const validArray = (raw: unknown, domain: "awards" | "experience" | "skills"): boolean => {
+          if (!Array.isArray(raw) || raw.length > (domain === "awards" ? 32 : 16)) return false;
           const ids = new Set<string>();
           return raw.every((entry, position) => {
             if (!entry || typeof entry !== "object") return false;
-            const award = entry as Record<string, unknown>;
-            const validTranslation = (value: unknown) => Boolean(value && typeof value === "object"
-              && Object.keys(value).sort().join(",") === "name,year"
-              && typeof (value as Record<string, unknown>).name === "string"
-              && typeof (value as Record<string, unknown>).year === "string");
-            if (Object.keys(award).sort().join(",") !== "en,id,position,zh" || typeof award.id !== "string"
-              || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(award.id)
-              || ids.has(award.id) || award.position !== position || !validTranslation(award.zh) || !validTranslation(award.en)) return false;
-            ids.add(award.id); return true;
+            const item = entry as Record<string, unknown>;
+            if (Object.keys(item).sort().join(",") !== "en,id,position,zh" || typeof item.id !== "string"
+              || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id)
+              || ids.has(item.id) || item.position !== position) return false;
+            const validTranslation = (value: unknown): boolean => {
+              if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+              const locale = value as Record<string, unknown>;
+              if (domain === "awards") return Object.keys(locale).sort().join(",") === "name,year"
+                && typeof locale.name === "string" && typeof locale.year === "string";
+              if (domain === "skills") return Object.keys(locale).sort().join(",") === "items,title"
+                && typeof locale.title === "string" && typeof locale.items === "string";
+              return Object.keys(locale).sort().join(",") === "description,location,organization,period,title"
+                && ["organization", "title", "period", "description"].every(field => typeof locale[field] === "string")
+                && (locale.location === null || typeof locale.location === "string");
+            };
+            if (!validTranslation(item.zh) || !validTranslation(item.en)) return false;
+            ids.add(item.id); return true;
           });
         };
-        if (Object.keys(snapshot).sort().join(",") !== "awards" || Object.keys(changes).join(",") !== "awards"
-          || !awardChange || !Array.isArray(awardChange.before) || !Array.isArray(awardChange.after)
-          || JSON.stringify(snapshot.awards) !== JSON.stringify(awardChange.after)
-          || !validArray(awardChange.before) || !validArray(awardChange.after)) throw new Error("Invalid Activity Log response");
+        if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
+          || !change || !Array.isArray(change.before) || !Array.isArray(change.after)
+          || JSON.stringify(snapshot[key]) !== JSON.stringify(change.after)
+          || !validArray(change.before, key) || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
       }
       return {
         ...common,
@@ -413,6 +435,63 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     } catch { throw new AwardsWorkerSaveError("The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry."); }
   };
   const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
+  const collectionPendingKey = (domain: "experience" | "skills", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
+  const saveSignedCollection = async (domain: "experience" | "skills", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
+    const fingerprint = JSON.stringify(payload);
+    if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
+    const storageKey = collectionPendingKey(domain, resumeId);
+    let pending: { requestId: string; resumeId: string; payload: unknown[] } | null = null;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(storageKey);
+      if (raw) {
+        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
+        const value = JSON.parse(raw) as Record<string, unknown>;
+        if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
+          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+          || !Array.isArray(value.payload) || JSON.stringify(value.payload) !== fingerprint) throw new Error("invalid");
+        pending = { requestId: value.requestId, resumeId, payload: value.payload };
+      }
+    } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely. Keep the draft unchanged and retry.`); }
+    if (!pending) {
+      if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable. Refresh the Admin and try again.`);
+      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, payload };
+      try {
+        const raw = JSON.stringify(pending);
+        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
+        globalThis.sessionStorage.setItem(storageKey, raw);
+      } catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely. Keep this page open and retry.`); }
+    }
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
+      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
+        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
+      let response: Response;
+      try { response = await fetch(`/api/admin/v1/${domain}/save`, { method: "POST", credentials: "omit",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, [domain]: pending.payload }), signal: AbortSignal.timeout(30_000) }); }
+      catch { throw new AggregateWorkerSaveError(`The ${domain} save result is uncertain. Retry the exact pending request.`); }
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500 && response.status !== 409) {
+          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Keep the failure visible if storage is unavailable. */ }
+        }
+        throw new AggregateWorkerSaveError(response.status === 409
+          ? `The ${domain} request ID conflicts with a different payload. Keep the pending draft and contact an administrator.`
+          : response.status >= 500 ? `The ${domain} save result is uncertain. Retry the exact pending request.`
+            : `${domain} could not be saved. Your draft remains available for correction and retry.`);
+      }
+      let value: unknown;
+      try { value = await response.json(); } catch { throw new AggregateWorkerSaveError(`The ${domain} save result is uncertain. Retry the exact pending request.`); }
+      if (!Array.isArray(value) || new TextEncoder().encode(JSON.stringify(value)).byteLength > 212992)
+        throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
+      const canonical = decode(value);
+      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* A replay remains safe with the same request ID. */ }
+      return canonical;
+    } catch (cause) {
+      if (cause instanceof AggregateWorkerSaveError) throw cause;
+      throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
+    }
+  };
   return {
     ...createEditableSectionWrites(supabase),
     ...createBatch6BRepositoryWrites(supabase, supabaseUrl),
@@ -521,6 +600,94 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     },
     hasPendingAwardsWorkerSave(resumeId) { try { return Boolean(readAwardsPending(resumeId)); } catch { return true; } },
     discardPendingAwardsSave() { /* An ambiguous request cannot be discarded safely. */ },
+    async loadAdminExperienceWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_experience_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Experience write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.experience_write_mode !== "direct" && row.experience_write_mode !== "rpc")
+        || typeof row.experience_trusted_context_required !== "boolean"
+        || (row.experience_write_mode === "direct" && row.experience_trusted_context_required)) throw new Error("Invalid Experience write state");
+      return { resumeId, domain: "experience" as const, activityLogEnabled: row.activity_log_enabled,
+        writeMode: row.experience_write_mode, trustedContextRequired: row.experience_trusted_context_required };
+    },
+    async saveExperienceWithWorker(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Experience content is invalid.");
+      const payload = items.map((item, position) => {
+        if (!item || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id))) throw new AggregateWorkerSaveError("Experience IDs are invalid.");
+        const locale = (value: ExperienceItem["translations"]["zh"]) => ({ organization: value.organization, title: value.title,
+          period: value.period, description: value.description, location: value.location });
+        return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+          zh: locale(item.translations.zh), en: locale(item.translations.en) };
+      });
+      const value = await saveSignedCollection("experience", resumeId, payload, raw => {
+        if (raw.length !== payload.length) throw new Error("length");
+        const seen = new Set<string>();
+        return raw.map((entry, position) => {
+          if (!entry || typeof entry !== "object") throw new Error("entry");
+          const row = entry as Record<string, unknown>; const zh = row.zh as Record<string, unknown> | undefined; const en = row.en as Record<string, unknown> | undefined;
+          const validLocale = (locale: Record<string, unknown> | undefined): locale is Record<string, unknown> => Boolean(locale
+            && Object.keys(locale).sort().join(",") === "description,location,organization,period,title"
+            && ["organization", "title", "period", "description"].every(key => typeof locale[key] === "string")
+            && (locale.location === null || typeof locale.location === "string"));
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
+            || seen.has(row.id) || row.position !== position || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
+          const requested = payload[position];
+          if ((requested.id && requested.id !== row.id) || ["organization", "title", "period", "description", "location"].some(field => requested.zh[field as keyof typeof requested.zh] !== zh[field])
+            || ["organization", "title", "period", "description", "location"].some(field => requested.en[field as keyof typeof requested.en] !== en[field])) throw new Error("mismatch");
+          seen.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
+          return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
+            translations: { zh: zh as ExperienceItem["translations"]["zh"], en: en as ExperienceItem["translations"]["en"] } } satisfies ExperienceItem;
+        });
+      }) as ExperienceItem[];
+      return value;
+    },
+    hasPendingExperienceWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("experience", resumeId))); } catch { return true; } },
+    discardPendingExperienceSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
+    async loadAdminSkillsWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_skills_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Skills write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.skills_write_mode !== "direct" && row.skills_write_mode !== "rpc")
+        || typeof row.skills_trusted_context_required !== "boolean"
+        || (row.skills_write_mode === "direct" && row.skills_trusted_context_required)) throw new Error("Invalid Skills write state");
+      return { resumeId, domain: "skills" as const, activityLogEnabled: row.activity_log_enabled,
+        writeMode: row.skills_write_mode, trustedContextRequired: row.skills_trusted_context_required };
+    },
+    async saveSkillsWithWorker(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Skills content is invalid.");
+      const payload = items.map((item, position) => {
+        if (!item || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id))) throw new AggregateWorkerSaveError("Skills IDs are invalid.");
+        return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+          zh: { title: item.translations.zh.title, items: item.translations.zh.items },
+          en: { title: item.translations.en.title, items: item.translations.en.items } };
+      });
+      return await saveSignedCollection("skills", resumeId, payload, raw => {
+        if (raw.length !== payload.length) throw new Error("length");
+        const seen = new Set<string>();
+        return raw.map((entry, position) => {
+          if (!entry || typeof entry !== "object") throw new Error("entry");
+          const row = entry as Record<string, unknown>; const zh = row.zh as Record<string, unknown> | undefined; const en = row.en as Record<string, unknown> | undefined;
+          const validLocale = (locale: Record<string, unknown> | undefined): locale is Record<string, unknown> => Boolean(locale && Object.keys(locale).sort().join(",") === "items,title"
+            && typeof locale.title === "string" && typeof locale.items === "string");
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
+            || seen.has(row.id) || row.position !== position || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
+          const requested = payload[position];
+          if ((requested.id && requested.id !== row.id) || requested.zh.title !== zh.title || requested.zh.items !== zh.items
+            || requested.en.title !== en.title || requested.en.items !== en.items) throw new Error("mismatch");
+          seen.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
+          return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
+            translations: { zh: zh as SkillItem["translations"]["zh"], en: en as SkillItem["translations"]["en"] } } satisfies SkillItem;
+        });
+      }) as SkillItem[];
+    },
+    hasPendingSkillsWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("skills", resumeId))); } catch { return true; } },
+    discardPendingSkillsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async saveIntroductionAtomically(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
         throw new Error("Invalid Introduction save");

@@ -80,6 +80,27 @@ Object.assign(dictionary, {
   "The Awards request ID conflicts with a different request. Keep the pending draft and contact an administrator.": "荣誉奖项请求 ID 与其他请求冲突。请保留待处理草稿并联系管理员。",
 });
 
+Object.assign(dictionary, {
+  "Retry exact Experience save": "重试完全相同的工作经历保存",
+  "Retry exact Skills save": "重试完全相同的技能保存",
+  "Experience changes saved.": "工作经历修改已保存。",
+  "Skill changes saved.": "技能修改已保存。",
+  "Experience content saved. The section title remains unsaved; retry to finish.": "工作经历内容已保存，但模块标题尚未保存；请重试以完成。",
+  "Skills content saved. The section title remains unsaved; retry to finish.": "技能内容已保存，但模块标题尚未保存；请重试以完成。",
+  "Experience content could not be saved. The Experience section title also remains unsaved.": "工作经历内容未能保存，工作经历模块标题也仍未保存。",
+  "Skills content could not be saved. The Skills section title also remains unsaved.": "技能内容未能保存，技能模块标题也仍未保存。",
+  "Experience save routing could not be verified. Refresh the Admin before trying again.": "无法验证工作经历保存路径，请刷新管理后台后重试。",
+  "Skills save routing could not be verified. Refresh the Admin before trying again.": "无法验证技能保存路径，请刷新管理后台后重试。",
+  "Experience save routing is unavailable or outdated. Refresh the Admin before trying again.": "工作经历保存配置不可用或已过期，请刷新管理后台后重试。",
+  "Skills save routing is unavailable or outdated. Refresh the Admin before trying again.": "技能保存配置不可用或已过期，请刷新管理后台后重试。",
+  "Secure Experience saving is not fully enabled for this target.": "此目标尚未完整启用安全工作经历保存。",
+  "Secure Skills saving is not fully enabled for this target.": "此目标尚未完整启用安全技能保存。",
+  "Experience organization": "工作经历组织", "Experience title": "工作经历职位", "Experience period": "工作经历时间段",
+  "Experience description": "工作经历描述", "Experience location": "工作经历地点",
+  "Skill group title": "技能组标题", "Skill group items": "技能项目",
+  "Skill group": "技能组", Experience: "工作经历", Skills: "技能",
+});
+
 const dynamicMessagePrefixes = [
   "Reorder was only partially applied and production order could not be refreshed. Retry after checking the current order.",
   "Reorder was only partially applied; the displayed order was refreshed from production.",

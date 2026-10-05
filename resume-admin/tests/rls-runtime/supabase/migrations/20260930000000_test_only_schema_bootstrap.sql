@@ -97,7 +97,7 @@ CREATE TABLE public.resume_experience_translations (
   experience_entry_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   organization text NOT NULL, title text NOT NULL, period text NOT NULL, description text NOT NULL, location text NULL,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (experience_entry_id,resume_id,locale),
+  PRIMARY KEY (experience_entry_id,locale),
   FOREIGN KEY (experience_entry_id,resume_id) REFERENCES public.resume_experience_entries(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );
@@ -133,7 +133,7 @@ CREATE UNIQUE INDEX resume_skill_source_key_unique ON public.resume_skill_groups
 CREATE TABLE public.resume_skill_group_translations (
   skill_group_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   title text NOT NULL, items text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (skill_group_id,resume_id,locale),
+  PRIMARY KEY (skill_group_id,locale),
   FOREIGN KEY (skill_group_id,resume_id) REFERENCES public.resume_skill_groups(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );

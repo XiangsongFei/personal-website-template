@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeExperienceSkillsActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -64,6 +64,46 @@ describe("Activity Log page", () => {
       { kind: "Updated", label: "乙", locale: "Chinese", field: "Year", before: "2025", after: "2026" },
       { kind: "Reordered", label: "Awards" },
     ]);
+  });
+
+  it("describes Experience and Skills collection diffs with shared-ID relative reorder semantics", () => {
+    const a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"; const b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const priorExp = { id: a, position: 0, zh: { organization: "甲组织", title: "工程师", period: "2024", description: "旧描述", location: null },
+      en: { organization: "Org A", title: "Engineer", period: "2024", description: "Old", location: "" } };
+    const nextExp = { ...priorExp, position: 1, zh: { ...priorExp.zh, description: "新描述", location: "上海" } };
+    const otherExp = { ...priorExp, id: b, position: 0, zh: { ...priorExp.zh, organization: "乙组织" } };
+    const base = event("experience-v2");
+    const expEvent: ActivityLogV13CEvent = { ...base, section: "experience", entityType: "experience_list", entityId: null,
+      entitySnapshot: { experience: [otherExp, nextExp] }, changes: { experience: { before: [priorExp], after: [otherExp, nextExp] } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeExperienceSkillsActivity(expEvent)).toEqual([
+      { kind: "Added", label: "乙组织" },
+      { kind: "Updated", label: "甲组织", locale: "Chinese", field: "Experience description", before: "旧描述", after: "新描述" },
+      { kind: "Updated", label: "甲组织", locale: "Chinese", field: "Experience location", before: "null", after: "上海" },
+    ]);
+    const firstSkill = { id: a, position: 0, zh: { title: "语言", items: "中文" }, en: { title: "Languages", items: "Chinese" } };
+    const secondSkill = { id: b, position: 1, zh: { title: "工具", items: "SQL" }, en: { title: "Tools", items: "SQL" } };
+    const reordered: ActivityLogV13CEvent = { ...base, section: "skills", entityType: "skill_group_list", entityId: null,
+      entitySnapshot: { skills: [secondSkill, firstSkill] }, changes: { skills: { before: [firstSkill, secondSkill], after: [secondSkill, firstSkill] } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeExperienceSkillsActivity(reordered)).toEqual([{ kind: "Reordered", label: "Skills" }]);
+  });
+
+  it("renders V2 Experience/Skills semantic rows in English and Chinese", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const row = { id, position: 0, zh: { title: "语言", items: "中文" }, en: { title: "Languages", items: "Chinese" } };
+    const v2: ActivityLogV13CEvent = { ...event("skill-v2"), section: "skills", entityType: "skill_group_list", entityId: null,
+      entitySnapshot: { skills: [row] }, changes: { skills: { before: [], after: [row] } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([v2]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/View changed fields/));
+    expect(await screen.findByText("Added")).toBeTruthy();
+    cleanup(); window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/查看变更字段/));
+    expect(await screen.findByText("已添加")).toBeTruthy();
   });
 
   it.each([

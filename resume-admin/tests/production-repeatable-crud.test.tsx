@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -82,6 +82,16 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       awardsWriteMode: options.awardsWriteMode ?? "direct", awardsTrustedContextRequired: options.awardsTrustedContextRequired ?? false })),
     saveAwardsWithWorker: vi.fn(async (_resumeId: string, draft: AwardItem[]) => draft.map((item, index) => ({ ...item,
       id: item.id.startsWith("local-") ? `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, "0")}` : item.id, position: index }))),
+    loadAdminExperienceWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "experience" as const,
+      activityLogEnabled: options.activityLogEnabled ?? options.experienceWriteMode === "rpc", writeMode: options.experienceWriteMode ?? "direct",
+      trustedContextRequired: options.experienceTrustedContextRequired ?? false })),
+    saveExperienceWithWorker: vi.fn(async (_resumeId: string, draft: ExperienceItem[]) => structuredClone(draft)),
+    hasPendingExperienceWorkerSave: vi.fn(() => false), discardPendingExperienceSave: vi.fn(),
+    loadAdminSkillsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "skills" as const,
+      activityLogEnabled: options.activityLogEnabled ?? options.skillsWriteMode === "rpc", writeMode: options.skillsWriteMode ?? "direct",
+      trustedContextRequired: options.skillsTrustedContextRequired ?? false })),
+    saveSkillsWithWorker: vi.fn(async (_resumeId: string, draft: SkillItem[]) => structuredClone(draft)),
+    hasPendingSkillsWorkerSave: vi.fn(() => false), discardPendingSkillsSave: vi.fn(),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");

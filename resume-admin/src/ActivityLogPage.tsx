@@ -91,6 +91,50 @@ export function describeAwardsActivity(event: ActivityLogV13CEvent): AwardActivi
   return lines;
 }
 
+export type CollectionActivityLine = { kind: "Added" | "Updated" | "Removed" | "Reordered"; label: string; locale?: "Chinese" | "English"; field?: string; before?: string; after?: string };
+type AggregateRow = { id: string; position: number; zh: Record<string, unknown>; en: Record<string, unknown> };
+function aggregateRows(value: unknown): AggregateRow[] | null {
+  if (!Array.isArray(value) || value.length > 16 || value.some(item => !item || typeof item !== "object"
+    || typeof (item as Record<string, unknown>).id !== "string" || !Number.isInteger((item as Record<string, unknown>).position)
+    || !(item as Record<string, unknown>).zh || !(item as Record<string, unknown>).en)) return null;
+  return value as AggregateRow[];
+}
+export function describeExperienceSkillsActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  const domain = event.section === "experience" && event.entityType === "experience_list" ? "experience"
+    : event.section === "skills" && event.entityType === "skill_group_list" ? "skills" : null;
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || !domain) return [];
+  const change = event.changes[domain] as { before?: unknown; after?: unknown } | undefined;
+  const before = aggregateRows(change?.before); const after = aggregateRows(change?.after);
+  if (!before || !after) return [];
+  const beforeById = new Map(before.map(item => [item.id, item])); const afterById = new Map(after.map(item => [item.id, item]));
+  const label = (item: AggregateRow) => domain === "experience"
+    ? String(item.zh.organization || item.en.organization || "Experience")
+    : String(item.zh.title || item.en.title || "Skill group");
+  const fieldNames = domain === "experience"
+    ? ["organization", "title", "period", "description", "location"]
+    : ["title", "items"];
+  const displayNames: Record<string, string> = domain === "experience"
+    ? { organization: "Experience organization", title: "Experience title", period: "Experience period", description: "Experience description", location: "Experience location" }
+    : { title: "Skill group title", items: "Skill group items" };
+  const lines: CollectionActivityLine[] = [];
+  for (const item of after) if (!beforeById.has(item.id)) lines.push({ kind: "Added", label: label(item) });
+  for (const item of before) if (!afterById.has(item.id)) lines.push({ kind: "Removed", label: label(item) });
+  for (const item of after) {
+    const old = beforeById.get(item.id);
+    if (!old) continue;
+    for (const locale of ["zh", "en"] as const) for (const field of fieldNames) {
+      const oldValue = old[locale][field]; const newValue = item[locale][field];
+      if (oldValue !== newValue) lines.push({ kind: "Updated", label: label(item), locale: locale === "zh" ? "Chinese" : "English",
+        field: displayNames[field], before: oldValue === null ? "null" : String(oldValue ?? ""), after: newValue === null ? "null" : String(newValue ?? "") });
+    }
+  }
+  const shared = new Set([...beforeById.keys()].filter(id => afterById.has(id)));
+  const priorSequence = before.filter(item => shared.has(item.id)).map(item => item.id);
+  const nextSequence = after.filter(item => shared.has(item.id)).map(item => item.id);
+  if (priorSequence.some((id, index) => id !== nextSequence[index])) lines.push({ kind: "Reordered", label: domain === "experience" ? "Experience" : "Skills" });
+  return lines;
+}
+
 function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
   const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
   const network = event.ipNetwork?.trim() ?? "";
@@ -212,7 +256,10 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
-                </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
+                </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list")
+                  ? <dl>{describeExperienceSkillsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                    <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Experience title")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
+                  </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
                   <dt>{t(fields[key] ?? key)}</dt><dd><span>{t("Before")}: {fieldValues(change.before, t)}</span><span>{t("After")}: {fieldValues(change.after, t)}</span></dd>
                 </div>)}</dl>}</details>}
             </li>)}</ol>

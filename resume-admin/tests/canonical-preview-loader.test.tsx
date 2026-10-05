@@ -42,6 +42,10 @@ function createRepository() {
     updateEditableTranslation: vi.fn(async (_section, targetResumeId, entryId, locale, translation) => ({
       resumeId: targetResumeId, entryId, locale, translation,
     })),
+    loadAdminExperienceWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "experience" as const, activityLogEnabled: false, writeMode: "direct" as const, trustedContextRequired: false })),
+    saveExperienceWithWorker: vi.fn(async (_targetResumeId: string, draft: typeof sections.experience) => structuredClone(draft)),
+    loadAdminSkillsWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "skills" as const, activityLogEnabled: false, writeMode: "direct" as const, trustedContextRequired: false })),
+    saveSkillsWithWorker: vi.fn(async (_targetResumeId: string, draft: typeof sections.skills) => structuredClone(draft)),
     updateEditableEntryPosition: vi.fn(async (_section, targetResumeId, entryId, position) => ({ resumeId: targetResumeId, entryId, position, sourceKey: null })),
     insertEditableEntry: vi.fn(async (_section, targetResumeId, position) => ({ resumeId: targetResumeId, entryId: "created-entry", position, sourceKey: null })),
     insertEditableTranslation: vi.fn(async (_section, targetResumeId, entryId, locale, translation) => ({ resumeId: targetResumeId, entryId, locale, translation })),

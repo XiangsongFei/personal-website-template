@@ -8,6 +8,8 @@ import {
 const API_ROOT = "/api/admin/v1";
 const SAVE_PATH = `${API_ROOT}/introduction/save`;
 const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
+const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
+const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -39,13 +41,17 @@ interface IntroductionItem {
 }
 
 interface AwardsItem { id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }
+interface ExperienceLocale { organization: string; title: string; period: string; description: string; location: string | null }
+interface ExperienceItem { id: string | null; position: number; zh: ExperienceLocale; en: ExperienceLocale }
+interface SkillsLocale { title: string; items: string }
+interface SkillsItem { id: string | null; position: number; zh: SkillsLocale; en: SkillsLocale }
 
 interface SignedContext {
   context_version: number;
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards";
+  domain: "introduction" | "awards" | "experience" | "skills";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -261,6 +267,69 @@ function validateAwards(value: unknown): AwardsItem[] {
 export function canonicalizeAwards(items: AwardsItem[]): string {
   return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
     zh: { name: item.zh.name, year: item.zh.year }, en: { name: item.en.name, year: item.en.year } })));
+}
+
+function boundedText(value: unknown, maxBytes: number, label: string): string {
+  if (typeof value !== "string" || value.includes("\0") || hasUnpairedSurrogate(value)
+    || UTF8.encode(value).byteLength > maxBytes) throw apiError(422, "invalid_collection", `${label} is invalid or too long.`);
+  return value;
+}
+
+function validateCollectionId(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || (!UUID_PATTERN.test(value) && !LOCAL_ID_PATTERN.test(value)))
+    throw apiError(422, "invalid_collection_id", "Collection item ID is invalid.");
+  return value.startsWith("local-") ? null : value.toLowerCase();
+}
+
+function validateExperience(value: unknown): ExperienceItem[] {
+  if (!Array.isArray(value) || value.length > 16) throw apiError(422, "invalid_experience", "Experience must contain no more than 16 entries.");
+  const ids = new Set<string>();
+  return value.map((raw, position) => {
+    if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "en,id,position,zh" || raw.position !== position)
+      throw apiError(422, "invalid_experience_entry", "Each Experience entry must contain only id, position, zh, and en in order.");
+    const id = validateCollectionId(raw.id);
+    if (id && (ids.has(id) || String(raw.id) !== id)) throw apiError(422, "invalid_experience_id", "Experience IDs must be unique canonical UUIDs.");
+    if (id) ids.add(id);
+    const locale = (input: unknown): ExperienceLocale => {
+      if (!isPlainObject(input) || Object.keys(input).sort().join(",") !== "description,location,organization,period,title")
+        throw apiError(422, "invalid_experience_locale", "Experience translations are invalid.");
+      const location = input.location === null ? null : boundedText(input.location, 64, "Experience location");
+      return { organization: boundedText(input.organization, 64, "Experience organization"),
+        title: boundedText(input.title, 64, "Experience title"), period: boundedText(input.period, 32, "Experience period"),
+        description: boundedText(input.description, 768, "Experience description"), location };
+    };
+    return { id, position, zh: locale(raw.zh), en: locale(raw.en) };
+  });
+}
+
+export function canonicalizeExperience(items: ExperienceItem[]): string {
+  return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
+    zh: { organization: item.zh.organization, title: item.zh.title, period: item.zh.period, description: item.zh.description, location: item.zh.location },
+    en: { organization: item.en.organization, title: item.en.title, period: item.en.period, description: item.en.description, location: item.en.location } })));
+}
+
+function validateSkills(value: unknown): SkillsItem[] {
+  if (!Array.isArray(value) || value.length > 16) throw apiError(422, "invalid_skills", "Skills must contain no more than 16 groups.");
+  const ids = new Set<string>();
+  return value.map((raw, position) => {
+    if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "en,id,position,zh" || raw.position !== position)
+      throw apiError(422, "invalid_skill_group", "Each Skills group must contain only id, position, zh, and en in order.");
+    const id = validateCollectionId(raw.id);
+    if (id && (ids.has(id) || String(raw.id) !== id)) throw apiError(422, "invalid_skill_id", "Skills IDs must be unique canonical UUIDs.");
+    if (id) ids.add(id);
+    const locale = (input: unknown): SkillsLocale => {
+      if (!isPlainObject(input) || Object.keys(input).sort().join(",") !== "items,title")
+        throw apiError(422, "invalid_skills_locale", "Skills translations are invalid.");
+      return { title: boundedText(input.title, 64, "Skill title"), items: boundedText(input.items, 896, "Skill items") };
+    };
+    return { id, position, zh: locale(raw.zh), en: locale(raw.en) };
+  });
+}
+
+export function canonicalizeSkills(items: SkillsItem[]): string {
+  return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
+    zh: { title: item.zh.title, items: item.zh.items }, en: { title: item.en.title, items: item.en.items } })));
 }
 
 function parseIPv4(value: string): number[] | null {
@@ -697,6 +766,55 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: "experience" | "skills"): Promise<Response> {
+  const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  const collectionKey = domain;
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== [collectionKey, "request_id", "resume_id"].sort().join(","))
+    throw apiError(400, "invalid_request", `Request must contain only request_id, resume_id, and ${collectionKey}.`);
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
+    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  const items = domain === "experience" ? validateExperience(parsed[collectionKey]) : validateSkills(parsed[collectionKey]);
+  const canonical = domain === "experience" ? canonicalizeExperience(items as ExperienceItem[]) : canonicalizeSkills(items as SkillsItem[]);
+  if (UTF8.encode(canonical).byteLength > 196608)
+    throw apiError(413, "canonical_payload_too_large", `${domain === "experience" ? "Experience" : "Skills"} exceeds the allowed size.`);
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(), domain, operation: "update", request_id: parsed.request_id.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_${domain}_v1`, {
+      method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
+        "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, [`canonical_${collectionKey}`]: canonical,
+        signed_context: signed.serialized, signature_hex: signed.signatureHex }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw apiError(504, "upstream_timeout", `The data service timed out. Retry with the same ${domain} request ID.`);
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const responseBody = await readJsonResponse(upstream, 220 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody))
+      throw apiError(409, "idempotency_conflict", `The ${domain} retry conflicts with a different request. Refresh before trying again.`);
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save ${domain} (HTTP ${upstream.status}).`);
+  }
+  if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)
+    throw apiError(502, "invalid_upstream_response", `The data service returned an invalid ${domain} result.`);
+  return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
 function isApiPath(pathname: string): boolean {
   return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
 }
@@ -704,7 +822,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -714,7 +832,9 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     });
   }
   try {
-    return await (url.pathname === SAVE_PATH ? saveIntroduction(request, env) : saveAwards(request, env));
+    if (url.pathname === SAVE_PATH) return await saveIntroduction(request, env);
+    if (url.pathname === SAVE_AWARDS_PATH) return await saveAwards(request, env);
+    return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);
     return errorResponse(apiError(502, "request_failed", "The Introduction request could not be completed."));
