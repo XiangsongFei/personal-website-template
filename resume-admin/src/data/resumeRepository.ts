@@ -260,10 +260,11 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
         throw new Error("Invalid Activity Log response");
       }
       if (!((row.payload_version === 1 && row.entity_type !== "award_list")
-        || (row.payload_version === 2 && row.entity_id === null && row.operation === "update"
-          && ((row.section_key === "awards" && row.entity_type === "award_list")
-            || (row.section_key === "experience" && row.entity_type === "experience_list")
-            || (row.section_key === "skills" && row.entity_type === "skill_group_list"))))) {
+          || (row.payload_version === 2 && row.entity_id === null && row.operation === "update"
+            && ((row.section_key === "awards" && row.entity_type === "award_list")
+              || (row.section_key === "experience" && row.entity_type === "experience_list")
+              || (row.section_key === "skills" && row.entity_type === "skill_group_list")
+              || (row.section_key === "education" && row.entity_type === "education_list"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -276,17 +277,23 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education";
         const change = changes[key];
-        const validArray = (raw: unknown, domain: "awards" | "experience" | "skills"): boolean => {
+        const validArray = (raw: unknown, domain: "awards" | "experience" | "skills" | "education"): boolean => {
           if (!Array.isArray(raw) || raw.length > (domain === "awards" ? 32 : 16)) return false;
           const ids = new Set<string>();
           return raw.every((entry, position) => {
             if (!entry || typeof entry !== "object") return false;
             const item = entry as Record<string, unknown>;
-            if (Object.keys(item).sort().join(",") !== "en,id,position,zh" || typeof item.id !== "string"
+            const expectedKeys = domain === "education" ? "education_category,en,entry_type,id,position,zh" : "en,id,position,zh";
+            if (Object.keys(item).sort().join(",") !== expectedKeys || typeof item.id !== "string"
               || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id)
               || ids.has(item.id) || item.position !== position) return false;
+            if (domain === "education") {
+              const validCategory = item.education_category === null || ["undergraduate", "graduate", "doctoral", "summerSchool", "custom"].includes(String(item.education_category));
+              if (!validCategory || (item.entry_type !== "standard" && item.entry_type !== "summerSchool")
+                || (item.education_category !== null && ((item.education_category === "summerSchool") !== (item.entry_type === "summerSchool")))) return false;
+            }
             const validTranslation = (value: unknown): boolean => {
               if (!value || typeof value !== "object" || Array.isArray(value)) return false;
               const locale = value as Record<string, unknown>;
@@ -294,6 +301,16 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
                 && typeof locale.name === "string" && typeof locale.year === "string";
               if (domain === "skills") return Object.keys(locale).sort().join(",") === "items,title"
                 && typeof locale.title === "string" && typeof locale.items === "string";
+              if (domain === "education") {
+                if (Object.keys(locale).sort().join(",") !== "course_description,course_title,custom_category_label,grade,period,program,title"
+                  || !["title", "program", "period", "grade"].every(field => typeof locale[field] === "string")) return false;
+                const byteLength = (value: string) => new TextEncoder().encode(value).length;
+                const bounded = (field: string, max: number) => typeof locale[field] === "string" && byteLength(locale[field] as string) <= max;
+                return bounded("title", 256) && bounded("program", 256) && bounded("period", 128) && bounded("grade", 256)
+                  && ((locale.course_title === null || bounded("course_title", 256))
+                    && (locale.course_description === null || bounded("course_description", 2048))
+                    && (locale.custom_category_label === null || bounded("custom_category_label", 256)));
+              }
               return Object.keys(locale).sort().join(",") === "description,location,organization,period,title"
                 && ["organization", "title", "period", "description"].every(field => typeof locale[field] === "string")
                 && (locale.location === null || typeof locale.location === "string");

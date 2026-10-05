@@ -177,6 +177,40 @@ describe("Activity Log repository RPC boundary", () => {
       entity_snapshot: { [domain]: [row] }, changes: { [domain]: { before: [], after: [{ ...row, extra: true }] } }, payload_version: 2 })], error: null });
     await expect(repository(malformed).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
   });
+
+  it("decodes Education V2 title updates with the frozen education_list snapshot shape", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const item = (title: string) => ({
+      id, position: 0, entry_type: "summerSchool", education_category: null,
+      zh: { title: "中文标题", program: "项目", period: "2025", grade: "", course_title: null, course_description: null, custom_category_label: null },
+      en: { title, program: "Program", period: "2025", grade: "", course_title: null, course_description: null, custom_category_label: null },
+    });
+    const rows = [
+      activityRow({ section_key: "education", entity_type: "education_list", entity_id: null,
+        entity_snapshot: { education: [item("QA Sample Institute [V1.3D-3 QA TEMP]")] },
+        changes: { education: { before: [item("QA Sample Institute")], after: [item("QA Sample Institute [V1.3D-3 QA TEMP]")] } }, payload_version: 2 }),
+      activityRow({ id: "event-education-restore", section_key: "education", entity_type: "education_list", entity_id: null,
+        entity_snapshot: { education: [item("QA Sample Institute")] },
+        changes: { education: { before: [item("QA Sample Institute [V1.3D-3 QA TEMP]")], after: [item("QA Sample Institute")] } }, payload_version: 2 }),
+    ];
+    const rpc = vi.fn().mockResolvedValue({ data: rows, error: null });
+    const events = await repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters);
+    expect(events).toHaveLength(2);
+    expect(events.map(event => event.changes?.education)).toEqual([
+      { before: [item("QA Sample Institute")], after: [item("QA Sample Institute [V1.3D-3 QA TEMP]")] },
+      { before: [item("QA Sample Institute [V1.3D-3 QA TEMP]")], after: [item("QA Sample Institute")] },
+    ]);
+  });
+
+  it("fails closed for malformed Education V2 snapshots", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const item = { id, position: 0, entry_type: "summerSchool", education_category: null,
+      zh: { title: "中文", program: "项目", period: "2025", grade: "", course_title: null, course_description: null, custom_category_label: null },
+      en: { title: "English", program: "Program", period: "2025", grade: "", course_title: null, course_description: null, custom_category_label: null } };
+    const rpc = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: "education", entity_type: "education_list", entity_id: null,
+      entity_snapshot: { education: [item] }, changes: { education: { before: [], after: [{ ...item, extra: true }] } }, payload_version: 2 })], error: null });
+    await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
 });
 
 describe("Awards repository signed write routing", () => {
