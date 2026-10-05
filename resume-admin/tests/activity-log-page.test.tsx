@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeExperienceSkillsActivity } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeExperienceSkillsActivity, describeProjectsActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -126,6 +126,26 @@ describe("Activity Log page", () => {
     fireEvent.click(await screen.findByText(/View changed fields/));
     expect(await screen.findByText(/Chinese · Education program · 暑期学校 · Before: 旧项目 · After: 新项目/)).toBeTruthy();
     expect(screen.getByText(/English · Education program · 暑期学校 · Before: Old program · After: New program/)).toBeTruthy();
+  });
+
+  it("describes Projects method edits and renders a Projects V2 event with sparse before positions", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const project = (positions: number[], values: string[]) => ({ id, position: 0,
+      zh: { title: "项目甲", subtitle: "", period: "2024", description: "", href: "" },
+      en: { title: "Project A", subtitle: "", period: "2024", description: "", href: "" },
+      methods: { zh: positions.map((position, i) => ({ id: `${String.fromCharCode(97 + i).repeat(8)}-${String.fromCharCode(97 + i).repeat(4)}-4${String.fromCharCode(97 + i).repeat(3)}-8${String.fromCharCode(97 + i).repeat(3)}-${String.fromCharCode(97 + i).repeat(12)}`, position, value: values[i]! })), en: [] },
+    });
+    const before = project([0, 1, 3], ["规划", "设计", "交付"]);
+    const after = project([0, 1, 2], ["规划", "设计", "上线"]);
+    const base = event("projects-v2");
+    const v2: ActivityLogV13CEvent = { ...base, section: "projects", entityType: "project_list", entityId: null,
+      entitySnapshot: { projects: [after] }, changes: { projects: { before: [before], after: [after] } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeProjectsActivity(v2)).toEqual([{ kind: "Updated", label: "项目甲", locale: "Chinese", field: "Project method", before: "交付", after: "上线" }]);
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([v2]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/View changed fields/));
+    expect(await screen.findByText(/Project method/)).toBeTruthy();
   });
 
   it.each([

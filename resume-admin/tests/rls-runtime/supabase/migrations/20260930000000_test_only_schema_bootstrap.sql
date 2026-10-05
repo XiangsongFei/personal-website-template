@@ -105,9 +105,8 @@ CREATE TABLE public.resume_experience_translations (
 CREATE TABLE public.resume_project_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), resume_id uuid NOT NULL REFERENCES public.resume_sites(id) ON DELETE CASCADE,
   source_key text NULL, position integer NOT NULL CHECK (position >= 0), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (id,resume_id), UNIQUE (resume_id,position)
+  UNIQUE (id,resume_id), UNIQUE (resume_id,position), UNIQUE (resume_id,source_key)
 );
-CREATE UNIQUE INDEX resume_project_source_key_unique ON public.resume_project_entries(resume_id,source_key) WHERE source_key IS NOT NULL;
 CREATE TABLE public.resume_project_translations (
   project_entry_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   title text NOT NULL, subtitle text NOT NULL, period text NOT NULL, description text NOT NULL, href text NOT NULL,

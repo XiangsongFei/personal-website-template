@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalizeEducation, canonicalizeExperience, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { canonicalizeEducation, canonicalizeExperience, canonicalizeProjects, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const actorId = "10000000-0000-4000-8000-000000000002";
@@ -12,6 +12,9 @@ const skills = { id: null, position: 0, zh: { title: "语言", items: "中文" }
 const education = { id: null, position: 0, entry_type: "summerSchool" as const, education_category: null,
   zh: { title: "暑期学校", program: "项目", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null },
   en: { title: "Summer School", program: "Program", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null } };
+const projects = [{ id: null, position: 0, zh: { title: "项目", subtitle: "", period: "2025", description: "简介", href: "" },
+  en: { title: "Project", subtitle: "", period: "2025", description: "Summary", href: "https://example.test" },
+  methods: { zh: [{ id: null, position: 0, value: "规划" }], en: [] } }];
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function jwt() {
@@ -40,6 +43,11 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     expect(parsed[0].education_category).toBeNull();
     expect(parsed[0].zh.course_title).toBeNull();
     expect(parsed[0].zh.course_description).toBe("");
+  });
+
+  it("canonicalizes Projects while preserving empty and locale-specific href values", () => {
+    expect(JSON.parse(canonicalizeProjects(projects))).toEqual(projects);
+    expect(canonicalizeProjects(projects)).toContain('"href":""');
   });
 
   it("enforces representative Education UTF-8, course-description, and collection-count boundaries", async () => {
@@ -72,6 +80,39 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     }), env());
     expect(response.status, await response.clone().text()).toBe(200);
     expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("signs Projects to its typed RPC with null new IDs, exact hrefs, and bounded nested methods", async () => {
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
+      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain: "projects", operation: "update", request_id: requestId });
+      expect(String(input)).toBe("https://local.test/rest/v1/rpc/save_resume_projects_v1");
+      expect(JSON.parse(String(body.canonical_projects))).toEqual(projects);
+      return Response.json([{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", position: 0,
+        zh: projects[0]!.zh, en: projects[0]!.en,
+        methods: { zh: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, value: "规划" }], en: [] } }]);
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/projects/save", {
+      request_id: requestId, resume_id: resumeId, projects,
+    }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [{ ...projects[0]!, methods: { ...projects[0]!.methods, zh: [{ id: null, position: 1, value: "out of order" }] } }],
+    [{ ...projects[0]!, en: { ...projects[0]!.en, href: "x".repeat(2049) } }],
+    [{ ...projects[0]!, methods: { ...projects[0]!.methods, zh: Array.from({ length: 65 }, (_, position) => ({ id: null, position, value: "x" })) } }],
+    [{ ...projects[0]!, zh: { ...projects[0]!.zh, extra: "rejected" } }],
+  ])("rejects malformed Projects before upstream access and never falls back", async invalid => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/projects/save", {
+      request_id: requestId, resume_id: resumeId, projects: invalid,
+    }), env());
+    expect(response.status).toBe(422);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it.each([

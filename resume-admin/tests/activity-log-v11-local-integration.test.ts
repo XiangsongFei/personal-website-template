@@ -143,6 +143,27 @@ async function readUnifiedEvents(target = targetId, bearer = userJwt!): Promise<
   return await rest("/rest/v1/rpc/read_activity_log_events_v13c", { method: "POST", body: JSON.stringify({ target_resume_id: target, page_limit: 100, event_filter: "successful" }) }, bearer) as Array<Record<string, unknown>>;
 }
 
+type LocalProject = { id: string; position: number; source_key: string | null; zh: Record<string, string>; en: Record<string, string>; methods: { zh: Array<{ id: string; position: number; value: string }>; en: Array<{ id: string; position: number; value: string }> } };
+async function readProjects(target = targetId, bearer = userJwt!): Promise<LocalProject[]> {
+  const parents = await rest(`/rest/v1/resume_project_entries?select=id,position,source_key&resume_id=eq.${target}&order=position.asc,id.asc`, {}, bearer) as Array<{ id: string; position: number; source_key: string | null }>;
+  const translations = await rest(`/rest/v1/resume_project_translations?select=project_entry_id,locale,title,subtitle,period,description,href&resume_id=eq.${target}`, {}, bearer) as Array<{ project_entry_id: string; locale: string; title: string; subtitle: string; period: string; description: string; href: string }>;
+  const methods = await rest(`/rest/v1/resume_project_methods?select=id,project_entry_id,locale,position,value&resume_id=eq.${target}&order=position.asc,id.asc`, {}, bearer) as Array<{ id: string; project_entry_id: string; locale: string; position: number; value: string }>;
+  return parents.map(parent => {
+    const locale = (key: "zh" | "en") => {
+      const row = translations.find(value => value.project_entry_id === parent.id && value.locale === key);
+      if (!row) throw new Error("Local Projects fixture is missing a required locale");
+      return { title: row.title, subtitle: row.subtitle, period: row.period, description: row.description, href: row.href };
+    };
+    const localeMethods = (key: "zh" | "en") => methods.filter(method => method.project_entry_id === parent.id && method.locale === key)
+      .map(({ id, position, value }) => ({ id, position, value }));
+    return { ...parent, zh: locale("zh"), en: locale("en"), methods: { zh: localeMethods("zh"), en: localeMethods("en") } };
+  });
+}
+
+async function readProjectsWriteState(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
+  return await rest("/rest/v1/rpc/load_admin_projects_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+}
+
 function localSql(sql: string): string {
   return execFileSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0];
 }
@@ -210,6 +231,18 @@ async function invokeAwards(awards: Array<{ id: string | null; position: number;
     const response = await handleWorkerRequest(makeAwardsRequest(awards, requestId, token, target), workerEnv());
     return { response, body: await response.json() };
   } finally { mutateNextAwardsRpcPayload = undefined; }
+}
+type LocalProjectsSavePayload = Array<{
+  id: string | null; position: number; zh: Record<string, string>; en: Record<string, string>;
+  methods: { zh: Array<{ id: string | null; position: number; value: string }>; en: Array<{ id: string | null; position: number; value: string }> };
+}>;
+async function invokeProjects(projects: LocalProjectsSavePayload, requestId = localUuid(), token = userJwt!, target = targetId): Promise<{ response: Response; body: unknown }> {
+  const request = new Request("https://admin.local.test/api/admin/v1/projects/save", { method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89" },
+    body: JSON.stringify({ request_id: requestId, resume_id: target, projects }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  const response = await handleWorkerRequest(request, workerEnv());
+  return { response, body: await response.json() };
 }
 
 function rpcRows(body: unknown): Array<{ id: string; position: number; translations: { zh: { text: string }; en: { text: string } } }> {
@@ -780,6 +813,67 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`)).toBe(beforeSystemCount);
     expect(localSql(`SELECT count(*) FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid AND resume_id='${targetId}'::uuid AND domain_key='awards' AND request_id='${requestId}'::uuid`)).toBe("0");
     expect(v13RecorderBodies).toHaveLength(recorderCount);
+  });
+
+  it("integrates Projects state/read and signed Worker → PostgREST → RPC save, exact replay, and conflict", async () => {
+    assertLocalConfiguration();
+    const baseline = await readProjects();
+    expect(baseline.length).toBeGreaterThan(0);
+    const beforeEvents = await readUnifiedEvents();
+    const directState = await readProjectsWriteState();
+    expect(directState).toHaveLength(1);
+    expect(directState[0]).toMatchObject({ resume_id: targetId, projects_write_mode: "direct" });
+
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='projects';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'projects','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
+    try {
+      const writeState = await readProjectsWriteState();
+      expect(writeState[0]).toMatchObject({ resume_id: targetId, projects_write_mode: "rpc", projects_trusted_context_required: true });
+      const toRequest = (items: LocalProject[]) => items.map(({ id, position, zh, en, methods }) => ({
+        id, position, zh, en,
+        methods: { zh: methods.zh.map(({ id: methodId, position: methodPosition, value }) => ({ id: methodId, position: methodPosition, value })),
+          en: methods.en.map(({ id: methodId, position: methodPosition, value }) => ({ id: methodId, position: methodPosition, value })) },
+      }));
+
+      const noOp = await invokeProjects(toRequest(baseline));
+      expect(noOp.response.status).toBe(200);
+      expect(await readProjects()).toEqual(baseline);
+      expect(await readUnifiedEvents()).toHaveLength(beforeEvents.length);
+
+      const changed = structuredClone(baseline);
+      changed[0]!.zh.title = `${changed[0]!.zh.title} integration check`;
+      const requestId = localUuid();
+      const first = await invokeProjects(toRequest(changed), requestId);
+      expect(first.response.status).toBe(200);
+      expect(Array.isArray(first.body)).toBe(true);
+      const committed = await readProjects();
+      expect(committed[0]!.zh.title).toBe(changed[0]!.zh.title);
+      expect(committed.map(({ id, source_key }) => [id, source_key])).toEqual(baseline.map(({ id, source_key }) => [id, source_key]));
+      expect(committed.flatMap(project => [...project.methods.zh, ...project.methods.en].map(({ id }) => id)))
+        .toEqual(baseline.flatMap(project => [...project.methods.zh, ...project.methods.en].map(({ id }) => id)));
+      const afterFirst = await readUnifiedEvents();
+      expect(afterFirst).toHaveLength(beforeEvents.length + 1);
+      expect(afterFirst[0]).toMatchObject({ resume_id: targetId, section_key: "projects", entity_type: "project_list", entity_id: null, operation: "update", payload_version: 2 });
+
+      const replay = await invokeProjects(toRequest(changed), requestId);
+      expect(replay.response.status).toBe(200);
+      expect(replay.body).toEqual(first.body);
+      expect(await readProjects()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(beforeEvents.length + 1);
+
+      const conflicting = structuredClone(changed);
+      conflicting[0]!.en.title = `${conflicting[0]!.en.title} conflict`;
+      const conflict = await invokeProjects(toRequest(conflicting), requestId);
+      expect(conflict.response.status).toBe(409);
+      expect(conflict.body).toMatchObject({ error: { code: "idempotency_conflict" } });
+      expect(await readProjects()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(beforeEvents.length + 1);
+    } finally {
+      localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key='projects';
+        DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='projects' AND requirement_key='trusted_network_context_v11'`);
+    }
   });
 
   it("accepts a valid request at the 4096-byte canonical boundary and stores a result within 8192 bytes", async () => {

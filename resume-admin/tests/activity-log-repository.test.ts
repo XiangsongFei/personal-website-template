@@ -202,6 +202,25 @@ describe("Activity Log repository RPC boundary", () => {
     ]);
   });
 
+  it("accepts Projects V2 with sparse stored before-method positions and dense canonical after positions", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const method = (methodId: string, position: number, value: string) => ({ id: methodId, position, value });
+    const project = (positions: number[]) => ({ id, position: 0,
+      zh: { title: "项目", subtitle: "", period: "2024", description: "", href: "" },
+      en: { title: "Project", subtitle: "", period: "2024", description: "", href: "" },
+      methods: { zh: positions.map((position, i) => method(`${i === 2 ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : i === 1 ? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"}`, position, `m${i}`)), en: [] },
+    });
+    const before = project([0, 1, 3]);
+    const after = project([0, 1, 2]);
+    const rpc = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: "projects", entity_type: "project_list", entity_id: null,
+      entity_snapshot: { projects: [after] }, changes: { projects: { before: [before], after: [after] } }, payload_version: 2 })], error: null });
+    await expect(repository(rpc).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).resolves.toMatchObject([{ payloadVersion: 2, entityType: "project_list" }]);
+    const malformedBefore = { ...before, methods: { ...before.methods, zh: before.methods.zh.map((row, index) => index === 2 ? { ...row, position: 1 } : row) } };
+    const malformed = vi.fn().mockResolvedValue({ data: [activityRow({ section_key: "projects", entity_type: "project_list", entity_id: null,
+      entity_snapshot: { projects: [after] }, changes: { projects: { before: [malformedBefore], after: [after] } }, payload_version: 2 })], error: null });
+    await expect(repository(malformed).loadActivityLogPageV13C!("qa-target", 25, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+
   it("fails closed for malformed Education V2 snapshots", async () => {
     const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const item = { id, position: 0, entry_type: "summerSchool", education_category: null,
@@ -245,6 +264,44 @@ describe("Awards repository signed write routing", () => {
     expect(calls[0]!.body.awards).toEqual(calls[1]!.body.awards);
     expect(calls[0]!.body.awards).toEqual([{ id: null, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }]);
     expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(false);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+});
+
+describe("Projects repository signed write routing", () => {
+  const resumeId = "ea111111-1111-4111-8111-111111111111";
+  it("loads target-scoped Projects mode and trusted-context state", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true,
+      projects_write_mode: "rpc", projects_trusted_context_required: true }], error: null });
+    await expect(repository(rpc).loadAdminProjectsWriteState!(resumeId)).resolves.toEqual({ resumeId, domain: "projects",
+      activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    expect(rpc).toHaveBeenCalledWith("load_admin_projects_write_state", { target_resume_id: resumeId });
+  });
+
+  it("posts only to the Projects Worker, preserves exact hrefs, decodes server IDs, and accepts sparse ordered no-op results", async () => {
+    const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const methodIds = ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"];
+    const draft = [{ id: "local-1-1", position: 0, sourceKey: null,
+      translations: { zh: { title: "项目", subtitle: "", period: "2025", description: "", href: "" },
+        en: { title: "Project", subtitle: "", period: "2025", description: "", href: "https://example.test" } },
+      methods: { zh: methodIds.map((id, position) => ({ id, position, value: `方法${position}` })), en: [] } }];
+    const response = [{ id: parentId, position: 0, zh: draft[0]!.translations.zh, en: draft[0]!.translations.en,
+      methods: { zh: methodIds.map((id, position) => ({ id, position: position === 2 ? 3 : position, value: `方法${position}` })), en: [] } }];
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return Response.json(response);
+    }));
+    const repo = createResumeRepository(supabase as unknown as SupabaseClient);
+    await expect(repo.saveProjectsWithWorker!(resumeId, draft)).resolves.toMatchObject([{ id: parentId, position: 0,
+      translations: { zh: { href: "" }, en: { href: "https://example.test" } },
+      methods: { zh: [{ id: methodIds[0], position: 0 }, { id: methodIds[1], position: 1 }, { id: methodIds[2], position: 2 }] } }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("/api/admin/v1/projects/save");
+    expect(calls[0]!.body.projects).toEqual([{ id: null, position: 0, zh: draft[0]!.translations.zh, en: draft[0]!.translations.en,
+      methods: { zh: methodIds.map((id, position) => ({ id, position, value: `方法${position}` })), en: [] } }]);
+    expect(repo.hasPendingProjectsWorkerSave!(resumeId)).toBe(false);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });

@@ -844,7 +844,8 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const pendingAwardsRetry = section === "awards" && (repository.hasPendingAwardsWorkerSave?.(resumeId) ?? false);
   const pendingExperienceRetry = section === "experience" && (repository.hasPendingExperienceWorkerSave?.(resumeId) ?? false);
   const pendingSkillsRetry = section === "skills" && (repository.hasPendingSkillsWorkerSave?.(resumeId) ?? false);
-  const pendingAggregateRetry = pendingExperienceRetry || pendingSkillsRetry;
+  const pendingProjectsRetry = section === "projects" && (repository.hasPendingProjectsWorkerSave?.(resumeId) ?? false);
+  const pendingAggregateRetry = pendingExperienceRetry || pendingSkillsRetry || pendingProjectsRetry;
   const dirty = contentDirty || Boolean(sectionText?.dirty) || pendingAwardsRetry || pendingAggregateRetry;
   const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked);
   const hasRecovery = Object.keys(editor.partialCreates).length > 0 || pendingAggregateRetry;
@@ -869,6 +870,8 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     }
     saving.current = true;
     let sectionTextSaveFailed = false;
+    let sectionTextSaveSucceeded: boolean | null = null;
+    let projectsRpcSaveStarted = false;
     let working: ProductionListState = { ...clone(editor), saving: true, notice: "", error: false };
     const commit = (next: ProductionListState) => { working = next; drafts.set(section, clone(next)); setEditor(next); };
     const patchCache = () => onChanged?.(section, resumeId, clone(working.baseline));
@@ -879,6 +882,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       let awardsWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminAwardsWriteState"]>>> | null = null;
       let experienceWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminExperienceWriteState"]>>> | null = null;
       let skillsWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminSkillsWriteState"]>>> | null = null;
+      let projectsWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminProjectsWriteState"]>>> | null = null;
       if (section === "introduction") {
         try { introductionFeatureState = await repository.loadAdminFeatureState!(resumeId); }
         catch { throw new Error("Introduction save routing could not be verified. Refresh the Admin before trying again."); }
@@ -932,8 +936,20 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         if (skillsWriteState.writeMode === "rpc" && (!skillsWriteState.activityLogEnabled || !skillsWriteState.trustedContextRequired))
           throw new Error("Secure Skills saving is not fully enabled for this target.");
       }
+      if (section === "projects") {
+        if (!repository.loadAdminProjectsWriteState || !repository.saveProjectsWithWorker) throw new Error("Projects save routing could not be verified. Refresh the Admin before trying again.");
+        try { projectsWriteState = await repository.loadAdminProjectsWriteState(resumeId); }
+        catch { throw new Error("Projects save routing could not be verified. Refresh the Admin before trying again."); }
+        if (projectsWriteState.resumeId !== resumeId
+          || (projectsWriteState.writeMode === "direct" && projectsWriteState.trustedContextRequired)
+          || (pendingProjectsRetry && !(projectsWriteState.writeMode === "rpc" && projectsWriteState.trustedContextRequired)))
+          throw new Error("Projects save routing is unavailable or outdated. Refresh the Admin before trying again.");
+        if (projectsWriteState.writeMode === "rpc" && (!projectsWriteState.activityLogEnabled || !projectsWriteState.trustedContextRequired))
+          throw new Error("Secure Projects saving is not fully enabled for this target.");
+      }
       const sectionTextSaved = sectionText ? await sectionText.save() : true;
       sectionTextSaveFailed = !sectionTextSaved;
+      sectionTextSaveSucceeded = sectionTextSaved;
       if (section === "introduction") {
         if (introductionFeatureState?.introductionWriteMode === "rpc") {
           const changedKeys = collectChangedBilingualFieldKeys(section, working.draft, editor.baseline);
@@ -969,6 +985,14 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         contextOnSave(collectChangedBilingualFieldKeys(section, working.draft, editor.baseline));
         working = { ...working, baseline: clone(canonical), draft: clone(canonical), saving: false,
           notice: sectionTextSaved ? "Skill changes saved." : "Skills content saved. The section title remains unsaved; retry to finish.", error: !sectionTextSaved };
+        commit(working); patchCache(); return;
+      }
+      if (section === "projects" && projectsWriteState?.writeMode === "rpc") {
+        projectsRpcSaveStarted = true;
+        const canonical = await repository.saveProjectsWithWorker!(resumeId, working.draft as ProjectItem[]);
+        contextOnSave(collectChangedBilingualFieldKeys(section, working.draft, editor.baseline));
+        working = { ...working, baseline: clone(canonical), draft: clone(canonical), saving: false,
+          notice: sectionTextSaved ? "Project changes saved." : "Projects content saved. The section title or link text remains unsaved; retry to finish.", error: !sectionTextSaved };
         commit(working); patchCache(); return;
       }
       // Explicitly remove child translations first so parent deletion never depends on FK cascade behavior.
@@ -1145,10 +1169,16 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       commit(working); patchCache();
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : "Production save failed. Your changes remain unsaved; please retry.";
+      const projectOutcome = section === "projects" && projectsRpcSaveStarted
+        ? sectionTextSaveSucceeded === true ? "Projects collection save did not complete. The section title or link text saved successfully; verify the collection before retrying."
+          : sectionTextSaveSucceeded === false ? "Projects collection save did not complete. The section title or link text save also failed or is uncertain; verify both before retrying."
+            : "Projects collection save did not start. The section title or link text outcome is uncertain; verify before retrying."
+        : null;
       if (!working.error) working = { ...working,
-        notice: sectionTextSaveFailed && section === "awards" ? "Awards content could not be saved. The Awards section title also remains unsaved."
+        notice: projectOutcome ?? (sectionTextSaveFailed && section === "projects" ? "Project content could not be saved. Section title or link text changes may already be saved; check them separately before retrying."
+          : sectionTextSaveFailed && section === "awards" ? "Awards content could not be saved. The Awards section title also remains unsaved."
           : sectionTextSaveFailed && section === "experience" ? "Experience content could not be saved. The Experience section title also remains unsaved."
-            : sectionTextSaveFailed && section === "skills" ? "Skills content could not be saved. The Skills section title also remains unsaved." : detail,
+            : sectionTextSaveFailed && section === "skills" ? "Skills content could not be saved. The Skills section title also remains unsaved." : detail),
         error: true };
       working = { ...working, saving: false };
       commit(working);
@@ -1179,7 +1209,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       {editor.notice && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice)}</p>}
       <div className="save-bar"><EditorFooterState dirty={dirty} message={editor.notice} error={editor.error} />
         <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || hasRecovery}>{t("Cancel changes")}</button>
-          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : pendingExperienceRetry ? t("Retry exact Experience save") : pendingSkillsRetry ? t("Retry exact Skills save") : section === "awards" && pendingAwardsRetry ? t("Retry exact Awards save") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
+          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || hasBlocked}>{editor.saving ? t("Saving…") : pendingExperienceRetry ? t("Retry exact Experience save") : pendingSkillsRetry ? t("Retry exact Skills save") : pendingProjectsRetry ? t("Retry exact Projects save") : section === "awards" && pendingAwardsRetry ? t("Retry exact Awards save") : t(section === "introduction" ? "Save Introduction changes" : section === "experience" ? "Save experience changes" : section === "projects" ? "Save project changes" : section === "skills" ? "Save skill changes" : section === "awards" ? "Save award changes" : "Save production changes")}</button></div>
       </div>
     </EditorActionFooter>
   </section>;

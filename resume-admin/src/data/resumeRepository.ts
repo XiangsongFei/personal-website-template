@@ -43,6 +43,10 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveEducationWithWorker?(resumeId: string, items: EducationItem[]): Promise<EducationItem[]>;
   hasPendingEducationWorkerSave?(resumeId: string): boolean;
   discardPendingEducationSave?(resumeId?: string): void;
+  loadAdminProjectsWriteState?(resumeId: string): Promise<AdminDomainWriteState<"projects">>;
+  saveProjectsWithWorker?(resumeId: string, items: ProjectItem[]): Promise<ProjectItem[]>;
+  hasPendingProjectsWorkerSave?(resumeId: string): boolean;
+  discardPendingProjectsSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -75,7 +79,7 @@ export type AdminFeatureState = {
   introductionTrustedContextRequired: boolean;
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
-export type AdminDomainWriteState<D extends "experience" | "skills"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
+export type AdminDomainWriteState<D extends "experience" | "skills" | "projects"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 
 export class IntroductionWorkerSaveError extends Error {
@@ -264,7 +268,8 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
             && ((row.section_key === "awards" && row.entity_type === "award_list")
               || (row.section_key === "experience" && row.entity_type === "experience_list")
               || (row.section_key === "skills" && row.entity_type === "skill_group_list")
-              || (row.section_key === "education" && row.entity_type === "education_list"))))) {
+              || (row.section_key === "education" && row.entity_type === "education_list")
+              || (row.section_key === "projects" && row.entity_type === "project_list"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -277,18 +282,20 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills" | "education";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects";
         const change = changes[key];
-        const validArray = (raw: unknown, domain: "awards" | "experience" | "skills" | "education"): boolean => {
+        const validArray = (raw: unknown, domain: "awards" | "experience" | "skills" | "education" | "projects", requireDensePositions = true): boolean => {
           if (!Array.isArray(raw) || raw.length > (domain === "awards" ? 32 : 16)) return false;
           const ids = new Set<string>();
           return raw.every((entry, position) => {
             if (!entry || typeof entry !== "object") return false;
             const item = entry as Record<string, unknown>;
-            const expectedKeys = domain === "education" ? "education_category,en,entry_type,id,position,zh" : "en,id,position,zh";
+            const expectedKeys = domain === "education" ? "education_category,en,entry_type,id,position,zh" : domain === "projects" ? "en,id,methods,position,zh" : "en,id,position,zh";
             if (Object.keys(item).sort().join(",") !== expectedKeys || typeof item.id !== "string"
               || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id)
-              || ids.has(item.id) || item.position !== position) return false;
+              || ids.has(item.id) || !Number.isInteger(item.position) || (item.position as number) < 0
+              || (requireDensePositions ? item.position !== position
+                : (position > 0 && (item.position as number) <= ((raw[position - 1] as Record<string, unknown>).position as number)))) return false;
             if (domain === "education") {
               const validCategory = item.education_category === null || ["undergraduate", "graduate", "doctoral", "summerSchool", "custom"].includes(String(item.education_category));
               if (!validCategory || (item.entry_type !== "standard" && item.entry_type !== "summerSchool")
@@ -297,6 +304,15 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
             const validTranslation = (value: unknown): boolean => {
               if (!value || typeof value !== "object" || Array.isArray(value)) return false;
               const locale = value as Record<string, unknown>;
+              if (domain === "projects") {
+                const bytes = (value: string) => new TextEncoder().encode(value).length;
+                return Object.keys(locale).sort().join(",") === "description,href,period,subtitle,title"
+                  && typeof locale.title === "string" && bytes(locale.title) <= 2048
+                  && typeof locale.subtitle === "string" && bytes(locale.subtitle) <= 2048
+                  && typeof locale.period === "string" && bytes(locale.period) <= 1024
+                  && typeof locale.description === "string" && bytes(locale.description) <= 16384
+                  && typeof locale.href === "string" && bytes(locale.href) <= 2048;
+              }
               if (domain === "awards") return Object.keys(locale).sort().join(",") === "name,year"
                 && typeof locale.name === "string" && typeof locale.year === "string";
               if (domain === "skills") return Object.keys(locale).sort().join(",") === "items,title"
@@ -316,13 +332,33 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
                 && (locale.location === null || typeof locale.location === "string");
             };
             if (!validTranslation(item.zh) || !validTranslation(item.en)) return false;
+            if (domain === "projects") {
+              const methods = item.methods as Record<string, unknown> | undefined;
+              if (!methods || Object.keys(methods).sort().join(",") !== "en,zh") return false;
+              const methodIds = new Set<string>();
+              for (const locale of ["zh", "en"] as const) {
+                const list = methods[locale];
+                if (!Array.isArray(list) || list.length > 64 || list.some((rawMethod, methodPosition) => {
+                  if (!rawMethod || typeof rawMethod !== "object" || Array.isArray(rawMethod)) return true;
+                  const method = rawMethod as Record<string, unknown>;
+                  if (Object.keys(method).sort().join(",") !== "id,position,value" || typeof method.id !== "string"
+                    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(method.id)
+                    || methodIds.has(method.id) || !Number.isInteger(method.position) || (method.position as number) < 0
+                    || (requireDensePositions ? method.position !== methodPosition
+                      : (methodPosition > 0 && (method.position as number) <= ((list[methodPosition - 1] as Record<string, unknown>).position as number)))
+                    || typeof method.value !== "string"
+                    || new TextEncoder().encode(method.value).length > 2048) return true;
+                  methodIds.add(method.id); return false;
+                })) return false;
+              }
+            }
             ids.add(item.id); return true;
           });
         };
         if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
           || !change || !Array.isArray(change.before) || !Array.isArray(change.after)
           || JSON.stringify(snapshot[key]) !== JSON.stringify(change.after)
-          || !validArray(change.before, key) || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
+          || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
       }
       return {
         ...common,
@@ -457,8 +493,8 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     } catch { throw new AwardsWorkerSaveError("The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry."); }
   };
   const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
-  const collectionPendingKey = (domain: "experience" | "skills" | "education", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
-  const saveSignedCollection = async (domain: "experience" | "skills" | "education", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
+  const collectionPendingKey = (domain: "experience" | "skills" | "education" | "projects", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
+  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
     const storageKey = collectionPendingKey(domain, resumeId);
@@ -979,6 +1015,78 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     },
     hasPendingEducationWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("education", resumeId))); } catch { return true; } },
     discardPendingEducationSave() { /* Ambiguous requests are retained for exact replay. */ },
+    async loadAdminProjectsWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_projects_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Projects write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.projects_write_mode !== "direct" && row.projects_write_mode !== "rpc")
+        || typeof row.projects_trusted_context_required !== "boolean"
+        || (row.projects_write_mode === "direct" && row.projects_trusted_context_required)) throw new Error("Invalid Projects write state");
+      return { resumeId, domain: "projects" as const, activityLogEnabled: row.activity_log_enabled,
+        writeMode: row.projects_write_mode, trustedContextRequired: row.projects_trusted_context_required };
+    },
+    async saveProjectsWithWorker(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Projects content is invalid.");
+      const payload = items.map((item, position) => {
+        if (!item || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)))
+          throw new AggregateWorkerSaveError("Project IDs are invalid.");
+        const locale = (value: ProjectItem["translations"]["zh"]) => ({ title: value.title, subtitle: value.subtitle, period: value.period, description: value.description, href: value.href });
+        const methods = (value: ProjectItem["methods"]["zh"]) => value.map((method, methodPosition) => {
+          if (!method || !(method.id.startsWith("local-method-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(method.id)))
+            throw new AggregateWorkerSaveError("Project method IDs are invalid.");
+          return { id: method.id.startsWith("local-method-") ? null : method.id.toLowerCase(), position: methodPosition, value: method.value };
+        });
+        return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+          zh: locale(item.translations.zh), en: locale(item.translations.en), methods: { zh: methods(item.methods.zh), en: methods(item.methods.en) } };
+      });
+      return await saveSignedCollection("projects", resumeId, payload, raw => {
+        if (raw.length !== payload.length) throw new Error("length");
+        const seenProjects = new Set<string>(); const seenMethods = new Set<string>();
+        let priorProjectPosition = -1;
+        return raw.map((entry, position) => {
+          if (!entry || typeof entry !== "object") throw new Error("entry");
+          const row = entry as Record<string, unknown>; const zh = row.zh as Record<string, unknown> | undefined;
+          const en = row.en as Record<string, unknown> | undefined; const methodLists = row.methods as Record<string, unknown> | undefined;
+          const validLocale = (value: Record<string, unknown> | undefined): value is Record<string, unknown> => Boolean(value
+            && Object.keys(value).sort().join(",") === "description,href,period,subtitle,title"
+            && ["title", "subtitle", "period", "description", "href"].every(key => typeof value[key] === "string"));
+          if (Object.keys(row).sort().join(",") !== "en,id,methods,position,zh" || typeof row.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
+            || seenProjects.has(row.id) || !Number.isInteger(row.position) || (row.position as number) < 0
+            || (position > 0 && (row.position as number) <= priorProjectPosition) || !validLocale(zh) || !validLocale(en)
+            || !methodLists || Object.keys(methodLists).sort().join(",") !== "en,zh") throw new Error("shape");
+          priorProjectPosition = row.position as number;
+          const requested = payload[position];
+          if ((requested.id && requested.id !== row.id) || Object.keys(zh).some(key => zh[key] !== requested.zh[key as keyof typeof requested.zh])
+            || Object.keys(en).some(key => en[key] !== requested.en[key as keyof typeof requested.en])) throw new Error("mismatch");
+          const decodeMethods = (rawMethods: unknown, requestedMethods: typeof requested.methods["zh"]) => {
+            if (!Array.isArray(rawMethods) || rawMethods.length !== requestedMethods.length) throw new Error("methods");
+            let priorPosition = -1;
+            return rawMethods.map((rawMethod, methodPosition) => {
+              if (!rawMethod || typeof rawMethod !== "object") throw new Error("method");
+              const method = rawMethod as Record<string, unknown>; const requestMethod = requestedMethods[methodPosition];
+              if (Object.keys(method).sort().join(",") !== "id,position,value" || typeof method.id !== "string"
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(method.id)
+                || seenMethods.has(method.id) || !Number.isInteger(method.position) || (method.position as number) < 0
+                || (methodPosition > 0 && (method.position as number) <= priorPosition) || typeof method.value !== "string"
+                || (requestMethod.id && requestMethod.id !== method.id) || requestMethod.value !== method.value) throw new Error("method shape");
+              priorPosition = method.position as number;
+              seenMethods.add(method.id); return { id: method.id, position: methodPosition, value: method.value };
+            });
+          };
+          if (!Array.isArray(methodLists.zh) || !Array.isArray(methodLists.en)) throw new Error("method lists");
+          const zhMethods = decodeMethods(methodLists.zh, requested.methods.zh); const enMethods = decodeMethods(methodLists.en, requested.methods.en);
+          seenProjects.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
+          return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
+            translations: { zh: zh as ProjectItem["translations"]["zh"], en: en as ProjectItem["translations"]["en"] },
+            methods: { zh: zhMethods, en: enMethods } } satisfies ProjectItem;
+        });
+      }) as ProjectItem[];
+    },
+    hasPendingProjectsWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("projects", resumeId))); } catch { return true; } },
+    discardPendingProjectsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async loadExperience(resumeId) {
       const [parents, translations] = await Promise.all([
         readResumeRows(supabase, "resume_experience_entries", resumeId),

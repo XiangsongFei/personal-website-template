@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -92,6 +92,14 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       trustedContextRequired: options.skillsTrustedContextRequired ?? false })),
     saveSkillsWithWorker: vi.fn(async (_resumeId: string, draft: SkillItem[]) => structuredClone(draft)),
     hasPendingSkillsWorkerSave: vi.fn(() => false), discardPendingSkillsSave: vi.fn(),
+    loadAdminProjectsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "projects" as const,
+      activityLogEnabled: options.activityLogEnabled ?? options.projectsWriteMode === "rpc", writeMode: options.projectsWriteMode ?? "direct",
+      trustedContextRequired: options.projectsTrustedContextRequired ?? false })),
+    saveProjectsWithWorker: vi.fn(async (_resumeId: string, draft: ProjectItem[]) => {
+      if (options.failProjectsRpc) throw new Error("Projects RPC save failed");
+      return structuredClone(draft);
+    }),
+    hasPendingProjectsWorkerSave: vi.fn(() => false), discardPendingProjectsSave: vi.fn(),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
@@ -1660,6 +1668,32 @@ describe("Batch 6A production repeatable CRUD", () => {
     await screen.findByText("No unsaved changes");
     expect(repo.methods.insertEditableEntry).toHaveBeenCalledOnce();
     expect(repo.methods.insertEditableTranslation.mock.calls.map(call=>call[3])).toEqual(["zh", "en", "en"]);
+  });
+
+  it("routes Projects RPC mode only through the typed Worker writer", async () => {
+    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/projects" }, repo.repository);
+    const title = await screen.findByLabelText("Chinese Title");
+    fireEvent.change(title, { target: { value: "Transactional Project" } });
+    save(); await screen.findByText("No unsaved changes");
+    expect(repo.methods.loadAdminProjectsWriteState).toHaveBeenCalledWith(resumeId);
+    expect(repo.methods.saveProjectsWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
+  });
+
+  it("reports a separate locale-content success when the Projects aggregate RPC fails", async () => {
+    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true, activityLogEnabled: true, failProjectsRpc: true });
+    open({ path: "/projects" }, repo.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Projects heading saved separately" } });
+    fireEvent.change(await screen.findByLabelText("Chinese Title"), { target: { value: "Aggregate remains unsaved" } });
+    save();
+    await screen.findByText("Projects collection save did not complete. The section title or link text saved successfully; verify the collection before retrying.");
+    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Projects heading saved separately" });
+    expect(repo.methods.saveProjectsWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Chinese Title") as HTMLInputElement).value).toBe("Aggregate remains unsaved");
   });
 
   it("persists the collision-safe Projects order", async () => {

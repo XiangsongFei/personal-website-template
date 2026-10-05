@@ -75,6 +75,8 @@ Object.assign(dictionary, {
   Projects: "项目经历", "Website & Links": "网站与链接", Profile: "个人资料", Files: "文件",
   Create: "创建", Update: "更新", Delete: "删除", Reorder: "调整顺序", Upload: "上传", Remove: "移除",
   Added: "已添加", Removed: "已移除", "Award": "奖项", "Chinese": "中文", "English": "英文",
+  Project: "项目", "Project title": "项目标题", "Project subtitle": "项目副标题", "Project period": "项目时间",
+  "Project description": "项目描述", "Project method": "项目方法", "Project methods": "项目方法",
   "Award name": "荣誉名称", Year: "年份", "Retry exact Awards save": "重试同一荣誉奖项保存",
   "Awards may contain no more than 32 entries.": "荣誉奖项最多包含 32 项。",
   "Awards content could not be saved. The Awards section title also remains unsaved.": "荣誉奖项内容未能保存，荣誉奖项标题也仍未保存。",

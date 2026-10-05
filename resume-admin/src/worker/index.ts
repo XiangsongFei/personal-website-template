@@ -11,6 +11,7 @@ const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
 const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
 const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
 const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
+const SAVE_PROJECTS_PATH = `${API_ROOT}/projects/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -55,13 +56,16 @@ interface EducationItem {
   education_category: "undergraduate" | "graduate" | "doctoral" | "summerSchool" | "custom" | null;
   zh: EducationLocale; en: EducationLocale;
 }
+interface ProjectsMethod { id: string | null; position: number; value: string }
+interface ProjectsItem { id: string | null; position: number; zh: { title: string; subtitle: string; period: string; description: string; href: string };
+  en: { title: string; subtitle: string; period: string; description: string; href: string }; methods: { zh: ProjectsMethod[]; en: ProjectsMethod[] } }
 
 interface SignedContext {
   context_version: number;
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards" | "experience" | "skills" | "education";
+  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -385,6 +389,46 @@ export function canonicalizeEducation(items: EducationItem[]): string {
       course_title: item.zh.course_title, course_description: item.zh.course_description, custom_category_label: item.zh.custom_category_label },
     en: { title: item.en.title, program: item.en.program, period: item.en.period, grade: item.en.grade,
       course_title: item.en.course_title, course_description: item.en.course_description, custom_category_label: item.en.custom_category_label } })));
+}
+
+function validateProjects(value: unknown): ProjectsItem[] {
+  if (!Array.isArray(value) || value.length > 16) throw apiError(422, "invalid_projects", "Projects must contain no more than 16 entries.");
+  const projectIds = new Set<string>(); const methodIds = new Set<string>();
+  return value.map((raw, position) => {
+    if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "en,id,methods,position,zh" || raw.position !== position)
+      throw apiError(422, "invalid_project", "Each Project must contain only id, position, zh, en, and methods in order.");
+    const id = validateCollectionId(raw.id);
+    if (id && projectIds.has(id)) throw apiError(422, "duplicate_project_id", "Project IDs must be unique.");
+    if (id) projectIds.add(id);
+    const locale = (input: unknown) => {
+      if (!isPlainObject(input) || Object.keys(input).sort().join(",") !== "description,href,period,subtitle,title")
+        throw apiError(422, "invalid_project_locale", "Project translations are invalid.");
+      return { title: boundedText(input.title, 2048, "Project title"), subtitle: boundedText(input.subtitle, 2048, "Project subtitle"),
+        period: boundedText(input.period, 1024, "Project period"), description: boundedText(input.description, 16384, "Project description"),
+        href: boundedText(input.href, 2048, "Project URL") };
+    };
+    if (!isPlainObject(raw.methods) || Object.keys(raw.methods).sort().join(",") !== "en,zh") throw apiError(422, "invalid_project_methods", "Project methods must contain zh and en lists.");
+    const methods = (input: unknown) => {
+      if (!Array.isArray(input) || input.length > 64) throw apiError(422, "invalid_project_methods", "Each Project locale may contain no more than 64 methods.");
+      return input.map((entry, methodPosition) => {
+        if (!isPlainObject(entry) || Object.keys(entry).sort().join(",") !== "id,position,value" || entry.position !== methodPosition)
+          throw apiError(422, "invalid_project_method", "Project method positions must be contiguous and ordered.");
+        const methodId = entry.id === null || (typeof entry.id === "string" && entry.id.startsWith("local-method-")) ? null : validateCollectionId(entry.id);
+        if (methodId && methodIds.has(methodId)) throw apiError(422, "duplicate_project_method_id", "Project method IDs must be unique.");
+        if (methodId) methodIds.add(methodId);
+        return { id: methodId, position: methodPosition, value: boundedText(entry.value, 2048, "Project method") };
+      });
+    };
+    return { id, position, zh: locale(raw.zh), en: locale(raw.en), methods: { zh: methods(raw.methods.zh), en: methods(raw.methods.en) } };
+  });
+}
+
+export function canonicalizeProjects(items: ProjectsItem[]): string {
+  return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
+    zh: { title: item.zh.title, subtitle: item.zh.subtitle, period: item.zh.period, description: item.zh.description, href: item.zh.href },
+    en: { title: item.en.title, subtitle: item.en.subtitle, period: item.en.period, description: item.en.description, href: item.en.href },
+    methods: { zh: item.methods.zh.map(method => ({ id: method.id, position: method.position, value: method.value })),
+      en: item.methods.en.map(method => ({ id: method.id, position: method.position, value: method.value })) } })));
 }
 
 function parseIPv4(value: string): number[] | null {
@@ -917,6 +961,45 @@ async function saveEducation(request: Request, env: WorkerEnv): Promise<Response
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveProjects(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "projects,request_id,resume_id") throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and projects.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id) || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
+    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  const items = validateProjects(parsed.projects); const canonical = canonicalizeProjects(items);
+  if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Projects exceeds the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: parsed.resume_id.toLowerCase(),
+    domain: "projects", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_projects_v1`, { method: "POST",
+      headers: { Authorization: authorization, apikey: supabase.publishableKey, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_projects: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same Projects request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const responseBody = await readJsonResponse(upstream, 220 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody)) throw apiError(409, "idempotency_conflict", "The Projects retry conflicts with a different request. Refresh before trying again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save Projects (HTTP ${upstream.status}).`);
+  }
+  if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Projects result.");
+  return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
 function isApiPath(pathname: string): boolean {
   return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
 }
@@ -924,7 +1007,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -937,6 +1020,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_PATH) return await saveIntroduction(request, env);
     if (url.pathname === SAVE_AWARDS_PATH) return await saveAwards(request, env);
     if (url.pathname === SAVE_EDUCATION_PATH) return await saveEducation(request, env);
+    if (url.pathname === SAVE_PROJECTS_PATH) return await saveProjects(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);

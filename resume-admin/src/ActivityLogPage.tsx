@@ -147,6 +147,42 @@ export function describeExperienceSkillsActivity(event: ActivityLogV13CEvent): C
   return lines;
 }
 
+type ProjectV2Row = { id: string; position: number; zh: Record<string, unknown>; en: Record<string, unknown>; methods: { zh: Array<{ id: string; position: number; value: string }>; en: Array<{ id: string; position: number; value: string }> } };
+function projectRows(value: unknown): ProjectV2Row[] | null {
+  if (!Array.isArray(value) || value.length > 16 || value.some(item => !item || typeof item !== "object")) return null;
+  return value as ProjectV2Row[];
+}
+export function describeProjectsActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "projects" || event.entityType !== "project_list") return [];
+  const change = event.changes.projects as { before?: unknown; after?: unknown } | undefined;
+  const before = projectRows(change?.before); const after = projectRows(change?.after);
+  if (!before || !after) return [];
+  const beforeById = new Map(before.map(item => [item.id, item])); const afterById = new Map(after.map(item => [item.id, item]));
+  const label = (item: ProjectV2Row) => String(item.zh.title || item.en.title || "Project");
+  const lines: CollectionActivityLine[] = [];
+  for (const item of after) if (!beforeById.has(item.id)) lines.push({ kind: "Added", label: label(item) });
+  for (const item of before) if (!afterById.has(item.id)) lines.push({ kind: "Removed", label: label(item) });
+  const names: Record<string, string> = { title: "Project title", subtitle: "Project subtitle", period: "Project period", description: "Project description", href: "Project URL" };
+  for (const item of after) {
+    const old = beforeById.get(item.id); if (!old) continue;
+    for (const locale of ["zh", "en"] as const) for (const field of Object.keys(names)) if (old[locale]?.[field] !== item[locale]?.[field])
+      lines.push({ kind: "Updated", label: label(item), locale: locale === "zh" ? "Chinese" : "English", field: names[field], before: String(old[locale]?.[field] ?? ""), after: String(item[locale]?.[field] ?? "") });
+    for (const locale of ["zh", "en"] as const) {
+      const oldMethods = old.methods[locale] ?? []; const nextMethods = item.methods[locale] ?? [];
+      const oldById = new Map(oldMethods.map(method => [method.id, method])); const nextById = new Map(nextMethods.map(method => [method.id, method]));
+      for (const method of nextMethods) if (!oldById.has(method.id)) lines.push({ kind: "Added", label: `${label(item)} · ${locale === "zh" ? "Chinese" : "English"} · Project method`, after: method.value });
+      for (const method of oldMethods) if (!nextById.has(method.id)) lines.push({ kind: "Removed", label: `${label(item)} · ${locale === "zh" ? "Chinese" : "English"} · Project method`, before: method.value });
+      for (const method of nextMethods) { const prior = oldById.get(method.id); if (prior && prior.value !== method.value) lines.push({ kind: "Updated", label: label(item), locale: locale === "zh" ? "Chinese" : "English", field: "Project method", before: prior.value, after: method.value }); }
+      const shared = new Set([...oldById.keys()].filter(id => nextById.has(id)));
+      if (oldMethods.filter(method => shared.has(method.id)).some((method, index) => nextMethods.filter(value => shared.has(value.id))[index]?.id !== method.id))
+        lines.push({ kind: "Reordered", label: `${label(item)} · ${locale === "zh" ? "Chinese" : "English"} · Project methods` });
+    }
+  }
+  const shared = new Set([...beforeById.keys()].filter(id => afterById.has(id)));
+  if (before.filter(item => shared.has(item.id)).some((item, index) => after.filter(value => shared.has(value.id))[index]?.id !== item.id)) lines.push({ kind: "Reordered", label: "Projects" });
+  return lines;
+}
+
 function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
   const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
   const network = event.ipNetwork?.trim() ?? "";
@@ -268,6 +304,8 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
+              </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "project_list" ? <dl>{describeProjectsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                  <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Project method")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before}` : ""}{line.after !== undefined ? ` · ${t("After")}: ${line.after}` : ""}</span></dd>
               </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list" || event.entityType === "education_list")
                   ? <dl>{describeExperienceSkillsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Experience title")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
