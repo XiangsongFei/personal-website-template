@@ -101,6 +101,15 @@ function educationCategory(row: Row, entryType: EducationItem["entryType"]): Edu
   return category;
 }
 
+function persistedEducationCategory(row: Row): EducationItem["persistedCategory"] {
+  const category = row.education_category;
+  if (category === undefined || category === null) return null;
+  if (category !== "undergraduate" && category !== "graduate" && category !== "doctoral" && category !== "summerSchool" && category !== "custom") {
+    throw new Error("Invalid Education category");
+  }
+  return category;
+}
+
 function item(row: Row) {
   return {
     id: value(row, "id"), position: position(row),
@@ -174,7 +183,7 @@ export function mapEducationRows(parents: Row[], translations: Row[], resumeId: 
   return sorted(parents).map(parent => {
     const entryType = value(parent, "entry_type");
     if (entryType !== "standard" && entryType !== "summerSchool") throw new Error("Invalid education entry type");
-    return { ...item(parent), entryType, category: educationCategory(parent, entryType),
+    return { ...item(parent), entryType, category: educationCategory(parent, entryType), persistedCategory: persistedEducationCategory(parent),
       translations: translated(translations, "education_entry_id", value(parent, "id"), row => ({
         title: field(row, "title"), program: field(row, "program"), period: field(row, "period"), grade: field(row, "grade"),
         courseTitle: nullableField(row, "course_title"), courseDescription: nullableField(row, "course_description"),
@@ -300,7 +309,7 @@ export function mapResumeRows(rows: ResumeRows): LoadedResume {
     const entryType = value(parent, "entry_type");
     if (entryType !== "standard" && entryType !== "summerSchool") throw new Error("Invalid education entry type");
     return {
-      ...item(parent), entryType, category: educationCategory(parent, entryType),
+      ...item(parent), entryType, category: educationCategory(parent, entryType), persistedCategory: persistedEducationCategory(parent),
       translations: translated(rows.resume_education_translations, "education_entry_id", value(parent, "id"), row => ({
         title: field(row, "title"), program: field(row, "program"), period: field(row, "period"),
         grade: field(row, "grade"), courseTitle: nullableField(row, "course_title"),

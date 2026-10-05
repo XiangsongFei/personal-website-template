@@ -28,6 +28,8 @@ function repository() {
       return { resumeId, entryId, position: changes.position ?? current.position, entryType: changes.entryType ?? current.entryType, category: changes.category ?? current.category ?? (current.entryType === "summerSchool" ? "summerSchool" : null), sourceKey: current.sourceKey };
     }),
     updateEducationTranslation: vi.fn(async (_id: string, entryId: string, locale: "zh" | "en", translation: EducationItem["translations"]["zh"]) => ({ resumeId, entryId, locale, translation })),
+    loadAdminEducationWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: true, educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
+    saveEducationWithWorker: vi.fn(async (_id: string, items: EducationItem[]) => structuredClone(items)),
     updateEditableEntryPosition: vi.fn(), insertEditableEntry: vi.fn(), updateEditableTranslation: vi.fn(),
     insertEditableTranslation: vi.fn(), deleteEditableTranslation: vi.fn(), deleteEditableEntry: vi.fn(),
     updateProjectMethod: vi.fn(), insertProjectMethod: vi.fn(), deleteProjectMethod: vi.fn(),
@@ -312,7 +314,7 @@ describe("Profile and Education live-preview prototype", () => {
     const unchangedEducationId = fixtureSections.education[1].sourceKey!;
     fireEvent.change(screen.getAllByLabelText("English Title")[0], { target: { value: "Unsaved undergraduate" } });
     expect(document.querySelector(`[data-preview-item-id="${changedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Move Uncategorized down" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Undergraduate down" }));
     expect(previewHeadings()).toEqual(["Academic Program", "Unsaved undergraduate"]);
     expect(document.querySelector(`[data-preview-item-id="${changedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("true");
     expect(document.querySelector(`[data-preview-item-id="${unchangedEducationId}"] h3 .resume-preview-marked-text`)?.getAttribute("data-preview-modified")).toBe("false");

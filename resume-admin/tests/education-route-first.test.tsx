@@ -9,6 +9,7 @@ import type { LoadedResume, ResumeSiteMetadata } from "../src/data/resumeMapper"
 import { createResumeRepository, type ResumeRepository, type ResumeSectionRepository } from "../src/data/resumeRepository";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import { fixtureSections } from "../src/fixtures";
+import type { EducationItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 const resumeId = "education-resume-id";
@@ -39,6 +40,8 @@ function repository(overrides: Partial<ResumeRepository & ResumeSectionRepositor
     loadContact: vi.fn().mockResolvedValue(fixtureSections.contact),
     loadLinks: vi.fn().mockResolvedValue(fixtureSections.links),
     updateProfileSharedDetails: vi.fn(), updateProfileTranslation: vi.fn(),
+    loadAdminEducationWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: true, educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
+    saveEducationWithWorker: vi.fn(async (_targetResumeId: string, items: EducationItem[]) => structuredClone(items)),
     updateEducationEntry: vi.fn(), updateEducationTranslation: vi.fn(), insertEducationEntry: vi.fn(),
     insertEducationTranslation: vi.fn(), readEducationTranslation: vi.fn(), deleteEducationEntry: vi.fn(),
     ...overrides,

@@ -10,6 +10,7 @@ const SAVE_PATH = `${API_ROOT}/introduction/save`;
 const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
 const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
 const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
+const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -45,13 +46,22 @@ interface ExperienceLocale { organization: string; title: string; period: string
 interface ExperienceItem { id: string | null; position: number; zh: ExperienceLocale; en: ExperienceLocale }
 interface SkillsLocale { title: string; items: string }
 interface SkillsItem { id: string | null; position: number; zh: SkillsLocale; en: SkillsLocale }
+interface EducationLocale {
+  title: string; program: string; period: string; grade: string;
+  course_title: string | null; course_description: string | null; custom_category_label: string | null;
+}
+interface EducationItem {
+  id: string | null; position: number; entry_type: "standard" | "summerSchool";
+  education_category: "undergraduate" | "graduate" | "doctoral" | "summerSchool" | "custom" | null;
+  zh: EducationLocale; en: EducationLocale;
+}
 
 interface SignedContext {
   context_version: number;
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards" | "experience" | "skills";
+  domain: "introduction" | "awards" | "experience" | "skills" | "education";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -330,6 +340,51 @@ function validateSkills(value: unknown): SkillsItem[] {
 export function canonicalizeSkills(items: SkillsItem[]): string {
   return JSON.stringify(items.map(item => ({ id: item.id, position: item.position,
     zh: { title: item.zh.title, items: item.zh.items }, en: { title: item.en.title, items: item.en.items } })));
+}
+
+const EDUCATION_CATEGORIES = ["undergraduate", "graduate", "doctoral", "summerSchool", "custom"] as const;
+const EDUCATION_TEXT_LIMITS = { title: 256, program: 256, period: 128, grade: 256,
+  course_title: 256, course_description: 2048, custom_category_label: 256 } as const;
+function validateEducation(value: unknown): EducationItem[] {
+  if (!Array.isArray(value) || value.length > 16) throw apiError(422, "invalid_education", "Education must contain no more than 16 entries.");
+  const ids = new Set<string>();
+  return value.map((raw, position) => {
+    if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "education_category,en,entry_type,id,position,zh"
+      || raw.position !== position || (raw.entry_type !== "standard" && raw.entry_type !== "summerSchool"))
+      throw apiError(422, "invalid_education_entry", "Each Education entry must contain the supported fields in order.");
+    const id = raw.id === null ? null : typeof raw.id === "string" && UUID_PATTERN.test(raw.id) ? raw.id.toLowerCase() : null;
+    if (raw.id !== null && (!id || String(raw.id) !== id)) throw apiError(422, "invalid_education_id", "Education IDs must be null or canonical UUIDs.");
+    if (id && ids.has(id)) throw apiError(422, "duplicate_education_id", "Education IDs must be unique.");
+    if (id) ids.add(id);
+    const category = raw.education_category;
+    if (category !== null && !(EDUCATION_CATEGORIES as readonly unknown[]).includes(category))
+      throw apiError(422, "invalid_education_category", "Education category is invalid.");
+    if (category !== null && ((category === "summerSchool") !== (raw.entry_type === "summerSchool")))
+      throw apiError(422, "invalid_education_category", "Education category conflicts with entry type.");
+    const locale = (input: unknown): EducationLocale => {
+      if (!isPlainObject(input) || Object.keys(input).sort().join(",") !== "course_description,course_title,custom_category_label,grade,period,program,title")
+        throw apiError(422, "invalid_education_locale", "Education translations are invalid.");
+      const result = {} as EducationLocale;
+      for (const field of Object.keys(EDUCATION_TEXT_LIMITS) as Array<keyof typeof EDUCATION_TEXT_LIMITS>) {
+        const fieldValue = input[field];
+        if (fieldValue === null && field !== "title" && field !== "program" && field !== "period" && field !== "grade") {
+          result[field] = null;
+        } else result[field] = boundedText(fieldValue, EDUCATION_TEXT_LIMITS[field], `Education ${field}`);
+      }
+      return result;
+    };
+    return { id, position, entry_type: raw.entry_type, education_category: category as EducationItem["education_category"],
+      zh: locale(raw.zh), en: locale(raw.en) };
+  });
+}
+
+export function canonicalizeEducation(items: EducationItem[]): string {
+  return JSON.stringify(items.map(item => ({ id: item.id, position: item.position, entry_type: item.entry_type,
+    education_category: item.education_category,
+    zh: { title: item.zh.title, program: item.zh.program, period: item.zh.period, grade: item.zh.grade,
+      course_title: item.zh.course_title, course_description: item.zh.course_description, custom_category_label: item.zh.custom_category_label },
+    en: { title: item.en.title, program: item.en.program, period: item.en.period, grade: item.en.grade,
+      course_title: item.en.course_title, course_description: item.en.course_description, custom_category_label: item.en.custom_category_label } })));
 }
 
 function parseIPv4(value: string): number[] | null {
@@ -815,6 +870,53 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveEducation(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "education,request_id,resume_id")
+    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and education.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
+    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  const items = validateEducation(parsed.education);
+  const canonical = canonicalizeEducation(items);
+  if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Education exceeds the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(), domain: "education", operation: "update", request_id: parsed.request_id.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_education_v1`, {
+      method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
+        "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_education: canonical,
+        signed_context: signed.serialized, signature_hex: signed.signatureHex }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same Education request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const responseBody = await readJsonResponse(upstream, 220 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody))
+      throw apiError(409, "idempotency_conflict", "The Education retry conflicts with a different request. Refresh before trying again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save Education (HTTP ${upstream.status}).`);
+  }
+  if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Education result.");
+  return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
 function isApiPath(pathname: string): boolean {
   return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
 }
@@ -822,7 +924,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -834,10 +936,11 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   try {
     if (url.pathname === SAVE_PATH) return await saveIntroduction(request, env);
     if (url.pathname === SAVE_AWARDS_PATH) return await saveAwards(request, env);
+    if (url.pathname === SAVE_EDUCATION_PATH) return await saveEducation(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);
-    return errorResponse(apiError(502, "request_failed", "The Introduction request could not be completed."));
+    return errorResponse(apiError(502, "request_failed", "The Admin request could not be completed."));
   }
 }
 

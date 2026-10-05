@@ -92,7 +92,7 @@ export function describeAwardsActivity(event: ActivityLogV13CEvent): AwardActivi
 }
 
 export type CollectionActivityLine = { kind: "Added" | "Updated" | "Removed" | "Reordered"; label: string; locale?: "Chinese" | "English"; field?: string; before?: string; after?: string };
-type AggregateRow = { id: string; position: number; zh: Record<string, unknown>; en: Record<string, unknown> };
+type AggregateRow = { id: string; position: number; zh: Record<string, unknown>; en: Record<string, unknown>; entry_type?: string; education_category?: string | null };
 function aggregateRows(value: unknown): AggregateRow[] | null {
   if (!Array.isArray(value) || value.length > 16 || value.some(item => !item || typeof item !== "object"
     || typeof (item as Record<string, unknown>).id !== "string" || !Number.isInteger((item as Record<string, unknown>).position)
@@ -101,7 +101,8 @@ function aggregateRows(value: unknown): AggregateRow[] | null {
 }
 export function describeExperienceSkillsActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
   const domain = event.section === "experience" && event.entityType === "experience_list" ? "experience"
-    : event.section === "skills" && event.entityType === "skill_group_list" ? "skills" : null;
+    : event.section === "skills" && event.entityType === "skill_group_list" ? "skills"
+      : event.section === "education" && event.entityType === "education_list" ? "education" : null;
   if (event.eventSource !== "activity" || event.payloadVersion !== 2 || !domain) return [];
   const change = event.changes[domain] as { before?: unknown; after?: unknown } | undefined;
   const before = aggregateRows(change?.before); const after = aggregateRows(change?.after);
@@ -109,13 +110,18 @@ export function describeExperienceSkillsActivity(event: ActivityLogV13CEvent): C
   const beforeById = new Map(before.map(item => [item.id, item])); const afterById = new Map(after.map(item => [item.id, item]));
   const label = (item: AggregateRow) => domain === "experience"
     ? String(item.zh.organization || item.en.organization || "Experience")
-    : String(item.zh.title || item.en.title || "Skill group");
+    : domain === "education" ? String(item.zh.title || item.en.title || "Education")
+      : String(item.zh.title || item.en.title || "Skill group");
   const fieldNames = domain === "experience"
     ? ["organization", "title", "period", "description", "location"]
-    : ["title", "items"];
+    : domain === "education" ? ["title", "program", "period", "grade", "course_title", "course_description", "custom_category_label"]
+      : ["title", "items"];
   const displayNames: Record<string, string> = domain === "experience"
     ? { organization: "Experience organization", title: "Experience title", period: "Experience period", description: "Experience description", location: "Experience location" }
-    : { title: "Skill group title", items: "Skill group items" };
+    : domain === "education"
+      ? { title: "Education title", program: "Education program", period: "Education period", grade: "Education grade",
+        course_title: "Education course title", course_description: "Education course description", custom_category_label: "Education custom category" }
+      : { title: "Skill group title", items: "Skill group items" };
   const lines: CollectionActivityLine[] = [];
   for (const item of after) if (!beforeById.has(item.id)) lines.push({ kind: "Added", label: label(item) });
   for (const item of before) if (!afterById.has(item.id)) lines.push({ kind: "Removed", label: label(item) });
@@ -131,7 +137,13 @@ export function describeExperienceSkillsActivity(event: ActivityLogV13CEvent): C
   const shared = new Set([...beforeById.keys()].filter(id => afterById.has(id)));
   const priorSequence = before.filter(item => shared.has(item.id)).map(item => item.id);
   const nextSequence = after.filter(item => shared.has(item.id)).map(item => item.id);
-  if (priorSequence.some((id, index) => id !== nextSequence[index])) lines.push({ kind: "Reordered", label: domain === "experience" ? "Experience" : "Skills" });
+  if (priorSequence.some((id, index) => id !== nextSequence[index])) lines.push({ kind: "Reordered", label: domain === "experience" ? "Experience" : domain === "education" ? "Education" : "Skills" });
+  if (domain === "education" && before.some(old => afterById.has(old.id) && old.education_category !== afterById.get(old.id)?.education_category)) {
+    lines.push({ kind: "Updated", label: "Education", field: "Education category" });
+  }
+  if (domain === "education" && before.some(old => afterById.has(old.id) && old.entry_type !== afterById.get(old.id)?.entry_type)) {
+    lines.push({ kind: "Updated", label: "Education", field: "Education entry type" });
+  }
   return lines;
 }
 
@@ -256,7 +268,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
-                </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list")
+              </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list" || event.entityType === "education_list")
                   ? <dl>{describeExperienceSkillsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Experience title")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
                   </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>

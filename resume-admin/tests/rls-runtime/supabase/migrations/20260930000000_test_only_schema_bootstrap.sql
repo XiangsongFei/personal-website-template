@@ -82,7 +82,7 @@ CREATE TABLE public.resume_education_translations (
   title text NOT NULL, program text NOT NULL, period text NOT NULL, grade text NOT NULL,
   course_title text NULL, course_description text NULL, custom_category_label text NULL,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (education_entry_id,resume_id,locale),
+  PRIMARY KEY (education_entry_id,locale),
   FOREIGN KEY (education_entry_id,resume_id) REFERENCES public.resume_education_entries(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
-import type { AdminFeatureState, EditableRepeatableSection, EditableTranslation, ResumeRepository, UpdatedEducationEntryRow, UpdatedEducationTranslationRow, UpdatedProfileRow, UpdatedProfileTranslationRow } from "./data/resumeRepository";
+import { AggregateWorkerSaveError, type AdminFeatureState, type EditableRepeatableSection, type EditableTranslation, type ResumeRepository, type UpdatedEducationEntryRow, type UpdatedEducationTranslationRow, type UpdatedProfileRow, type UpdatedProfileTranslationRow } from "./data/resumeRepository";
 import type {
   AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
@@ -1785,7 +1785,7 @@ function educationCategoryChanged(item: EducationItem, category: EducationCatego
     zh: { ...item.translations.zh, title: synchronizedEducationTitle(item.translations.zh.title, "zh", category) },
     en: { ...item.translations.en, title: synchronizedEducationTitle(item.translations.en.title, "en", category) },
   };
-  return { ...item, category, entryType: category === "summerSchool" ? "summerSchool" : "standard", translations };
+  return { ...item, category, persistedCategory: category, entryType: category === "summerSchool" ? "summerSchool" : "standard", translations };
 }
 
 function synchronizedEducationTitle(title: string, locale: Locale, category: Exclude<EducationCategory, "custom">): string {
@@ -1865,7 +1865,7 @@ function Education() {
       action={educationLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryEducation ?? undefined}>{t("Retry")}</button> : undefined} />;
   }
   return <RepeatableSection<EducationItem> section="education" title="Education" description="" sectionTextOverride={sectionText}
-    create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", category: null, translations: {
+    create={(id, position) => ({ id, sourceKey: null, position, entryType: "standard", category: null, persistedCategory: null, translations: {
       zh: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
       en: { title: "", program: "", period: "", grade: "", courseTitle: "", courseDescription: "", customCategoryLabel: null },
     } })}
@@ -1890,7 +1890,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const { t, locale } = useUiLocale();
   const context = useContext(EditorContext);
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set(editor.draft[0] ? [editor.draft[0].id] : []));
-  const methodsReady = Boolean(repository?.updateEducationEntry && repository.updateEducationTranslation
+  const methodsReady = Boolean(repository?.loadAdminEducationWriteState && repository?.saveEducationWithWorker
+    && repository?.updateEducationEntry && repository.updateEducationTranslation
     && repository.insertEducationEntry && repository.insertEducationTranslation && repository.readEducationTranslation && repository.deleteEducationEntry);
   const baselineById = new Map(editor.baseline.map(item => [item.id, item]));
   const contentDirty = editor.draft.some(item => !baselineById.has(item.id) || JSON.stringify(item) !== JSON.stringify(baselineById.get(item.id)))
@@ -1905,8 +1906,25 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const saveChanges = async () => {
     if (!repository || !methodsReady || editor.saving) return;
     let confirmedParentCreated = false;
+    let educationLabelSavedSeparately = false;
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
+      const writeState = await repository.loadAdminEducationWriteState!(resumeId);
+      if (writeState.educationWriteMode === "rpc") {
+        if (!writeState.activityLogEnabled || !writeState.educationTrustedContextRequired) {
+          throw new AggregateWorkerSaveError("Education RPC mode is not fully configured. Your draft remains available.");
+        }
+        const sectionTextWasDirty = sectionText.dirty;
+        const sectionTextSaved = await sectionText.save();
+        educationLabelSavedSeparately = sectionTextWasDirty && sectionTextSaved;
+        const saved = await repository.saveEducationWithWorker!(resumeId, editor.draft);
+        const next = clone(saved);
+        context.onBilingualSave(collectChangedBilingualFieldKeys("education", editor.draft, editor.baseline));
+        setEditor(current => current ? { ...current, baseline: next, draft: clone(next), partialCreates: {},
+          notice: sectionTextSaved ? "Education changes saved to production." : "Education content saved. Some section text remains unsaved; retry to finish.", error: !sectionTextSaved } : current);
+        onEducationChanged?.(resumeId, next);
+        return;
+      }
       const sectionTextSaved = await sectionText.save();
       let workingDraft = clone(editor.draft);
       let workingBaseline = clone(editor.baseline);
@@ -1926,7 +1944,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           }
           confirmedParentCreated = true;
           const oldId = item.id;
-          item = { ...item, id: parent.entryId, position: parent.position, sourceKey: parent.sourceKey, entryType: parent.entryType, category: parent.category };
+          item = { ...item, id: parent.entryId, position: parent.position, sourceKey: parent.sourceKey, entryType: parent.entryType, category: parent.category, persistedCategory: parent.category };
           setOpenIds(current => { const next = new Set(current); if (next.delete(oldId)) next.add(parent.entryId); return next; });
           workingDraft = workingDraft.map(value => value.id === oldId ? item : value);
           partialCreates[parent.entryId] = { inserted: [] };
@@ -1967,7 +1985,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
           const confirmed = await repository.updateEducationEntry!(resumeId, item.id, { entryType: item.entryType, category: educationCategoryFor(item) });
           baseline = mergeEducationParent(baseline, confirmed);
           workingBaseline = workingBaseline.map(value => value.id === item.id ? baseline! : value);
-          item = { ...item, entryType: confirmed.entryType, category: confirmed.category, sourceKey: confirmed.sourceKey };
+          item = { ...item, entryType: confirmed.entryType, category: confirmed.category, persistedCategory: confirmed.category, sourceKey: confirmed.sourceKey };
           workingDraft = workingDraft.map(value => value.id === item.id ? item : value);
           reconcileBaselineEntry(item.id, value => mergeEducationParent(value, confirmed));
         }
@@ -2046,7 +2064,10 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         try { if (onReloadEducation) await onReloadEducation(); } catch { /* Keep the confirmed partial-create draft available for an explicit retry. */ }
       }
       const message = cause instanceof Error ? cause.message : "Education save failed. Retry after checking the production state.";
-      setEditor(current => current ? { ...current, notice: message, error: true } : current);
+      const visibleMessage = educationLabelSavedSeparately
+        ? `${message} ${t("The Education section title was saved separately; collection changes remain unsaved and can be retried.")}`
+        : message;
+      setEditor(current => current ? { ...current, notice: visibleMessage, error: true } : current);
     } finally {
       setEditor(current => current ? { ...current, saving: false } : current);
     }
@@ -2054,12 +2075,27 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const deleteEntry = async (id: string) => {
     const item = editor.draft.find(value => value.id === id);
     if (!item) return;
-    const isPersisted = !id.startsWith("local-education-")
+      const isPersisted = !id.startsWith("local-education-")
       && (editor.baseline.some(value => value.id === id) || Boolean(editor.partialCreates[id]));
     if (!isPersisted) {
       setEditor(current => current ? { ...current, draft: current.draft.filter(value => value.id !== id), partialCreates: Object.fromEntries(Object.entries(current.partialCreates).filter(([key]) => key !== id)), deleteTarget: null, notice: "Unsaved Education draft discarded.", error: false } : current);
       setOpenIds(current => { const next = new Set(current); next.delete(id); return next; });
       return;
+    }
+    if (repository?.loadAdminEducationWriteState) {
+      try {
+        const state = await repository.loadAdminEducationWriteState(resumeId);
+        if (state.educationWriteMode === "rpc") {
+          setEditor(current => current ? { ...current, draft: current.draft.filter(value => value.id !== id),
+            partialCreates: Object.fromEntries(Object.entries(current.partialCreates).filter(([key]) => key !== id)),
+            deleteTarget: null, notice: "Education entry removed from the draft. Save to apply the collection change.", error: false } : current);
+          setOpenIds(current => { const next = new Set(current); next.delete(id); return next; });
+          return;
+        }
+      } catch (cause) {
+        setEditor(current => current ? { ...current, notice: cause instanceof Error ? cause.message : "Unable to confirm Education write mode.", error: true } : current);
+        return;
+      }
     }
     if (!repository?.deleteEducationEntry || editor.deleting) return;
     setEditor(current => current ? { ...current, deleting: true, notice: "", error: false } : current);
@@ -2077,7 +2113,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const addEntry = () => {
     const position = editor.draft.length ? Math.max(...editor.draft.map(item => item.position)) + 1 : 0;
     const id = `local-education-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const blank: EducationItem = { id, sourceKey: null, position, entryType: "standard", category: null, translations: {
+    const blank: EducationItem = { id, sourceKey: null, position, entryType: "standard", category: null, persistedCategory: null, translations: {
       zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
       en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
     } };
@@ -2157,7 +2193,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
 }
 
 function mergeEducationParent(item: EducationItem, row: UpdatedEducationEntryRow): EducationItem {
-  return { ...item, id: row.entryId, position: row.position, entryType: row.entryType, category: row.category, sourceKey: row.sourceKey };
+  return { ...item, id: row.entryId, position: row.position, entryType: row.entryType, category: row.category, persistedCategory: row.category, sourceKey: row.sourceKey };
 }
 
 function Experience() {

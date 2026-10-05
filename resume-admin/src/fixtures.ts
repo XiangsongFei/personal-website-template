@@ -20,11 +20,11 @@ export const fixtureSections: EditorSections = {
     { id: "intro-2", position: 1, translations: { zh: { text: "所有内容均为本地演示。" }, en: { text: "All content here is a local demo." } } },
   ],
   education: [
-    { id: "edu-1", sourceKey: "education-undergraduate", position: 0, entryType: "standard", translations: {
+    { id: "edu-1", sourceKey: "education-undergraduate", position: 0, entryType: "standard", category: "undergraduate", persistedCategory: "undergraduate", translations: {
       zh: { title: "本科教育", program: "学位项目", period: "20XX — 20XX", grade: "GPA: 示例", courseTitle: "", courseDescription: "" },
       en: { title: "Undergraduate Education", program: "Degree Program", period: "20XX — 20XX", grade: "GPA: Example", courseTitle: "", courseDescription: "" },
     } },
-    { id: "edu-2", sourceKey: "education-summer-school", position: 1, entryType: "summerSchool", translations: {
+    { id: "edu-2", sourceKey: "education-summer-school", position: 1, entryType: "summerSchool", category: "summerSchool", persistedCategory: "summerSchool", translations: {
       zh: { title: "学术项目", program: "课程名称", period: "20XX", grade: "示例成绩", courseTitle: "课程说明", courseDescription: "当前公开页面对此字段使用固定短语排版。" },
       en: { title: "Academic Program", program: "Course Title", period: "20XX", grade: "Sample grade", courseTitle: "Course Description", courseDescription: "A general course description for a demo entry." },
     } },

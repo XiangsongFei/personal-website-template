@@ -21,6 +21,8 @@ export type EducationCategory = "undergraduate" | "graduate" | "doctoral" | "sum
 export type EducationItem = OrderedItem & {
   sourceKey: string | null;
   entryType: "standard" | "summerSchool";
+  /** Exact database value; may be null even when the UI derives a display category. */
+  persistedCategory: EducationCategory | null;
   /** Null is the safe legacy value for existing standard records. */
   category?: EducationCategory | null;
   translations: Bilingual<{

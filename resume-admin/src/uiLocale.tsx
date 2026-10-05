@@ -27,6 +27,12 @@ const dictionary: Record<string, string> = {
 };
 
 Object.assign(dictionary, {
+  "Education entry removed from the draft. Save to apply the collection change.": "教育经历已从草稿中移除。保存后才会应用集合变更。",
+  "Education RPC mode is not fully configured. Your draft remains available.": "教育经历 RPC 模式尚未完整配置，草稿仍会保留。",
+  "The Education section title was saved separately; collection changes remain unsaved and can be retried.": "教育版块标题已单独保存；教育条目更改尚未保存，可以重试。",
+  "Education category": "教育类别", "Education entry type": "教育类型", "Education title": "教育标题",
+  "Education program": "教育项目/专业", "Education period": "教育时间", "Education grade": "教育成绩",
+  "Education course title": "教育课程名称", "Education course description": "教育课程描述", "Education custom category": "自定义教育类别",
   "Section title": "板块标题",
   "Section settings": "板块设置",
   "Public resume section name": "公开简历中显示的板块名称",

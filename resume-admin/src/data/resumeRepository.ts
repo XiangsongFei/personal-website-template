@@ -39,6 +39,10 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveSkillsWithWorker?(resumeId: string, items: SkillItem[]): Promise<SkillItem[]>;
   hasPendingSkillsWorkerSave?(resumeId: string): boolean;
   discardPendingSkillsSave?(resumeId?: string): void;
+  loadAdminEducationWriteState?(resumeId: string): Promise<AdminEducationWriteState>;
+  saveEducationWithWorker?(resumeId: string, items: EducationItem[]): Promise<EducationItem[]>;
+  hasPendingEducationWorkerSave?(resumeId: string): boolean;
+  discardPendingEducationSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -72,6 +76,7 @@ export type AdminFeatureState = {
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
 export type AdminDomainWriteState<D extends "experience" | "skills"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
+export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 
 export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
@@ -435,8 +440,8 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     } catch { throw new AwardsWorkerSaveError("The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry."); }
   };
   const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
-  const collectionPendingKey = (domain: "experience" | "skills", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
-  const saveSignedCollection = async (domain: "experience" | "skills", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
+  const collectionPendingKey = (domain: "experience" | "skills" | "education", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
+  const saveSignedCollection = async (domain: "experience" | "skills" | "education", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
     const storageKey = collectionPendingKey(domain, resumeId);
@@ -889,6 +894,74 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       ]);
       return mapEducationRows(parents, translations, resumeId);
     },
+    async loadAdminEducationWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_education_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Education write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.education_write_mode !== "direct" && row.education_write_mode !== "rpc")
+        || typeof row.education_trusted_context_required !== "boolean"
+        || (row.education_write_mode === "direct" && row.education_trusted_context_required)) throw new Error("Invalid Education write state");
+      return { resumeId, activityLogEnabled: row.activity_log_enabled,
+        educationWriteMode: row.education_write_mode, educationTrustedContextRequired: row.education_trusted_context_required };
+    },
+    async saveEducationWithWorker(resumeId, items) {
+      if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Education content is invalid.");
+      const payload = items.map((item, position) => {
+        if (!item || !(item.id.startsWith("local-education-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)))
+          throw new AggregateWorkerSaveError("Education IDs are invalid.");
+        const category = item.persistedCategory;
+        if (category !== null && !isEducationCategory(category)) throw new AggregateWorkerSaveError("Education category is invalid.");
+        const locale = (value: EducationItem["translations"]["zh"]) => ({
+          title: value.title, program: value.program, period: value.period, grade: value.grade,
+          course_title: value.courseTitle, course_description: value.courseDescription,
+          custom_category_label: value.customCategoryLabel ?? null,
+        });
+        return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+          entry_type: item.entryType, education_category: category,
+          zh: locale(item.translations.zh), en: locale(item.translations.en) };
+      });
+      return await saveSignedCollection("education", resumeId, payload, raw => {
+        if (raw.length !== payload.length) throw new Error("length");
+        const seen = new Set<string>();
+        return raw.map((entry, position) => {
+          if (!entry || typeof entry !== "object") throw new Error("entry");
+          const row = entry as Record<string, unknown>;
+          const zh = row.zh as Record<string, unknown> | undefined; const en = row.en as Record<string, unknown> | undefined;
+          const validLocale = (locale: Record<string, unknown> | undefined) => Boolean(locale
+            && Object.keys(locale).sort().join(",") === "course_description,course_title,custom_category_label,grade,period,program,title"
+            && ["title", "program", "period", "grade"].every(key => typeof locale[key] === "string")
+            && ["course_title", "course_description", "custom_category_label"].every(key => locale[key] === null || typeof locale[key] === "string"));
+          const category = row.education_category;
+          if (Object.keys(row).sort().join(",") !== "education_category,en,entry_type,id,position,zh"
+            || typeof row.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
+            || seen.has(row.id) || row.position !== position || (row.entry_type !== "standard" && row.entry_type !== "summerSchool")
+            || !(category === null || isEducationCategory(category)) || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
+          const requested = payload[position] as Record<string, unknown>;
+          const sameLocale = (expected: unknown, actual: Record<string, unknown> | undefined) => {
+            if (!expected || typeof expected !== "object" || !actual) return false;
+            const left = expected as Record<string, unknown>;
+            return ["title", "program", "period", "grade", "course_title", "course_description", "custom_category_label"]
+              .every(key => left[key] === actual[key]);
+          };
+          if ((requested.id && requested.id !== row.id) || requested.entry_type !== row.entry_type || requested.education_category !== category
+            || !sameLocale(requested.zh, zh) || !sameLocale(requested.en, en)) throw new Error("mismatch");
+          seen.add(row.id);
+          const source = items.find(item => item.id.toLowerCase() === row.id);
+          const parsedCategory = category as EducationCategory | null;
+          return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
+            entryType: row.entry_type as EducationItem["entryType"], persistedCategory: parsedCategory,
+            category: parsedCategory ?? (row.entry_type === "summerSchool" ? "summerSchool" : null),
+            translations: { zh: { title: zh!.title as string, program: zh!.program as string, period: zh!.period as string, grade: zh!.grade as string,
+              courseTitle: zh!.course_title as string | null, courseDescription: zh!.course_description as string | null, customCategoryLabel: zh!.custom_category_label as string | null },
+            en: { title: en!.title as string, program: en!.program as string, period: en!.period as string, grade: en!.grade as string,
+              courseTitle: en!.course_title as string | null, courseDescription: en!.course_description as string | null, customCategoryLabel: en!.custom_category_label as string | null } } } satisfies EducationItem;
+        });
+      }) as EducationItem[];
+    },
+    hasPendingEducationWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("education", resumeId))); } catch { return true; } },
+    discardPendingEducationSave() { /* Ambiguous requests are retained for exact replay. */ },
     async loadExperience(resumeId) {
       const [parents, translations] = await Promise.all([
         readResumeRows(supabase, "resume_experience_entries", resumeId),

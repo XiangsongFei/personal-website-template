@@ -10,7 +10,7 @@ import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import type { ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
-import type { ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, Locale, StatusItem } from "../src/model";
+import type { ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 const resumeId = "batch6a-resume-id";
@@ -112,6 +112,8 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
 }
 function addEducationWriters(repository: ResumeRepository) {
   Object.assign(repository, {
+    loadAdminEducationWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: true, educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
+    saveEducationWithWorker: vi.fn(async (_targetResumeId: string, items: EducationItem[]) => structuredClone(items)),
     updateEducationEntry: vi.fn(), updateEducationTranslation: vi.fn(), insertEducationEntry: vi.fn(),
     insertEducationTranslation: vi.fn(), readEducationTranslation: vi.fn(), deleteEducationEntry: vi.fn(),
   });

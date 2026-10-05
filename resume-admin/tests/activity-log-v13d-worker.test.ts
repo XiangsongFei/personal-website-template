@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalizeExperience, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { canonicalizeEducation, canonicalizeExperience, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const actorId = "10000000-0000-4000-8000-000000000002";
@@ -9,6 +9,9 @@ const experience = { id: null, position: 0,
   zh: { organization: "机构", title: "职位", period: "2024", description: "描述", location: null },
   en: { organization: "Org", title: "Role", period: "2024", description: "Work", location: "" } };
 const skills = { id: null, position: 0, zh: { title: "语言", items: "中文" }, en: { title: "Languages", items: "English" } };
+const education = { id: null, position: 0, entry_type: "summerSchool" as const, education_category: null,
+  zh: { title: "暑期学校", program: "项目", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null },
+  en: { title: "Summer School", program: "Program", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null } };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function jwt() {
@@ -29,6 +32,59 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
   it("canonicalizes exact Experience and Skills shapes, retaining NULL versus empty location", () => {
     expect(canonicalizeExperience([experience])).toBe('[{"id":null,"position":0,"zh":{"organization":"机构","title":"职位","period":"2024","description":"描述","location":null},"en":{"organization":"Org","title":"Role","period":"2024","description":"Work","location":""}}]');
     expect(canonicalizeSkills([skills])).toBe('[{"id":null,"position":0,"zh":{"title":"语言","items":"中文"},"en":{"title":"Languages","items":"English"}}]');
+  });
+
+  it("canonicalizes Education while preserving the raw legacy NULL category and nullable text", () => {
+    expect(canonicalizeEducation([education])).toBe(JSON.stringify([education]));
+    const parsed = JSON.parse(canonicalizeEducation([education])) as typeof education[];
+    expect(parsed[0].education_category).toBeNull();
+    expect(parsed[0].zh.course_title).toBeNull();
+    expect(parsed[0].zh.course_description).toBe("");
+  });
+
+  it("enforces representative Education UTF-8, course-description, and collection-count boundaries", async () => {
+    const atTitleLimit = { ...education, zh: { ...education.zh, title: `${"界".repeat(85)}x` } }; // exactly 256 UTF-8 bytes
+    expect(new TextEncoder().encode(atTitleLimit.zh.title).byteLength).toBe(256);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+    const save = async (items: unknown[], id: string) => handleWorkerRequest(request("/api/admin/v1/education/save", {
+      request_id: id, resume_id: resumeId, education: items,
+    }), env());
+    expect((await save([atTitleLimit], "d1111111-1111-4111-8111-111111111112")).status).toBe(200);
+    expect((await save([{ ...education, zh: { ...education.zh, title: "界".repeat(86) } }], "d1111111-1111-4111-8111-111111111113")).status).toBe(422);
+    expect((await save([{ ...education, zh: { ...education.zh, course_description: "x".repeat(2048) } }], "d1111111-1111-4111-8111-111111111114")).status).toBe(200);
+    expect((await save([{ ...education, zh: { ...education.zh, course_description: "x".repeat(2049) } }], "d1111111-1111-4111-8111-111111111115")).status).toBe(422);
+    expect((await save(Array.from({ length: 16 }, (_, position) => ({ ...education, position })), "d1111111-1111-4111-8111-111111111116")).status).toBe(200);
+    expect((await save(Array.from({ length: 17 }, (_, position) => ({ ...education, position })), "d1111111-1111-4111-8111-111111111117")).status).toBe(422);
+  });
+
+  it("signs Education for only the typed education RPC", async () => {
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
+      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain: "education", operation: "update", request_id: requestId });
+      expect(String(input)).toBe("https://local.test/rest/v1/rpc/save_resume_education_v1");
+      expect(JSON.parse(String(body.canonical_education))).toEqual([education]);
+      return Response.json([{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", position: 0 }]);
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/education/save", {
+      request_id: requestId, resume_id: resumeId, education: [education],
+    }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [{ ...education, entry_type: "standard", education_category: "summerSchool" }],
+    [{ ...education, zh: { ...education.zh, course_description: "x".repeat(2049) } }],
+    [{ ...education, en: { ...education.en, extra: "no" } }],
+  ])("rejects malformed Education payloads without upstream fallback", async invalid => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/education/save", {
+      request_id: requestId, resume_id: resumeId, education: [invalid],
+    }), env());
+    expect(response.status).toBe(422);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it.each([

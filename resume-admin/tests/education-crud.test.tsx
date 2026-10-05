@@ -27,7 +27,7 @@ function snapshot(withSecondEducation = false) {
     rows.resume_navigation_items.push(row({ id, position, source_key: null }));
     for (const locale of ["zh", "en"] as const) rows.resume_navigation_item_translations.push(row({ navigation_item_id: id, locale, label: `${locale} nav ${position}` }));
   }
-  rows.resume_education_entries = [row({ id: "education-id", source_key: "education-source", position: 0, entry_type: "summerSchool", education_category: "summerSchool" })];
+  rows.resume_education_entries = [row({ id: "education-id", source_key: "education-source", position: 0, entry_type: "summerSchool", education_category: null })];
   for (const locale of ["zh", "en"] as const) rows.resume_education_translations.push(row({ education_entry_id: "education-id", locale, title: locale === "zh" ? "中文教育" : "English Education", program: "Program", period: "2024", grade: "A", course_title: null, course_description: locale === "zh" ? "固定描述" : "English course", custom_category_label: null }));
   if (withSecondEducation) {
     rows.resume_education_entries.push(row({ id: "second-id", source_key: "second-source", position: 1, entry_type: "standard", education_category: null }));
@@ -40,6 +40,8 @@ function makeRepository(overrides: Partial<ResumeRepository> = {}, withSecondEdu
   let items = structuredClone(snapshot(withSecondEducation).sections.education);
   const inserted: Record<string, EducationItem["translations"][Locale]> = {};
   const repo: ResumeRepository = {
+    loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true, educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
+    saveEducationWithWorker: vi.fn(async (_resume: string, next: EducationItem[]) => structuredClone(next.map((item, position) => ({ ...item, position })))),
     load: vi.fn(async () => ({ ...snapshot(), sections: { ...snapshot().sections, education: structuredClone(items) } })),
     updateProfileSharedDetails: vi.fn(), updateProfileTranslation: vi.fn(),
     updateEducationEntry: vi.fn(async (_resume, id, changes) => {
@@ -53,7 +55,7 @@ function makeRepository(overrides: Partial<ResumeRepository> = {}, withSecondEdu
     }),
     insertEducationEntry: vi.fn(async (_resume, position, entryType, category) => {
       const parent = { resumeId, entryId: "created-real-id", position, entryType, category: category ?? (entryType === "summerSchool" ? "summerSchool" : null), sourceKey: null };
-      items.push({ id: parent.entryId, position, entryType, category: parent.category, sourceKey: null, translations: {
+      items.push({ id: parent.entryId, position, entryType, category: parent.category, persistedCategory: parent.category, sourceKey: null, translations: {
         zh: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
         en: { title: "", program: "", period: "", grade: "", courseTitle: null, courseDescription: null, customCategoryLabel: null },
       } });
@@ -83,7 +85,7 @@ const categoryOptionLabels = {
   zh: { undergraduate: "本科", graduate: "研究生", doctoral: "博士", summerSchool: "暑期学校", custom: "自定义" },
 } as const;
 function categoryCombobox(index = 1, locale: "zh" | "en" = "en") {
-  return screen.getByRole("combobox", { name: `${locale === "zh" ? "教育分类" : "Education category"} ${String(index).padStart(2, "0")}` }) as HTMLButtonElement;
+  return screen.getByRole("combobox", { name: `${locale === "zh" ? "教育类别" : "Education category"} ${String(index).padStart(2, "0")}` }) as HTMLButtonElement;
 }
 function chooseCategory(index: number, category: keyof typeof categoryOptionLabels.en, locale: "zh" | "en" = "en", optionLabel?: string) {
   fireEvent.click(categoryCombobox(index, locale));
@@ -153,7 +155,9 @@ describe("Stage 4G Education production CRUD", () => {
   });
 
   it("places the category selector after each order number and preserves the title content", async () => {
-    openEducation(makeRepository(), "/education", snapshot(true));
+    const legacy = snapshot(true);
+    expect(legacy.sections.education[0]).toMatchObject({ entryType: "summerSchool", category: "summerSchool", persistedCategory: null });
+    openEducation(makeRepository(), "/education", legacy);
     expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
     const cards = Array.from(document.querySelectorAll<HTMLElement>(".education-editor-scope .item-card"));
     expect(cards.map(card => Array.from(card.querySelector(".item-card-heading")!.children[0].children).map(child => child.className))).toEqual([
@@ -250,6 +254,55 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.updateEducationTranslation).toHaveBeenCalledWith(resumeId, "education-id", "en", expect.objectContaining({ title: "Graduate Education" }));
   });
 
+  it("uses only the aggregate RPC path in rpc mode and preserves the legacy raw NULL category", async () => {
+    const saveEducationWithWorker = vi.fn(async (_id: string, items: EducationItem[]) => structuredClone(items));
+    const repo = makeRepository({ loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
+      educationWriteMode: "rpc" as const, educationTrustedContextRequired: true })), saveEducationWithWorker });
+    openEducation(repo);
+    fireEvent.change(screen.getByLabelText("Chinese Title"), { target: { value: "更新暑期学校" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await waitFor(() => expect(saveEducationWithWorker).toHaveBeenCalledOnce());
+    expect(saveEducationWithWorker.mock.calls[0][1][0].persistedCategory).toBeNull();
+    expect(repo.updateEducationEntry).not.toHaveBeenCalled();
+    expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
+    expect(repo.insertEducationEntry).not.toHaveBeenCalled();
+  });
+
+  it("states that the Education title saved separately when the collection RPC fails and keeps the collection draft retryable", async () => {
+    const saveEducationWithWorker = vi.fn(async () => { throw new Error("Education RPC unavailable. Your draft remains available."); });
+    const updateSiteText = vi.fn(async () => {});
+    const repo = makeRepository({ updateSiteText,
+      loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
+        educationWriteMode: "rpc" as const, educationTrustedContextRequired: true })), saveEducationWithWorker });
+    openEducation(repo);
+    const label = await screen.findByLabelText("Chinese Section title") as HTMLInputElement;
+    fireEvent.change(label, { target: { value: "Education title saved first" } });
+    const title = screen.getByLabelText("Chinese Title") as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Collection draft retained" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+
+    await screen.findByText(/section title was saved separately; collection changes remain unsaved and can be retried/i);
+    expect(updateSiteText).toHaveBeenCalledOnce();
+    expect(saveEducationWithWorker).toHaveBeenCalledOnce();
+    expect(label.value).toBe("Education title saved first");
+    expect(title.value).toBe("Collection draft retained");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("treats persisted deletion as a draft removal in rpc mode", async () => {
+    const saveEducationWithWorker = vi.fn(async (_id: string, items: EducationItem[]) => structuredClone(items));
+    const repo = makeRepository({ loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
+      educationWriteMode: "rpc" as const, educationTrustedContextRequired: true })), saveEducationWithWorker });
+    openEducation(repo);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+    expect(repo.deleteEducationEntry).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByDisplayValue("English Education")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
+    await waitFor(() => expect(saveEducationWithWorker).toHaveBeenCalledOnce());
+    expect(saveEducationWithWorker.mock.calls[0][1]).toEqual([]);
+  });
+
   it("localizes the category selector in the Chinese admin UI", async () => {
     window.localStorage.setItem("cms-ui-locale", "en");
     openEducation(makeRepository(), "/education", snapshot(true), undefined, true);
@@ -257,7 +310,7 @@ describe("Stage 4G Education production CRUD", () => {
     const categorySelect = categoryCombobox(1, "zh");
     expect(categorySelect.textContent).toBe("暑期学校");
     fireEvent.click(categorySelect);
-    expect(within(screen.getByRole("listbox", { name: "教育分类 01" })).getAllByRole("option").map(option => option.textContent))
+    expect(within(screen.getByRole("listbox", { name: "教育类别 01" })).getAllByRole("option").map(option => option.textContent))
       .toEqual(["本科", "研究生", "博士", "暑期学校", "自定义"]);
     expect(document.querySelectorAll(".education-editor-scope .item-card-heading h3")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "添加教育经历" })).toBeTruthy();

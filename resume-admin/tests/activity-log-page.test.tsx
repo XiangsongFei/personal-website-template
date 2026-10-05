@@ -106,6 +106,28 @@ describe("Activity Log page", () => {
     expect(await screen.findByText("已添加")).toBeTruthy();
   });
 
+  it("describes Education aggregate additions and bilingual field edits", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const before = { id, position: 0, entry_type: "summerSchool", education_category: null,
+      zh: { title: "暑期学校", program: "旧项目", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null },
+      en: { title: "Summer School", program: "Old program", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null } };
+    const after = { ...before, zh: { ...before.zh, program: "新项目" }, en: { ...before.en, program: "New program" } };
+    const base = event("education-v2");
+    const v2: ActivityLogV13CEvent = { ...base, section: "education", entityType: "education_list", entityId: null,
+      entitySnapshot: { education: [after] }, changes: { education: { before: [before], after: [after] } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeExperienceSkillsActivity(v2)).toEqual([
+      { kind: "Updated", label: "暑期学校", locale: "Chinese", field: "Education program", before: "旧项目", after: "新项目" },
+      { kind: "Updated", label: "暑期学校", locale: "English", field: "Education program", before: "Old program", after: "New program" },
+    ]);
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([v2]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/View changed fields/));
+    expect(await screen.findByText(/Chinese · Education program · 暑期学校 · Before: 旧项目 · After: 新项目/)).toBeTruthy();
+    expect(screen.getByText(/English · Education program · 暑期学校 · Before: Old program · After: New program/)).toBeTruthy();
+  });
+
   it.each([
     ["create", "Create"], ["update", "Update"], ["delete", "Delete"],
     ["reorder", "Reorder"], ["upload", "Upload"], ["remove", "Remove"],
