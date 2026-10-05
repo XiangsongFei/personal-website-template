@@ -183,6 +183,43 @@ export function describeProjectsActivity(event: ActivityLogV13CEvent): Collectio
   return lines;
 }
 
+type ContactV2Item = { id: string; position: number; status_type?: string; zh: { title: string; detail: string }; en: { title: string; detail: string } };
+type ContactV2Aggregate = { translations: { zh: { contact_label: string; availability: string }; en: { contact_label: string; availability: string } }; focus: ContactV2Item[]; status: ContactV2Item[] };
+export function describeContactActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "contact" || event.entityType !== "contact_section") return [];
+  const change = event.changes.contact as { before?: unknown; after?: unknown } | undefined;
+  if (!change?.before || typeof change.before !== "object" || !change.after || typeof change.after !== "object") return [];
+  const before = change.before as ContactV2Aggregate; const after = change.after as ContactV2Aggregate;
+  const lines: CollectionActivityLine[] = [];
+  for (const locale of ["zh", "en"] as const) for (const field of ["contact_label", "availability"] as const) {
+    const oldValue = before.translations?.[locale]?.[field]; const newValue = after.translations?.[locale]?.[field];
+    if (oldValue !== newValue && typeof oldValue === "string" && typeof newValue === "string") lines.push({ kind: "Updated",
+      label: "Contact", locale: locale === "zh" ? "Chinese" : "English", field: field === "contact_label" ? "Contact label" : "Availability", before: oldValue, after: newValue });
+  }
+  for (const kind of ["focus", "status"] as const) {
+    const oldItems = before[kind]; const nextItems = after[kind];
+    if (!Array.isArray(oldItems) || !Array.isArray(nextItems)) return [];
+    const oldById = new Map(oldItems.map(item => [item.id, item])); const nextById = new Map(nextItems.map(item => [item.id, item]));
+    const label = (item: ContactV2Item) => String(item.zh.title || item.en.title || (kind === "focus" ? "Focus" : "Status"));
+    for (const item of nextItems) if (!oldById.has(item.id)) lines.push({ kind: "Added", field: kind === "focus" ? "Focus entry" : "Status entry", label: label(item) });
+    for (const item of oldItems) if (!nextById.has(item.id)) lines.push({ kind: "Removed", field: kind === "focus" ? "Focus entry" : "Status entry", label: label(item) });
+    for (const item of nextItems) {
+      const prior = oldById.get(item.id); if (!prior) continue;
+      for (const locale of ["zh", "en"] as const) for (const field of ["title", "detail"] as const) {
+        if (prior[locale]?.[field] !== item[locale]?.[field]) lines.push({ kind: "Updated", label: label(item), locale: locale === "zh" ? "Chinese" : "English",
+          field: kind === "focus" ? field === "title" ? "Focus title" : "Focus detail" : field === "title" ? "Status title" : "Status detail",
+          before: prior[locale]?.[field] ?? "", after: item[locale]?.[field] ?? "" });
+      }
+      if (kind === "status" && prior.status_type !== item.status_type) lines.push({ kind: "Updated", label: label(item), field: "Status type", before: prior.status_type ?? "", after: item.status_type ?? "" });
+    }
+    const shared = new Set([...oldById.keys()].filter(id => nextById.has(id)));
+    const oldOrder = oldItems.filter(item => shared.has(item.id)).map(item => item.id);
+    const nextOrder = nextItems.filter(item => shared.has(item.id)).map(item => item.id);
+    if (oldOrder.some((id, index) => id !== nextOrder[index])) lines.push({ kind: "Reordered", label: kind === "focus" ? "Current Focus" : "Current Status" });
+  }
+  return lines;
+}
+
 function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
   const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
   const network = event.ipNetwork?.trim() ?? "";
@@ -304,6 +341,8 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
+              </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "contact_section" ? <dl>{describeContactActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                  <dt>{t(line.kind)}</dt><dd><span>{line.field ? `${line.locale ? `${t(line.locale)} · ` : ""}${t(line.field)} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before}` : ""}{line.after !== undefined ? ` · ${t("After")}: ${line.after}` : ""}</span></dd>
               </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "project_list" ? <dl>{describeProjectsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Project method")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before}` : ""}{line.after !== undefined ? ` · ${t("After")}: ${line.after}` : ""}</span></dd>
               </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list" || event.entityType === "education_list")

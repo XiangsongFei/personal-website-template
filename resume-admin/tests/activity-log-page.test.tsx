@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeExperienceSkillsActivity, describeProjectsActivity } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeProjectsActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -126,6 +126,40 @@ describe("Activity Log page", () => {
     fireEvent.click(await screen.findByText(/View changed fields/));
     expect(await screen.findByText(/Chinese · Education program · 暑期学校 · Before: 旧项目 · After: 新项目/)).toBeTruthy();
     expect(screen.getByText(/English · Education program · 暑期学校 · Before: Old program · After: New program/)).toBeTruthy();
+  });
+
+  it("describes Contact V2 bilingual fields, Focus/Status edits, type changes, and order", () => {
+    const focusId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const statusId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const translations = { zh: { contact_label: "联系", availability: "交流" }, en: { contact_label: "Contact", availability: "Open" } };
+    const before = { translations, focus: [{ id: focusId, position: 3, zh: { title: "实践", detail: "旧细节" }, en: { title: "Practice", detail: "Old detail" } }],
+      status: [{ id: statusId, position: 2, status_type: "open", zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
+    const after = { translations: { ...translations, zh: { ...translations.zh, contact_label: "联系我" } },
+      focus: [{ ...before.focus[0]!, position: 0, zh: { ...before.focus[0]!.zh, detail: "新细节" } }],
+      status: [{ ...before.status[0]!, position: 0, status_type: "study" }] };
+    const base = event("contact-v2");
+    const v2: ActivityLogV13CEvent = { ...base, section: "contact", entityType: "contact_section", entityId: null,
+      entitySnapshot: { contact: after }, changes: { contact: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeContactActivity(v2)).toEqual([
+      { kind: "Updated", label: "Contact", locale: "Chinese", field: "Contact label", before: "联系", after: "联系我" },
+      { kind: "Updated", label: "实践", locale: "Chinese", field: "Focus detail", before: "旧细节", after: "新细节" },
+      { kind: "Updated", label: "开放", field: "Status type", before: "open", after: "study" },
+    ]);
+  });
+
+  it("renders Contact V2 semantic changes in the Activity Log UI", async () => {
+    const before = { translations: { zh: { contact_label: "联系", availability: "旧状态" }, en: { contact_label: "Contact", availability: "Old availability" } }, focus: [], status: [] };
+    const after = { ...before, translations: { ...before.translations, en: { ...before.translations.en, availability: "New availability" } } };
+    const row: ActivityLogV13CEvent = { ...event("contact-render-v2"), section: "contact", entityType: "contact_section", entityId: null,
+      entitySnapshot: { contact: after }, changes: { contact: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([row]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/View changed fields/));
+    expect(await screen.findByText(/Availability/)).toBeTruthy();
+    const changeText = document.querySelector(".activity-log-change")?.textContent ?? "";
+    expect(changeText).toContain("Old availability");
+    expect(changeText).toContain("New availability");
   });
 
   it("describes Projects method edits and renders a Projects V2 event with sparse before positions", async () => {

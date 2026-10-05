@@ -2448,6 +2448,19 @@ const contactCreateRecovery = new Map<string, { entryId?: string; confirmed: Loc
 function recoveryKey(kind: "focus" | "status", resumeId: string, draftId: string) { return `${kind}:${resumeId}:${draftId}`; }
 
 async function saveContactProduction(repository: ResumeRepository, resumeId: string, next: ContactSection, baseline: ContactSection): Promise<ContactSection> {
+  if (!repository.loadAdminContactWriteState || !repository.saveContactWithWorker) throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again.");
+  let writeState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminContactWriteState"]>>>;
+  try { writeState = await repository.loadAdminContactWriteState(resumeId); }
+  catch { throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again."); }
+  const pendingRpcRetry = repository.hasPendingContactWorkerSave?.(resumeId) ?? false;
+  if (writeState.resumeId !== resumeId || (writeState.contactWriteMode === "direct" && writeState.contactTrustedContextRequired)
+    || (pendingRpcRetry && !(writeState.contactWriteMode === "rpc" && writeState.contactTrustedContextRequired && writeState.activityLogEnabled))) {
+    throw new Error("Contact save routing is unavailable or outdated. Refresh the Admin before trying again.");
+  }
+  if (writeState.contactWriteMode === "rpc") {
+    if (!writeState.activityLogEnabled || !writeState.contactTrustedContextRequired) throw new Error("Secure Contact saving is not fully enabled for this target.");
+    return await repository.saveContactWithWorker(resumeId, next);
+  }
   const required = [repository.updateContactLabel, repository.updateFocusPosition, repository.insertFocus, repository.updateFocusTranslation, repository.insertFocusTranslation,
     repository.readFocusTranslation, repository.deleteFocus, repository.updateStatusPosition, repository.insertStatus, repository.updateStatusTranslation,
     repository.insertStatusTranslation, repository.readStatusTranslation, repository.deleteStatus, repository.updateStatusType];

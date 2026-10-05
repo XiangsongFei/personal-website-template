@@ -350,3 +350,63 @@ describe("Experience and Skills repository signed write routing", () => {
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });
+
+describe("Contact repository typed writer and V2 decoder", () => {
+  const resumeId = "ea111111-1111-4111-8111-111111111111";
+  const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const contact = { translations: { zh: { contactLabel: "联系", availability: "交流" }, en: { contactLabel: "Contact", availability: "Open" } },
+    focus: [{ id: "local-focus", position: 0, translations: { zh: { title: "项目", detail: "实践" }, en: { title: "Projects", detail: "Practice" } } }],
+    status: [{ id: "local-status", position: 0, statusType: "open" as const, translations: { zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } } }] };
+  const rpcRow = (overrides: Record<string, unknown> = {}) => ({ event_source: "activity", source_rank: 1,
+    id: "contact-event", occurred_at: "2026-10-05T01:00:00Z", actor_email_snapshot: "qa@example.test", actor_role_snapshot: "qa",
+    operation: "update", section_key: "contact", entity_type: "contact_section", entity_id: null,
+    entity_snapshot: { contact: {} }, changes: { contact: { before: {}, after: {} } }, payload_version: 2,
+    event_kind: null, outcome: null, failure_stage: null, failure_code: null, request_id: null,
+    ip_network: null, country_code: null, region: null, city: null, ...overrides });
+
+  it("loads Contact mode state and preserves one exact Worker request after an ambiguous response", async () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const response = { translations: { zh: { contact_label: "联系", availability: "交流" }, en: { contact_label: "Contact", availability: "Open" } },
+      focus: [{ id, position: 0, zh: { title: "项目", detail: "实践" }, en: { title: "Projects", detail: "Practice" } }],
+      status: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, status_type: "open", zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
+    const supabase = { rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true,
+      contact_write_mode: "rpc", contact_trusted_context_required: true }], error: null }), from: vi.fn(),
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let failOnce = true;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      if (failOnce) { failOnce = false; throw new Error("lost response"); }
+      return Response.json(response);
+    }));
+    const repo = createResumeRepository(supabase as unknown as SupabaseClient);
+    await expect(repo.loadAdminContactWriteState!(resumeId)).resolves.toMatchObject({ resumeId, contactWriteMode: "rpc", contactTrustedContextRequired: true });
+    await expect(repo.saveContactWithWorker!(resumeId, contact)).rejects.toThrow("exact pending request");
+    await expect(repo.saveContactWithWorker!(resumeId, contact)).resolves.toMatchObject({
+      focus: [{ id, position: 0 }], status: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, statusType: "open" }],
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toBe("/api/admin/v1/contact/save");
+    expect(calls[0]!.body.request_id).toBe(calls[1]!.body.request_id);
+    expect(calls[0]!.body.contact).toEqual(calls[1]!.body.contact);
+    expect(calls[0]!.body.contact).toMatchObject({ focus: [{ id: null, position: 0 }], status: [{ id: null, position: 0, status_type: "open" }] });
+    expect(repo.hasPendingContactWorkerSave!(resumeId)).toBe(false);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("accepts valid Contact V2 with sparse before order and rejects malformed status semantics", async () => {
+    const before = { translations: { zh: { contact_label: "联系", availability: "交流" }, en: { contact_label: "Contact", availability: "Open" } },
+      focus: [{ id, position: 3, zh: { title: "项目", detail: "实践" }, en: { title: "Projects", detail: "Practice" } }],
+      status: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 2, status_type: "open", zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
+    const after = { ...before, focus: [{ ...before.focus[0]!, position: 0, zh: { ...before.focus[0]!.zh, detail: "更新" } }],
+      status: [{ ...before.status[0]!, position: 0 }] };
+    const valid = vi.fn().mockResolvedValue({ data: [rpcRow({ entity_snapshot: { contact: after }, changes: { contact: { before, after } } })], error: null });
+    await expect(repository(valid).loadActivityLogPageV13C!(resumeId, 25, { eventFilter: "all", section: "", operation: "", actorEmail: "", dateFrom: null, dateToExclusive: null, search: "" }))
+      .resolves.toMatchObject([{ section: "contact", entityType: "contact_section", payloadVersion: 2 }]);
+    const malformedAfter = { ...after, status: [{ ...after.status[0]!, status_type: "unknown" }] };
+    const malformed = vi.fn().mockResolvedValue({ data: [rpcRow({ entity_snapshot: { contact: malformedAfter },
+      changes: { contact: { before, after: malformedAfter } } })], error: null });
+    await expect(repository(malformed).loadActivityLogPageV13C!(resumeId, 25, { eventFilter: "all", section: "", operation: "", actorEmail: "", dateFrom: null, dateToExclusive: null, search: "" }))
+      .rejects.toThrow("Invalid Activity Log response");
+  });
+});

@@ -164,6 +164,50 @@ async function readProjectsWriteState(target = targetId, bearer = userJwt!): Pro
   return await rest("/rest/v1/rpc/load_admin_projects_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
 }
 
+type LocalContact = { translations: { zh: { contact_label: string; availability: string }; en: { contact_label: string; availability: string } };
+  focus: Array<{ id: string | null; position: number; zh: { title: string; detail: string }; en: { title: string; detail: string } }>;
+  status: Array<{ id: string | null; position: number; status_type: "study" | "graduation" | "open"; zh: { title: string; detail: string }; en: { title: string; detail: string } }> };
+async function readContact(target = targetId, bearer = userJwt!): Promise<LocalContact> {
+  const localeRows = await rest(`/rest/v1/resume_locale_content?select=locale,contact_label,availability&resume_id=eq.${target}&order=locale.asc`, {}, bearer) as Array<{ locale: "zh" | "en"; contact_label: string; availability: string }>;
+  const focusParents = await rest(`/rest/v1/resume_contact_focus_items?select=id,position&resume_id=eq.${target}&order=position.asc,id.asc`, {}, bearer) as Array<{ id: string; position: number }>;
+  const focusTranslations = await rest(`/rest/v1/resume_contact_focus_translations?select=focus_item_id,locale,title,detail&resume_id=eq.${target}`, {}, bearer) as Array<{ focus_item_id: string; locale: string; title: string; detail: string }>;
+  const statusParents = await rest(`/rest/v1/resume_contact_status_items?select=id,position,status_type&resume_id=eq.${target}&order=position.asc,id.asc`, {}, bearer) as Array<{ id: string; position: number; status_type: "study" | "graduation" | "open" }>;
+  const statusTranslations = await rest(`/rest/v1/resume_contact_status_translations?select=status_item_id,locale,title,detail&resume_id=eq.${target}`, {}, bearer) as Array<{ status_item_id: string; locale: string; title: string; detail: string }>;
+  const locale = (value: "zh" | "en") => {
+    const row = localeRows.find(item => item.locale === value);
+    if (!row) throw new Error("Local Contact fixture lacks a required locale");
+    return { contact_label: row.contact_label, availability: row.availability };
+  };
+  const focus = focusParents.map((parent, position) => {
+    const text = (value: "zh" | "en") => {
+      const row = focusTranslations.find(item => item.focus_item_id === parent.id && item.locale === value);
+      if (!row) throw new Error("Local Contact Focus translation is missing");
+      return { title: row.title, detail: row.detail };
+    };
+    return { id: parent.id, position, zh: text("zh"), en: text("en") };
+  });
+  const status = statusParents.map((parent, position) => {
+    const text = (value: "zh" | "en") => {
+      const row = statusTranslations.find(item => item.status_item_id === parent.id && item.locale === value);
+      if (!row) throw new Error("Local Contact Status translation is missing");
+      return { title: row.title, detail: row.detail };
+    };
+    return { id: parent.id, position, status_type: parent.status_type, zh: text("zh"), en: text("en") };
+  });
+  return { translations: { zh: locale("zh"), en: locale("en") }, focus, status };
+}
+async function readContactWriteState(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
+  return await rest("/rest/v1/rpc/load_admin_contact_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+}
+async function invokeContact(contact: LocalContact, requestId = localUuid(), token = userJwt!, target = targetId): Promise<{ response: Response; body: unknown }> {
+  const request = new Request("https://admin.local.test/api/admin/v1/contact/save", { method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89" },
+    body: JSON.stringify({ request_id: requestId, resume_id: target, contact }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  const response = await handleWorkerRequest(request, workerEnv());
+  return { response, body: await response.json() };
+}
+
 function localSql(sql: string): string {
   return execFileSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0];
 }
@@ -873,6 +917,83 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     } finally {
       localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key='projects';
         DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='projects' AND requirement_key='trusted_network_context_v11'`);
+    }
+  });
+
+  it("integrates Contact mode/read, no-op, changed aggregate, generated IDs, replay, and conflict through Worker → PostgREST → RPC", async () => {
+    assertLocalConfiguration();
+    const baseline = await readContact();
+    const initialEvents = await readUnifiedEvents();
+    const direct = await readContactWriteState();
+    expect(direct).toHaveLength(1);
+    expect(direct[0]).toMatchObject({ resume_id: targetId, contact_write_mode: "direct", contact_trusted_context_required: false });
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key='contact';
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'contact','trusted_network_context_v11',true)
+      ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
+    try {
+      expect(await readContactWriteState()).toMatchObject([{ resume_id: targetId, contact_write_mode: "rpc", contact_trusted_context_required: true }]);
+      const noOp = await invokeContact(baseline);
+      expect(noOp.response.status, JSON.stringify(noOp.body)).toBe(200);
+      expect(await readContact()).toEqual(baseline);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length);
+
+      const directLocale = await originalFetch(`${apiBase}/rest/v1/resume_locale_content?resume_id=eq.${targetId}&locale=eq.zh`, {
+        method: "PATCH", headers: { apikey: publishableKey!, Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ contact_label: "forbidden direct Contact edit" }),
+      });
+      expect(directLocale.ok).toBe(false);
+      const directFocus = await originalFetch(`${apiBase}/rest/v1/resume_contact_focus_translations?resume_id=eq.${targetId}&locale=eq.zh`, {
+        method: "PATCH", headers: { apikey: publishableKey!, Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ title: "forbidden direct Focus edit" }),
+      });
+      expect(directFocus.ok).toBe(true);
+      expect(await directFocus.json()).toEqual([]);
+      expect(await readContact()).toEqual(baseline);
+
+      const changed = structuredClone(baseline);
+      changed.translations.zh.contact_label += " integration";
+      if (changed.focus[0]) changed.focus[0].zh.detail += " integration";
+      if (changed.status[0]) {
+        changed.status[0].zh.detail += " integration";
+        changed.status[0].status_type = changed.status[0].status_type === "study" ? "open" : "study";
+      }
+      changed.focus.push({ id: null, position: changed.focus.length, zh: { title: "Local Contact focus", detail: "Synthetic QA" }, en: { title: "Local Contact focus", detail: "Synthetic QA" } });
+      changed.status.push({ id: null, position: changed.status.length, status_type: "open", zh: { title: "Local Contact status", detail: "Synthetic QA" }, en: { title: "Local Contact status", detail: "Synthetic QA" } });
+      const requestId = localUuid();
+      const saved = await invokeContact(changed, requestId);
+      expect(saved.response.status, JSON.stringify(saved.body)).toBe(200);
+      const committed = await readContact();
+      expect(committed.translations.zh.contact_label).toBe(changed.translations.zh.contact_label);
+      expect(committed.focus).toHaveLength(baseline.focus.length + 1);
+      expect(committed.status).toHaveLength(baseline.status.length + 1);
+      expect(committed.focus.at(-1)?.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(committed.status.at(-1)?.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(committed.focus.at(-1)?.id).not.toBe("local");
+      const afterSave = await readUnifiedEvents();
+      expect(afterSave).toHaveLength(initialEvents.length + 1);
+      expect(afterSave[0]).toMatchObject({ resume_id: targetId, section_key: "contact", entity_type: "contact_section", entity_id: null,
+        operation: "update", payload_version: 2 });
+      expect((afterSave[0]!.changes as Record<string, { before: unknown; after: unknown }>).contact?.after).toMatchObject({
+        translations: { zh: expect.objectContaining({ contact_label: changed.translations.zh.contact_label }) },
+        focus: expect.any(Array), status: expect.any(Array),
+      });
+
+      const replay = await invokeContact(changed, requestId);
+      expect(replay.response.status).toBe(200);
+      expect(replay.body).toEqual(saved.body);
+      expect(await readContact()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 1);
+      const conflicting = structuredClone(changed);
+      conflicting.translations.en.availability += " conflict";
+      const conflict = await invokeContact(conflicting, requestId);
+      expect(conflict.response.status).toBe(409);
+      expect(conflict.body).toMatchObject({ error: { code: "idempotency_conflict" } });
+      expect(await readContact()).toEqual(committed);
+      expect(await readUnifiedEvents()).toHaveLength(initialEvents.length + 1);
+    } finally {
+      localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key='contact';
+        DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='contact' AND requirement_key='trusted_network_context_v11'`);
     }
   });
 

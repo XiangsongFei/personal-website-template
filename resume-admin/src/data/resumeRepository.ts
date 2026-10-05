@@ -47,6 +47,10 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveProjectsWithWorker?(resumeId: string, items: ProjectItem[]): Promise<ProjectItem[]>;
   hasPendingProjectsWorkerSave?(resumeId: string): boolean;
   discardPendingProjectsSave?(resumeId?: string): void;
+  loadAdminContactWriteState?(resumeId: string): Promise<AdminContactWriteState>;
+  saveContactWithWorker?(resumeId: string, contact: ContactSection): Promise<ContactSection>;
+  hasPendingContactWorkerSave?(resumeId: string): boolean;
+  discardPendingContactSave?(resumeId?: string): void;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -81,6 +85,7 @@ export type AdminFeatureState = {
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
+export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
 
 export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
@@ -269,7 +274,8 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
               || (row.section_key === "experience" && row.entity_type === "experience_list")
               || (row.section_key === "skills" && row.entity_type === "skill_group_list")
               || (row.section_key === "education" && row.entity_type === "education_list")
-              || (row.section_key === "projects" && row.entity_type === "project_list"))))) {
+              || (row.section_key === "projects" && row.entity_type === "project_list")
+              || (row.section_key === "contact" && row.entity_type === "contact_section"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -282,8 +288,46 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact";
         const change = changes[key];
+        const validContact = (raw: unknown, requireDensePositions: boolean): boolean => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+          const aggregate = raw as Record<string, unknown>;
+          if (Object.keys(aggregate).sort().join(",") !== "focus,status,translations" || !aggregate.translations
+            || typeof aggregate.translations !== "object" || Array.isArray(aggregate.translations)) return false;
+          const translations = aggregate.translations as Record<string, unknown>;
+          if (Object.keys(translations).sort().join(",") !== "en,zh") return false;
+          for (const locale of ["zh", "en"] as const) {
+            const value = translations[locale];
+            if (!value || typeof value !== "object" || Array.isArray(value)
+              || Object.keys(value).sort().join(",") !== "availability,contact_label"
+              || typeof (value as Record<string, unknown>).contact_label !== "string"
+              || typeof (value as Record<string, unknown>).availability !== "string") return false;
+          }
+          const validList = (value: unknown, kind: "focus" | "status"): boolean => {
+            if (!Array.isArray(value) || value.length > 32) return false;
+            const ids = new Set<string>(); let priorPosition = -1;
+            return value.every((rawItem, index) => {
+              if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) return false;
+              const item = rawItem as Record<string, unknown>;
+              const expected = kind === "focus" ? "en,id,position,zh" : "en,id,position,status_type,zh";
+              if (Object.keys(item).sort().join(",") !== expected || typeof item.id !== "string"
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id)
+                || ids.has(item.id) || !Number.isInteger(item.position) || (item.position as number) < 0
+                || (requireDensePositions ? item.position !== index : index > 0 && (item.position as number) <= priorPosition)
+                || (kind === "status" && !(item.status_type === "study" || item.status_type === "graduation" || item.status_type === "open"))) return false;
+              ids.add(item.id); priorPosition = item.position as number;
+              for (const locale of ["zh", "en"] as const) {
+                const rawText = item[locale];
+                if (!rawText || typeof rawText !== "object" || Array.isArray(rawText)) return false;
+                const text = rawText as Record<string, unknown>;
+                if (Object.keys(text).sort().join(",") !== "detail,title" || typeof text.title !== "string" || typeof text.detail !== "string") return false;
+              }
+              return true;
+            });
+          };
+          return validList(aggregate.focus, "focus") && validList(aggregate.status, "status");
+        };
         const validArray = (raw: unknown, domain: "awards" | "experience" | "skills" | "education" | "projects", requireDensePositions = true): boolean => {
           if (!Array.isArray(raw) || raw.length > (domain === "awards" ? 32 : 16)) return false;
           const ids = new Set<string>();
@@ -355,9 +399,12 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
             ids.add(item.id); return true;
           });
         };
-        if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
-          || !change || !Array.isArray(change.before) || !Array.isArray(change.after)
-          || JSON.stringify(snapshot[key]) !== JSON.stringify(change.after)
+        if (!change || JSON.stringify(snapshot[key]) !== JSON.stringify(change.after)) throw new Error("Invalid Activity Log response");
+        if (key === "contact") {
+          if (Object.keys(snapshot).sort().join(",") !== "contact" || Object.keys(changes).sort().join(",") !== "contact"
+            || !validContact(change.before, false) || !validContact(change.after, true)) throw new Error("Invalid Activity Log response");
+        } else if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
+          || !Array.isArray(change.before) || !Array.isArray(change.after)
           || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
       }
       return {
@@ -548,6 +595,111 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     } catch (cause) {
       if (cause instanceof AggregateWorkerSaveError) throw cause;
       throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
+    }
+  };
+  const contactPendingKey = (resumeId: string) => `admin-contact-rpc-pending-v1:${resumeId}`;
+  const saveSignedContact = async (resumeId: string, payload: Record<string, unknown>): Promise<ContactSection> => {
+    const fingerprint = JSON.stringify(payload);
+    if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError("Contact content exceeds the allowed request size.");
+    const storageKey = contactPendingKey(resumeId);
+    let pending: { requestId: string; resumeId: string; payload: Record<string, unknown> } | null = null;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(storageKey);
+      if (raw) {
+        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
+        const value = JSON.parse(raw) as Record<string, unknown>;
+        if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
+          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+          || JSON.stringify(value.payload) !== fingerprint) throw new Error("invalid");
+        pending = { requestId: value.requestId, resumeId, payload: value.payload as Record<string, unknown> };
+      }
+    } catch { throw new AggregateWorkerSaveError("A pending Contact request cannot be verified safely. Keep the draft unchanged and retry."); }
+    if (!pending) {
+      if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError("Secure Contact saving is unavailable. Refresh the Admin and try again.");
+      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, payload };
+      try {
+        const raw = JSON.stringify(pending);
+        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
+        globalThis.sessionStorage.setItem(storageKey, raw);
+      } catch { throw new AggregateWorkerSaveError("The exact pending Contact request could not be stored safely. Keep the draft unchanged and retry."); }
+    }
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
+      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
+        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
+      let response: Response;
+      try { response = await fetch("/api/admin/v1/contact/save", { method: "POST", credentials: "omit",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, contact: pending.payload }), signal: AbortSignal.timeout(30_000) }); }
+      catch { throw new AggregateWorkerSaveError("The Contact save result is uncertain. Retry the exact pending request."); }
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500 && response.status !== 409) {
+          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* preserve safe failure state */ }
+        }
+        throw new AggregateWorkerSaveError(response.status === 409
+          ? "The Contact request ID conflicts with a different payload. Keep the pending draft and contact an administrator."
+          : response.status >= 500 ? "The Contact save result is uncertain. Retry the exact pending request."
+            : "Contact could not be saved. Your draft remains available for correction and retry.");
+      }
+      let raw: unknown;
+      try { raw = await response.json(); } catch { throw new AggregateWorkerSaveError("The Contact save result is uncertain. Retry the exact pending request."); }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) || new TextEncoder().encode(JSON.stringify(raw)).byteLength > 212992)
+        throw new AggregateWorkerSaveError("The Contact save result could not be confirmed. Retry the exact pending request.");
+      const value = raw as Record<string, unknown>;
+      if (Object.keys(value).sort().join(",") !== "focus,status,translations" || !value.translations || typeof value.translations !== "object") throw new Error("shape");
+      const translations = value.translations as Record<string, unknown>;
+      const decodeLocale = (locale: unknown) => {
+        if (!locale || typeof locale !== "object" || Array.isArray(locale)) throw new Error("locale");
+        const fields = locale as Record<string, unknown>;
+        if (Object.keys(fields).sort().join(",") !== "availability,contact_label" || typeof fields.contact_label !== "string" || typeof fields.availability !== "string") throw new Error("fields");
+        return { contactLabel: fields.contact_label, availability: fields.availability };
+      };
+      const decodeItems = (rawItems: unknown, kind: "focus" | "status") => {
+        if (!Array.isArray(rawItems) || rawItems.length > 32) throw new Error("items");
+        const requested = payload[kind] as Array<Record<string, unknown>>;
+        if (requested.length !== rawItems.length) throw new Error("length");
+        const ids = new Set<string>(); let priorPosition = -1;
+        return rawItems.map((rawItem, position) => {
+          if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) throw new Error("item");
+          const item = rawItem as Record<string, unknown>; const expectKeys = kind === "focus" ? "en,id,position,zh" : "en,id,position,status_type,zh";
+          if (Object.keys(item).sort().join(",") !== expectKeys || typeof item.id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(item.id)
+            || ids.has(item.id) || !Number.isInteger(item.position) || (item.position as number) < 0
+            || (position > 0 && (item.position as number) <= priorPosition) || (requested[position]?.id && requested[position]?.id !== item.id)) throw new Error("identity");
+          ids.add(item.id); priorPosition = item.position as number;
+          const decodeText = (locale: unknown) => {
+            if (!locale || typeof locale !== "object" || Array.isArray(locale)) throw new Error("text");
+            const text = locale as Record<string, unknown>;
+            if (Object.keys(text).sort().join(",") !== "detail,title" || typeof text.title !== "string" || typeof text.detail !== "string") throw new Error("text fields");
+            return { title: text.title, detail: text.detail };
+          };
+          const zh = decodeText(item.zh); const en = decodeText(item.en);
+          const requestItem = requested[position]!;
+          const matches = (key: "zh" | "en") => {
+            const asked = requestItem[key] as Record<string, unknown> | undefined;
+            const got = key === "zh" ? zh : en;
+            return Boolean(asked && asked.title === got.title && asked.detail === got.detail);
+          };
+          if (!matches("zh") || !matches("en")) throw new Error("mismatch");
+          if (kind === "focus") return { id: item.id, position: item.position as number, translations: { zh, en } };
+          if (!(item.status_type === "study" || item.status_type === "graduation" || item.status_type === "open")
+            || item.status_type !== requestItem.status_type) throw new Error("status type");
+          return { id: item.id, position: item.position as number, statusType: item.status_type, translations: { zh, en } };
+        });
+      };
+      const focus = decodeItems(value.focus, "focus") as ContactSection["focus"];
+      const status = decodeItems(value.status, "status") as ContactSection["status"];
+      const expectedTranslations = payload.translations as Record<string, Record<string, unknown>>;
+      const zh = decodeLocale(translations.zh); const en = decodeLocale(translations.en);
+      if (zh.contactLabel !== expectedTranslations.zh?.contact_label || zh.availability !== expectedTranslations.zh?.availability
+        || en.contactLabel !== expectedTranslations.en?.contact_label || en.availability !== expectedTranslations.en?.availability) throw new Error("translation mismatch");
+      const canonical = { translations: { zh, en }, focus, status } satisfies ContactSection;
+      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* same request ID remains safe to replay */ }
+      return canonical;
+    } catch (cause) {
+      if (cause instanceof AggregateWorkerSaveError) throw cause;
+      throw new AggregateWorkerSaveError("The Contact save result could not be confirmed. Retry the exact pending request.");
     }
   };
   return {
@@ -1027,6 +1179,42 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return { resumeId, domain: "projects" as const, activityLogEnabled: row.activity_log_enabled,
         writeMode: row.projects_write_mode, trustedContextRequired: row.projects_trusted_context_required };
     },
+    async loadAdminContactWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_contact_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Contact write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.contact_write_mode !== "direct" && row.contact_write_mode !== "rpc")
+        || typeof row.contact_trusted_context_required !== "boolean"
+        || (row.contact_write_mode === "direct" && row.contact_trusted_context_required)) throw new Error("Invalid Contact write state");
+      return { resumeId, activityLogEnabled: row.activity_log_enabled, contactWriteMode: row.contact_write_mode, contactTrustedContextRequired: row.contact_trusted_context_required };
+    },
+    async saveContactWithWorker(resumeId, contact) {
+      if (!resumeId || !contact || !contact.translations || !Array.isArray(contact.focus) || !Array.isArray(contact.status))
+        throw new AggregateWorkerSaveError("Contact content is invalid.");
+      const locale = (value: ContactSection["translations"]["zh"]) => ({ contact_label: value.contactLabel, availability: value.availability });
+      const entryLocale = (value: { title: string; detail: string }) => ({ title: value.title, detail: value.detail });
+      const payload = {
+        translations: { zh: locale(contact.translations.zh), en: locale(contact.translations.en) },
+        focus: contact.focus.map((item, position) => {
+          if (!item || typeof item.id !== "string" || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id)))
+            throw new AggregateWorkerSaveError("Contact Focus IDs are invalid.");
+          return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
+            zh: entryLocale(item.translations.zh), en: entryLocale(item.translations.en) };
+        }),
+        status: contact.status.map((item, position) => {
+          if (!item || typeof item.id !== "string" || !(item.id.startsWith("local-") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id))
+            || !(item.statusType === "study" || item.statusType === "graduation" || item.statusType === "open"))
+            throw new AggregateWorkerSaveError("Contact Status values are invalid.");
+          return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position, status_type: item.statusType,
+            zh: entryLocale(item.translations.zh), en: entryLocale(item.translations.en) };
+        }),
+      };
+      return await saveSignedContact(resumeId, payload);
+    },
+    hasPendingContactWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(contactPendingKey(resumeId))); } catch { return true; } },
+    discardPendingContactSave() { /* Ambiguous requests are retained for exact replay. */ },
     async saveProjectsWithWorker(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Projects content is invalid.");
       const payload = items.map((item, position) => {

@@ -12,6 +12,7 @@ const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
 const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
 const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
 const SAVE_PROJECTS_PATH = `${API_ROOT}/projects/save`;
+const SAVE_CONTACT_PATH = `${API_ROOT}/contact/save`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -59,13 +60,18 @@ interface EducationItem {
 interface ProjectsMethod { id: string | null; position: number; value: string }
 interface ProjectsItem { id: string | null; position: number; zh: { title: string; subtitle: string; period: string; description: string; href: string };
   en: { title: string; subtitle: string; period: string; description: string; href: string }; methods: { zh: ProjectsMethod[]; en: ProjectsMethod[] } }
+interface ContactLocale { contact_label: string; availability: string }
+interface ContactEntryLocale { title: string; detail: string }
+interface ContactFocusItem { id: string | null; position: number; zh: ContactEntryLocale; en: ContactEntryLocale }
+interface ContactStatusItem extends ContactFocusItem { status_type: "study" | "graduation" | "open" }
+interface ContactAggregate { translations: { zh: ContactLocale; en: ContactLocale }; focus: ContactFocusItem[]; status: ContactStatusItem[] }
 
 interface SignedContext {
   context_version: number;
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects";
+  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -429,6 +435,71 @@ export function canonicalizeProjects(items: ProjectsItem[]): string {
     en: { title: item.en.title, subtitle: item.en.subtitle, period: item.en.period, description: item.en.description, href: item.en.href },
     methods: { zh: item.methods.zh.map(method => ({ id: method.id, position: method.position, value: method.value })),
       en: item.methods.en.map(method => ({ id: method.id, position: method.position, value: method.value })) } })));
+}
+
+function validateContact(value: unknown): ContactAggregate {
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "focus,status,translations"
+    || !isPlainObject(value.translations) || Object.keys(value.translations).sort().join(",") !== "en,zh")
+    throw apiError(422, "invalid_contact", "Contact must contain translations, Focus, and Status.");
+  const translations = {} as ContactAggregate["translations"];
+  for (const locale of ["zh", "en"] as const) {
+    const raw = value.translations[locale];
+    if (!isPlainObject(raw) || Object.keys(raw).sort().join(",") !== "availability,contact_label"
+      || typeof raw.contact_label !== "string" || raw.contact_label.includes("\0") || hasUnpairedSurrogate(raw.contact_label)
+      || typeof raw.availability !== "string" || raw.availability.includes("\0") || hasUnpairedSurrogate(raw.availability))
+      throw apiError(422, "invalid_contact_translation", "Contact translations are invalid.");
+    translations[locale] = { contact_label: raw.contact_label, availability: raw.availability };
+  }
+  const focusIds = new Set<string>();
+  const focus = (raw: unknown): ContactFocusItem[] => {
+    if (!Array.isArray(raw) || raw.length > 32) throw apiError(422, "invalid_contact_focus", "Contact Focus must contain no more than 32 entries.");
+    return raw.map((entry, position) => {
+      if (!isPlainObject(entry) || Object.keys(entry).sort().join(",") !== "en,id,position,zh" || entry.position !== position)
+        throw apiError(422, "invalid_contact_focus_entry", "Contact Focus positions must be contiguous and ordered.");
+      const id = validateCollectionId(entry.id);
+      if (id && focusIds.has(id)) throw apiError(422, "duplicate_contact_focus_id", "Contact Focus IDs must be unique.");
+      if (id) focusIds.add(id);
+      const locale = (item: unknown): ContactEntryLocale => {
+        if (!isPlainObject(item) || Object.keys(item).sort().join(",") !== "detail,title"
+          || typeof item.title !== "string" || item.title.includes("\0") || hasUnpairedSurrogate(item.title)
+          || typeof item.detail !== "string" || item.detail.includes("\0") || hasUnpairedSurrogate(item.detail))
+          throw apiError(422, "invalid_contact_focus_translation", "Contact Focus translations are invalid.");
+        return { title: item.title, detail: item.detail };
+      };
+      return { id, position, zh: locale(entry.zh), en: locale(entry.en) };
+    });
+  };
+  const statusIds = new Set<string>();
+  const status = (raw: unknown): ContactStatusItem[] => {
+    if (!Array.isArray(raw) || raw.length > 32) throw apiError(422, "invalid_contact_status", "Contact Status must contain no more than 32 entries.");
+    return raw.map((entry, position) => {
+      if (!isPlainObject(entry) || Object.keys(entry).sort().join(",") !== "en,id,position,status_type,zh" || entry.position !== position
+        || !["study", "graduation", "open"].includes(String(entry.status_type)))
+        throw apiError(422, "invalid_contact_status_entry", "Contact Status entries are invalid or out of order.");
+      const id = validateCollectionId(entry.id);
+      if (id && statusIds.has(id)) throw apiError(422, "duplicate_contact_status_id", "Contact Status IDs must be unique.");
+      if (id) statusIds.add(id);
+      const locale = (item: unknown): ContactEntryLocale => {
+        if (!isPlainObject(item) || Object.keys(item).sort().join(",") !== "detail,title"
+          || typeof item.title !== "string" || typeof item.detail !== "string")
+          throw apiError(422, "invalid_contact_status_translation", "Contact Status translations are invalid.");
+        return { title: item.title, detail: item.detail };
+      };
+      return { id, position, status_type: entry.status_type as ContactStatusItem["status_type"], zh: locale(entry.zh), en: locale(entry.en) };
+    });
+  };
+  return { translations, focus: focus(value.focus), status: status(value.status) };
+}
+
+export function canonicalizeContact(contact: ContactAggregate): string {
+  return JSON.stringify({
+    translations: { zh: { contact_label: contact.translations.zh.contact_label, availability: contact.translations.zh.availability },
+      en: { contact_label: contact.translations.en.contact_label, availability: contact.translations.en.availability } },
+    focus: contact.focus.map(item => ({ id: item.id, position: item.position,
+      zh: { title: item.zh.title, detail: item.zh.detail }, en: { title: item.en.title, detail: item.en.detail } })),
+    status: contact.status.map(item => ({ id: item.id, position: item.position, status_type: item.status_type,
+      zh: { title: item.zh.title, detail: item.zh.detail }, en: { title: item.en.title, detail: item.en.detail } })),
+  });
 }
 
 function parseIPv4(value: string): number[] | null {
@@ -1000,6 +1071,45 @@ async function saveProjects(request: Request, env: WorkerEnv): Promise<Response>
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveContact(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "contact,request_id,resume_id")
+    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and contact.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)) throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  const contact = validateContact(parsed.contact); const canonical = canonicalizeContact(contact);
+  if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Contact exceeds the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: parsed.resume_id.toLowerCase(),
+    domain: "contact", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
+  let upstream: Response;
+  try { upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_contact_v1`, { method: "POST",
+    headers: { Authorization: authorization, apikey: supabase.publishableKey, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_contact: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex }),
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }); }
+  catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same Contact request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const responseBody = await readJsonResponse(upstream, 220 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody)) throw apiError(409, "idempotency_conflict", "The Contact retry conflicts with a different request. Refresh before trying again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save Contact (HTTP ${upstream.status}).`);
+  }
+  if (!isPlainObject(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Contact result.");
+  return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
 function isApiPath(pathname: string): boolean {
   return pathname === API_ROOT || pathname.startsWith(`${API_ROOT}/`);
 }
@@ -1007,7 +1117,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1021,6 +1131,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_AWARDS_PATH) return await saveAwards(request, env);
     if (url.pathname === SAVE_EDUCATION_PATH) return await saveEducation(request, env);
     if (url.pathname === SAVE_PROJECTS_PATH) return await saveProjects(request, env);
+    if (url.pathname === SAVE_CONTACT_PATH) return await saveContact(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);

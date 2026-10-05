@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalizeEducation, canonicalizeExperience, canonicalizeProjects, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { canonicalizeContact, canonicalizeEducation, canonicalizeExperience, canonicalizeProjects, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const actorId = "10000000-0000-4000-8000-000000000002";
@@ -15,6 +15,9 @@ const education = { id: null, position: 0, entry_type: "summerSchool" as const, 
 const projects = [{ id: null, position: 0, zh: { title: "项目", subtitle: "", period: "2025", description: "简介", href: "" },
   en: { title: "Project", subtitle: "", period: "2025", description: "Summary", href: "https://example.test" },
   methods: { zh: [{ id: null, position: 0, value: "规划" }], en: [] } }];
+const contact = { translations: { zh: { contact_label: "联系", availability: "交流" }, en: { contact_label: "Contact", availability: "Open" } },
+  focus: [{ id: null, position: 0, zh: { title: "项目", detail: "实践" }, en: { title: "Projects", detail: "Practice" } }],
+  status: [{ id: null, position: 0, status_type: "open" as const, zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function jwt() {
@@ -32,6 +35,46 @@ function request(path: string, body: unknown) {
 }
 
 describe("V1.3D Experience and Skills Worker boundary", () => {
+  it("canonicalizes the exact Contact aggregate, preserves empty strings, and calls only the typed Contact RPC", async () => {
+    expect(canonicalizeContact(contact)).toBe(JSON.stringify(contact));
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
+      expect(body.target_resume_id).toBe(resumeId);
+      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain: "contact", operation: "update", request_id: requestId });
+      expect(String(input)).toBe("https://local.test/rest/v1/rpc/save_resume_contact_v1");
+      expect(body.canonical_contact).toBe(canonicalizeContact(contact));
+      return Response.json({ translations: contact.translations,
+        focus: [{ ...contact.focus[0], id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }],
+        status: [{ ...contact.status[0], id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }] });
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/contact/save", { request_id: requestId, resume_id: resumeId, contact }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [{ ...contact, translations: { ...contact.translations, zh: { ...contact.translations.zh, extra: "rejected" } } }, 422],
+    [{ ...contact, focus: [{ ...contact.focus[0]!, position: 1 }] }, 422],
+    [{ ...contact, status: [{ ...contact.status[0]!, status_type: "other" }] }, 422],
+    [{ ...contact, status: [{ ...contact.status[0]!, en: { ...contact.status[0]!.en, detail: "x".repeat(200000) } }] }, 413],
+  ])("rejects malformed Contact aggregates before upstream access", async (invalid, status) => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/contact/save", { request_id: requestId, resume_id: resumeId, contact: invalid }), env());
+    expect(response.status).toBe(status);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("maps only the exact Contact idempotency conflict and does not report/fallback", async () => {
+    const upstream = vi.fn(async () => new Response('{"code":"P13B1"}', { status: 400 })); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/contact/save", { request_id: requestId, resume_id: resumeId, contact }),
+      { ...env(), ACTIVITY_LOG_V13B_FAILURE_REPORTING: "true" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
   it("canonicalizes exact Experience and Skills shapes, retaining NULL versus empty location", () => {
     expect(canonicalizeExperience([experience])).toBe('[{"id":null,"position":0,"zh":{"organization":"机构","title":"职位","period":"2024","description":"描述","location":null},"en":{"organization":"Org","title":"Role","period":"2024","description":"Work","location":""}}]');
     expect(canonicalizeSkills([skills])).toBe('[{"id":null,"position":0,"zh":{"title":"语言","items":"中文"},"en":{"title":"Languages","items":"English"}}]');

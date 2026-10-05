@@ -10,7 +10,7 @@ import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import type { ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
-import type { ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, Locale, StatusItem } from "../src/model";
+import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 const resumeId = "batch6a-resume-id";
@@ -30,7 +30,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -73,6 +73,14 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     insertProjectMethod: vi.fn(async (_rid: string, pid: string, locale: Locale, position: number, value: string) => ({ resumeId: _rid, projectId: pid, methodId: `method-created-${++nextId}`, locale, position, value })),
     readProjectMethodByPosition: vi.fn().mockResolvedValue(null), deleteProjectMethod: vi.fn(),
     updateContactLabel: vi.fn(async (_rid: string, locale: Locale, contactLabel: string) => ({ resumeId: _rid, locale, contactLabel })),
+    loadAdminContactWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId,
+      activityLogEnabled: options.activityLogEnabled ?? options.contactWriteMode === "rpc", contactWriteMode: options.contactWriteMode ?? "direct",
+      contactTrustedContextRequired: options.contactTrustedContextRequired ?? false })),
+    saveContactWithWorker: vi.fn(async (_targetResumeId: string, draft: ContactSection) => {
+      if (options.failContactRpc) throw new Error("Contact RPC save failed");
+      return structuredClone(draft);
+    }),
+    hasPendingContactWorkerSave: vi.fn(() => false), discardPendingContactSave: vi.fn(),
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
@@ -2137,6 +2145,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const field = await screen.findByLabelText("English Section label");
     fireEvent.change(field, { target: { value: "In-flight Contact" } });
     save();
+    await waitFor(() => expect(contact.methods.updateContactLabel).toHaveBeenCalledOnce());
     fireEvent.submit(field.closest("form")!);
     expect(contact.methods.updateContactLabel).toHaveBeenCalledOnce();
     resolveWrite({ resumeId, locale: "en", contactLabel: "In-flight Contact" });
@@ -2222,6 +2231,20 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save(); await screen.findByText("No unsaved changes");
     expect(contact.methods.updateContactLabel).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes Contact RPC mode through the transactional Worker without direct-DML fallback", async () => {
+    const contact = makeRepository("skills", { contactWriteMode: "rpc", contactTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/contact" }, contact.repository);
+    fireEvent.change(await screen.findByLabelText("English Section label"), { target: { value: "Transactional Contact" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(contact.methods.loadAdminContactWriteState).toHaveBeenCalledWith(resumeId);
+    expect(contact.methods.saveContactWithWorker).toHaveBeenCalledOnce();
+    expect(contact.methods.updateContactLabel).not.toHaveBeenCalled();
+    expect(contact.methods.updateContactAvailability).not.toHaveBeenCalled();
+    expect(contact.methods.insertFocus).not.toHaveBeenCalled();
+    expect(contact.methods.insertStatus).not.toHaveBeenCalled();
   });
 
   it("persists Contact and Links changes through their scoped writers", async () => {

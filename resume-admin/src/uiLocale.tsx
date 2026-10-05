@@ -27,6 +27,7 @@ const dictionary: Record<string, string> = {
 };
 
 Object.assign(dictionary, {
+  "Focus detail": "关注详情", "Status detail": "状态详情", "Focus entry": "关注项目", "Status entry": "状态项目",
   "Education entry removed from the draft. Save to apply the collection change.": "教育经历已从草稿中移除。保存后才会应用集合变更。",
   "Education RPC mode is not fully configured. Your draft remains available.": "教育经历 RPC 模式尚未完整配置，草稿仍会保留。",
   "The Education section title was saved separately; collection changes remain unsaved and can be retried.": "教育版块标题已单独保存；教育条目更改尚未保存，可以重试。",
