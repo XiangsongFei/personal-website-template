@@ -158,7 +158,7 @@ CREATE TABLE public.resume_contact_focus_items (
 CREATE TABLE public.resume_contact_focus_translations (
   focus_item_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   title text NOT NULL, detail text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (focus_item_id,resume_id,locale),
+  PRIMARY KEY (focus_item_id,locale),
   FOREIGN KEY (focus_item_id,resume_id) REFERENCES public.resume_contact_focus_items(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );
@@ -171,7 +171,7 @@ CREATE TABLE public.resume_contact_status_items (
 CREATE TABLE public.resume_contact_status_translations (
   status_item_id uuid NOT NULL, resume_id uuid NOT NULL, locale text NOT NULL CHECK (locale IN ('zh','en')),
   title text NOT NULL, detail text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (status_item_id,resume_id,locale),
+  PRIMARY KEY (status_item_id,locale),
   FOREIGN KEY (status_item_id,resume_id) REFERENCES public.resume_contact_status_items(id,resume_id) ON DELETE CASCADE,
   FOREIGN KEY (resume_id,locale) REFERENCES public.resume_locale_content(resume_id,locale) ON DELETE CASCADE
 );

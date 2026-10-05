@@ -6,12 +6,34 @@ const v2 = readFileSync(resolve("migrations/20261021_activity_log_contact_writer
 const writer = readFileSync(resolve("migrations/20261022_activity_log_contact_writer.sql"), "utf8");
 const v2Mirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261021000000_activity_log_contact_writer.sql"), "utf8");
 const writerMirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261022000000_activity_log_contact_writer.sql"), "utf8");
+const conflictCorrection = readFileSync(resolve("migrations/20261023_activity_log_contact_writer_conflict_target.sql"), "utf8");
+const conflictCorrectionMirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261023000000_activity_log_contact_writer_conflict_target.sql"), "utf8");
+const bootstrap = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20260930000000_test_only_schema_bootstrap.sql"), "utf8");
 const runtime = readFileSync(resolve("tests/rls-runtime/supabase/tests/activity_log_contact_writer.test.sql"), "utf8");
 
 describe("V1.3D-5 Contact migrations", () => {
   it("keeps canonical production migrations byte-identical to their local runtime mirrors", () => {
     expect(v2Mirror).toBe(v2);
     expect(writerMirror).toBe(writer);
+    expect(conflictCorrectionMirror).toBe(conflictCorrection);
+  });
+
+  it("corrects only the Contact translation conflict targets to match the installed primary keys", () => {
+    expect(writer).toContain("ON CONFLICT(focus_item_id,resume_id,locale)");
+    expect(writer).toContain("ON CONFLICT(status_item_id,resume_id,locale)");
+    expect(conflictCorrection).toContain("CREATE OR REPLACE FUNCTION public.save_resume_contact_v1(");
+    expect(conflictCorrection).toContain("ON CONFLICT(focus_item_id,locale)");
+    expect(conflictCorrection).toContain("ON CONFLICT(status_item_id,locale)");
+    expect(conflictCorrection).not.toContain("ON CONFLICT(focus_item_id,resume_id,locale)");
+    expect(conflictCorrection).not.toContain("ON CONFLICT(status_item_id,resume_id,locale)");
+    expect(conflictCorrection).toContain("SECURITY DEFINER SET search_path=''");
+    expect(conflictCorrection).toContain("GRANT EXECUTE ON FUNCTION public.save_resume_contact_v1(uuid,text,text,text) TO authenticated");
+    expect(conflictCorrection).not.toMatch(/CREATE\s+TABLE|ALTER\s+TABLE|INSERT\s+INTO\s+cms_private\.(?:resume_capabilities|resume_write_modes|resume_domain_requirements)/i);
+    expect(bootstrap).toContain("PRIMARY KEY (focus_item_id,locale)");
+    expect(bootstrap).toContain("PRIMARY KEY (status_item_id,locale)");
+    expect(bootstrap).not.toContain("PRIMARY KEY (focus_item_id,resume_id,locale)");
+    expect(bootstrap).not.toContain("PRIMARY KEY (status_item_id,resume_id,locale)");
+    expect(runtime).toContain("pre-fix Focus ON CONFLICT target fails against the production composite primary key with SQLSTATE 42P10");
   });
 
   it("adds only the Contact V2 contract while preserving existing dispatch and installation-only semantics", () => {

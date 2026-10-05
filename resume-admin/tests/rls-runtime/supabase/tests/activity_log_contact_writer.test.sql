@@ -3,6 +3,20 @@ BEGIN;
 CREATE FUNCTION public.test_only_contact_event_count(target_resume uuid)
 RETURNS bigint LANGUAGE sql SECURITY DEFINER SET search_path=''
 AS $function$ SELECT count(*) FROM cms_private.activity_log_events WHERE resume_id=target_resume AND section_key='contact' AND entity_type='contact_section' AND payload_version=2 $function$;
+CREATE FUNCTION public.test_only_contact_pre_fix_conflict_target_raises_42p10()
+RETURNS boolean LANGUAGE plpgsql SET search_path=''
+AS $function$
+BEGIN
+  BEGIN
+    EXECUTE 'EXPLAIN (COSTS OFF) INSERT INTO public.resume_contact_focus_translations(focus_item_id,resume_id,locale,title,detail) '
+      || 'VALUES (''aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa''::uuid,''ea111111-1111-4111-8111-111111111111''::uuid,''zh'',''x'',''x'') '
+      || 'ON CONFLICT(focus_item_id,resume_id,locale) DO NOTHING';
+    RETURN false;
+  EXCEPTION WHEN SQLSTATE '42P10' THEN
+    RETURN true;
+  END;
+END
+$function$;
 CREATE FUNCTION public.test_only_contact_event_valid(target_resume uuid)
 RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path=''
 AS $function$
@@ -215,7 +229,9 @@ GRANT EXECUTE ON FUNCTION public.test_only_contact_event_count(uuid),public.test
   public.test_only_contact_direct_locale_delete_legacy(uuid),public.test_only_contact_direct_locale_insert_legacy(uuid),
   public.test_only_contact_direct_collection_blocked(uuid),public.test_only_contact_direct_legacy(uuid) TO authenticated;
 
-SELECT extensions.plan(33);
+SELECT extensions.plan(34);
+SELECT extensions.ok(public.test_only_contact_pre_fix_conflict_target_raises_42p10(),
+  'pre-fix Focus ON CONFLICT target fails against the production composite primary key with SQLSTATE 42P10');
 SELECT extensions.ok((SELECT contact_label_attnotnull AND availability_attnotnull FROM (
     SELECT bool_or(attnotnull) FILTER(WHERE attname='contact_label') AS contact_label_attnotnull,
       bool_or(attnotnull) FILTER(WHERE attname='availability') AS availability_attnotnull
