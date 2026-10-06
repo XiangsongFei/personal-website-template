@@ -292,7 +292,10 @@ function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" |
   return location || network || null;
 }
 
-export function ActivityLogPage({ resumeId, repository }: { resumeId: string | null; repository: ResumeRepository | null }) {
+export function ActivityLogPage({ resumeId, repository, filesRestoreReady = false, onRouteDataFresh }: {
+  resumeId: string | null; repository: ResumeRepository | null; filesRestoreReady?: boolean;
+  onRouteDataFresh?: (resumeId: string, fresh: boolean) => void;
+}) {
   const { t } = useUiLocale();
   const [events, setEvents] = useState<ActivityLogV13CEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -302,7 +305,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
   const [draft, setDraft] = useState<ActivityLogDraft>(EMPTY_DRAFT);
   const [appliedFilters, setAppliedFilters] = useState<ActivityLogV13CFilters>(EMPTY_FILTERS);
   const [filterError, setFilterError] = useState(false);
-  const [filesRestoreAvailable, setFilesRestoreAvailable] = useState(false);
+  const [activityLogTargetAuthorized, setActivityLogTargetAuthorized] = useState(false);
   const [restoreBusy, setRestoreBusy] = useState<string | null>(null);
   const [restoreNotice, setRestoreNotice] = useState("");
   const authorizedTargetChecked = useRef(false);
@@ -313,8 +316,11 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
   const load = useCallback(async (append: boolean, filters = activeFiltersRef.current) => {
     const generation = generationRef.current;
     if (!resumeId || !repository?.loadActivityLogAuthorizedTargets || !repository.loadActivityLogPageV13C) {
+      if (resumeId) onRouteDataFresh?.(resumeId, false);
+      setActivityLogTargetAuthorized(false);
       setError(true); setLoading(false); return;
     }
+    onRouteDataFresh?.(resumeId, false);
     if (append) setLoadingMore(true);
     else { setLoading(true); setLoadingMore(false); }
     setError(false);
@@ -323,13 +329,8 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
         const targets = await repository.loadActivityLogAuthorizedTargets();
         if (generation !== generationRef.current) return;
         if (!targets.some(target => target.resumeId === resumeId)) throw new Error("Activity Log target is not authorized");
-        if (repository.loadAdminFilesWriteState) {
-          try {
-            const state = await repository.loadAdminFilesWriteState(resumeId);
-            setFilesRestoreAvailable(state.resumeId === resumeId && state.activityLogEnabled && state.writeMode === "rpc" && state.trustedContextRequired);
-          } catch { setFilesRestoreAvailable(false); }
-        }
         authorizedTargetChecked.current = true;
+        setActivityLogTargetAuthorized(true);
       }
       const cursor = append ? cursorRef.current : undefined;
       const page = await repository.loadActivityLogPageV13C(resumeId, PAGE_SIZE, filters, cursor);
@@ -338,24 +339,28 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
       setHasMore(page.length === PAGE_SIZE);
       const last = page.at(-1);
       cursorRef.current = last ? { occurredAt: last.occurredAt, id: last.id, sourceRank: last.sourceRank } : undefined;
+      onRouteDataFresh?.(resumeId, true);
     } catch {
-      if (generation === generationRef.current) setError(true);
+      if (generation === generationRef.current) {
+        onRouteDataFresh?.(resumeId, false);
+        setError(true);
+      }
     } finally {
       if (generation === generationRef.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [resumeId, repository]);
+  }, [resumeId, repository, onRouteDataFresh]);
 
   useEffect(() => {
     generationRef.current += 1;
     activeFiltersRef.current = EMPTY_FILTERS;
     cursorRef.current = undefined;
     authorizedTargetChecked.current = false;
-    setFilesRestoreAvailable(false); setRestoreBusy(null); setRestoreNotice("");
+    setActivityLogTargetAuthorized(false); setRestoreBusy(null); setRestoreNotice("");
     setDraft(EMPTY_DRAFT); setAppliedFilters(EMPTY_FILTERS); setFilterError(false);
     setEvents([]); setHasMore(false);
     void load(false, EMPTY_FILTERS);
-    return () => { generationRef.current += 1; };
-  }, [load]);
+    return () => { generationRef.current += 1; if (resumeId) onRouteDataFresh?.(resumeId, false); };
+  }, [load, onRouteDataFresh, resumeId]);
 
   const apply = (next: ActivityLogV13CFilters) => {
     generationRef.current += 1;
@@ -374,6 +379,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
     apply(EMPTY_FILTERS);
   };
   const restoreFilesFromEvent = repository?.restoreFilesFromEvent;
+  const filesRestoreAvailable = filesRestoreReady && activityLogTargetAuthorized;
   const filtered = Boolean(appliedFilters.eventFilter !== "all" || appliedFilters.section || appliedFilters.operation || appliedFilters.actorEmail || appliedFilters.dateFrom || appliedFilters.dateToExclusive || appliedFilters.search);
 
   return <section className="page-section activity-log-page">
@@ -442,6 +448,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
                     return (["zh", "en"] as const).filter(locale => before.translations[locale].portfolio_href !== after.translations[locale].portfolio_href)
                       .map(locale => <button className="button secondary" type="button" key={`${event.id}-${locale}`} disabled={restoreBusy !== null}
                         onClick={() => {
+                          if (!filesRestoreAvailable) return;
                           if (!window.confirm(t(`Restore the ${locale === "zh" ? "Chinese" : "English"} PDF from this Files event?`))) return;
                           setRestoreBusy(`${event.id}:${locale}`); setRestoreNotice("");
                           void restoreFilesFromEvent(resumeId!, event.id, locale).then(result => {

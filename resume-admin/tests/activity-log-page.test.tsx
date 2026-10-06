@@ -27,7 +27,7 @@ function visibleLocationText(): string {
   const row = document.querySelector(".activity-log-location");
   return row ? Array.from(row.childNodes).slice(0, 2).map(node => node.textContent ?? "").join("").trim() : "";
 }
-function renderPage(repository: ResumeRepository) {
+function renderPage(repository: ResumeRepository, filesRestoreReady = false) {
   const loadV13C = vi.fn(async (id: string, size: number, filters: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[2], cursor?: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[3]) => {
     const page = repository.loadActivityLogPageV13C
       ? await repository.loadActivityLogPageV13C(id, size, filters, cursor)
@@ -35,7 +35,7 @@ function renderPage(repository: ResumeRepository) {
     return page.map(row => "eventSource" in row ? row as ActivityLogV13CEvent : v13cActivity(row as ActivityLogEvent));
   });
   const compatible = { ...repository, loadActivityLogPageV13C: loadV13C } as ResumeRepository;
-  return { ...render(<UiLocaleProvider><ActivityLogPage resumeId={resumeId} repository={compatible} /></UiLocaleProvider>), repository: compatible };
+  return { ...render(<UiLocaleProvider><ActivityLogPage resumeId={resumeId} repository={compatible} filesRestoreReady={filesRestoreReady} /></UiLocaleProvider>), repository: compatible };
 }
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
@@ -536,7 +536,7 @@ describe("Activity Log page", () => {
       loadActivityLogPageV13C: vi.fn().mockResolvedValue([fileEvent]),
       restoreFilesFromEvent: vi.fn().mockResolvedValue({ files: before, cleanupWarning: false }) } as unknown as ResumeRepository;
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    renderPage(repository);
+    renderPage(repository, true);
     const button = await screen.findByRole("button", { name: "Restore Chinese PDF from this event" });
     expect(screen.queryByRole("button", { name: "Restore English PDF from this event" })).toBeNull();
     fireEvent.click(button);

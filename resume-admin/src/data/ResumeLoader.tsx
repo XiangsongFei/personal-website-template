@@ -6,7 +6,7 @@ import type {
   ResumeRepository, ResumeSectionRepository, UpdatedProfileRow, UpdatedProfileTranslationRow,
 } from "./resumeRepository";
 import type { AdminTarget } from "../auth/supabase";
-import { createWriteReadinessRepository, type AdminFeatureState } from "./resumeRepository";
+import { createWriteReadinessRepository, type AdminDomainWriteState, type AdminFeatureState } from "./resumeRepository";
 import { resumeSectionStore, type ResumeSectionStore } from "./resumeSectionStore";
 import { isDocumentReloadNavigation } from "../refreshState";
 import type { Bilingual, EducationItem, ExperienceItem, IntroItem, ProfileSection, SkillItem, AwardItem, ProjectItem, ContactSection, LinksSection, EditorSections, SiteTextTranslation } from "../model";
@@ -189,6 +189,13 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   const [fullSnapshotState, setFullSnapshotState] = useState<"idle" | "loading" | "error">("idle");
   const [fullAttempt, setFullAttempt] = useState(0);
   const [featureStateResult, setFeatureStateResult] = useState<{ status: "loading" } | { status: "error" } | { status: "ready"; state: AdminFeatureState }>({ status: "loading" });
+  const [activityLogFilesState, setActivityLogFilesState] = useState<{ kind: "idle" | "loading" | "error" } | {
+    kind: "loaded"; resumeId: string; siteKey: string; role: AdminTarget["role"]; identityId: string; sessionKey: string; locationKey: string;
+    state: AdminDomainWriteState<"files">;
+  }>({ kind: "idle" });
+  const [activityLogPageFreshness, setActivityLogPageFreshness] = useState<{
+    resumeId: string; siteKey: string; role: AdminTarget["role"]; identityId: string; sessionKey: string; locationKey: string;
+  } | null>(null);
   const featureTargetId = useRef<string | null>(null);
   const activeFeatureState = authorizedTarget && featureStateResult.status === "ready"
     && featureStateResult.state.resumeId === authorizedTarget.resumeId ? featureStateResult.state : null;
@@ -261,6 +268,47 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     });
     return () => { active = false; };
   }, [authReady, repository, authorizedTarget]);
+
+  // Activity Log does not load a resume snapshot. Its Files restore route is
+  // fresh only after the exact target's Files write state and the authorized
+  // Activity Log page have both been read for this user/session/route entry.
+  useEffect(() => {
+    let active = true;
+    if (!isActivityLogRoute) {
+      setActivityLogFilesState({ kind: "idle" });
+      return () => { active = false; };
+    }
+    const target = authorizedTarget;
+    if (!authReady || !identityId || !sessionKey || !target || !repository?.loadAdminFilesWriteState) {
+      setActivityLogFilesState({ kind: "error" });
+      return () => { active = false; };
+    }
+    setActivityLogFilesState({ kind: "loading" });
+    repository.loadAdminFilesWriteState(target.resumeId).then(state => {
+      if (!active) return;
+      if (state.resumeId !== target.resumeId || state.domain !== "files"
+        || typeof state.activityLogEnabled !== "boolean"
+        || (state.writeMode !== "direct" && state.writeMode !== "rpc")
+        || typeof state.trustedContextRequired !== "boolean") {
+        setActivityLogFilesState({ kind: "error" });
+        return;
+      }
+      setActivityLogFilesState({ kind: "loaded", resumeId: target.resumeId, siteKey: target.siteKey, role: target.role,
+        identityId, sessionKey, locationKey: location.key, state });
+    }, () => { if (active) setActivityLogFilesState({ kind: "error" }); });
+    return () => { active = false; };
+  }, [authReady, identityId, isActivityLogRoute, location.key, repository, sessionKey, authorizedTarget]);
+
+  const markActivityLogPageFresh = useCallback((resumeId: string, fresh: boolean) => {
+    if (!isActivityLogRoute || !identityId || !sessionKey || !authorizedTarget || resumeId !== authorizedTarget.resumeId) return;
+    const current = { resumeId, siteKey: authorizedTarget.siteKey, role: authorizedTarget.role, identityId, sessionKey, locationKey: location.key };
+    setActivityLogPageFreshness(previous => {
+      if (fresh) return current;
+      return previous && previous.resumeId === current.resumeId && previous.siteKey === current.siteKey
+        && previous.role === current.role && previous.identityId === current.identityId && previous.sessionKey === current.sessionKey
+        && previous.locationKey === current.locationKey ? null : previous;
+    });
+  }, [authorizedTarget, identityId, isActivityLogRoute, location.key, sessionKey]);
 
   useEffect(() => {
     if (snapshotRouteFresh && snapshotSectionTextFresh) {
@@ -576,7 +624,20 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     ? { [additionalRoute.key]: additionalRoute.value }
     : {};
 
-  const currentRouteDataFresh = Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
+  const currentActivityLogFilesState = isActivityLogRoute && authorizedTarget && activityLogFilesState.kind === "loaded"
+    && activityLogFilesState.resumeId === authorizedTarget.resumeId && activityLogFilesState.siteKey === authorizedTarget.siteKey
+    && activityLogFilesState.role === authorizedTarget.role && activityLogFilesState.identityId === identityId
+    && activityLogFilesState.sessionKey === sessionKey && activityLogFilesState.locationKey === location.key
+    ? activityLogFilesState.state : null;
+  const currentActivityLogPageFresh = isActivityLogRoute && authorizedTarget && activityLogPageFreshness
+    && activityLogPageFreshness.resumeId === authorizedTarget.resumeId && activityLogPageFreshness.siteKey === authorizedTarget.siteKey
+    && activityLogPageFreshness.role === authorizedTarget.role && activityLogPageFreshness.identityId === identityId
+    && activityLogPageFreshness.sessionKey === sessionKey && activityLogPageFreshness.locationKey === location.key;
+  const activityLogRouteDataFresh = Boolean(authReady && identityId && sessionKey && activeFeatureState?.activityLogEnabled
+    && currentActivityLogFilesState && currentActivityLogPageFresh);
+  const filesRestoreReady = Boolean(activityLogRouteDataFresh && currentActivityLogFilesState?.activityLogEnabled
+    && currentActivityLogFilesState.writeMode === "rpc" && currentActivityLogFilesState.trustedContextRequired);
+  const currentRouteDataFresh = isActivityLogRoute ? activityLogRouteDataFresh : Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
     : location.pathname === "/education" ? educationState.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
       : additionalRouteKey ? additionalRouteState?.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
         : false);
@@ -665,7 +726,8 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     onRetryAdditionalRoute={additionalRouteKey && useSectionAdditional ? () => { retryAdditional(additionalRouteKey); if (useSectionTextRead) retrySiteText(); } : useSectionTextRead ? retrySiteText : retryFullSnapshot}
     additionalResumeId={additionalRoute?.resumeId ?? resume?.resumeId ?? authorizedTarget?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
-    activityLogEnabled={activeFeatureState?.activityLogEnabled ?? false}
+    activityLogEnabled={activeFeatureState?.activityLogEnabled ?? false} activityLogFilesRestoreReady={filesRestoreReady}
+    onActivityLogRouteFresh={markActivityLogPageFresh}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved}
     onSnapshotRebased={markSnapshotBaselineApplied} />;
 }

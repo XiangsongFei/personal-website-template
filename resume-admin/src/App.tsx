@@ -2963,7 +2963,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
   siteTextTranslations = null, siteTextResumeId = null, onSiteTextChanged = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
-  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false }: {
+  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false, activityLogFilesRestoreReady = false, onActivityLogRouteFresh = null }: {
   identityEmail: string | null;
   onSignOut: () => void;
   signOutPending: boolean;
@@ -3007,6 +3007,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   snapshotDataRevision?: number;
   onSnapshotRebased?: () => void;
   activityLogEnabled?: boolean;
+  activityLogFilesRestoreReady?: boolean;
+  onActivityLogRouteFresh?: ((resumeId: string, fresh: boolean) => void) | null;
 }) {
   const { t } = useUiLocale();
   const location = useLocation();
@@ -3706,7 +3708,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
           busy={fullSnapshotState !== "error"} action={fullSnapshotState === "error" ? <button type="button" className="button secondary" onClick={onRetryFullSnapshot ?? undefined}>{t("Retry")}</button> : undefined} />
         : <Routes>
         <Route path="/activity-log" element={activityLogEnabled
-          ? <ActivityLogPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository} />
+          ? <ActivityLogPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository}
+            filesRestoreReady={activityLogFilesRestoreReady} onRouteDataFresh={onActivityLogRouteFresh ?? undefined} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />
         <Route path="/profile" element={<PreviewWorkspace section="profile"><Profile /></PreviewWorkspace>} /><Route path="/introduction" element={<PreviewWorkspace section="introduction"><Introduction /></PreviewWorkspace>} />
