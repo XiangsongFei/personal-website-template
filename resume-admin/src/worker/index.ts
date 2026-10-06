@@ -19,6 +19,7 @@ const SAVE_CONTACT_PATH = `${API_ROOT}/contact/save`;
 const SAVE_PROFILE_PATH = `${API_ROOT}/profile/save`;
 const SAVE_WEBSITE_LINKS_PATH = `${API_ROOT}/website-links/save`;
 const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
+const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -1183,6 +1184,83 @@ async function saveProfile(request: Request, env: WorkerEnv): Promise<Response> 
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+export function canonicalizeFilesRestore(value: { target_resume_id: string; source_event_id: string; locale: "zh" | "en" }): string {
+  return JSON.stringify({ action: "restore_before", locale: value.locale, source_event_id: value.source_event_id.toLowerCase(),
+    target_resume_id: value.target_resume_id.toLowerCase(), version: 1 });
+}
+
+function historicalFilesReferenceAllowed(reference: string, origin: string, resumeId: string, locale: "zh" | "en"): boolean {
+  try {
+    const base = new URL(origin); const url = new URL(reference);
+    if (base.protocol !== "https:" || base.username || base.password || base.search || base.hash || !["", "/"].includes(base.pathname)
+      || url.origin !== base.origin || url.username || url.password || url.hash || reference.includes("%") || reference.includes("\\")) return false;
+    if (url.search && (!/^\?cacheNonce=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.search)
+      || [...url.searchParams.keys()].length !== 1 || !url.searchParams.has("cacheNonce"))) return false;
+    return url.pathname === `/storage/v1/object/public/resume-files/${resumeId}/resume_${locale}.pdf`
+      || (resumeId === V13B_OFFICIAL_RESUME_ID && url.pathname === `/storage/v1/object/public/resume-files/example-cv/resume_${locale}.pdf`);
+  } catch { return false; }
+}
+
+async function restoreFilesFromEvent(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 4096);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "locale,request_id,resume_id,source_event_id"
+    || typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.source_event_id !== "string" || !UUID_PATTERN.test(parsed.source_event_id)
+    || (parsed.locale !== "zh" && parsed.locale !== "en"))
+    throw apiError(400, "invalid_request", "Restore requires only request_id, resume_id, source_event_id, and locale.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const targetResumeId = parsed.resume_id.toLowerCase(); const sourceEventId = parsed.source_event_id.toLowerCase();
+  const canonical = canonicalizeFilesRestore({ target_resume_id: targetResumeId, source_event_id: sourceEventId, locale: parsed.locale });
+  const rpcHeaders = { Authorization: authorization, apikey: supabase.publishableKey, "Content-Type": "application/json", Accept: "application/json" };
+  let sourceResponse: Response;
+  try {
+    sourceResponse = await fetch(`${supabase.baseUrl}/rest/v1/rpc/load_admin_files_restore_source_v1`, { method: "POST", headers: rpcHeaders,
+      body: JSON.stringify({ target_resume_id: targetResumeId, source_event_id: sourceEventId, target_locale: parsed.locale,
+        target_request_id: parsed.request_id.toLowerCase(), canonical_restore: canonical }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  } catch { throw apiError(502, "restore_source_unavailable", "The prior Files event could not be verified."); }
+  const sourceBody = await readJsonResponse(sourceResponse, 8192);
+  if (!sourceResponse.ok || !Array.isArray(sourceBody) || sourceBody.length !== 1 || !isPlainObject(sourceBody[0])
+    || typeof sourceBody[0].already_completed !== "boolean"
+    || (!sourceBody[0].already_completed && (typeof sourceBody[0].historical_reference !== "string"
+      || !historicalFilesReferenceAllowed(sourceBody[0].historical_reference, supabase.baseUrl, targetResumeId, parsed.locale))))
+    throw apiError(422, "restore_source_invalid", "The prior Files event is not eligible for restoration.");
+  if (!sourceBody[0].already_completed) {
+    let objectCheck: Response;
+    try { objectCheck = await fetch(sourceBody[0].historical_reference as string, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }); }
+    catch { throw apiError(502, "storage_check_unavailable", "The prior PDF could not be verified in Storage."); }
+    if (!objectCheck.ok) throw apiError(422, "storage_object_missing", "The prior PDF is not available in Storage.");
+  }
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: targetResumeId,
+    domain: "files", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/restore_resume_files_from_event_v1`, { method: "POST", headers: rpcHeaders,
+      body: JSON.stringify({ target_resume_id: targetResumeId, source_event_id: sourceEventId, target_locale: parsed.locale,
+        canonical_restore: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  } catch { throw apiError(504, "upstream_timeout", "The Files restore result is uncertain. Retry the exact request."); }
+  const responseBody = await readJsonResponse(upstream, 24 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, responseBody)) throw apiError(409, "idempotency_conflict", "The Files restore request ID conflicts with a different intent.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not restore Files (HTTP ${upstream.status}).`);
+  }
+  try {
+    if (!isPlainObject(responseBody) || !isPlainObject(responseBody.files) || typeof responseBody.superseded_reference !== "string") throw new Error("shape");
+    const files = validateFilesAggregate(responseBody.files);
+    if (!sourceBody[0].already_completed && files.translations[parsed.locale].portfolio_href !== sourceBody[0].historical_reference) throw new Error("reference");
+    return Response.json({ files, superseded_reference: responseBody.superseded_reference }, { headers: { "Cache-Control": "no-store" } });
+  } catch { throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Files restore result."); }
+}
+
 async function saveWebsiteLinksOrFiles(request: Request, env: WorkerEnv, domain: "website_links" | "files"): Promise<Response> {
   const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
@@ -1245,7 +1323,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1263,6 +1341,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_PROFILE_PATH) return await saveProfile(request, env);
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");
+    if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);

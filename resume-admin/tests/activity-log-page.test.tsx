@@ -525,4 +525,21 @@ describe("Activity Log page", () => {
     expect(await screen.findByRole("heading", { name: "技能" })).toBeTruthy();
     expect(screen.getByText(/移除 操作人： QA/)).toBeTruthy();
   });
+
+  it("offers a locale-specific restore action only for changed Files V2 events in active RPC mode", async () => {
+    const before = { translations: { zh: { portfolio_href: "https://storage.example.test/storage/v1/object/public/resume-files/qa-resume/resume_zh.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, en: { portfolio_href: "" } } };
+    const after = { translations: { zh: { portfolio_href: "https://storage.example.test/storage/v1/object/public/resume-files/qa-resume/zh/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf" }, en: { portfolio_href: "" } } };
+    const fileEvent: ActivityLogV13CEvent = { ...event("file-restore-anchor"), section: "files", entityType: "resume_file_set", entityId: null,
+      entitySnapshot: { files: after }, changes: { files: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadAdminFilesWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true }),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([fileEvent]),
+      restoreFilesFromEvent: vi.fn().mockResolvedValue({ files: before, cleanupWarning: false }) } as unknown as ResumeRepository;
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage(repository);
+    const button = await screen.findByRole("button", { name: "Restore Chinese PDF from this event" });
+    expect(screen.queryByRole("button", { name: "Restore English PDF from this event" })).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(repository.restoreFilesFromEvent).toHaveBeenCalledWith(resumeId, "file-restore-anchor", "zh"));
+  });
 });

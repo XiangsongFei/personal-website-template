@@ -302,6 +302,9 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
   const [draft, setDraft] = useState<ActivityLogDraft>(EMPTY_DRAFT);
   const [appliedFilters, setAppliedFilters] = useState<ActivityLogV13CFilters>(EMPTY_FILTERS);
   const [filterError, setFilterError] = useState(false);
+  const [filesRestoreAvailable, setFilesRestoreAvailable] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState<string | null>(null);
+  const [restoreNotice, setRestoreNotice] = useState("");
   const authorizedTargetChecked = useRef(false);
   const cursorRef = useRef<ActivityLogV13CCursor | undefined>(undefined);
   const generationRef = useRef(0);
@@ -320,6 +323,12 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
         const targets = await repository.loadActivityLogAuthorizedTargets();
         if (generation !== generationRef.current) return;
         if (!targets.some(target => target.resumeId === resumeId)) throw new Error("Activity Log target is not authorized");
+        if (repository.loadAdminFilesWriteState) {
+          try {
+            const state = await repository.loadAdminFilesWriteState(resumeId);
+            setFilesRestoreAvailable(state.resumeId === resumeId && state.activityLogEnabled && state.writeMode === "rpc" && state.trustedContextRequired);
+          } catch { setFilesRestoreAvailable(false); }
+        }
         authorizedTargetChecked.current = true;
       }
       const cursor = append ? cursorRef.current : undefined;
@@ -341,6 +350,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
     activeFiltersRef.current = EMPTY_FILTERS;
     cursorRef.current = undefined;
     authorizedTargetChecked.current = false;
+    setFilesRestoreAvailable(false); setRestoreBusy(null); setRestoreNotice("");
     setDraft(EMPTY_DRAFT); setAppliedFilters(EMPTY_FILTERS); setFilterError(false);
     setEvents([]); setHasMore(false);
     void load(false, EMPTY_FILTERS);
@@ -363,6 +373,7 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
     setDraft(EMPTY_DRAFT);
     apply(EMPTY_FILTERS);
   };
+  const restoreFilesFromEvent = repository?.restoreFilesFromEvent;
   const filtered = Boolean(appliedFilters.eventFilter !== "all" || appliedFilters.section || appliedFilters.operation || appliedFilters.actorEmail || appliedFilters.dateFrom || appliedFilters.dateToExclusive || appliedFilters.search);
 
   return <section className="page-section activity-log-page">
@@ -422,7 +433,27 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
                   </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
                   <dt>{t(fields[key] ?? key)}</dt><dd><span>{t("Before")}: {fieldValues(change.before, t)}</span><span>{t("After")}: {fieldValues(change.after, t)}</span></dd>
                 </div>)}</dl>}</details>}
+              {filesRestoreAvailable && restoreFilesFromEvent && event.eventSource === "activity" && event.section === "files"
+                && event.entityType === "resume_file_set" && event.entityId === null && event.operation === "update" && event.payloadVersion === 2
+                && (() => {
+                  try {
+                    const change = event.changes.files as { before?: unknown; after?: unknown } | undefined;
+                    const before = validateFilesAggregate(change?.before); const after = validateFilesAggregate(change?.after);
+                    return (["zh", "en"] as const).filter(locale => before.translations[locale].portfolio_href !== after.translations[locale].portfolio_href)
+                      .map(locale => <button className="button secondary" type="button" key={`${event.id}-${locale}`} disabled={restoreBusy !== null}
+                        onClick={() => {
+                          if (!window.confirm(t(`Restore the ${locale === "zh" ? "Chinese" : "English"} PDF from this Files event?`))) return;
+                          setRestoreBusy(`${event.id}:${locale}`); setRestoreNotice("");
+                          void restoreFilesFromEvent(resumeId!, event.id, locale).then(result => {
+                            setRestoreNotice(result.cleanupWarning ? t("Previous file reference restored; managed-file cleanup needs review.") : t("Previous file reference restored."));
+                            return load(false);
+                          }).catch(() => setRestoreNotice(t("Files restoration could not be confirmed. Keep the current state unchanged.")))
+                            .finally(() => setRestoreBusy(null));
+                        }}>{restoreBusy === `${event.id}:${locale}` ? t("Restoring…") : t(`Restore ${locale === "zh" ? "Chinese" : "English"} PDF from this event`)}</button>);
+                  } catch { return null; }
+                })()}
             </li>)}</ol>
+            {restoreNotice && <p className="activity-log-state" role="status">{restoreNotice}</p>}
             {hasMore && <button className="button secondary activity-log-more" type="button" disabled={loadingMore} onClick={() => void load(true)}>{loadingMore ? t("Loading…") : t("Load more")}</button>}
           </>}
   </section>;

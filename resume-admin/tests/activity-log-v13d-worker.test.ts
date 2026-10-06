@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalizeContact, canonicalizeEducation, canonicalizeExperience, canonicalizeProjects, canonicalizeSkills, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { canonicalizeContact, canonicalizeEducation, canonicalizeExperience, canonicalizeProjects, canonicalizeSkills, canonicalizeFilesRestore, handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const actorId = "10000000-0000-4000-8000-000000000002";
@@ -43,6 +43,120 @@ function request(path: string, body: unknown) {
 }
 
 describe("V1.3D Experience and Skills Worker boundary", () => {
+  it("restores only from a server-loaded event and sends identifier-only RPC input", async () => {
+    const oldRef = `https://local.test/storage/v1/object/public/resume-files/${resumeId}/resume_zh.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+    const nextRef = `https://local.test/storage/v1/object/public/resume-files/${resumeId}/zh/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf`;
+    const restored = { translations: { zh: { portfolio_href: oldRef }, en: { portfolio_href: "" } } };
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.endsWith("/rpc/load_admin_files_restore_source_v1")) return Response.json([{ historical_reference: oldRef, already_completed: false }]);
+      if (url === oldRef) return new Response(null, { status: 200 });
+      if (url.endsWith("/rpc/restore_resume_files_from_event_v1")) return Response.json({ files: restored, superseded_reference: nextRef });
+      return new Response(null, { status: 404 });
+    }));
+    expect(canonicalizeFilesRestore({ target_resume_id: resumeId, source_event_id: requestId, locale: "zh" }))
+      .toBe(`{"action":"restore_before","locale":"zh","source_event_id":"${requestId}","target_resume_id":"${resumeId}","version":1}`);
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(calls.map(call => call.url)).toEqual([
+      "https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1", oldRef,
+      "https://local.test/rest/v1/rpc/restore_resume_files_from_event_v1",
+    ]);
+    const rpcBody = JSON.parse(String(calls[2]?.init?.body)) as Record<string, unknown>;
+    expect(Object.keys(rpcBody).sort()).toEqual(["canonical_restore", "signature_hex", "signed_context", "source_event_id", "target_locale", "target_resume_id"].sort());
+    expect(rpcBody).toMatchObject({ target_resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", target_locale: "zh" });
+    expect(JSON.stringify(rpcBody)).not.toContain(oldRef);
+    expect(JSON.stringify(rpcBody)).not.toContain(nextRef);
+  });
+
+  it("rejects URL injection before the restore RPC", async () => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const injected = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: requestId, locale: "zh", portfolio_href: "https://attacker.test/a.pdf",
+    }), env());
+    expect(injected.status).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated restore without contacting PostgREST", async () => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const unauthenticated = new Request("https://qa-admin.test/api/admin/v1/files/restore", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request_id: requestId,
+        resume_id: resumeId, source_event_id: requestId, locale: "zh" }) });
+    const response = await handleWorkerRequest(unauthenticated, env());
+    expect(response.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the authenticated source-event lookup is rejected", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input)); return Response.json({ code: "42501" }, { status: 403 });
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status).toBe(422);
+    expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1"]);
+  });
+
+  it("does not invoke the restore RPC when the historical PDF is missing in Storage", async () => {
+    const oldRef = `https://local.test/storage/v1/object/public/resume-files/${resumeId}/resume_zh.pdf`;
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); urls.push(url);
+      if (url.endsWith("/rpc/load_admin_files_restore_source_v1")) return Response.json([{ historical_reference: oldRef, already_completed: false }]);
+      return new Response(null, { status: 404 });
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status).toBe(422);
+    expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1", oldRef]);
+  });
+
+  it("sanitizes typed restore RPC rejection and never falls back to browser DML", async () => {
+    const oldRef = `https://local.test/storage/v1/object/public/resume-files/${resumeId}/resume_zh.pdf`;
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); const method = init?.method ?? "GET"; calls.push({ url, method });
+      if (url.endsWith("/rpc/load_admin_files_restore_source_v1")) return Response.json([{ historical_reference: oldRef, already_completed: false }]);
+      if (url === oldRef) return new Response(null, { status: 200 });
+      return Response.json({ code: "P0001", message: "stale restore source" }, { status: 400 });
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    const body = await response.json() as { error?: { message?: string } };
+    expect(response.status).toBe(422);
+    expect(body.error?.message).toBe("The data service could not restore Files (HTTP 400).");
+    expect(calls.map(call => call.url)).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1", oldRef,
+      "https://local.test/rest/v1/rpc/restore_resume_files_from_event_v1"]);
+    expect(calls.every(call => !call.url.includes("resume_locale_content"))).toBe(true);
+  });
+
+  it("does not require a second Storage HEAD when the same request ID already completed", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); urls.push(url);
+      if (url.endsWith("/rpc/load_admin_files_restore_source_v1")) return Response.json([{ historical_reference: null, already_completed: true }]);
+      if (url.endsWith("/rpc/restore_resume_files_from_event_v1")) return Response.json({
+        files: { translations: { zh: { portfolio_href: "https://local.test/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/resume_zh.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, en: { portfolio_href: "" } } },
+        superseded_reference: "https://local.test/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/zh/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf",
+      });
+      return new Response(null, { status: 404 });
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(urls).toHaveLength(2);
+    expect(urls.some(url => url.includes("/storage/v1/object/"))).toBe(false);
+  });
+
   it("canonicalizes the exact Contact aggregate, preserves empty strings, and calls only the typed Contact RPC", async () => {
     expect(canonicalizeContact(contact)).toBe(JSON.stringify(contact));
     const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

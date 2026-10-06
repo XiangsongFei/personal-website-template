@@ -33,6 +33,11 @@ let dropNextAwardsRpcResponseAfterCommit = false;
 let lastAwardsRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 let lastProfileRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 let lastD7RpcFailure: { status: number; code: string | null } | null = null;
+let filesRestoreSourceRpcCalls = 0;
+let filesRestoreRpcCalls = 0;
+let lastFilesRestoreSourceFailure: { status: number; code: string | null } | null = null;
+let lastFilesRestoreRpcFailure: { status: number; code: string | null } | null = null;
+let workerStorageDeleteCalls = 0;
 const v13RecorderBodies: string[] = [];
 let profileRpcCalls = 0;
 
@@ -40,6 +45,7 @@ if (enabled) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url);
     if (url.origin !== workerUpstreamOrigin) throw new Error("Local integration refused a non-fixture Worker upstream");
+    if (url.pathname === "/storage/v1/object/resume-files" && (init?.method ?? "GET").toUpperCase() === "DELETE") workerStorageDeleteCalls += 1;
     url.protocol = "http:";
     url.hostname = "127.0.0.1";
     url.port = "55421";
@@ -57,6 +63,26 @@ if (enabled) {
       if (!response.ok) {
         const failure = await response.clone().json().catch(() => null) as { code?: unknown } | null;
         lastD7RpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null };
+      }
+      return response;
+    }
+    if (url.pathname === "/rest/v1/rpc/load_admin_files_restore_source_v1") {
+      filesRestoreSourceRpcCalls += 1;
+      lastFilesRestoreSourceFailure = null;
+      const response = await originalFetch(url, forwardedInit);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown } | null;
+        lastFilesRestoreSourceFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null };
+      }
+      return response;
+    }
+    if (url.pathname === "/rest/v1/rpc/restore_resume_files_from_event_v1") {
+      filesRestoreRpcCalls += 1;
+      lastFilesRestoreRpcFailure = null;
+      const response = await originalFetch(url, forwardedInit);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown } | null;
+        lastFilesRestoreRpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null };
       }
       return response;
     }
@@ -270,6 +296,29 @@ async function readFiles(target = targetId, bearer = userJwt!): Promise<FilesAgg
 async function readD7WriteState(domain: "website_links" | "files", target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
   return await rest(`/rest/v1/rpc/load_admin_${domain}_write_state`, { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
 }
+async function uploadLocalResumePdf(objectName: string): Promise<void> {
+  assertLocalConfiguration();
+  const pdf = new TextEncoder().encode("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n");
+  const response = await originalFetch(`${apiBase}/storage/v1/object/resume-files/${objectName}`, { method: "POST", headers: {
+    apikey: publishableKey!, Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/pdf", "x-upsert": "false",
+  }, body: pdf });
+  if (!response.ok) throw new Error(`Local Storage fixture upload failed (${response.status})`);
+}
+async function deleteLocalResumePdfs(objectNames: string[]): Promise<void> {
+  if (!objectNames.length || !apiBase || !publishableKey || !userJwt) return;
+  const response = await originalFetch(`${apiBase}/storage/v1/object/resume-files`, { method: "DELETE", headers: {
+    apikey: publishableKey, Authorization: `Bearer ${userJwt}`, "Content-Type": "application/json",
+  }, body: JSON.stringify({ prefixes: objectNames }) });
+  if (!response.ok) throw new Error(`Local Storage fixture cleanup failed (${response.status})`);
+}
+async function invokeFilesRestore(sourceEventId: string, requestId = localUuid(), token = userJwt!, target = targetId, locale: "zh" | "en" = "en"): Promise<{ response: Response; body: unknown }> {
+  const request = new Request("https://admin.local.test/api/admin/v1/files/restore", { method: "POST", headers: {
+    Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89",
+  }, body: JSON.stringify({ request_id: requestId, resume_id: target, source_event_id: sourceEventId, locale }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  const response = await handleWorkerRequest(request, workerEnv());
+  return { response, body: await response.json() };
+}
 async function invokeD7(domain: "website_links" | "files", aggregate: WebsiteLinksAggregate | FilesAggregate, requestId = localUuid(), token = userJwt!, target = targetId,
   mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
   mutateNextD7RpcPayload = mutateRpcPayload;
@@ -304,6 +353,36 @@ async function invokeContact(contact: LocalContact, requestId = localUuid(), tok
 
 function localSql(sql: string): string {
   return execFileSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql], { encoding: "utf8" }).trim().split(/\r?\n/, 1)[0];
+}
+
+function sqlText(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function installConcurrentFilesSaveHelper(): void {
+  localSql(`CREATE OR REPLACE FUNCTION public.test_only_concurrent_files_save(target_resume uuid,target_request uuid,target_reference text)
+    RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
+    AS $helper$
+    DECLARE body text; context_value text; signature_value text; issued bigint; key_bytes bytea;
+    BEGIN
+      body:=pg_catalog.jsonb_set(cms_private.files_aggregate(target_resume),'{translations,en,portfolio_href}',pg_catalog.to_jsonb(target_reference))::text;
+      issued:=floor(date_part('epoch',clock_timestamp()))::bigint;
+      context_value:=pg_catalog.jsonb_build_object('context_version',1,'key_id','activity_log_v11_hmac_v1',
+        'actor_user_id','${actorId}','resume_id',target_resume::text,'domain','files','operation','update',
+        'request_id',target_request::text,'mutation_digest',encode(extensions.digest(convert_to(body,'UTF8'),'sha256'),'hex'),
+        'issued_at',issued,'expires_at',issued+180,'ip_network',NULL,'country_code',NULL,'region',NULL,'city',NULL)::text;
+      key_bytes:=cms_private.activity_log_v11_key('activity_log_v11_hmac_v1');
+      signature_value:=encode(extensions.hmac(convert_to(context_value,'UTF8'),key_bytes,'sha256'),'hex');
+      PERFORM public.save_resume_files_v1(target_resume,body,context_value,signature_value);
+      RETURN 'FILES_SAVE_SUCCEEDED';
+    END
+    $helper$;
+    REVOKE ALL ON FUNCTION public.test_only_concurrent_files_save(uuid,uuid,text) FROM PUBLIC,anon,service_role;
+    GRANT EXECUTE ON FUNCTION public.test_only_concurrent_files_save(uuid,uuid,text) TO authenticated`);
+}
+
+function dropConcurrentFilesSaveHelper(): void {
+  localSql("DROP FUNCTION IF EXISTS public.test_only_concurrent_files_save(uuid,uuid,text)");
 }
 
 function nearLimitAwards(): Array<{ id: null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }> {
@@ -434,6 +513,41 @@ async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: (
   } catch (error) {
     await release();
     throw error;
+  }
+}
+
+type OpenLocalPsqlSession = ReturnType<typeof spawn> & { output: string; exited: Promise<number | null> };
+function openLocalPsqlSession(): OpenLocalPsqlSession {
+  if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer) throw new Error("Open SQL session refused an unexpected database container");
+  const child = spawn("docker", ["exec", "-i", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1"]);
+  let output = "";
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => { output += chunk; });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", code => resolve(code));
+  });
+  const session = child as OpenLocalPsqlSession;
+  Object.defineProperty(session, "output", { get: () => output });
+  Object.defineProperty(session, "exited", { value: exited });
+  return session;
+}
+
+async function waitForPsqlOutput(session: OpenLocalPsqlSession, marker: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!session.output.includes(marker) && Date.now() < deadline && session.exitCode === null) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  if (!session.output.includes(marker)) throw new Error(`Local SQL session did not reach its ${marker} barrier`);
+}
+
+async function closeLocalPsqlSession(session: OpenLocalPsqlSession, commit: boolean): Promise<void> {
+  if (session.exitCode === null && !session.stdin?.destroyed) session.stdin?.write(`${commit ? "COMMIT" : "ROLLBACK"};\n\\q\n`);
+  const code = await Promise.race([session.exited, new Promise<null>(resolve => setTimeout(() => resolve(null), 5000))]);
+  if (code !== 0 && code !== null) throw new Error("Open local SQL session did not close cleanly");
+  if (code === null) {
+    session.kill("SIGTERM");
+    throw new Error("Open local SQL session exceeded its bounded shutdown timeout");
   }
 }
 
@@ -1200,11 +1314,19 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(await readD7WriteState("website_links")).toMatchObject([{ resume_id: targetId, website_links_write_mode: "direct", website_links_trusted_context_required: false, activity_log_enabled: true }]);
     expect(await readD7WriteState("files")).toMatchObject([{ resume_id: targetId, files_write_mode: "direct", files_trusted_context_required: false, activity_log_enabled: true }]);
     expect(localSql("SELECT count(*) FROM cms_private.profile_photo_origin_config")).toBe("0");
+    const legacyPath = `${targetId}/resume_en.pdf`;
+    const legacyNonce = localUuid();
+    const legacyReference = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${legacyPath}?cacheNonce=${legacyNonce}`;
+    const candidatePath = `${targetId}/en/${localUuid()}.pdf`;
+    const candidateReference = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${candidatePath}`;
+    localSql(`UPDATE public.resume_locale_content SET portfolio_href='${legacyReference}' WHERE resume_id='${targetId}'::uuid AND locale='en'`);
+    const uploadedPaths = [legacyPath, candidatePath];
     localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
       INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
       VALUES ('${targetId}'::uuid,'website_links','trusted_network_context_v11',true),('${targetId}'::uuid,'files','trusted_network_context_v11',true);
       INSERT INTO cms_private.profile_photo_origin_config(singleton,origin) VALUES(true,'https://local.supabase.invalid')`);
     try {
+      await uploadLocalResumePdf(legacyPath);
       expect(await readD7WriteState("website_links")).toMatchObject([{ resume_id: targetId, website_links_write_mode: "rpc", website_links_trusted_context_required: true }]);
       expect(await readD7WriteState("files")).toMatchObject([{ resume_id: targetId, files_write_mode: "rpc", files_trusted_context_required: true }]);
       const websiteBaseline = await readWebsiteLinks();
@@ -1259,7 +1381,8 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       expect(await readFiles()).toEqual(filesBaseline);
       expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 1);
       const filesChanged = structuredClone(filesBaseline);
-      filesChanged.translations.en.portfolio_href = `https://local.supabase.invalid/storage/v1/object/public/resume-files/${targetId}/en/${localUuid()}.pdf`;
+      filesChanged.translations.en.portfolio_href = candidateReference;
+      await uploadLocalResumePdf(candidatePath);
       const filesRequestId = localUuid();
       const tamperedFiles = await invokeD7("files", filesChanged, localUuid(), userJwt!, targetId,
         payload => ({ ...payload, signature_hex: "f".repeat(64) }));
@@ -1289,7 +1412,160 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       expect(filesConflict.response.status).toBe(409);
       expect(await readFiles()).toEqual(filesChanged);
       expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 2);
+
+      const saveEvent = (await readUnifiedEvents()).find(event => event.section_key === "files" && event.payload_version === 2);
+      expect(saveEvent).toBeTruthy();
+      const restoreRequestId = localUuid();
+      const restored = await invokeFilesRestore(String(saveEvent!.id), restoreRequestId);
+      expect(restored.response.status, JSON.stringify(restored.body)).toBe(200);
+      expect(restored.body).toEqual({ files: filesBaseline, superseded_reference: candidateReference });
+      expect(await readFiles()).toEqual(filesBaseline);
+      events = await readUnifiedEvents();
+      expect(d7Count(events)).toBe(initialD7Count + 3);
+      expect(events[0]).toMatchObject({ resume_id: targetId, section_key: "files", entity_type: "resume_file_set", entity_id: null, operation: "update", payload_version: 2 });
+      expect((events[0]!.changes as Record<string, { before: unknown; after: unknown }>).files).toEqual({ before: filesChanged, after: filesBaseline });
+      const restoreReplay = await invokeFilesRestore(String(saveEvent!.id), restoreRequestId);
+      expect(restoreReplay.response.status).toBe(200);
+      expect(restoreReplay.body).toEqual(restored.body);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 3);
+
+      // Gap A: only the persisted successful event carries the legacy ref;
+      // the UI-shaped restore request supplies an event ID, never a URL.
+      const officialFilesBefore = await readFiles(officialId, ownerJwt!);
+      const officialFilesEventsBefore = (await readUnifiedEvents(officialId, ownerJwt!))
+        .filter(event => event.section_key === "files" && event.payload_version === 2).length;
+      const officialLegacyZh = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/example-cv/resume_zh.pdf`;
+      const qaHistoricalBPath = `${targetId}/en/${localUuid()}.pdf`;
+      const qaHistoricalB = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${qaHistoricalBPath}`;
+      uploadedPaths.push(qaHistoricalBPath);
+      localSql(`UPDATE public.resume_locale_content SET portfolio_href='${officialLegacyZh}' WHERE resume_id='${targetId}'::uuid AND locale='zh'`);
+      const sourceFixtureBefore = await readFiles();
+      const sourceFixtureAfter = structuredClone(sourceFixtureBefore);
+      sourceFixtureAfter.translations.en.portfolio_href = qaHistoricalB;
+      await uploadLocalResumePdf(qaHistoricalBPath);
+      const beforeSourceSaveEvents = new Set((await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2)
+        .map(event => String(event.id)));
+      const sourceSave = await invokeD7("files", sourceFixtureAfter, localUuid());
+      expect(sourceSave.response.status, JSON.stringify(sourceSave.body)).toBe(200);
+      const persistedSourceEvent = (await readUnifiedEvents()).find(event => event.section_key === "files" && event.payload_version === 2
+        && !beforeSourceSaveEvents.has(String(event.id)));
+      expect(persistedSourceEvent).toBeTruthy();
+      expect(persistedSourceEvent).toMatchObject({ resume_id: targetId, actor_user_id: actorId, section_key: "files",
+        entity_type: "resume_file_set", entity_id: null, operation: "update", payload_version: 2 });
+      const sourceChanges = (persistedSourceEvent!.changes as Record<string, { before: FilesAggregate; after: FilesAggregate }>).files;
+      expect(sourceChanges.before.translations.zh.portfolio_href).toBe(officialLegacyZh);
+      expect(sourceChanges.after.translations.zh.portfolio_href).toBe(officialLegacyZh);
+      expect(sourceChanges.after).toEqual(sourceFixtureAfter);
+      expect(localSql(`SELECT cms_private.activity_event_payload_v2_files_is_allowed(section_key,entity_type,entity_id,operation,entity_snapshot,changes)::text
+        FROM cms_private.activity_log_events WHERE id='${String(persistedSourceEvent!.id)}'::uuid`)).toBe("true");
+      expect(localSql(`SELECT site_key FROM public.resume_sites WHERE id='${targetId}'::uuid`)).toBe("example-cv-qa");
+
+      const qaFilesBeforeRejectedRestore = await readFiles();
+      const qaEventsBeforeRejectedRestore = (await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2).length;
+      const sourceRpcCountBefore = filesRestoreSourceRpcCalls;
+      const restoreRpcCountBefore = filesRestoreRpcCalls;
+      const storageDeleteCountBefore = workerStorageDeleteCalls;
+      const crossTargetRestoreRequestId = localUuid();
+      const crossTargetRestore = await invokeFilesRestore(String(persistedSourceEvent!.id), crossTargetRestoreRequestId, userJwt!, targetId, "zh");
+      expect(crossTargetRestore.response.status).toBe(422);
+      expect(crossTargetRestore.body).toMatchObject({ error: { code: "restore_source_invalid" } });
+      expect(filesRestoreSourceRpcCalls).toBe(sourceRpcCountBefore + 1);
+      expect(lastFilesRestoreSourceFailure).toMatchObject({ status: 400, code: "22023" });
+      expect(filesRestoreRpcCalls).toBe(restoreRpcCountBefore);
+      expect(workerStorageDeleteCalls).toBe(storageDeleteCountBefore);
+      expect(await readFiles()).toEqual(qaFilesBeforeRejectedRestore);
+      expect((await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2)).toHaveLength(qaEventsBeforeRejectedRestore);
+      expect(localSql(`SELECT count(*) FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid
+        AND resume_id='${targetId}'::uuid AND domain_key='files' AND request_id='${crossTargetRestoreRequestId}'::uuid`)).toBe("0");
+      expect(await readFiles(officialId, ownerJwt!)).toEqual(officialFilesBefore);
+      expect((await readUnifiedEvents(officialId, ownerJwt!)).filter(event => event.section_key === "files" && event.payload_version === 2))
+        .toHaveLength(officialFilesEventsBefore);
+
+      // Restore the isolated QA fixture to A, then make E (A→B). Session S
+      // executes the real typed save RPC B→C and keeps its transaction/row lock
+      // open while the Worker starts restore R for E on a second connection.
+      localSql(`UPDATE public.resume_locale_content l SET portfolio_href=CASE WHEN l.locale='zh' THEN ${sqlText(filesBaseline.translations.zh.portfolio_href)}
+        ELSE ${sqlText(filesBaseline.translations.en.portfolio_href)} END WHERE l.resume_id='${targetId}'::uuid AND l.locale IN('zh','en')`);
+      expect(await readFiles()).toEqual(filesBaseline);
+      const filesBPath = `${targetId}/en/${localUuid()}.pdf`;
+      const filesB = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${filesBPath}`;
+      const filesBState = structuredClone(filesBaseline);
+      filesBState.translations.en.portfolio_href = filesB;
+      uploadedPaths.push(filesBPath);
+      await uploadLocalResumePdf(filesBPath);
+      const beforeBEvents = new Set((await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2)
+        .map(event => String(event.id)));
+      const saveB = await invokeD7("files", filesBState, localUuid());
+      expect(saveB.response.status, JSON.stringify(saveB.body)).toBe(200);
+      expect(await readFiles()).toEqual(filesBState);
+      const eventE = (await readUnifiedEvents()).find(event => event.section_key === "files" && event.payload_version === 2 && !beforeBEvents.has(String(event.id)));
+      expect(eventE).toBeTruthy();
+      expect((eventE!.changes as Record<string, { before: FilesAggregate; after: FilesAggregate }>).files)
+        .toEqual({ before: filesBaseline, after: filesBState });
+
+      const filesCPath = `${targetId}/en/${localUuid()}.pdf`;
+      const filesC = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${filesCPath}`;
+      uploadedPaths.push(filesCPath);
+      await uploadLocalResumePdf(filesCPath);
+      const unrelatedFingerprint = localSql(`SELECT md5((SELECT to_jsonb(l)::text FROM public.resume_locale_content l WHERE l.resume_id='${targetId}'::uuid AND l.locale='zh'))
+        || ':' || md5((SELECT (to_jsonb(l)-'portfolio_href')::text FROM public.resume_locale_content l WHERE l.resume_id='${targetId}'::uuid AND l.locale='en'))
+        || ':' || md5((SELECT to_jsonb(p)::text FROM public.resume_public_links p WHERE p.resume_id='${targetId}'::uuid))`);
+      const fileEventsBeforeS = (await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2);
+      const eventIdsBeforeS = new Set(fileEventsBeforeS.map(event => String(event.id)));
+      const restoreRequestIdConcurrent = localUuid();
+      installConcurrentFilesSaveHelper();
+      let saveSession: OpenLocalPsqlSession | undefined;
+      let pendingStaleRestore: ReturnType<typeof invokeFilesRestore> | undefined;
+      let saveCommitted = false;
+      try {
+        saveSession = openLocalPsqlSession();
+        const claims = JSON.stringify({ sub: actorId, role: "authenticated", email: "qa-local@example.invalid" });
+        saveSession.stdin?.write(`BEGIN;\nSET LOCAL ROLE authenticated;\nSET LOCAL request.jwt.claim.sub='${actorId}';\nSET LOCAL request.jwt.claims='${claims}';\n`);
+        saveSession.stdin?.write(`SELECT public.test_only_concurrent_files_save('${targetId}'::uuid,'${localUuid()}'::uuid,'${filesC}');\nSELECT 'FILES_SAVE_TX_OPEN';\n`);
+        await waitForPsqlOutput(saveSession, "FILES_SAVE_TX_OPEN", 8000);
+        expect(saveSession.output).toContain("FILES_SAVE_SUCCEEDED");
+        expect(saveSession.exitCode).toBeNull();
+        pendingStaleRestore = invokeFilesRestore(String(eventE!.id), restoreRequestIdConcurrent);
+        let waitingRestores = 0;
+        const lockDeadline = Date.now() + 10000;
+        while (Date.now() < lockDeadline) {
+          waitingRestores = Number(localSql(`SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()
+            AND wait_event_type='Lock' AND query ILIKE '%restore_resume_files_from_event_v1%'`));
+          if (waitingRestores >= 1) break;
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        expect(waitingRestores).toBeGreaterThanOrEqual(1);
+        await closeLocalPsqlSession(saveSession, true);
+        saveCommitted = true;
+        const staleRestore = await pendingStaleRestore;
+        expect(staleRestore.response.status).toBe(422);
+        expect(staleRestore.body).toMatchObject({ error: { code: "upstream_failure" } });
+        expect(lastFilesRestoreRpcFailure).toMatchObject({ status: 400, code: "P0001" });
+      } finally {
+        if (saveSession && !saveSession.exitCode) await closeLocalPsqlSession(saveSession, false);
+        if (pendingStaleRestore) await pendingStaleRestore.catch(() => undefined);
+        dropConcurrentFilesSaveHelper();
+      }
+      expect(saveCommitted).toBe(true);
+      const filesAfterConcurrency = await readFiles();
+      expect(filesAfterConcurrency).toEqual({ translations: { zh: filesBState.translations.zh, en: { portfolio_href: filesC } } });
+      expect(filesAfterConcurrency.translations.en.portfolio_href).toBe(filesC);
+      expect(filesAfterConcurrency.translations.zh).toEqual(filesBState.translations.zh);
+      expect(localSql(`SELECT md5((SELECT to_jsonb(l)::text FROM public.resume_locale_content l WHERE l.resume_id='${targetId}'::uuid AND l.locale='zh'))
+        || ':' || md5((SELECT (to_jsonb(l)-'portfolio_href')::text FROM public.resume_locale_content l WHERE l.resume_id='${targetId}'::uuid AND l.locale='en'))
+        || ':' || md5((SELECT to_jsonb(p)::text FROM public.resume_public_links p WHERE p.resume_id='${targetId}'::uuid))`)).toBe(unrelatedFingerprint);
+      const fileEventsAfterS = (await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2);
+      const eventsAddedByS = fileEventsAfterS.filter(event => !eventIdsBeforeS.has(String(event.id)));
+      expect(eventsAddedByS).toHaveLength(1);
+      expect((eventsAddedByS[0]!.changes as Record<string, { before: FilesAggregate; after: FilesAggregate }>).files)
+        .toEqual({ before: filesBState, after: { translations: { zh: filesBState.translations.zh, en: { portfolio_href: filesC } } } });
+      expect(localSql(`SELECT cms_private.activity_event_payload_v2_files_is_allowed(section_key,entity_type,entity_id,operation,entity_snapshot,changes)::text
+        FROM cms_private.activity_log_events WHERE id='${String(eventsAddedByS[0]!.id)}'::uuid`)).toBe("true");
+      expect(localSql(`SELECT count(*) FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid
+        AND resume_id='${targetId}'::uuid AND domain_key='files' AND request_id='${restoreRequestIdConcurrent}'::uuid`)).toBe("0");
+      expect(workerStorageDeleteCalls).toBe(storageDeleteCountBefore);
     } finally {
+      await deleteLocalResumePdfs(uploadedPaths);
       localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
         DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files') AND requirement_key='trusted_network_context_v11';
         DELETE FROM cms_private.profile_photo_origin_config WHERE singleton`);

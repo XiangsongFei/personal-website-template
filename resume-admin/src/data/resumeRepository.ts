@@ -63,6 +63,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   hasPendingWebsiteLinksWorkerSave?(resumeId: string): boolean;
   loadAdminFilesWriteState?(resumeId: string): Promise<AdminDomainWriteState<"files">>;
   saveFilesWithWorker?(resumeId: string, files: FilesAggregate): Promise<FilesAggregate>;
+  restoreFilesFromEvent?(resumeId: string, sourceEventId: string, locale: Locale): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   hasPendingFilesWorkerSave?(resumeId: string): boolean;
   retryPendingFilesWithWorker?(resumeId: string): Promise<FilesAggregate>;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
@@ -1558,6 +1559,59 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     async saveFilesWithWorker(resumeId, files) {
       if (!resumeId) throw new AggregateWorkerSaveError("Missing resume ID");
       return await saveSignedD7("files", resumeId, validateFilesAggregate(files)) as FilesAggregate;
+    },
+    async restoreFilesFromEvent(resumeId, sourceEventId, locale) {
+      if (!resumeId || !/^[0-9a-f-]{36}$/i.test(sourceEventId) || (locale !== "zh" && locale !== "en"))
+        throw new AggregateWorkerSaveError("Invalid Files restore request.");
+      const key = `admin-files-restore-pending-v1:${resumeId}:${sourceEventId}:${locale}`;
+      let pending: { requestId: string; resumeId: string; sourceEventId: string; locale: Locale } | null = null;
+      try {
+        const raw = globalThis.sessionStorage?.getItem(key);
+        if (raw) {
+          const value = JSON.parse(raw) as Record<string, unknown>;
+          if (Object.keys(value).sort().join(",") !== "locale,requestId,resumeId,sourceEventId" || value.resumeId !== resumeId
+            || value.sourceEventId !== sourceEventId || value.locale !== locale || typeof value.requestId !== "string"
+            || !/^[0-9a-f-]{36}$/i.test(value.requestId)) throw new Error("pending mismatch");
+          pending = { requestId: value.requestId, resumeId, sourceEventId, locale };
+        }
+      } catch { throw new AggregateWorkerSaveError("A pending Files restore cannot be verified safely; keep the current state unchanged."); }
+      if (!pending) {
+        if (!globalThis.crypto?.randomUUID || !globalThis.sessionStorage) throw new AggregateWorkerSaveError("Secure Files restoration is unavailable.");
+        pending = { requestId: globalThis.crypto.randomUUID(), resumeId, sourceEventId, locale };
+        try { globalThis.sessionStorage.setItem(key, JSON.stringify(pending)); }
+        catch { throw new AggregateWorkerSaveError("The exact pending Files restore could not be stored safely."); }
+      }
+      const { data, error } = await supabase.auth.getSession(); const token = data.session?.access_token;
+      if (error || typeof token !== "string" || !token) throw new AggregateWorkerSaveError("Your session could not be verified.");
+      let response: Response;
+      try { response = await fetch("/api/admin/v1/files/restore", { method: "POST", credentials: "omit",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, source_event_id: sourceEventId, locale }), signal: AbortSignal.timeout(30_000) }); }
+      catch { throw new AggregateWorkerSaveError("The Files restore result is uncertain. Retry the exact request.", true); }
+      if (!response.ok) {
+        if (response.status >= 500) throw new AggregateWorkerSaveError("The Files restore result is uncertain. Retry the exact request.", true);
+        try { globalThis.sessionStorage.removeItem(key); } catch { /* safe to retain */ }
+        throw new AggregateWorkerSaveError("The previous Files reference could not be restored.");
+      }
+      let result: unknown;
+      try { result = await response.json(); } catch { throw new AggregateWorkerSaveError("The Files restore result is uncertain. Retry the exact request.", true); }
+      let files: FilesAggregate; let supersededReference: string;
+      try {
+        if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("result shape");
+        const body = result as Record<string, unknown>;
+        files = validateFilesAggregate(body.files);
+        if (typeof body.superseded_reference !== "string") throw new Error("cleanup reference");
+        supersededReference = body.superseded_reference;
+        try { globalThis.sessionStorage.removeItem(key); } catch { /* replay is safe */ }
+      } catch { throw new AggregateWorkerSaveError("The Files restore result could not be confirmed. Retry the exact request.", true); }
+      let cleanupWarning = false;
+      if (supersededReference && supersededReference !== files.translations[locale].portfolio_href) {
+        try {
+          const cleanup = await createBatch6BRepositoryWrites(supabase, supabaseUrl ?? "").deleteManagedResumePdf?.(resumeId, locale, supersededReference);
+          cleanupWarning = cleanup !== "deleted" && cleanup !== "already-absent" && cleanup !== "not-managed";
+        } catch { cleanupWarning = true; }
+      }
+      return { files, cleanupWarning };
     },
     hasPendingFilesWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
     async retryPendingFilesWithWorker(resumeId) {
