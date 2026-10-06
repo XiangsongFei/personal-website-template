@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActivityLogEvent, ActivityLogFilters, ActivityLogV13CCursor, ActivityLogV13CEvent, ActivityLogV13CFilters, ResumeRepository } from "./data/resumeRepository";
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { useUiLocale } from "./uiLocale";
+import { validateFilesAggregate, validateWebsiteLinksAggregate } from "./data/websiteFilesAggregate";
 
 const PAGE_SIZE = 25;
 const EMPTY_FILTERS: ActivityLogV13CFilters = { eventFilter: "all", section: "", operation: "", actorEmail: "", dateFrom: null, dateToExclusive: null, search: "" };
@@ -220,6 +221,49 @@ export function describeContactActivity(event: ActivityLogV13CEvent): Collection
   return lines;
 }
 
+export function describeWebsiteLinksActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "website_links" || event.entityType !== "website_links_settings") return [];
+  try {
+    const change = event.changes.website_links as { before?: unknown; after?: unknown } | undefined;
+    if (!change) return [];
+    const before = validateWebsiteLinksAggregate(change.before); const after = validateWebsiteLinksAggregate(change.after);
+    const lines: CollectionActivityLine[] = [];
+    const sharedLabels = { email: "Email address", github: "GitHub URL", github_label: "GitHub button label",
+      linkedin_display_name: "LinkedIn display name", email_label: "Email label", linkedin_label: "LinkedIn label" } as const;
+    for (const key of Object.keys(sharedLabels) as Array<keyof typeof sharedLabels>) if (before.shared[key] !== after.shared[key])
+      lines.push({ kind: "Updated", label: "Public links", field: sharedLabels[key], before: before.shared[key], after: after.shared[key] });
+    const translationNames = { linkedin_label: "LinkedIn label", linkedin_href: "LinkedIn URL", portfolio_label: "Resume button label", updated_at_label: "Updated-at label" } as const;
+    for (const locale of ["zh", "en"] as const) for (const key of Object.keys(translationNames) as Array<keyof typeof translationNames>)
+      if (before.translations[locale][key] !== after.translations[locale][key]) lines.push({ kind: "Updated", label: "Site text",
+        locale: locale === "zh" ? "Chinese" : "English", field: translationNames[key], before: before.translations[locale][key], after: after.translations[locale][key] });
+    for (const item of after.navigation) {
+      const old = before.navigation.find(value => value.navigation_item_id === item.navigation_item_id);
+      if (!old) continue;
+      for (const locale of ["zh", "en"] as const) if (old[locale].label !== item[locale].label) lines.push({ kind: "Updated",
+        label: `Navigation ${item.position + 1}`, locale: locale === "zh" ? "Chinese" : "English", field: "Navigation label", before: old[locale].label, after: item[locale].label });
+    }
+    return lines;
+  } catch { return []; }
+}
+
+export function describeFilesActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "files" || event.entityType !== "resume_file_set") return [];
+  try {
+    const change = event.changes.files as { before?: unknown; after?: unknown } | undefined;
+    if (!change) return [];
+    const before = validateFilesAggregate(change.before); const after = validateFilesAggregate(change.after);
+    const label = (value: string) => {
+      if (!value) return "Not set";
+      try { return decodeURIComponent(new URL(value).pathname.split("/").filter(Boolean).at(-1) ?? "Resume PDF"); }
+      catch { return "Resume PDF"; }
+    };
+    return (["zh", "en"] as const).flatMap(locale => before.translations[locale].portfolio_href === after.translations[locale].portfolio_href ? [] : [{
+      kind: "Updated" as const, label: "Resume files", locale: locale === "zh" ? "Chinese" as const : "English" as const,
+      field: "Resume PDF", before: label(before.translations[locale].portfolio_href), after: label(after.translations[locale].portfolio_href),
+    }]);
+  } catch { return []; }
+}
+
 export function describeProfileActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
   if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "profile" || event.entityType !== "profile_settings") return [];
   const change = event.changes.profile as { before?: unknown; after?: unknown } | undefined;
@@ -371,6 +415,10 @@ export function ActivityLogPage({ resumeId, repository }: { resumeId: string | n
               </div>)}</dl> : event.payloadVersion === 2 && (event.entityType === "experience_list" || event.entityType === "skill_group_list" || event.entityType === "education_list")
                   ? <dl>{describeExperienceSkillsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Experience title")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
+                  </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "website_links_settings" ? <dl>{describeWebsiteLinksActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                    <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.label)} · {t(line.field ?? "Website & Links")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
+                  </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "resume_file_set" ? <dl>{describeFilesActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                    <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.label)} · {t(line.field ?? "Resume PDF")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
                   </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>
                   <dt>{t(fields[key] ?? key)}</dt><dd><span>{t("Before")}: {fieldValues(change.before, t)}</span><span>{t("After")}: {fieldValues(change.after, t)}</span></dd>
                 </div>)}</dl>}</details>}

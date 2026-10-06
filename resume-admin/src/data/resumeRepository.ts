@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAdminTarget } from "../auth/supabase";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
 import { canonicalizeProfile, profileAggregateFromSection, profileSectionFromAggregate, validateProfileAggregate, type ProfileAggregate } from "./profileAggregate";
+import { canonicalizeFiles, canonicalizeWebsiteLinks, type FilesAggregate, type WebsiteLinksAggregate, validateFilesAggregate, validateWebsiteLinksAggregate } from "./websiteFilesAggregate";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
   mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
@@ -27,6 +28,7 @@ export const resumeTables = [
 
 export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
+  loadLinks?(resumeId: string): Promise<LinksSection>;
   loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
   loadAdminAwardsWriteState?(resumeId: string): Promise<AdminAwardsWriteState>;
   saveAwardsWithWorker?(resumeId: string, items: AwardItem[]): Promise<AwardItem[]>;
@@ -56,6 +58,13 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveProfileWithWorker?(resumeId: string, profile: ProfileSection, baselinePhotoUrl: string | null): Promise<ProfileSection>;
   hasPendingProfileWorkerSave?(resumeId: string): boolean;
   discardPendingProfileSave?(resumeId?: string): void;
+  loadAdminWebsiteLinksWriteState?(resumeId: string): Promise<AdminDomainWriteState<"website_links">>;
+  saveWebsiteLinksWithWorker?(resumeId: string, links: LinksSection): Promise<LinksSection>;
+  hasPendingWebsiteLinksWorkerSave?(resumeId: string): boolean;
+  loadAdminFilesWriteState?(resumeId: string): Promise<AdminDomainWriteState<"files">>;
+  saveFilesWithWorker?(resumeId: string, files: FilesAggregate): Promise<FilesAggregate>;
+  hasPendingFilesWorkerSave?(resumeId: string): boolean;
+  retryPendingFilesWithWorker?(resumeId: string): Promise<FilesAggregate>;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -88,7 +97,7 @@ export type AdminFeatureState = {
   introductionTrustedContextRequired: boolean;
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
-export type AdminDomainWriteState<D extends "experience" | "skills" | "projects"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
+export type AdminDomainWriteState<D extends "experience" | "skills" | "projects" | "website_links" | "files"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
 export type AdminProfileWriteState = { resumeId: string; activityLogEnabled: boolean; profileWriteMode: "direct" | "rpc"; profileTrustedContextRequired: boolean };
@@ -97,7 +106,7 @@ export class IntroductionWorkerSaveError extends Error {
   constructor(message: string) { super(message); this.name = "IntroductionWorkerSaveError"; }
 }
 export class AwardsWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AwardsWorkerSaveError"; } }
-export class AggregateWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AggregateWorkerSaveError"; } }
+export class AggregateWorkerSaveError extends Error { constructor(message: string, readonly uncertain = false) { super(message); this.name = "AggregateWorkerSaveError"; } }
 export type ActivityLogCursor = { occurredAt: string; id: string };
 export type ActivityLogFilters = {
   section: string;
@@ -282,7 +291,9 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
               || (row.section_key === "education" && row.entity_type === "education_list")
               || (row.section_key === "projects" && row.entity_type === "project_list")
               || (row.section_key === "contact" && row.entity_type === "contact_section")
-              || (row.section_key === "profile" && row.entity_type === "profile_settings"))))) {
+              || (row.section_key === "profile" && row.entity_type === "profile_settings")
+              || (row.section_key === "website_links" && row.entity_type === "website_links_settings")
+              || (row.section_key === "files" && row.entity_type === "resume_file_set"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -295,8 +306,17 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
         const change = changes[key];
+        if (key === "website_links" || key === "files") {
+          const snapshot = row.entity_snapshot as Record<string, unknown>;
+          if (Object.keys(snapshot).join(",") !== key || Object.keys(changes).join(",") !== key || !change
+            ) throw new Error("Invalid Activity Log response");
+          if (key === "website_links") canonicalizeWebsiteLinks(change.before); else canonicalizeFiles(change.before);
+          const canonicalAfter = key === "website_links" ? canonicalizeWebsiteLinks(change.after) : canonicalizeFiles(change.after);
+          const canonicalSnapshot = key === "website_links" ? canonicalizeWebsiteLinks(snapshot[key]) : canonicalizeFiles(snapshot[key]);
+          if (canonicalAfter !== canonicalSnapshot) throw new Error("Invalid Activity Log response");
+        }
         const validContact = (raw: unknown, requireDensePositions: boolean): boolean => {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
           const aggregate = raw as Record<string, unknown>;
@@ -434,9 +454,11 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
           if (Object.keys(snapshot).sort().join(",") !== "profile" || Object.keys(changes).sort().join(",") !== "profile"
             || JSON.stringify(snapshot.profile) !== JSON.stringify(change.after)
             || !validProfile(change.before) || !validProfile(change.after)) throw new Error("Invalid Activity Log response");
-        } else if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
-          || !Array.isArray(change.before) || !Array.isArray(change.after)
-          || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
+        } else if (key === "awards" || key === "experience" || key === "skills" || key === "education" || key === "projects") {
+          if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
+            || !Array.isArray(change.before) || !Array.isArray(change.after)
+            || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
+        } else if (key !== "website_links" && key !== "files") throw new Error("Invalid Activity Log response");
       }
       return {
         ...common,
@@ -795,9 +817,56 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       throw new AggregateWorkerSaveError("The Contact save result could not be confirmed. Retry the exact pending request.");
     }
   };
+  const saveSignedD7 = async (domain: "website_links" | "files", resumeId: string, value: WebsiteLinksAggregate | FilesAggregate): Promise<WebsiteLinksAggregate | FilesAggregate> => {
+    const canonical = domain === "website_links" ? canonicalizeWebsiteLinks(value) : canonicalizeFiles(value);
+    if (new TextEncoder().encode(canonical).byteLength > (domain === "website_links" ? 65536 : 16384)) throw new AggregateWorkerSaveError("Website & Links / Files content exceeds the allowed request size.");
+    const storageKey = `admin-${domain}-rpc-pending-v1:${resumeId}`;
+    let pending: { requestId: string; resumeId: string; canonical: string } | null = null;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(storageKey);
+      if (raw) {
+        if (new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("oversize");
+        const stored = JSON.parse(raw) as Record<string, unknown>;
+        if (Object.keys(stored).sort().join(",") !== "canonical,requestId,resumeId" || stored.resumeId !== resumeId
+          || stored.canonical !== canonical || typeof stored.requestId !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stored.requestId)) throw new Error("mismatch");
+        pending = { requestId: stored.requestId, resumeId, canonical };
+      }
+    } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely; keep the draft unchanged.`); }
+    if (!pending) {
+      if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable.`);
+      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, canonical };
+      try { if (!globalThis.sessionStorage) throw new Error("unavailable"); globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pending)); }
+      catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely.`); }
+    }
+    const { data, error } = await supabase.auth.getSession();
+    const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
+    if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
+      throw new AggregateWorkerSaveError("Your session could not be verified. Retry the unchanged request.");
+    let response: Response;
+    try { response = await fetch(`/api/admin/v1/${domain === "website_links" ? "website-links" : "files"}/save`, { method: "POST", credentials: "omit",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, [domain]: value }), signal: AbortSignal.timeout(30_000) }); }
+    catch { throw new AggregateWorkerSaveError(`The ${domain} result is uncertain. Retry the exact pending request.`, true); }
+    if (!response.ok) {
+      if (response.status >= 500) throw new AggregateWorkerSaveError(`The ${domain} result is uncertain. Retry the exact pending request.`, true);
+      if (response.status !== 409) { try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* retain safe failure state */ } }
+      throw new AggregateWorkerSaveError(response.status === 409 ? `The ${domain} request ID conflicts with a different payload. Keep the draft unchanged.`
+        : `${domain} could not be saved. Your draft remains available.`);
+    }
+    let responseValue: unknown;
+    try { responseValue = await response.json(); } catch { throw new AggregateWorkerSaveError(`The ${domain} result is uncertain. Retry the exact pending request.`, true); }
+    try {
+      const validated = domain === "website_links" ? validateWebsiteLinksAggregate(responseValue) : validateFilesAggregate(responseValue);
+      const returnedCanonical = domain === "website_links" ? canonicalizeWebsiteLinks(validated) : canonicalizeFiles(validated);
+      if (returnedCanonical !== canonical) throw new Error("mismatch");
+      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* exact replay remains safe */ }
+      return validated;
+    } catch { throw new AggregateWorkerSaveError(`The ${domain} result could not be confirmed. Retry the exact pending request.`, true); }
+  };
   return {
     ...createEditableSectionWrites(supabase),
-    ...createBatch6BRepositoryWrites(supabase, supabaseUrl),
+    ...createBatch6BRepositoryWrites(supabase, supabaseUrl ?? ""),
     async load() {
       const site = await readSiteRow(supabase);
       const resumeId = site.id as string;
@@ -1446,6 +1515,63 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       try { return Boolean(globalThis.sessionStorage?.getItem(profilePendingKey(resumeId))); } catch { return true; }
     },
     discardPendingProfileSave() { /* Ambiguous requests are retained for exact replay. */ },
+    async loadAdminWebsiteLinksWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_website_links_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Website & Links write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.website_links_write_mode !== "direct" && row.website_links_write_mode !== "rpc")
+        || typeof row.website_links_trusted_context_required !== "boolean"
+        || (row.website_links_write_mode === "direct" && row.website_links_trusted_context_required)) throw new Error("Invalid Website & Links write state");
+      return { resumeId, domain: "website_links" as const, activityLogEnabled: row.activity_log_enabled,
+        writeMode: row.website_links_write_mode, trustedContextRequired: row.website_links_trusted_context_required };
+    },
+    async saveWebsiteLinksWithWorker(resumeId, links) {
+      if (!resumeId || !links || !Array.isArray(links.navigation)) throw new AggregateWorkerSaveError("Website & Links content is invalid.");
+      const payload: WebsiteLinksAggregate = validateWebsiteLinksAggregate({
+        shared: { email: links.shared.email, github: links.shared.github, github_label: links.shared.githubLabel,
+          linkedin_display_name: links.shared.linkedInDisplayName, email_label: links.shared.emailLabel, linkedin_label: links.shared.linkedInLabel },
+        translations: Object.fromEntries(( ["zh", "en"] as const).map(locale => [locale, {
+          linkedin_label: links.translations[locale].linkedInLabel, linkedin_href: links.translations[locale].linkedInHref,
+          portfolio_label: links.translations[locale].portfolioLabel, updated_at_label: links.translations[locale].updatedAtLabel,
+        }])) as WebsiteLinksAggregate["translations"],
+        navigation: links.navigation.map(item => ({ navigation_item_id: item.id, position: item.position,
+          zh: { label: item.translations.zh.label }, en: { label: item.translations.en.label } })),
+      });
+      await saveSignedD7("website_links", resumeId, payload);
+      return links;
+    },
+    hasPendingWebsiteLinksWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-website_links-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
+    async loadAdminFilesWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_files_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Files write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.files_write_mode !== "direct" && row.files_write_mode !== "rpc")
+        || typeof row.files_trusted_context_required !== "boolean"
+        || (row.files_write_mode === "direct" && row.files_trusted_context_required)) throw new Error("Invalid Files write state");
+      return { resumeId, domain: "files" as const, activityLogEnabled: row.activity_log_enabled,
+        writeMode: row.files_write_mode, trustedContextRequired: row.files_trusted_context_required };
+    },
+    async saveFilesWithWorker(resumeId, files) {
+      if (!resumeId) throw new AggregateWorkerSaveError("Missing resume ID");
+      return await saveSignedD7("files", resumeId, validateFilesAggregate(files)) as FilesAggregate;
+    },
+    hasPendingFilesWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
+    async retryPendingFilesWithWorker(resumeId) {
+      let value: unknown;
+      try {
+        const raw = globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`);
+        if (!raw || new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("missing");
+        const pending = JSON.parse(raw) as Record<string, unknown>;
+        if (Object.keys(pending).sort().join(",") !== "canonical,requestId,resumeId" || pending.resumeId !== resumeId || typeof pending.canonical !== "string") throw new Error("shape");
+        value = JSON.parse(pending.canonical);
+        if (canonicalizeFiles(value) !== pending.canonical) throw new Error("canonical");
+      } catch { throw new AggregateWorkerSaveError("A pending Files request cannot be restored safely. Keep the current draft unchanged."); }
+      return await saveSignedD7("files", resumeId, validateFilesAggregate(value)) as FilesAggregate;
+    },
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");
       if (!shared || typeof shared.graduationValue !== "string" || typeof shared.avatarInitials !== "string"

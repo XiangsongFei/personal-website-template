@@ -6,6 +6,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { canonicalizeAwards, handleWorkerRequest, serializePostgresJsonbObject, type WorkerEnv } from "../src/worker/index";
 import { deriveActivityLogV13FailureEventId } from "../src/worker/activityLogV13";
 import type { ProfileAggregate } from "../src/data/profileAggregate";
+import type { FilesAggregate, WebsiteLinksAggregate } from "../src/data/websiteFilesAggregate";
 
 const enabled = process.env.V11_LOCAL_INTEGRATION === "1";
 const apiBase = process.env.V11_LOCAL_API_URL;
@@ -26,10 +27,12 @@ const workerUpstreamOrigin = "https://local.supabase.invalid";
 const localUuid = randomUUID;
 let mutateNextRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
 let mutateNextAwardsRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
+let mutateNextD7RpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
 let dropNextV13RecorderResponseAfterCommit = false;
 let dropNextAwardsRpcResponseAfterCommit = false;
 let lastAwardsRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 let lastProfileRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
+let lastD7RpcFailure: { status: number; code: string | null } | null = null;
 const v13RecorderBodies: string[] = [];
 let profileRpcCalls = 0;
 
@@ -45,6 +48,17 @@ if (enabled) {
       const mutate = mutateNextRpcPayload;
       mutateNextRpcPayload = undefined;
       forwardedInit = { ...init, body: JSON.stringify(mutate(JSON.parse(init.body) as Record<string, unknown>)) };
+    }
+    if ((url.pathname === "/rest/v1/rpc/save_resume_website_links_v1" || url.pathname === "/rest/v1/rpc/save_resume_files_v1") && typeof init?.body === "string") {
+      const forwarded = mutateNextD7RpcPayload ? { ...init, body: JSON.stringify(mutateNextD7RpcPayload(JSON.parse(init.body) as Record<string, unknown>)) } : init;
+      mutateNextD7RpcPayload = undefined;
+      lastD7RpcFailure = null;
+      const response = await originalFetch(url, forwarded);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown } | null;
+        lastD7RpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null };
+      }
+      return response;
     }
     if (url.pathname === "/rest/v1/rpc/save_resume_awards_v1" && typeof init?.body === "string") {
       const body = JSON.parse(init.body) as Record<string, unknown>;
@@ -226,6 +240,47 @@ async function readProfile(target = targetId, bearer = userJwt!): Promise<Profil
 }
 async function readProfileWriteState(target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
   return await rest("/rest/v1/rpc/load_admin_profile_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+}
+async function readWebsiteLinks(target = targetId, bearer = userJwt!): Promise<WebsiteLinksAggregate> {
+  const sharedRows = await rest(`/rest/v1/resume_public_links?select=email,github,github_label,linkedin_display_name,email_label,linkedin_label&resume_id=eq.${target}`, {}, bearer) as Array<WebsiteLinksAggregate["shared"]>;
+  const localeRows = await rest(`/rest/v1/resume_locale_content?select=locale,linkedin_label,linkedin_href,portfolio_label,updated_at_label&resume_id=eq.${target}&order=locale.asc`, {}, bearer) as Array<{ locale: "zh" | "en"; linkedin_label: string; linkedin_href: string; portfolio_label: string; updated_at_label: string }>;
+  const parents = await rest(`/rest/v1/resume_navigation_items?select=id,position&resume_id=eq.${target}&order=position.asc`, {}, bearer) as Array<{ id: string; position: number }>;
+  const navTranslations = await rest(`/rest/v1/resume_navigation_item_translations?select=navigation_item_id,locale,label&resume_id=eq.${target}`, {}, bearer) as Array<{ navigation_item_id: string; locale: "zh" | "en"; label: string }>;
+  const shared = sharedRows[0];
+  const locale = (key: "zh" | "en") => {
+    const row = localeRows.find(value => value.locale === key);
+    if (!row) throw new Error("Local Website & Links fixture lacks a required locale");
+    return { linkedin_label: row.linkedin_label, linkedin_href: row.linkedin_href, portfolio_label: row.portfolio_label, updated_at_label: row.updated_at_label };
+  };
+  if (!shared || localeRows.length !== 2 || parents.length !== 5) throw new Error("Local Website & Links fixture is incomplete");
+  const navigation = parents.map((parent) => {
+    const zh = navTranslations.find(value => value.navigation_item_id === parent.id && value.locale === "zh");
+    const en = navTranslations.find(value => value.navigation_item_id === parent.id && value.locale === "en");
+    if (!zh || !en) throw new Error("Local Navigation fixture lacks a required translation");
+    return { navigation_item_id: parent.id, position: parent.position, zh: { label: zh.label }, en: { label: en.label } };
+  });
+  return { shared, translations: { zh: locale("zh"), en: locale("en") }, navigation };
+}
+async function readFiles(target = targetId, bearer = userJwt!): Promise<FilesAggregate> {
+  const rows = await rest(`/rest/v1/resume_locale_content?select=locale,portfolio_href&resume_id=eq.${target}&order=locale.asc`, {}, bearer) as Array<{ locale: "zh" | "en"; portfolio_href: string }>;
+  const zh = rows.find(value => value.locale === "zh"); const en = rows.find(value => value.locale === "en");
+  if (rows.length !== 2 || !zh || !en) throw new Error("Local Files fixture lacks authoritative zh/en references");
+  return { translations: { zh: { portfolio_href: zh.portfolio_href }, en: { portfolio_href: en.portfolio_href } } };
+}
+async function readD7WriteState(domain: "website_links" | "files", target = targetId, bearer = userJwt!): Promise<Array<Record<string, unknown>>> {
+  return await rest(`/rest/v1/rpc/load_admin_${domain}_write_state`, { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+}
+async function invokeD7(domain: "website_links" | "files", aggregate: WebsiteLinksAggregate | FilesAggregate, requestId = localUuid(), token = userJwt!, target = targetId,
+  mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
+  mutateNextD7RpcPayload = mutateRpcPayload;
+  const request = new Request(`https://admin.local.test/api/admin/v1/${domain === "website_links" ? "website-links" : "files"}/save`, { method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89" },
+    body: JSON.stringify({ request_id: requestId, resume_id: target, [domain]: aggregate }) });
+  Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
+  try {
+    const response = await handleWorkerRequest(request, workerEnv());
+    return { response, body: await response.json() };
+  } finally { mutateNextD7RpcPayload = undefined; }
 }
 async function invokeProfile(profile: ProfileAggregate, requestId = localUuid(), baselinePhotoUrl = profile.shared.photo_url, target = targetId): Promise<{ response: Response; body: unknown }> {
   const request = new Request("https://admin.local.test/api/admin/v1/profile/save", { method: "POST", headers: {
@@ -1138,5 +1193,106 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(Number(resultBytes)).toBeLessThanOrEqual(8192);
     expect(completed).toBe("true");
     expect(await readUnifiedEvents()).toHaveLength(beforeEvents.length + 1);
+  });
+
+  it("integrates Website & Links and Files through the Worker, local PostgREST, and typed RPCs", async () => {
+    assertLocalConfiguration();
+    expect(await readD7WriteState("website_links")).toMatchObject([{ resume_id: targetId, website_links_write_mode: "direct", website_links_trusted_context_required: false, activity_log_enabled: true }]);
+    expect(await readD7WriteState("files")).toMatchObject([{ resume_id: targetId, files_write_mode: "direct", files_trusted_context_required: false, activity_log_enabled: true }]);
+    expect(localSql("SELECT count(*) FROM cms_private.profile_photo_origin_config")).toBe("0");
+    localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
+      INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
+      VALUES ('${targetId}'::uuid,'website_links','trusted_network_context_v11',true),('${targetId}'::uuid,'files','trusted_network_context_v11',true);
+      INSERT INTO cms_private.profile_photo_origin_config(singleton,origin) VALUES(true,'https://local.supabase.invalid')`);
+    try {
+      expect(await readD7WriteState("website_links")).toMatchObject([{ resume_id: targetId, website_links_write_mode: "rpc", website_links_trusted_context_required: true }]);
+      expect(await readD7WriteState("files")).toMatchObject([{ resume_id: targetId, files_write_mode: "rpc", files_trusted_context_required: true }]);
+      const websiteBaseline = await readWebsiteLinks();
+      const filesBaseline = await readFiles();
+      const initialEvents = await readUnifiedEvents();
+      const d7Count = (events: Array<Record<string, unknown>>) => events.filter(event => event.resume_id === targetId && (event.section_key === "website_links" || event.section_key === "files") && event.payload_version === 2).length;
+      const initialD7Count = d7Count(initialEvents);
+
+      const websiteNoOp = await invokeD7("website_links", websiteBaseline);
+      expect(websiteNoOp.response.status, JSON.stringify(websiteNoOp.body)).toBe(200);
+      expect(await readWebsiteLinks()).toEqual(websiteBaseline);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count);
+      const malformedRequest = new Request("https://admin.local.test/api/admin/v1/website-links/save", { method: "POST",
+        headers: { Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: localUuid(), resume_id: targetId, website_links: websiteBaseline, unexpected: true }) });
+      expect((await handleWorkerRequest(malformedRequest, workerEnv())).status).toBe(400);
+
+      const websiteChanged = structuredClone(websiteBaseline);
+      websiteChanged.shared.email = `${websiteChanged.shared.email} integration`;
+      const websiteRequestId = localUuid();
+      const tamperedWebsite = await invokeD7("website_links", websiteChanged, localUuid(), userJwt!, targetId,
+        payload => ({ ...payload, signature_hex: "0".repeat(64) }));
+      expect(tamperedWebsite.response.status).toBe(422);
+      expect(lastD7RpcFailure?.code).toBe("22023");
+      expect(await readWebsiteLinks()).toEqual(websiteBaseline);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count);
+      const unauthorizedWebsite = await invokeD7("website_links", websiteBaseline, localUuid(), userJwt!, officialId);
+      expect(unauthorizedWebsite.response.ok).toBe(false);
+      expect(await readWebsiteLinks(targetId)).toEqual(websiteBaseline);
+
+      const websiteSaved = await invokeD7("website_links", websiteChanged, websiteRequestId);
+      expect(websiteSaved.response.status, JSON.stringify(websiteSaved.body)).toBe(200);
+      expect(websiteSaved.body).toEqual(websiteChanged);
+      expect(await readWebsiteLinks()).toEqual(websiteChanged);
+      let events = await readUnifiedEvents();
+      expect(d7Count(events)).toBe(initialD7Count + 1);
+      expect(events[0]).toMatchObject({ resume_id: targetId, section_key: "website_links", entity_type: "website_links_settings", entity_id: null, operation: "update", payload_version: 2 });
+      expect((events[0]!.changes as Record<string, { before: unknown; after: unknown }>).website_links).toEqual({ before: websiteBaseline, after: websiteChanged });
+      const websiteReplay = await invokeD7("website_links", websiteChanged, websiteRequestId);
+      expect(websiteReplay.response.status).toBe(200);
+      expect(websiteReplay.body).toEqual(websiteSaved.body);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 1);
+      const websiteConflictBody = structuredClone(websiteChanged);
+      websiteConflictBody.shared.email = `${websiteConflictBody.shared.email} conflict`;
+      const websiteConflict = await invokeD7("website_links", websiteConflictBody, websiteRequestId);
+      expect(websiteConflict.response.status).toBe(409);
+      expect(await readWebsiteLinks()).toEqual(websiteChanged);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 1);
+
+      const filesNoOp = await invokeD7("files", filesBaseline);
+      expect(filesNoOp.response.status, JSON.stringify(filesNoOp.body)).toBe(200);
+      expect(await readFiles()).toEqual(filesBaseline);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 1);
+      const filesChanged = structuredClone(filesBaseline);
+      filesChanged.translations.en.portfolio_href = `https://local.supabase.invalid/storage/v1/object/public/resume-files/${targetId}/en/${localUuid()}.pdf`;
+      const filesRequestId = localUuid();
+      const tamperedFiles = await invokeD7("files", filesChanged, localUuid(), userJwt!, targetId,
+        payload => ({ ...payload, signature_hex: "f".repeat(64) }));
+      expect(tamperedFiles.response.status).toBe(422);
+      expect(lastD7RpcFailure?.code).toBe("22023");
+      expect(await readFiles()).toEqual(filesBaseline);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 1);
+      const unauthorizedFiles = await invokeD7("files", filesBaseline, localUuid(), userJwt!, officialId);
+      expect(unauthorizedFiles.response.ok).toBe(false);
+      expect(await readFiles(targetId)).toEqual(filesBaseline);
+
+      const filesSaved = await invokeD7("files", filesChanged, filesRequestId);
+      expect(filesSaved.response.status, JSON.stringify(filesSaved.body)).toBe(200);
+      expect(filesSaved.body).toEqual(filesChanged);
+      expect(await readFiles()).toEqual(filesChanged);
+      events = await readUnifiedEvents();
+      expect(d7Count(events)).toBe(initialD7Count + 2);
+      expect(events[0]).toMatchObject({ resume_id: targetId, section_key: "files", entity_type: "resume_file_set", entity_id: null, operation: "update", payload_version: 2 });
+      expect((events[0]!.changes as Record<string, { before: unknown; after: unknown }>).files).toEqual({ before: filesBaseline, after: filesChanged });
+      const filesReplay = await invokeD7("files", filesChanged, filesRequestId);
+      expect(filesReplay.response.status).toBe(200);
+      expect(filesReplay.body).toEqual(filesSaved.body);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 2);
+      const filesConflictBody = structuredClone(filesChanged);
+      filesConflictBody.translations.en.portfolio_href = `https://local.supabase.invalid/storage/v1/object/public/resume-files/${targetId}/en/${localUuid()}.pdf`;
+      const filesConflict = await invokeD7("files", filesConflictBody, filesRequestId);
+      expect(filesConflict.response.status).toBe(409);
+      expect(await readFiles()).toEqual(filesChanged);
+      expect(d7Count(await readUnifiedEvents())).toBe(initialD7Count + 2);
+    } finally {
+      localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
+        DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files') AND requirement_key='trusted_network_context_v11';
+        DELETE FROM cms_private.profile_photo_origin_config WHERE singleton`);
+    }
   });
 });

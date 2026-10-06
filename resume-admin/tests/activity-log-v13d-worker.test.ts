@@ -18,6 +18,14 @@ const projects = [{ id: null, position: 0, zh: { title: "项目", subtitle: "", 
 const contact = { translations: { zh: { contact_label: "联系", availability: "交流" }, en: { contact_label: "Contact", availability: "Open" } },
   focus: [{ id: null, position: 0, zh: { title: "项目", detail: "实践" }, en: { title: "Projects", detail: "Practice" } }],
   status: [{ id: null, position: 0, status_type: "open" as const, zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
+const websiteLinks = {
+  shared: { email: "a@example.test", github: "https://github.test/a", github_label: "GitHub", linkedin_display_name: "Name", email_label: "Email", linkedin_label: "LinkedIn" },
+  translations: { zh: { linkedin_label: "领英", linkedin_href: "https://zh.test", portfolio_label: "简历", updated_at_label: "更新" },
+    en: { linkedin_label: "LinkedIn", linkedin_href: "https://en.test", portfolio_label: "Resume", updated_at_label: "Updated" } },
+  navigation: [0, 1, 2, 3, 4].map((position) => ({ navigation_item_id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${position + 1}`, position,
+    zh: { label: `中${position}` }, en: { label: `EN ${position}` } })),
+};
+const files = { translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function jwt() {
@@ -91,6 +99,36 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
   it("canonicalizes Projects while preserving empty and locale-specific href values", () => {
     expect(JSON.parse(canonicalizeProjects(projects))).toEqual(projects);
     expect(canonicalizeProjects(projects)).toContain('"href":""');
+  });
+
+  it.each([
+    ["website_links", "/api/admin/v1/website-links/save", "canonical_website_links", websiteLinks],
+    ["files", "/api/admin/v1/files/save", "canonical_files", files],
+  ] as const)("signs and proxies %s through its typed RPC only", async (domain, path, canonicalKey, aggregate) => {
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
+      expect(body.target_resume_id).toBe(resumeId);
+      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain, operation: "update", request_id: requestId });
+      expect(String(input)).toBe(`https://local.test/rest/v1/rpc/save_resume_${domain}_v1`);
+      expect(JSON.parse(String(body[canonicalKey]))).toEqual(aggregate);
+      return Response.json(aggregate);
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request(path, { request_id: requestId, resume_id: resumeId, [domain]: aggregate }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(await response.json()).toEqual(aggregate);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["website_links", "/api/admin/v1/website-links/save", { ...websiteLinks, navigation: websiteLinks.navigation.slice(0, 4) }],
+    ["files", "/api/admin/v1/files/save", { ...files, unexpected: true }],
+  ] as const)("rejects malformed %s before upstream access", async (domain, path, aggregate) => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request(path, { request_id: requestId, resume_id: resumeId, [domain]: aggregate }), env());
+    expect(response.status).toBe(422);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("enforces representative Education UTF-8, course-description, and collection-count boundaries", async () => {

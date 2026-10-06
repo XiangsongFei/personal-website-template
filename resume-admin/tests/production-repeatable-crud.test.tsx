@@ -10,10 +10,12 @@ import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import type { ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
-import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, Locale, StatusItem } from "../src/model";
+import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, LinksSection, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 const resumeId = "batch6a-resume-id";
+const pdfCandidateUrl = (targetResumeId: string, locale: Locale, id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") =>
+  `https://storage.example.test/storage/v1/object/public/resume-files/${targetResumeId}/${locale}/${id}.pdf`;
 const cases = [
   { section: "introduction", path: "/introduction", title: "Introduction", input: "Chinese Paragraph", english: "English Paragraph", first: "这是一个双语个人网站模板。", changed: "已修改的中文段落", tableCount: 2 },
   { section: "experience", path: "/experience", title: "Experience", input: "Chinese Organization", english: "English Organization", first: "示例科技公司", changed: "已修改的中文组织", tableCount: 1 },
@@ -83,7 +85,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     hasPendingContactWorkerSave: vi.fn(() => false), discardPendingContactSave: vi.fn(),
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
-    updatePublicLinks: vi.fn(), updateSiteText: vi.fn(), updateNavigationLabel: vi.fn(),
+    updatePublicLinks: vi.fn(), updateSiteText: vi.fn(async (targetResumeId: string, locale: Locale, fields: Partial<LinksSection["translations"][Locale]>) => { void targetResumeId; void locale; void fields; }), updateNavigationLabel: vi.fn(),
     loadAdminFeatureState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct", introductionTrustedContextRequired: options.introductionTrustedContextRequired ?? false })),
     loadAdminAwardsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId,
       activityLogEnabled: options.activityLogEnabled ?? options.awardsWriteMode === "rpc",
@@ -109,12 +111,18 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     }),
     hasPendingProjectsWorkerSave: vi.fn(() => false), discardPendingProjectsSave: vi.fn(),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
+    loadAdminWebsiteLinksWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "website_links" as const, activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false })),
+    loadAdminFilesWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "files" as const, activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false })),
+    saveFilesWithWorker: vi.fn(async (_targetResumeId: string, files: { translations: Record<Locale, { portfolio_href: string }> }) => structuredClone(files)),
+    hasPendingFilesWorkerSave: vi.fn(() => false),
+    retryPendingFilesWithWorker: vi.fn(async () => ({ translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } })),
+    deleteManagedResumePdf: vi.fn(async (targetResumeId: string, locale: Locale, reference: string): Promise<"deleted" | "already-absent" | "not-managed" | "still-referenced" | "unverified" | "failed"> => { void targetResumeId; void locale; void reference; return "deleted"; }),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
       return structuredClone(draft);
     }),
     saveIntroductionWithWorker: vi.fn(async (_resumeId: string, draft: IntroItem[]) => structuredClone(draft)),
-    uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => `https://storage.example.test/${targetResumeId}/resume_${locale}.pdf?cacheNonce=repository-version`),
+    uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => pdfCandidateUrl(targetResumeId, locale)),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile), loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -156,7 +164,29 @@ async function waitForField(id: string): Promise<HTMLInputElement | HTMLTextArea
   await waitFor(() => expect(document.getElementById(id)).toBeTruthy());
   return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement;
 }
-afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+function openLinksAtResume(repository: ResumeRepository, links: typeof fixtureSections.links, targetResumeId = "11111111-1111-4111-8111-111111111111") {
+  const resume: LoadedResume = { resumeId: targetResumeId, siteKey: "example-cv", isPublished: true, updatedAt: null,
+    sections: { ...structuredClone(fixtureSections), links: structuredClone(links) } };
+  return render(<UiLocaleProvider><MemoryRouter initialEntries={["/links"]}>
+    <App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} repository={repository} />
+  </MemoryRouter></UiLocaleProvider>);
+}
+function managedPdfUrl(targetResumeId: string, locale: Locale, id: string) {
+  return `https://storage.example.test/storage/v1/object/public/resume-files/${targetResumeId}/${locale}/${id}.pdf`;
+}
+function pdfFile(content: string, name: string, lastModified = 1) {
+  const file = new File([content], name, { type: "application/pdf", lastModified });
+  Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode(content).buffer });
+  return file;
+}
+function selectBothPdfs() {
+  const zh = pdfFile("%PDF zh", "resume-zh.pdf", 10);
+  const en = pdfFile("%PDF en", "resume-en.pdf", 20);
+  fireEvent.change(screen.getByLabelText("Chinese Resume PDF"), { target: { files: [zh] } });
+  fireEvent.change(screen.getByLabelText("English Resume PDF"), { target: { files: [en] } });
+  return { zh, en };
+}
+afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Batch 6A production repeatable CRUD", () => {
   it.each([
@@ -2323,7 +2353,7 @@ describe("Batch 6A production repeatable CRUD", () => {
 
   it("saves a PDF after SPA navigation with only the canonical resume ID available", async () => {
     const { repository, methods } = makeRepository("skills");
-    const savedPdfUrl = `https://storage.example.test/${resumeId}/resume_zh.pdf?cacheNonce=spa-fallback`;
+    const savedPdfUrl = pdfCandidateUrl(resumeId, "zh");
     methods.uploadResumePdf.mockResolvedValueOnce(savedPdfUrl);
     const canonicalResume: LoadedResume = {
       resumeId,
@@ -2339,7 +2369,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     </MemoryRouter></UiLocaleProvider>);
 
     fireEvent.click(screen.getByRole("button", { name: "Open Links" }));
-    const file = new File(["%PDF-1.7 test"], "spa-resume-zh.pdf", { type: "application/pdf" });
+    const file = pdfFile("%PDF-1.7 test", "spa-resume-zh.pdf");
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
 
     expect(screen.getByText("Selected: spa-resume-zh.pdf")).toBeTruthy();
@@ -2363,11 +2393,11 @@ describe("Batch 6A production repeatable CRUD", () => {
     ["en", "English Resume PDF", "Fei_XiangSong_English_Resume.pdf"],
   ] as const)("keeps a valid %s PDF selection as a draft and saves its stable public URL only on Save", async (locale, inputName, filename) => {
     const { repository, methods } = makeRepository("skills");
-    const savedPdfUrl = `https://storage.example.test/${resumeId}/resume_${locale}.pdf?cacheNonce=saved-version`;
+    const savedPdfUrl = pdfCandidateUrl(resumeId, locale);
     methods.uploadResumePdf.mockResolvedValueOnce(savedPdfUrl);
     open({ path: "/links" }, repository);
     const input = await screen.findByLabelText(inputName);
-    const file = new File(["%PDF-1.7 test"], filename, { type: "application/pdf" });
+    const file = pdfFile("%PDF-1.7 test", filename);
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText(`Selected: ${filename}`)).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
@@ -2380,16 +2410,207 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, locale, {
       portfolioHref: savedPdfUrl,
     });
-    expect(new URL(savedPdfUrl).pathname).toBe(`/${resumeId}/resume_${locale}.pdf`);
+    expect(new URL(savedPdfUrl).pathname).toBe(`/storage/v1/object/public/resume-files/${resumeId}/${locale}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf`);
     expect(screen.getByRole("link", { name: `Current PDF: ${filename}` }).getAttribute("href")).toBe(savedPdfUrl);
     expect(screen.queryByText(`Selected: ${filename}`)).toBeNull();
+  });
+
+  it("saves both direct-mode Files locales independently and cleans only superseded managed objects", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(1).buffer) } });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    links.translations.zh.portfolioHref = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    links.translations.en.portfolioHref = managedPdfUrl(target, "en", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    const authoritative = structuredClone(links);
+    setup.repository.loadLinks = vi.fn(async () => structuredClone(authoritative));
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"));
+    setup.methods.updateSiteText.mockImplementation(async (_resume, locale, fields) => {
+      if (fields.portfolioHref) authoritative.translations[locale].portfolioHref = fields.portfolioHref;
+    });
+    openLinksAtResume(setup.repository, links, target);
+    const selected = selectBothPdfs();
+    save();
+
+    await screen.findByText("Site & link changes saved.");
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledTimes(2);
+    expect(setup.methods.updateSiteText.mock.calls.map(([, locale]) => locale)).toEqual(["zh", "en"]);
+    expect(authoritative.translations.zh.portfolioHref).toContain("/zh/cccccccc-");
+    expect(authoritative.translations.en.portfolioHref).toContain("/en/cccccccc-");
+    expect(setup.methods.deleteManagedResumePdf.mock.calls.map(([, locale]) => locale)).toEqual(["zh", "en"]);
+    expect(screen.queryByText(`Selected: ${selected.zh.name}`)).toBeNull();
+    expect(screen.queryByText(`Selected: ${selected.en.name}`)).toBeNull();
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+  });
+
+  it.each([
+    { failedLocale: "en" as const, savedLocale: "zh" as const },
+    { failedLocale: "zh" as const, savedLocale: "en" as const },
+  ])("represents direct Files partial persistence truthfully when $failedLocale fails", async ({ failedLocale, savedLocale }) => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(2).buffer) } });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    links.translations.zh.portfolioHref = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    links.translations.en.portfolioHref = managedPdfUrl(target, "en", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    const original = { zh: links.translations.zh.portfolioHref, en: links.translations.en.portfolioHref };
+    const authoritative = structuredClone(links);
+    setup.repository.loadLinks = vi.fn(async () => structuredClone(authoritative));
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    setup.methods.updateSiteText.mockImplementation(async (_resume, locale, fields) => {
+      if (locale === failedLocale) throw new Error("second locale write rejected");
+      if (fields.portfolioHref) authoritative.translations[locale].portfolioHref = fields.portfolioHref;
+    });
+    setup.methods.deleteManagedResumePdf.mockImplementation(async (_resume, locale, reference) => {
+      if (locale === failedLocale) return "deleted";
+      return reference === original[locale] ? "deleted" : "still-referenced";
+    });
+    openLinksAtResume(setup.repository, links, target);
+    const selected = selectBothPdfs();
+    save();
+
+    expect(await screen.findByText(new RegExp(`${savedLocale === "zh" ? "Chinese" : "English"} PDF saved`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${failedLocale === "zh" ? "Chinese" : "English"} PDF was not saved`))).toBeTruthy();
+    expect(authoritative.translations[savedLocale].portfolioHref).toContain(`/${savedLocale}/`);
+    expect(authoritative.translations[failedLocale].portfolioHref).toBe(original[failedLocale]);
+    expect(setup.methods.updateSiteText.mock.calls.map(([, locale]) => locale)).toEqual(["zh", "en"]);
+    expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, failedLocale, expect.stringContaining(`/${failedLocale}/`));
+    expect(screen.queryByText(`Selected: ${selected[savedLocale].name}`)).toBeNull();
+    expect(screen.getByText(`Selected: ${selected[failedLocale].name}`)).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect([...document.querySelectorAll<HTMLAnchorElement>(".links-editor-scope a[href]")].some(link => link.href === authoritative.translations[savedLocale].portfolioHref)).toBe(true);
+  });
+
+  it("keeps a confirmed direct Files save successful when superseded-object cleanup fails", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(3).buffer) } });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    links.translations.zh.portfolioHref = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const authoritative = structuredClone(links);
+    setup.repository.loadLinks = vi.fn(async () => structuredClone(authoritative));
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"));
+    setup.methods.updateSiteText.mockImplementation(async (_resume, locale, fields) => { if (fields.portfolioHref) authoritative.translations[locale].portfolioHref = fields.portfolioHref; });
+    setup.methods.deleteManagedResumePdf.mockResolvedValue(false as never);
+    openLinksAtResume(setup.repository, links, target);
+    selectBothPdfs();
+    fireEvent.change(screen.getByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF zh", "resume-zh.pdf", 10)] } });
+    save();
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/cleanup needs attention/i);
+    expect(authoritative.translations.zh.portfolioHref).toContain("/zh/cccccccc-");
+    expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Selected: resume-zh.pdf")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/cleanup needs attention/i);
+  });
+
+  it("cleans an unreferenced failed-locale candidate and warns if that cleanup fails", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(4).buffer) } });
+    for (const cleanupResult of ["deleted", "failed"] as const) {
+      cleanup(); window.sessionStorage.clear();
+      const setup = makeRepository("skills");
+      const links = structuredClone(fixtureSections.links);
+      links.translations.zh.portfolioHref = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+      const authoritative = structuredClone(links);
+      setup.repository.loadLinks = vi.fn(async () => structuredClone(authoritative));
+      setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"));
+      setup.methods.updateSiteText.mockRejectedValue(new Error("write rejected"));
+      setup.methods.deleteManagedResumePdf.mockResolvedValue(cleanupResult);
+      openLinksAtResume(setup.repository, links, target);
+      fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF zh", "resume-zh.pdf", 10)] } });
+      save();
+      expect(await screen.findByText(/Chinese PDF was not saved/)).toBeTruthy();
+      expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, "zh", expect.stringContaining("/zh/cccccccc-"));
+      expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
+      if (cleanupResult === "failed") expect(screen.getByRole("alert").textContent).toMatch(/Storage cleanup needs attention/i);
+      else expect(screen.getByRole("alert").textContent).not.toMatch(/Storage cleanup needs attention/i);
+    }
+  });
+
+  it("does not overwrite a third authoritative reference when retrying an ambiguous direct Files save", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(7).buffer) } });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    const authoritative = structuredClone(links);
+    const thirdReference = "https://legacy.example.test/current-resume.pdf";
+    setup.repository.loadLinks = vi.fn(async () => structuredClone(authoritative));
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"));
+    setup.methods.updateSiteText.mockImplementationOnce(async () => {
+      authoritative.translations.zh.portfolioHref = thirdReference;
+      throw new Error("ambiguous response after concurrent reference change");
+    });
+    openLinksAtResume(setup.repository, links, target);
+    const selected = pdfFile("%PDF zh", "resume-zh.pdf", 10);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [selected] } });
+    save();
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/result is unresolved; do not upload again/i);
+    expect(authoritative.translations.zh.portfolioHref).toBe(thirdReference);
+    expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
+    save();
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/result is unresolved; do not upload again/i);
+    expect(setup.methods.updateSiteText).toHaveBeenCalledTimes(1);
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledTimes(1);
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+    expect(authoritative.translations.zh.portfolioHref).toBe(thirdReference);
+    expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("keeps RPC-mode dual-locale Files saving in one transaction with no direct fallback", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(5).buffer) } });
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    openLinksAtResume(setup.repository, links, target);
+    selectBothPdfs();
+    save();
+
+    await screen.findByText("Site & link changes saved.");
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, { translations: {
+      zh: { portfolio_href: expect.stringContaining("/zh/") }, en: { portfolio_href: expect.stringContaining("/en/") },
+    } });
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
+  it("retains RPC-mode dual-locale selections and references when the transactional save fails", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(6).buffer) } });
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    setup.methods.saveFilesWithWorker.mockRejectedValue(new Error("transaction rejected"));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    openLinksAtResume(setup.repository, links, target);
+    selectBothPdfs();
+    save();
+
+    expect(await screen.findByText(/Files save was rejected/)).toBeTruthy();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
+    expect(screen.getByText("Selected: resume-en.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
   it("marks both pending PDF locales dirty and Cancel discards them without uploading", async () => {
     const { repository, methods } = makeRepository("skills");
     open({ path: "/links" }, repository);
-    const chinese = new File(["%PDF zh"], "draft-zh.pdf", { type: "application/pdf" });
-    const english = new File(["%PDF en"], "draft-en.pdf", { type: "application/pdf" });
+    const chinese = pdfFile("%PDF zh", "draft-zh.pdf");
+    const english = pdfFile("%PDF en", "draft-en.pdf");
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [chinese] } });
     fireEvent.change(screen.getByLabelText("English Resume PDF"), { target: { files: [english] } });
 
@@ -2417,7 +2638,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByRole("link", { name: "Current PDF: Fei_XiangSong_Resume.pdf" })).toBeTruthy();
 
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), {
-      target: { files: [new File(["%PDF"], "测试新版.pdf", { type: "application/pdf" })] },
+      target: { files: [pdfFile("%PDF", "测试新版.pdf")] },
     });
     expect(screen.getByText("Selected: 测试新版.pdf")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Current PDF: 费湘淞_中文简历.pdf" })).toBeTruthy();
@@ -2458,10 +2679,10 @@ describe("Batch 6A production repeatable CRUD", () => {
     methods.uploadResumePdf.mockRejectedValueOnce(new Error("Resume PDF upload failed."));
     open({ path: "/links" }, repository);
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), {
-      target: { files: [new File(["%PDF"], "resume.pdf", { type: "application/pdf" })] },
+      target: { files: [pdfFile("%PDF", "resume.pdf")] },
     });
     save();
-    expect((await screen.findByRole("alert")).textContent).toBe("Resume PDF upload failed.");
+    expect((await screen.findByRole("alert")).textContent).toContain("Chinese PDF was not saved; keep its selection and retry");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(screen.getByText("Selected: resume.pdf")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save site & link changes" }).hasAttribute("disabled")).toBe(false);
@@ -2471,7 +2692,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(2);
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", {
-      portfolioHref: `https://storage.example.test/${resumeId}/resume_zh.pdf?cacheNonce=repository-version`,
+      portfolioHref: pdfCandidateUrl(resumeId, "zh"),
     });
   });
 
@@ -2479,11 +2700,11 @@ describe("Batch 6A production repeatable CRUD", () => {
     const { repository, methods } = makeRepository("skills");
     methods.updateSiteText.mockRejectedValueOnce(new Error("temporary site text failure"));
     open({ path: "/links" }, repository);
-    const file = new File(["%PDF"], "retryable-en.pdf", { type: "application/pdf" });
+    const file = pdfFile("%PDF", "retryable-en.pdf");
     fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [file] } });
 
     save();
-    expect((await screen.findByRole("alert")).textContent).toBe("temporary site text failure");
+    expect((await screen.findByRole("alert")).textContent).toContain("English PDF was not saved; keep its selection and retry");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(screen.getByText("Selected: retryable-en.pdf")).toBeTruthy();
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(1);
@@ -2493,13 +2714,13 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(2);
     expect(methods.updateSiteText).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("link", { name: "Current PDF: retryable-en.pdf" }).getAttribute("href")).toBe(`https://storage.example.test/${resumeId}/resume_en.pdf?cacheNonce=repository-version`);
+    expect(screen.getByRole("link", { name: "Current PDF: retryable-en.pdf" }).getAttribute("href")).toBe(pdfCandidateUrl(resumeId, "en"));
   });
 
   it("retains selected PDF files across route navigation until Save or Cancel", async () => {
     const { repository, methods } = makeRepository("skills");
     open({ path: "/links" }, repository);
-    const file = new File(["%PDF"], "keep-this-draft.pdf", { type: "application/pdf" });
+    const file = pdfFile("%PDF", "keep-this-draft.pdf");
     fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("link", { name: "Overview" }));
     await screen.findByRole("heading", { name: "Overview" });

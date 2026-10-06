@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeProfileActivity, describeProjectsActivity } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeFilesActivity, describeProfileActivity, describeProjectsActivity, describeWebsiteLinksActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ActivityLogV13CSuccessEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -87,6 +87,32 @@ describe("Activity Log page", () => {
       entitySnapshot: { skills: [secondSkill, firstSkill] }, changes: { skills: { before: [firstSkill, secondSkill], after: [secondSkill, firstSkill] } },
       eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
     expect(describeExperienceSkillsActivity(reordered)).toEqual([{ kind: "Reordered", label: "Skills" }]);
+  });
+
+  it("decodes and renders the explicit Website Links and Files V2 contracts without exposing a file URL", async () => {
+    const websiteBefore = { shared: { email: "a@example.test", github: "", github_label: "GitHub", linkedin_display_name: "Name", email_label: "Email", linkedin_label: "LinkedIn" },
+      translations: { zh: { linkedin_label: "领英", linkedin_href: "", portfolio_label: "简历", updated_at_label: "更新" }, en: { linkedin_label: "LinkedIn", linkedin_href: "", portfolio_label: "Resume", updated_at_label: "Updated" } },
+      navigation: [0, 1, 2, 3, 4].map(position => ({ navigation_item_id: `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${position + 1}`, position, zh: { label: `中文${position}` }, en: { label: `English ${position}` } })) };
+    const websiteAfter = structuredClone(websiteBefore);
+    websiteAfter.translations.en.updated_at_label = "Updated on";
+    const base = event("website-links-v2");
+    const websiteEvent: ActivityLogV13CEvent = { ...base, section: "website_links", entityType: "website_links_settings", entityId: null,
+      entitySnapshot: { website_links: websiteAfter }, changes: { website_links: { before: websiteBefore, after: websiteAfter } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeWebsiteLinksActivity(websiteEvent)).toEqual([{ kind: "Updated", label: "Site text", locale: "English", field: "Updated-at label", before: "Updated", after: "Updated on" }]);
+
+    const filesBefore = { translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } };
+    const filesAfter = { translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "https://storage.example.test/storage/v1/object/public/resume-files/qa-resume/en/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf" } } };
+    const fileEvent: ActivityLogV13CEvent = { ...base, id: "files-v2", section: "files", entityType: "resume_file_set", entityId: null,
+      entitySnapshot: { files: filesAfter }, changes: { files: { before: filesBefore, after: filesAfter } },
+      eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeFilesActivity(fileEvent)).toEqual([{ kind: "Updated", label: "Resume files", locale: "English", field: "Resume PDF", before: "Not set", after: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf" }]);
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPage: vi.fn().mockResolvedValue([fileEvent]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    expect(await screen.findByRole("heading", { name: "Files" })).toBeTruthy();
+    expect(screen.getByText(/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\.pdf/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("storage.example.test");
   });
 
   it("renders V2 Experience/Skills semantic rows in English and Chinese", async () => {

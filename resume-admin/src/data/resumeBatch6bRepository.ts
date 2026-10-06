@@ -2,11 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FocusItem, LinksSection, Locale, ProjectItem, StatusItem } from "../model";
 import { profilePhotoExtension, validateProfilePhoto } from "./profilePhoto";
 import { managedProfilePhotoObjectPath } from "./profilePhotoStorage";
+import { managedResumePdfObjectPath } from "./websiteFilesAggregate";
 
 type Row = Record<string, unknown>;
 type OrderedParent = { resumeId: string; entryId: string; position: number; sourceKey: string | null; statusType?: StatusItem["statusType"] };
 type Translation<K> = { resumeId: string; entryId: string; locale: Locale; translation: K };
 type MethodRow = { resumeId: string; projectId: string; methodId: string; locale: Locale; position: number; value: string };
+export type ManagedResumePdfCleanupResult = "deleted" | "already-absent" | "not-managed" | "still-referenced" | "unverified" | "failed";
 let uploadIdCounter = 0;
 const tableSpec = {
   focus: { parent: "resume_contact_focus_items", translations: "resume_contact_focus_translations", fk: "focus_item_id" },
@@ -147,15 +149,24 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
       validateLocale(locale);
       if (!(file instanceof File) || file.type !== "application/pdf") throw new Error("Resume PDF must be a PDF file.");
       if (file.size > 10 * 1024 * 1024) throw new Error("Resume PDF must be 10 MB or smaller.");
-      const path = `${resumeId}/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
+      const path = `${resumeId}/${locale}/${createUploadId()}.pdf`;
       const bucket = client.storage.from("resume-files");
-      const { error } = await bucket.upload(path, file, { upsert: true, contentType: "application/pdf", cacheControl: "60", metadata: { originalFilename: file.name } });
+      const { error } = await bucket.upload(path, file, { upsert: false, contentType: "application/pdf", cacheControl: "31536000", metadata: { originalFilename: file.name } });
       if (error) throw new Error("Resume PDF upload failed.");
       const { data } = bucket.getPublicUrl(path);
-      if (!data.publicUrl) throw new Error("Resume PDF public URL was not returned.");
-      const publicUrl = new URL(data.publicUrl);
-      publicUrl.searchParams.set("cacheNonce", createUploadId());
-      return publicUrl.toString();
+      if (!data.publicUrl || !managedResumePdfObjectPath(supabaseUrl, resumeId, locale, data.publicUrl)) throw new Error("Resume PDF public URL was not canonical.");
+      return data.publicUrl;
+    },
+    deleteManagedResumePdf: async (resumeId: string, locale: Locale, reference: string): Promise<ManagedResumePdfCleanupResult> => {
+      assertIdentity(resumeId); validateLocale(locale);
+      const objectPath = managedResumePdfObjectPath(supabaseUrl, resumeId, locale, reference);
+      if (!objectPath) return "not-managed";
+      const { data: rows, error: readError } = await client.from("resume_locale_content").select("portfolio_href").eq("resume_id", resumeId).in("locale", ["zh", "en"]);
+      if (readError || !Array.isArray(rows) || rows.length !== 2) return "unverified";
+      if (rows.some(row => row.portfolio_href === reference)) return "still-referenced";
+      const { data, error } = await client.storage.from("resume-files").remove([objectPath]);
+      if (error || !Array.isArray(data) || data.length > 1) return "failed";
+      return data.length === 1 ? "deleted" : "already-absent";
     },
     updateProjectPosition: (resumeId: string, id: string, position: number) => updatePosition("projects", resumeId, id, position),
     insertProject: (resumeId: string, position: number) => insertParent("projects", resumeId, position),

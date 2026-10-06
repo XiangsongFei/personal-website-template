@@ -4,6 +4,7 @@ import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "re
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
 import { AggregateWorkerSaveError, type AdminFeatureState, type EditableRepeatableSection, type EditableTranslation, type ResumeRepository, type UpdatedEducationEntryRow, type UpdatedEducationTranslationRow, type UpdatedProfileRow, type UpdatedProfileTranslationRow } from "./data/resumeRepository";
+import { managedResumePdfObjectPath, validateWebsiteLinksAggregate, type FilesAggregate, type WebsiteLinksAggregate } from "./data/websiteFilesAggregate";
 import type {
   AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
@@ -633,11 +634,12 @@ function EditorFooterState({ dirty, message = "", error = false }: { dirty: bool
   </span>;
 }
 
-function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText }: {
+type ProductionSaveNotice<T> = { __productionSaveNotice: true; value: T; message: string; warning: boolean; keepProductionDraft?: boolean; savedPdfLocales?: Locale[] };
+function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, onProductionPartialSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void, confirmed: T) => ReactNode;
-  productionSave?: (draft: T, baseline: T) => Promise<T | void>;
-  productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void; quietCancelNotice?: boolean;
+  productionSave?: (draft: T, baseline: T) => Promise<T | void | ProductionSaveNotice<T>>;
+  productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void; onProductionPartialSaved?: (savedLocales: Locale[]) => void; quietCancelNotice?: boolean;
   hidePageHeading?: boolean; hideSaveModeNotice?: boolean; saveLabel?: string;
   sectionText?: ReturnType<typeof useSectionText>;
 }) {
@@ -666,7 +668,7 @@ function SectionForm<T>({ section, title, description, initial, children, produc
         return;
       }
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
-      try { const sectionTextSaved = sectionText ? await sectionText.save() : true; const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const confirmed = result ?? editor.draft; context.onBilingualSave(changedKeys); editor.confirm(confirmed); onProductionSaved?.(); setSaveError(!sectionTextSaved); editor.setMessage(sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish."); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
+      try { const sectionTextSaved = sectionText ? await sectionText.save() : true; const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved); const notice = result && typeof result === "object" && "__productionSaveNotice" in result ? result as ProductionSaveNotice<T> : null; const confirmed: T = notice ? notice.value : ((result as T | void) ?? editor.draft); context.onBilingualSave(changedKeys); editor.confirm(confirmed); if (notice?.keepProductionDraft) onProductionPartialSaved?.(notice.savedPdfLocales ?? []); else onProductionSaved?.(); setSaveError(Boolean(notice?.warning) || !sectionTextSaved); editor.setMessage(notice?.message ?? (sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish.")); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
       finally { saveLock.current = false; setSaving(false); }
       return;
@@ -2597,32 +2599,209 @@ async function saveContactProduction(repository: ResumeRepository, resumeId: str
   return confirmed;
 }
 
-async function saveLinksProduction(repository: ResumeRepository, resumeId: string, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}): Promise<LinksSection> {
-  if (!repository.updatePublicLinks || !repository.updateSiteText || !repository.updateNavigationLabel) throw new Error("Links & Site Text production writes are unavailable.");
-  const shared: Partial<LinksSection["shared"]> = {};
-  for (const key of Object.keys(next.shared) as (keyof LinksSection["shared"])[]) if (next.shared[key] !== baseline.shared[key]) shared[key] = next.shared[key];
-  if (Object.keys(shared).length) await repository.updatePublicLinks(resumeId, shared);
-  const confirmed = structuredClone(next);
-  for (const locale of ["zh", "en"] as const) {
-    const fields: Partial<LinksSection["translations"][Locale]> = {};
-    for (const key of Object.keys(next.translations[locale]) as (keyof LinksSection["translations"][Locale])[]) if (next.translations[locale][key] !== baseline.translations[locale][key]) fields[key] = next.translations[locale][key];
-    const file = pdfFiles[locale];
-    if (file) {
-      if (!repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
-      fields.portfolioHref = await repository.uploadResumePdf(resumeId, locale, file);
-      confirmed.translations[locale].portfolioHref = fields.portfolioHref;
-    }
-    if (Object.keys(fields).length) await repository.updateSiteText(resumeId, locale, fields);
-    if (file) {
-      confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: file.name };
-    }
-  }
+type DirectPdfPending = { candidateHref: string; oldHref: string; fileName: string; fileSize: number; fileLastModified: number; fingerprint: string };
+const directPdfPendingKey = (resumeId: string, locale: Locale) => `admin-files-direct-pending-v1:${resumeId}:${locale}`;
+function readDirectPdfPending(resumeId: string, locale: Locale): DirectPdfPending | null {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(directPdfPendingKey(resumeId, locale));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (Object.keys(value).sort().join(",") !== "candidateHref,fileLastModified,fileName,fileSize,fingerprint,oldHref"
+      || typeof value.candidateHref !== "string" || typeof value.oldHref !== "string" || typeof value.fileName !== "string"
+      || !Number.isSafeInteger(value.fileSize) || !Number.isSafeInteger(value.fileLastModified)
+      || typeof value.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.fingerprint)
+      || !managedResumePdfObjectPath(import.meta.env.VITE_SUPABASE_URL, resumeId, locale, value.candidateHref)) throw new Error("invalid pending state");
+    return value as DirectPdfPending;
+  } catch { throw new Error("A pending direct Files request cannot be verified safely. Keep the current draft unchanged."); }
+}
+function writeDirectPdfPending(resumeId: string, locale: Locale, value: DirectPdfPending): void {
+  try { if (!globalThis.sessionStorage) throw new Error("unavailable"); globalThis.sessionStorage.setItem(directPdfPendingKey(resumeId, locale), JSON.stringify(value)); }
+  catch { throw new Error("The direct Files request could not be stored safely before saving."); }
+}
+function clearDirectPdfPending(resumeId: string, locale: Locale): void {
+  try { globalThis.sessionStorage?.removeItem(directPdfPendingKey(resumeId, locale)); } catch { /* Keep a safe pending marker if storage is unavailable. */ }
+}
+function hasDirectPdfPending(resumeId: string): boolean {
+  try { return (["zh", "en"] as const).some(locale => Boolean(globalThis.sessionStorage?.getItem(directPdfPendingKey(resumeId, locale)))); }
+  catch { return true; }
+}
+async function fileFingerprint(file: File): Promise<string> {
+  if (!globalThis.crypto?.subtle) throw new Error("Secure PDF retry verification is unavailable.");
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function cleanupNeedsWarning(result: unknown): boolean {
+  return result !== "deleted" && result !== "already-absent" && result !== "not-managed" && result !== "still-referenced";
+}
+
+async function saveLinksProduction(repository: ResumeRepository, resumeId: string, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}): Promise<LinksSection | ProductionSaveNotice<LinksSection>> {
+  if (!repository.updatePublicLinks || !repository.updateSiteText || !repository.updateNavigationLabel) throw new Error("Website & Links / Files production writes are unavailable.");
+  if (next.navigation.length !== 5 || baseline.navigation.length !== 5) throw new Error("Navigation structure is fixed; only the five existing labels may be edited.");
   for (const item of next.navigation) {
-    const old = baseline.navigation.find(value=>value.id===item.id);
-    if (!old || old.position !== item.position || old.sectionId !== item.sectionId || old.sourceKey !== item.sourceKey) throw new Error("Navigation structure is fixed; only labels may be edited.");
-    for (const locale of ["zh", "en"] as const) if (item.translations[locale].label !== old.translations[locale].label) await repository.updateNavigationLabel(resumeId, item.id, locale, item.translations[locale].label);
+    const old = baseline.navigation.find(value => value.id === item.id);
+    if (!old || old.position !== item.position || old.sectionId !== item.sectionId || old.sourceKey !== item.sourceKey) throw new Error("Navigation identity and order are fixed; only labels may be edited.");
   }
-  if (next.navigation.length !== baseline.navigation.length) throw new Error("Navigation structure is fixed; only labels may be edited.");
+  const confirmed = structuredClone(next);
+  const shared: Partial<LinksSection["shared"]> = {};
+  for (const key of Object.keys(next.shared) as Array<keyof LinksSection["shared"]>) if (next.shared[key] !== baseline.shared[key]) shared[key] = next.shared[key];
+  const websiteTranslationKeys = ["linkedInLabel", "linkedInHref", "portfolioLabel", "updatedAtLabel"] as const;
+  const websiteChanged = Object.keys(shared).length > 0 || (["zh", "en"] as const).some(locale => websiteTranslationKeys.some(key => next.translations[locale][key] !== baseline.translations[locale][key]))
+    || next.navigation.some(item => (["zh", "en"] as const).some(locale => item.translations[locale].label !== baseline.navigation.find(old => old.id === item.id)!.translations[locale].label));
+  let websiteSaved = false;
+  if (websiteChanged) {
+    const state = await repository.loadAdminWebsiteLinksWriteState?.(resumeId);
+    if (!state || state.resumeId !== resumeId || state.domain !== "website_links") throw new Error("Website & Links write state is unavailable.");
+    if (state.writeMode === "rpc") {
+      if (!state.activityLogEnabled || !state.trustedContextRequired || !repository.saveWebsiteLinksWithWorker) throw new Error("Secure Website & Links RPC saving is not fully enabled.");
+      const payload: WebsiteLinksAggregate = validateWebsiteLinksAggregate({
+        shared: { email: next.shared.email, github: next.shared.github, github_label: next.shared.githubLabel, linkedin_display_name: next.shared.linkedInDisplayName, email_label: next.shared.emailLabel, linkedin_label: next.shared.linkedInLabel },
+        translations: Object.fromEntries((["zh", "en"] as const).map(locale => [locale, { linkedin_label: next.translations[locale].linkedInLabel,
+          linkedin_href: next.translations[locale].linkedInHref, portfolio_label: next.translations[locale].portfolioLabel, updated_at_label: next.translations[locale].updatedAtLabel }])) as WebsiteLinksAggregate["translations"],
+        navigation: next.navigation.map(item => ({ navigation_item_id: item.id, position: item.position, zh: { label: item.translations.zh.label }, en: { label: item.translations.en.label } })),
+      });
+      await repository.saveWebsiteLinksWithWorker(resumeId, next);
+      if (!payload) throw new Error("Website & Links aggregate validation failed.");
+    } else {
+      if (Object.keys(shared).length) await repository.updatePublicLinks(resumeId, shared);
+      for (const locale of ["zh", "en"] as const) {
+        const fields: Partial<LinksSection["translations"][Locale]> = {};
+        for (const key of websiteTranslationKeys) if (next.translations[locale][key] !== baseline.translations[locale][key]) fields[key] = next.translations[locale][key];
+        if (Object.keys(fields).length) await repository.updateSiteText(resumeId, locale, fields);
+      }
+      for (const item of next.navigation) for (const locale of ["zh", "en"] as const)
+        if (item.translations[locale].label !== baseline.navigation.find(value => value.id === item.id)!.translations[locale].label)
+          await repository.updateNavigationLabel(resumeId, item.id, locale, item.translations[locale].label);
+    }
+    websiteSaved = true;
+  }
+
+  const selectedLocales = (["zh", "en"] as const).filter(locale => Boolean(pdfFiles[locale]));
+  let fileState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminFilesWriteState"]>>> | null = null;
+  const directPending: Partial<Record<Locale, DirectPdfPending>> = {};
+  for (const locale of ["zh", "en"] as const) directPending[locale] = readDirectPdfPending(resumeId, locale) ?? undefined;
+  const filesLocales = (["zh", "en"] as const).filter(locale => Boolean(pdfFiles[locale] || directPending[locale]));
+  const partialNotice = (message: string, savedPdfLocales: Locale[] = [], keepDraft = true): ProductionSaveNotice<LinksSection> => ({
+    __productionSaveNotice: true, value: confirmed, message: websiteSaved ? `Website & Links saved. ${message}` : message,
+    warning: true, keepProductionDraft: keepDraft, savedPdfLocales,
+  });
+  if (filesLocales.length) {
+    try { fileState = await repository.loadAdminFilesWriteState?.(resumeId) ?? null; }
+    catch { return partialNotice("Files state could not be confirmed. The selected PDFs remain available."); }
+    if (!fileState || fileState.resumeId !== resumeId || fileState.domain !== "files") return partialNotice("Files state is unavailable. The selected PDFs remain available.");
+    if (fileState.writeMode === "rpc" && (!fileState.activityLogEnabled || !fileState.trustedContextRequired || !repository.saveFilesWithWorker)) return partialNotice("Secure Files RPC saving is not fully enabled. The selected PDFs remain available.");
+    if (fileState.writeMode === "rpc" && Object.values(directPending).some(Boolean)) return partialNotice("A prior direct Files request needs reconciliation before RPC-mode saving.");
+    const oldRefs = { zh: baseline.translations.zh.portfolioHref, en: baseline.translations.en.portfolioHref };
+    let saved: FilesAggregate;
+    if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId)) {
+      if (!repository.retryPendingFilesWithWorker) throw new Error("A pending Files request requires exact retry support.");
+      saved = await repository.retryPendingFilesWithWorker(resumeId);
+      confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
+      confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
+      return { __productionSaveNotice: true, value: confirmed, warning: false, keepProductionDraft: true,
+        message: "The pending Files request was confirmed. Your current file selection remains unsaved; review it before saving again." };
+    }
+    if (fileState.writeMode === "rpc") {
+      if (!repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
+      const refs = { ...oldRefs };
+      try { for (const locale of selectedLocales) refs[locale] = await repository.uploadResumePdf(resumeId, locale, pdfFiles[locale]!); }
+      catch { return partialNotice("PDF upload failed; authoritative references remain unchanged and your selection is retained."); }
+      saved = { translations: { zh: { portfolio_href: refs.zh }, en: { portfolio_href: refs.en } } };
+      try { saved = await repository.saveFilesWithWorker!(resumeId, saved); }
+      catch (error) {
+        const uncertain = error instanceof AggregateWorkerSaveError && (error.uncertain || error.message.includes("conflicts"));
+        let candidateCleanupWarning = false;
+        if (!uncertain) for (const locale of selectedLocales) try {
+          const cleanup = await repository.deleteManagedResumePdf?.(resumeId, locale, refs[locale]);
+          candidateCleanupWarning ||= cleanupNeedsWarning(cleanup ?? "unverified") || cleanup === "still-referenced";
+        } catch { candidateCleanupWarning = true; }
+        const rejection = "Files save was rejected; old authoritative references were retained and your selections remain available.";
+        return partialNotice(uncertain ? "Files save is uncertain; keep this request and do not upload again. Candidate cleanup was deferred." : `${rejection}${candidateCleanupWarning ? " Candidate Storage cleanup needs attention." : ""}`);
+      }
+      confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
+      confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
+      for (const locale of selectedLocales) confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pdfFiles[locale]!.name };
+      let cleanupWarning = false;
+      for (const locale of selectedLocales) if (oldRefs[locale] && oldRefs[locale] !== saved.translations[locale].portfolio_href && managedResumePdfObjectPath(import.meta.env.VITE_SUPABASE_URL, resumeId, locale, oldRefs[locale])) {
+        try { cleanupWarning ||= cleanupNeedsWarning(await repository.deleteManagedResumePdf?.(resumeId, locale, oldRefs[locale]) ?? "unverified"); }
+        catch { cleanupWarning = true; }
+      }
+      if (cleanupWarning) return partialNotice("Files references were saved, but superseded Storage cleanup needs attention.", selectedLocales, false);
+    } else {
+      if (!repository.uploadResumePdf || !repository.loadLinks) return partialNotice("Direct Files reconciliation is unavailable; your selections remain available.");
+      const savedLocales: Locale[] = []; const failedLocales: Locale[] = []; const unresolvedLocales: Locale[] = []; let cleanupWarning = false;
+      for (const locale of filesLocales) {
+        let pending = directPending[locale] ?? null; const file = pdfFiles[locale];
+        if (pending && file) {
+          if (pending.fileName !== file.name || pending.fileSize !== file.size || pending.fileLastModified !== file.lastModified || pending.fingerprint !== await fileFingerprint(file))
+            return partialNotice(`${locale === "zh" ? "Chinese" : "English"} PDF has an unresolved earlier request. Reconcile it before selecting a different file.`, savedLocales);
+        }
+        if (!pending) {
+          if (!file) continue;
+          const fingerprint = await fileFingerprint(file);
+          let candidateHref: string;
+          try { candidateHref = await repository.uploadResumePdf(resumeId, locale, file); }
+          catch {
+            failedLocales.push(locale);
+            continue;
+          }
+          pending = { candidateHref, oldHref: oldRefs[locale], fileName: file.name, fileSize: file.size, fileLastModified: file.lastModified, fingerprint };
+          try { writeDirectPdfPending(resumeId, locale, pending); }
+          catch {
+            const cleanup = await repository.deleteManagedResumePdf?.(resumeId, locale, candidateHref).catch(() => "failed" as const);
+            if (cleanupNeedsWarning(cleanup ?? "unverified") || cleanup === "still-referenced") cleanupWarning = true;
+            failedLocales.push(locale);
+            continue;
+          }
+        }
+        let currentHref: string | null = null;
+        try { currentHref = (await repository.loadLinks(resumeId)).translations[locale].portfolioHref; }
+        catch { unresolvedLocales.push(locale); continue; }
+        if (currentHref === pending.candidateHref) {
+          confirmed.translations[locale].portfolioHref = pending.candidateHref; confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pending.fileName };
+          savedLocales.push(locale); clearDirectPdfPending(resumeId, locale);
+        } else if (currentHref !== pending.oldHref) {
+          confirmed.translations[locale].portfolioHref = currentHref;
+          unresolvedLocales.push(locale);
+          continue;
+        } else {
+          try {
+            await repository.updateSiteText(resumeId, locale, { portfolioHref: pending.candidateHref });
+            confirmed.translations[locale].portfolioHref = pending.candidateHref; confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pending.fileName };
+            savedLocales.push(locale); clearDirectPdfPending(resumeId, locale);
+          } catch {
+            let actualHref: string | null = null; let readConfirmed = false;
+            try { actualHref = (await repository.loadLinks(resumeId)).translations[locale].portfolioHref; readConfirmed = true; }
+            catch { /* Keep both references and the exact candidate pending for reconciliation. */ }
+            if (readConfirmed && actualHref === pending.candidateHref) {
+              confirmed.translations[locale].portfolioHref = pending.candidateHref; confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pending.fileName };
+              savedLocales.push(locale); clearDirectPdfPending(resumeId, locale);
+            } else if (readConfirmed && actualHref === pending.oldHref) {
+              failedLocales.push(locale);
+              const cleanup = await repository.deleteManagedResumePdf?.(resumeId, locale, pending.candidateHref).catch(() => "failed" as const);
+              if (cleanup === "deleted" || cleanup === "already-absent") clearDirectPdfPending(resumeId, locale);
+              else if (cleanup !== "not-managed") cleanupWarning = true;
+            } else {
+              if (readConfirmed && actualHref !== null) confirmed.translations[locale].portfolioHref = actualHref;
+              unresolvedLocales.push(locale);
+            }
+          }
+        }
+        if (savedLocales.includes(locale) && pending.oldHref && pending.oldHref !== pending.candidateHref
+          && managedResumePdfObjectPath(import.meta.env.VITE_SUPABASE_URL, resumeId, locale, pending.oldHref)) {
+          const cleanup = await repository.deleteManagedResumePdf?.(resumeId, locale, pending.oldHref).catch(() => "failed" as const);
+          if (cleanupNeedsWarning(cleanup ?? "unverified")) cleanupWarning = true;
+        }
+      }
+      if (failedLocales.length || unresolvedLocales.length || cleanupWarning) {
+        const status = [...savedLocales.map(locale => `${locale === "zh" ? "Chinese" : "English"} PDF saved`),
+          ...failedLocales.map(locale => `${locale === "zh" ? "Chinese" : "English"} PDF was not saved; keep its selection and retry`),
+          ...unresolvedLocales.map(locale => `${locale === "zh" ? "Chinese" : "English"} PDF result is unresolved; do not upload again`),
+          ...(cleanupWarning ? ["Storage cleanup needs attention"] : [])].join(". ");
+        return partialNotice(status, savedLocales);
+      }
+      for (const locale of savedLocales) if (pdfFiles[locale]) confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pdfFiles[locale]!.name };
+    }
+  }
   return confirmed;
 }
 
@@ -2704,12 +2883,16 @@ function Links() {
     setPdfErrors(current => ({ ...current, [locale]: undefined }));
   };
   const clearPdfDrafts = () => { setPdfFiles({}); setPdfErrors({}); };
+  const clearSavedPdfDrafts = (locales: Locale[]) => {
+    setPdfFiles(current => Object.fromEntries(Object.entries(current).filter(([locale]) => !locales.includes(locale as Locale))));
+    setPdfErrors(current => Object.fromEntries(Object.entries(current).filter(([locale]) => !locales.includes(locale as Locale))));
+  };
   const linksResumeId = context.additionalResumeId ?? context.resume?.resumeId ?? null;
   const navigationRowLabels: Record<LinksSection["navigation"][number]["sectionId"], string> = {
     experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact",
   };
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
-    productionDirty={Boolean(pdfFiles.zh || pdfFiles.en)} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts}
+    productionDirty={Boolean(pdfFiles.zh || pdfFiles.en || (typeof linksResumeId === "string" && hasDirectPdfPending(linksResumeId)))} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts} onProductionPartialSaved={clearSavedPdfDrafts}
     productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles) : undefined}>
     {(links, onChange, confirmed) => <>
       <section className="links-section" data-editor-anchor="links:public-links"><h2>{t("Public links")}</h2>
