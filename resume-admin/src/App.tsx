@@ -672,25 +672,9 @@ function SectionForm<T>({ section, title, description, initial, children, produc
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
       const operation = createFilesSaveOperation(); saveOperation.current = operation;
       const operationIsMounted = () => saveOperation.current === operation;
-      try {
-        const sectionTextSaved = sectionText ? await sectionText.save() : true;
-        const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved);
-        if (section === "links") operation.diagnostic?.("production_save_started");
-        let result: T | void | ProductionSaveNotice<T>;
-        try { result = await productionSave(editor.draft, editor.saved, operation); }
-        finally { if (section === "links") operation.diagnostic?.("production_save_settled"); }
-        if (!operationIsMounted()) return;
-        const notice = result && typeof result === "object" && "__productionSaveNotice" in result ? result as ProductionSaveNotice<T> : null;
-        const confirmed: T = notice ? notice.value : ((result as T | void) ?? editor.draft);
-        context.onBilingualSave(changedKeys);
-        editor.confirm(confirmed);
-        if (notice?.keepProductionDraft) onProductionPartialSaved?.(notice.savedPdfLocales ?? []); else onProductionSaved?.();
-        setSaveError(Boolean(notice?.warning) || !sectionTextSaved);
-        editor.setMessage(notice?.message ?? (sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish."));
-        context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed);
-      }
+      try { const sectionTextSaved = sectionText ? await sectionText.save() : true; const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved, operation); if (!operationIsMounted()) return; const notice = result && typeof result === "object" && "__productionSaveNotice" in result ? result as ProductionSaveNotice<T> : null; const confirmed: T = notice ? notice.value : ((result as T | void) ?? editor.draft); context.onBilingualSave(changedKeys); editor.confirm(confirmed); if (notice?.keepProductionDraft) onProductionPartialSaved?.(notice.savedPdfLocales ?? []); else onProductionSaved?.(); setSaveError(Boolean(notice?.warning) || !sectionTextSaved); editor.setMessage(notice?.message ?? (sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish.")); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { if (!operationIsMounted()) return; setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
-      finally { if (operationIsMounted()) { if (section === "links") operation.diagnostic?.("submit_finally_reached"); operation.abandon(); saveOperation.current = null; saveLock.current = false; setSaving(false); } }
+      finally { if (operationIsMounted()) { operation.abandon(); saveOperation.current = null; saveLock.current = false; setSaving(false); } }
       return;
     }
     const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved);
@@ -2718,7 +2702,6 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     try {
       const statePromise = repository.loadAdminFilesWriteState?.(resumeId, saveOperation);
       fileState = statePromise ? await runFilesSavePreflight(saveOperation, "write-state check", statePromise) : null;
-      saveOperation.diagnostic?.("storage_state_completed");
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Files write state could not be confirmed.";
       return partialNotice(`Files state could not be confirmed. ${detail} The selected PDFs remain available.`);
@@ -2735,11 +2718,7 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     let saved: FilesAggregate;
     if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId)) {
       if (!repository.retryPendingFilesWithWorker) throw new Error("A pending Files request requires exact retry support.");
-      saveOperation.diagnostic?.("pending_files_save_retry_selected");
-      saveOperation.diagnostic?.("pending_files_save_retry_started");
-      let retryResult: Awaited<ReturnType<NonNullable<ResumeRepository["retryPendingFilesWithWorker"]>>>;
-      try { retryResult = await repository.retryPendingFilesWithWorker(resumeId, saveOperation); }
-      finally { saveOperation.diagnostic?.("pending_files_save_retry_settled"); }
+      const retryResult = await repository.retryPendingFilesWithWorker(resumeId, saveOperation);
       saved = retryResult.files;
       confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
       confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
@@ -2750,7 +2729,6 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
         message: `${retryCleanupWarning ? "The Files request was confirmed; Storage cleanup needs attention. " : ""}The pending Files request was confirmed. Your current file selection remains unsaved; review it before saving again.` };
     }
     if (fileState.writeMode === "rpc") {
-      saveOperation.diagnostic?.("new_upload_selected");
       const useStorageIntent = fileState.storageProtocol === "intent_v1";
       if (useStorageIntent && (!fileState.activityLogEnabled || !fileState.trustedContextRequired || !repository.uploadResumePdfWithWorker))
         return partialNotice("Secure Files Storage authorization is not fully enabled. The selected PDFs remain available.");

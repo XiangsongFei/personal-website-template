@@ -2822,9 +2822,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
   });
 
-  it("reports the pending Files-save retry branch without starting a new upload", async () => {
-    vi.stubEnv("MODE", "qa");
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  it("retries a pending Files save without starting a new upload", async () => {
     const setup = makeRepository("skills");
     setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true,
       writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
@@ -2839,17 +2837,9 @@ describe("Batch 6A production repeatable CRUD", () => {
     await screen.findByText(/pending Files request was confirmed/i);
     expect(setup.methods.retryPendingFilesWithWorker).toHaveBeenCalledOnce();
     expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
-    const records = info.mock.calls.filter(call => call[0] === "d8_files_client_stage").map(call => call[1] as Record<string, unknown>);
-    expect(records.map(record => record.stage)).toEqual([
-      "production_save_started", "storage_state_completed", "pending_files_save_retry_selected",
-      "pending_files_save_retry_started", "pending_files_save_retry_settled", "production_save_settled", "submit_finally_reached",
-    ]);
-    for (const record of records) expect(Object.keys(record).every(key => ["stage", "locale", "elapsed_ms", "category"].includes(key))).toBe(true);
   });
 
-  it("completes an intent_v1 UI save and emits ordered QA client stages", async () => {
-    vi.stubEnv("MODE", "qa");
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+  it("completes a successful intent_v1 UI save through the real Files repository methods", async () => {
     const setup = makeRepository("skills");
     const target = "11111111-1111-4111-8111-111111111111";
     const uploadId = "11111111-1111-4111-8111-111111111111";
@@ -2905,20 +2895,6 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByRole("link", { name: `Current PDF: ${file.name}` }).getAttribute("href")).toBe(reference);
     expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${target}`)).toBeNull();
     expect(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${target}:zh`)).toBeNull();
-    const records = info.mock.calls.filter(call => call[0] === "d8_files_client_stage").map(call => call[1] as Record<string, unknown>);
-    expect(records.map(record => record.stage)).toEqual([
-      "production_save_started", "storage_state_completed", "new_upload_selected", "file_read_started", "file_read_completed",
-      "digest_started", "digest_completed", "pending_identity_ready", "session_started", "session_completed",
-      "headers_constructed", "upload_fetch_invoking", "upload_fetch_settled", "production_save_settled", "submit_finally_reached",
-    ]);
-    for (const record of records) {
-      expect(Object.keys(record).every(key => ["stage", "locale", "elapsed_ms", "category"].includes(key))).toBe(true);
-      expect(JSON.stringify(record)).not.toContain(file.name);
-      expect(JSON.stringify(record)).not.toContain(uploadId);
-      expect(JSON.stringify(record)).not.toContain("test-token");
-      expect(typeof record.elapsed_ms).toBe("number");
-      expect(record.elapsed_ms).toBeGreaterThanOrEqual(0);
-    }
   });
 
   it("retains RPC-mode dual-locale selections and references when the transactional save fails", async () => {
