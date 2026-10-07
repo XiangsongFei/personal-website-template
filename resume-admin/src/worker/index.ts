@@ -45,6 +45,7 @@ export interface WorkerEnv {
   ACTIVITY_LOG_HMAC_KEY_ID?: string;
   ACTIVITY_LOG_V13_HMAC_KEY?: string;
   ACTIVITY_LOG_V13B_FAILURE_REPORTING?: string;
+  D8_FILES_UPLOAD_DIAGNOSTICS?: string;
 }
 
 interface IntroductionItem {
@@ -108,6 +109,53 @@ function errorResponse(error: ApiError): Response {
 
 function apiError(status: number, code: string, message: string): ApiError {
   return new ApiError(status, code, message);
+}
+
+interface FilesUploadDiagnostic {
+  mark(stage: string, fields?: { status?: number; code?: string; byteCount?: number }): void;
+}
+
+function createFilesUploadDiagnostic(env: WorkerEnv, request: Request): FilesUploadDiagnostic | undefined {
+  if (env.D8_FILES_UPLOAD_DIAGNOSTICS !== "true") return undefined;
+  const url = new URL(request.url);
+  const rawRequestId = request.headers.get("x-upload-request-id");
+  const requestId = rawRequestId && UUID_PATTERN.test(rawRequestId) ? rawRequestId.toLowerCase() : undefined;
+  const locales = url.searchParams.getAll("locale");
+  const locale = locales.length === 1 && (locales[0] === "zh" || locales[0] === "en") ? locales[0] : undefined;
+  const startedAt = performance.now();
+  return {
+    mark(stage, fields = {}) {
+      const record: Record<string, string | number> = {
+        event: "d8_files_upload",
+        stage,
+        elapsed_ms: Math.max(0, performance.now() - startedAt),
+      };
+      if (requestId) record.request_id = requestId;
+      if (locale) record.locale = locale;
+      if (Number.isInteger(fields.status) && fields.status! >= 100 && fields.status! <= 599) record.status = fields.status!;
+      if (typeof fields.code === "string" && /^[a-z0-9_]{1,64}$/i.test(fields.code)) record.code = fields.code;
+      if (Number.isSafeInteger(fields.byteCount) && fields.byteCount! >= 0) record.byte_count = fields.byteCount!;
+      try { console.log("d8_files_upload", record); } catch { /* diagnostics must never affect the request */ }
+    },
+  };
+}
+
+function filesUploadErrorFields(error: unknown): { status: number; code: string } {
+  return error instanceof ApiError
+    ? { status: error.status, code: error.code }
+    : { status: 502, code: "request_failed" };
+}
+
+function completeFilesUploadDiagnostic(diagnostic: FilesUploadDiagnostic | undefined, response: Response, error?: unknown): void {
+  if (!diagnostic) return;
+  const fields = error === undefined ? { status: response.status } : filesUploadErrorFields(error);
+  diagnostic.mark("response_status_prepared", fields);
+  diagnostic.mark("handler_completed", fields);
+}
+
+function rejectFilesUpload(diagnostic: FilesUploadDiagnostic | undefined, status: number, code: string, message: string): ApiError {
+  diagnostic?.mark("request_validation_rejected", { status, code });
+  return apiError(status, code, message);
 }
 
 async function readBoundedBody(request: Request, limit: number): Promise<Uint8Array> {
@@ -1325,25 +1373,44 @@ async function sha256HexBytes(value: Uint8Array): Promise<string> {
   return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function uploadResumeFile(request: Request, env: WorkerEnv): Promise<Response> {
+async function uploadResumeFile(request: Request, env: WorkerEnv, diagnostic?: FilesUploadDiagnostic): Promise<Response> {
   const url = new URL(request.url);
   if ([...url.searchParams.keys()].some(key => key !== "locale") || url.searchParams.getAll("locale").length !== 1)
-    throw apiError(400, "invalid_upload_request", "Only a PDF locale may be selected.");
+    throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "Only a PDF locale may be selected.");
   const locale = url.searchParams.get("locale");
   const requestId = request.headers.get("x-upload-request-id");
   const originalFilename = request.headers.get("x-original-filename");
   if ((locale !== "zh" && locale !== "en") || !requestId || !UUID_PATTERN.test(requestId))
-    throw apiError(400, "invalid_upload_request", "A supported locale and upload request UUID are required.");
+    throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "A supported locale and upload request UUID are required.");
   if (!originalFilename || !originalFilename.trim() || originalFilename.length>255 || UTF8.encode(originalFilename).byteLength>512
     || [...originalFilename].some(character => character.charCodeAt(0)<32 || character.charCodeAt(0)===127))
-    throw apiError(400,"invalid_upload_request","A valid PDF filename is required.");
+    throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "A valid PDF filename is required.");
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/pdf")
-    throw apiError(415, "invalid_pdf_type", "Resume files must use application/pdf.");
-  const bytes = await readBoundedBody(request, RESUME_PDF_LIMIT);
-  if (!bytes.byteLength) throw apiError(422, "empty_pdf", "The selected PDF is empty.");
+    throw rejectFilesUpload(diagnostic, 415, "invalid_pdf_type", "Resume files must use application/pdf.");
+  diagnostic?.mark("body_read_started");
+  let bytes: Uint8Array;
+  try {
+    bytes = await readBoundedBody(request, RESUME_PDF_LIMIT);
+    diagnostic?.mark("body_read_completed", { byteCount: bytes.byteLength });
+  } catch (error) {
+    const fields = filesUploadErrorFields(error);
+    diagnostic?.mark("body_read_failed", { status: fields.status, code: fields.code === "request_failed" ? "body_read_failed" : fields.code });
+    throw error;
+  }
+  if (!bytes.byteLength) throw rejectFilesUpload(diagnostic, 422, "empty_pdf", "The selected PDF is empty.");
   if (bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46 || bytes[4] !== 0x2d)
-    throw apiError(422, "invalid_pdf_signature", "The selected file does not have a PDF signature.");
-  const resumeId = await resolveFilesStorageTarget(request, env);
+    throw rejectFilesUpload(diagnostic, 422, "invalid_pdf_signature", "The selected file does not have a PDF signature.");
+  diagnostic?.mark("request_validation_completed");
+  diagnostic?.mark("target_resolution_started");
+  let resumeId: string;
+  try {
+    resumeId = await resolveFilesStorageTarget(request, env);
+    diagnostic?.mark("target_resolution_succeeded");
+  } catch (error) {
+    const fields = filesUploadErrorFields(error);
+    diagnostic?.mark("target_resolution_failed", fields);
+    throw error;
+  }
   const digest = await sha256HexBytes(bytes);
   const canonical = uploadCanonical(resumeId, locale, requestId.toLowerCase(), bytes.byteLength, digest);
   const { keyId, key } = getSigningConfig(env); const issuedAt = Math.floor(Date.now() / 1000);
@@ -1352,16 +1419,29 @@ async function uploadResumeFile(request: Request, env: WorkerEnv): Promise<Respo
     mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...getTrustedNetworkContext(request) };
   const signed = await signContext(context, key);
   const candidateName = pdfObjectName(resumeId, locale);
-  const prepared = await userRpc(request, env, "prepare_resume_file_upload_v1", { target_resume_id: resumeId, target_locale: locale,
-    target_request_id: requestId.toLowerCase(), candidate_object_name: candidateName, target_byte_size: bytes.byteLength,
-    target_content_sha256: digest, canonical_upload: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex });
+  diagnostic?.mark("prepare_intent_rpc_started");
+  let prepared: { response: Response; value: unknown };
+  try {
+    prepared = await userRpc(request, env, "prepare_resume_file_upload_v1", { target_resume_id: resumeId, target_locale: locale,
+      target_request_id: requestId.toLowerCase(), candidate_object_name: candidateName, target_byte_size: bytes.byteLength,
+      target_content_sha256: digest, canonical_upload: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex });
+  } catch (error) {
+    const fields = filesUploadErrorFields(error);
+    diagnostic?.mark("prepare_intent_rpc_failed", fields);
+    throw error;
+  }
   if (!prepared.response.ok || !Array.isArray(prepared.value) || prepared.value.length !== 1 || !isPlainObject(prepared.value[0])
     || typeof prepared.value[0].object_name !== "string" || typeof prepared.value[0].upload_status !== "string"
     || !new RegExp(`^${resumeId}/${locale}/[0-9a-f-]{36}\\.pdf$`).test(prepared.value[0].object_name)
     || !["prepared", "uploaded", "consumed", "cleanup_pending", "cleaned", "expired"].includes(prepared.value[0].upload_status)) {
-    if (isV13BIdempotencyConflict(prepared.response, prepared.value)) throw apiError(409, "upload_request_conflict", "This upload request UUID was used with different PDF bytes.");
+    if (isV13BIdempotencyConflict(prepared.response, prepared.value)) {
+      diagnostic?.mark("prepare_intent_rpc_failed", { status: prepared.response.status, code: "upload_request_conflict" });
+      throw apiError(409, "upload_request_conflict", "This upload request UUID was used with different PDF bytes.");
+    }
+    diagnostic?.mark("prepare_intent_rpc_failed", { status: prepared.response.status, code: "prepare_rejected" });
     throw apiError(prepared.response.status >= 400 && prepared.response.status < 500 ? 422 : 502, "upload_not_authorized", "The PDF upload was not authorized.");
   }
+  diagnostic?.mark("prepare_intent_rpc_succeeded", { status: prepared.response.status, code: prepared.value[0].upload_status });
   const objectName = prepared.value[0].object_name;
   if (prepared.value[0].upload_status === "cleanup_pending" || prepared.value[0].upload_status === "expired") {
     const requested = await userRpc(request, env, "request_resume_file_candidate_cleanup_v1", {
@@ -1497,14 +1577,18 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
+  const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
+  uploadDiagnostic?.mark("upload_route_entered");
   if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
-    return new Response(JSON.stringify({ error: { code: "method_not_allowed", message: "Only POST is allowed." } }), {
+    const response = new Response(JSON.stringify({ error: { code: "method_not_allowed", message: "Only POST is allowed." } }), {
       status: 405,
       headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Allow": "POST" },
     });
+    completeFilesUploadDiagnostic(uploadDiagnostic, response, apiError(405, "method_not_allowed", "Only POST is allowed."));
+    return response;
   }
   try {
     if (url.pathname === SAVE_PATH) return await saveIntroduction(request, env);
@@ -1516,7 +1600,19 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");
     if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
-    if (url.pathname === UPLOAD_FILES_PATH) return await uploadResumeFile(request, env);
+    if (url.pathname === UPLOAD_FILES_PATH) {
+      try {
+        const response = await uploadResumeFile(request, env, uploadDiagnostic);
+        completeFilesUploadDiagnostic(uploadDiagnostic, response);
+        return response;
+      } catch (error) {
+        const response = error instanceof ApiError
+          ? errorResponse(error)
+          : errorResponse(apiError(502, "request_failed", "The Admin request could not be completed."));
+        completeFilesUploadDiagnostic(uploadDiagnostic, response, error);
+        return response;
+      }
+    }
     if (url.pathname === CLEANUP_FILES_PATH) return await cleanupResumeFileCandidates(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {

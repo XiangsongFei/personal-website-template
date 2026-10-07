@@ -5,7 +5,8 @@
   "compatibility_date": "2026-08-18",
   "workers_dev": true,
   "vars": {
-    "ACTIVITY_LOG_V13B_FAILURE_REPORTING": "false"
+    "ACTIVITY_LOG_V13B_FAILURE_REPORTING": "false",
+    "D8_FILES_UPLOAD_DIAGNOSTICS": "true"
   },
   "assets": {
     "directory": "./dist",

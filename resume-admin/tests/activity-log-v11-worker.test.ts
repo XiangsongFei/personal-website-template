@@ -447,7 +447,10 @@ describe("Activity Log V1.1 Worker upstream failures and configuration", () => {
   it("does not place service-role credentials or log request secrets in the Worker", async () => {
     const source = readFileSync(resolve("src/worker/index.ts"), "utf8");
     expect(source).not.toMatch(/service[_-]?role/i);
-    expect(source).not.toMatch(/console\.(?:log|info|error)\s*\(/);
+    expect(source).not.toMatch(/console\.(?:info|error)\s*\(/);
+    expect(source.match(/console\.log\s*\(/g)).toHaveLength(1);
+    expect(source).toContain('if (env.D8_FILES_UPLOAD_DIAGNOSTICS !== "true") return undefined;');
+    expect(source).toContain('console.log("d8_files_upload", record);');
     expect(source.match(/console\.warn\s*\(/g)).toHaveLength(1);
     expect(source).toContain('console.warn("activity_log_v13_reporter", category);');
   });
