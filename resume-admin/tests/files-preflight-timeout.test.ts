@@ -150,11 +150,43 @@ describe("D-8 bounded pre-request Files operations", () => {
     await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation())).resolves.toMatchObject({ uploadRequestId: stored.requestId });
     expect(getSession).toHaveBeenCalledTimes(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.headers).toMatchObject({ "X-Upload-Request-ID": stored.requestId });
+    const uploadHeaders = new Headers((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.headers);
+    expect(uploadHeaders.get("X-Upload-Request-ID")).toBe(stored.requestId);
+    expect(uploadHeaders.get("X-Original-Filename-UTF8-Percent-Encoded")).toBe(encodeURIComponent(file.name));
+    expect(uploadHeaders.has("X-Original-Filename")).toBe(false);
 
     const changed = makeFile(async () => new Uint8Array([9, 2, 3]).buffer);
     await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", changed, createFilesSaveOperation())).rejects.toThrow(/exact same file/i);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies header construction failure as not sent and preserves the exact pending identity", async () => {
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => uploadRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
+    const { repository, fetchImpl } = makeRepository();
+    const NativeHeaders = globalThis.Headers;
+    vi.stubGlobal("Headers", class { constructor() { throw new TypeError("synthetic header construction failure"); } });
+    const file = makeFile();
+    const key = `admin-files-upload-pending-v1:${resumeId}:zh`;
+    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation()))
+      .rejects.toMatchObject({ uncertain: false, message: expect.stringContaining("no request was sent") });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(window.sessionStorage.getItem(key)!).requestId).toBe(uploadRequestId);
+
+    vi.stubGlobal("Headers", NativeHeaders);
+    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation()))
+      .resolves.toMatchObject({ uploadRequestId });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(new Headers((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.headers).get("X-Upload-Request-ID")).toBe(uploadRequestId);
+  });
+
+  it("keeps a rejected fetch after invocation uncertain without automatic replay", async () => {
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => uploadRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
+    const fetchImpl = vi.fn(async () => { throw new TypeError("network failure"); }) as unknown as typeof fetch;
+    const { repository } = makeRepository(undefined, fetchImpl);
+    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", makeFile(), createFilesSaveOperation()))
+      .rejects.toMatchObject({ uncertain: true });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.parse(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${resumeId}:zh`)!).requestId).toBe(uploadRequestId);
   });
 
   it("aborts an actually timed-out upload and preserves its exact upload identity", async () => {

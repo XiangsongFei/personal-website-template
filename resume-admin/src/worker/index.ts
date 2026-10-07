@@ -1318,6 +1318,25 @@ function pdfObjectName(resumeId: string, locale: "zh" | "en"): string {
   return `${resumeId}/${locale}/${crypto.randomUUID().toLowerCase()}.pdf`;
 }
 
+const MAX_ENCODED_UPLOAD_FILENAME_LENGTH = 1536;
+
+function uploadDisplayFilename(request: Request): string | null {
+  const encoded = request.headers.get("x-original-filename-utf8-percent-encoded");
+  const legacy = request.headers.get("x-original-filename");
+  if (encoded !== null && legacy !== null) return null;
+  let filename: string;
+  if (encoded !== null) {
+    if (!encoded.length || encoded.length > MAX_ENCODED_UPLOAD_FILENAME_LENGTH || !/^[\x20-\x7e]+$/.test(encoded)) return null;
+    try { filename = decodeURIComponent(encoded); } catch { return null; }
+  } else if (legacy !== null && /^[\x20-\x7e]+$/.test(legacy)) {
+    // Temporary compatibility for already-open clients using the former ASCII header.
+    filename = legacy;
+  } else return null;
+  if (!filename.trim() || filename.length > 255 || UTF8.encode(filename).byteLength > 512
+    || [...filename].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return null;
+  return filename;
+}
+
 function uploadCanonical(resumeId: string, locale: "zh" | "en", requestId: string, size: number, digest: string): string {
   return JSON.stringify({ byte_size: size, content_sha256: digest, locale, request_id: requestId, resume_id: resumeId, version: 1 });
 }
@@ -1379,11 +1398,10 @@ async function uploadResumeFile(request: Request, env: WorkerEnv, diagnostic?: F
     throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "Only a PDF locale may be selected.");
   const locale = url.searchParams.get("locale");
   const requestId = request.headers.get("x-upload-request-id");
-  const originalFilename = request.headers.get("x-original-filename");
+  const originalFilename = uploadDisplayFilename(request);
   if ((locale !== "zh" && locale !== "en") || !requestId || !UUID_PATTERN.test(requestId))
     throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "A supported locale and upload request UUID are required.");
-  if (!originalFilename || !originalFilename.trim() || originalFilename.length>255 || UTF8.encode(originalFilename).byteLength>512
-    || [...originalFilename].some(character => character.charCodeAt(0)<32 || character.charCodeAt(0)===127))
+  if (!originalFilename)
     throw rejectFilesUpload(diagnostic, 400, "invalid_upload_request", "A valid PDF filename is required.");
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/pdf")
     throw rejectFilesUpload(diagnostic, 415, "invalid_pdf_type", "Resume files must use application/pdf.");

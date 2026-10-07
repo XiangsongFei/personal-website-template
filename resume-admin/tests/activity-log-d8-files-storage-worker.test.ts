@@ -10,9 +10,10 @@ const pdf=new TextEncoder().encode("%PDF-1.7 valid fixture");
 const auth=`Bearer ${btoa(JSON.stringify({alg:"HS256"})).replaceAll("=","")}.${btoa(JSON.stringify({sub:actorId,role:"authenticated"})).replaceAll("=","")}.synthetic`;
 function env(): WorkerEnv { return {ASSETS:{fetch:async()=>new Response("asset")},SUPABASE_URL:"https://local.test",SUPABASE_PUBLISHABLE_KEY:"publishable",
   ACTIVITY_LOG_HMAC_KEY_ID:"activity_log_v11_hmac_v1",ACTIVITY_LOG_HMAC_KEY:key}; }
-function uploadRequest(locale="en",bytes:Uint8Array=pdf,headers:Record<string,string>={}) {
-  return new Request(`https://qa.test/api/admin/v1/files/upload?locale=${locale}`,{method:"POST",headers:{Authorization:auth,"Content-Type":"application/pdf",
-    "X-Upload-Request-ID":uploadId,"X-Original-Filename":"resume.pdf",...headers},body:new Uint8Array(bytes)});
+function uploadRequest(locale="en",bytes:Uint8Array=pdf,headers:Record<string,string>={},includeLegacyFilename=true) {
+  const requestHeaders:Record<string,string>={Authorization:auth,"Content-Type":"application/pdf","X-Upload-Request-ID":uploadId,...headers};
+  if(includeLegacyFilename) requestHeaders["X-Original-Filename"]="resume.pdf";
+  return new Request(`https://qa.test/api/admin/v1/files/upload?locale=${locale}`,{method:"POST",headers:requestHeaders,body:new Uint8Array(bytes)});
 }
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 
@@ -49,6 +50,48 @@ describe("D-8 Worker authenticated PDF Storage protocol",()=>{
     const sentBytes=body instanceof ArrayBuffer ? new Uint8Array(body) : new Uint8Array(body.buffer as ArrayBuffer,body.byteOffset,body.byteLength);
     expect(Array.from(sentBytes)).toEqual(Array.from(pdf));
     expect(calls.some(call=>call.url.includes("resume_locale_content"))).toBe(false);
+  });
+
+  it("decodes UTF-8 filename metadata while keeping the managed object path generated",async()=>{
+    const calls:Array<{url:string;init?:RequestInit}>=[];let candidateObjectName="";
+    const filename="../中文 resume.pdf";
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const url=String(input);calls.push({url,init});
+      if(url.endsWith("/rpc/resolve_admin_files_storage_target_v1")) return Response.json(resumeId);
+      if(url.endsWith("/rpc/prepare_resume_file_upload_v1")) {
+        candidateObjectName=(JSON.parse(String(init?.body)) as {candidate_object_name:string}).candidate_object_name;
+        return Response.json([{object_name:candidateObjectName,upload_status:"prepared"}]);
+      }
+      if(url===`https://local.test/storage/v1/object/resume-files/${candidateObjectName}`) return Response.json({Key:"inserted"});
+      if(url===`https://local.test/storage/v1/object/authenticated/resume-files/${candidateObjectName}`) return new Response(pdf,{status:200});
+      if(url.endsWith("/rpc/complete_resume_file_upload_v1")) return Response.json(true);
+      return new Response("unexpected",{status:404});
+    }));
+    const response=await handleWorkerRequest(uploadRequest("zh",pdf,{"X-Original-Filename-UTF8-Percent-Encoded":encodeURIComponent(filename)},false),env());
+    expect(response.status,await response.clone().text()).toBe(200);
+    expect(candidateObjectName).toMatch(new RegExp(`^${resumeId}/zh/[0-9a-f-]{36}\\.pdf$`));
+    expect(candidateObjectName).not.toContain(filename);
+    const storage=calls.find(call=>call.url===`https://local.test/storage/v1/object/resume-files/${candidateObjectName}`)!;
+    const metadataHeader=new Headers(storage.init?.headers).get("x-metadata")!;
+    const metadataBytes=Uint8Array.from(atob(metadataHeader),character=>character.charCodeAt(0));
+    expect(JSON.parse(new TextDecoder().decode(metadataBytes))).toEqual({originalFilename:filename});
+  });
+
+  it.each([
+    ["malformed percent encoding","%E0%A4%A"],
+    ["oversized encoded value","x".repeat(1537)],
+    ["oversized decoded value",encodeURIComponent("x".repeat(256))],
+  ])("rejects %s before any upstream DB or Storage request",async(_name,encoded)=>{
+    const upstream=vi.fn();vi.stubGlobal("fetch",upstream);
+    const response=await handleWorkerRequest(uploadRequest("zh",pdf,{"X-Original-Filename-UTF8-Percent-Encoded":encoded},false),env());
+    expect(response.status).toBe(400);expect(await response.json()).toMatchObject({error:{code:"invalid_upload_request"}});
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the legacy and encoded filename headers conflict",async()=>{
+    const upstream=vi.fn();vi.stubGlobal("fetch",upstream);
+    const response=await handleWorkerRequest(uploadRequest("zh",pdf,{"X-Original-Filename-UTF8-Percent-Encoded":encodeURIComponent("other.pdf")}),env());
+    expect(response.status).toBe(400);expect(upstream).not.toHaveBeenCalled();
   });
 
   it.each([

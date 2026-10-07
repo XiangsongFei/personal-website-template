@@ -128,6 +128,8 @@ export function createFilesSaveOperation(): FilesSaveOperation {
 const FILE_PREFLIGHT_TIMEOUT_MS = 15_000;
 const FILE_AUTH_TIMEOUT_MS = 10_000;
 const FILE_UPLOAD_TIMEOUT_MS = 60_000;
+const FILE_UPLOAD_FILENAME_HEADER = "X-Original-Filename-UTF8-Percent-Encoded";
+const FILE_UPLOAD_FILENAME_HEADER_MAX_LENGTH = 1536;
 const FILE_SAVE_TIMEOUT_MS = 30_000;
 const FILE_CLEANUP_TIMEOUT_MS = 30_000;
 
@@ -1742,9 +1744,18 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files session check failed before a request was sent. Keep the selected file and retry."); }
       const { data, error } = session; const token = data.session?.access_token;
       if (error || typeof token !== "string" || !token) throw new AggregateWorkerSaveError("Your session could not be verified; keep the selected PDF unchanged.");
+      let uploadHeaders: Headers;
+      try {
+        const encodedFilename = encodeURIComponent(file.name);
+        if (encodedFilename.length > FILE_UPLOAD_FILENAME_HEADER_MAX_LENGTH) throw new Error("filename too long");
+        uploadHeaders = new Headers({ Authorization:`Bearer ${token}`, "Content-Type":"application/pdf", "X-Upload-Request-ID":requestId,
+          [FILE_UPLOAD_FILENAME_HEADER]:encodedFilename });
+      } catch {
+        throw new AggregateWorkerSaveError("PDF upload request could not be constructed; no request was sent. Keep the selected file and retry.");
+      }
       const { response, responseValue, errorCode } = await awaitFilesRequest(async signal => {
         const issued = await fetch(`/api/admin/v1/files/upload?locale=${locale}`, { method:"POST", credentials:"omit",
-          headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/pdf", "X-Upload-Request-ID":requestId, "X-Original-Filename":file.name }, body:bytes, signal });
+          headers:uploadHeaders, body:bytes, signal });
         let decoded: unknown; let code: unknown;
         if (issued.ok) {
           try { decoded = await issued.json(); }

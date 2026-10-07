@@ -2838,8 +2838,8 @@ describe("Batch 6A production repeatable CRUD", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("/api/admin/v1/files/upload")) {
-        const headers = init?.headers as Record<string, string>;
-        return Response.json({ reference, upload_request_id: headers["X-Upload-Request-ID"] });
+        const headers = new Headers(init?.headers);
+        return Response.json({ reference, upload_request_id: headers.get("X-Upload-Request-ID") });
       }
       if (url === "/api/admin/v1/files/save") return Response.json({ files: { translations: {
         zh: { portfolio_href: reference }, en: { portfolio_href: fixtureSections.links.translations.en.portfolioHref },
@@ -2856,7 +2856,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const links = structuredClone(fixtureSections.links);
     setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
     openLinksAtResume(setup.repository, links, target);
-    const file = pdfFile("%PDF UI repository integration", "integration-zh.pdf", 14);
+    const file = pdfFile("%PDF UI repository integration", "integration-中文.pdf", 14);
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
 
     save();
@@ -2869,8 +2869,13 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/admin/v1/files/save");
     expect((fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(false);
     expect((fetchMock.mock.calls[1]?.[1]?.signal as AbortSignal).aborted).toBe(false);
-    expect(screen.queryByText("Selected: integration-zh.pdf")).toBeNull();
-    expect(screen.getByRole("link", { name: "Current PDF: integration-zh.pdf" }).getAttribute("href")).toBe(reference);
+    const uploadHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    const encodedFilename = uploadHeaders.get("X-Original-Filename-UTF8-Percent-Encoded")!;
+    expect(encodedFilename).toBe(encodeURIComponent(file.name));
+    expect(/^[\x20-\x7e]+$/.test(encodedFilename)).toBe(true);
+    expect(uploadHeaders.has("X-Original-Filename")).toBe(false);
+    expect(screen.queryByText(`Selected: ${file.name}`)).toBeNull();
+    expect(screen.getByRole("link", { name: `Current PDF: ${file.name}` }).getAttribute("href")).toBe(reference);
     expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${target}`)).toBeNull();
     expect(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${target}:zh`)).toBeNull();
   });
