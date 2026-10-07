@@ -33,17 +33,22 @@ async function advanceToTimeout(promise: Promise<unknown>, timeoutMs: number, ph
   await assertion;
 }
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("D-8 bounded pre-request Files operations", () => {
   it("bounds File.arrayBuffer and fences a late resolution before upload", async () => {
     vi.useFakeTimers();
+    vi.stubEnv("MODE", "qa");
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const read = deferred<ArrayBuffer>();
     const { repository, fetchImpl } = makeRepository();
     const operation = createFilesSaveOperation();
     const request = repository.uploadResumePdfWithWorker!(resumeId, "zh", makeFile(() => read.promise), operation);
     await advanceToTimeout(request, 15_000, "file read timed out before a request was sent");
     expect(operation.isActive()).toBe(false);
+    const records = info.mock.calls.filter(call => call[0] === "d8_files_client_stage").map(call => call[1] as Record<string, unknown>);
+    expect(records.map(record => record.stage)).toEqual(["file_read_started", "file_read_completed"]);
+    expect(records[1]?.category).toBe("timeout_or_cancelled");
     read.resolve(new Uint8Array([1, 2, 3]).buffer);
     await Promise.resolve(); await Promise.resolve();
     expect(fetchImpl).not.toHaveBeenCalled();

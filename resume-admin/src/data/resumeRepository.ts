@@ -113,15 +113,47 @@ export class IntroductionWorkerSaveError extends Error {
 export class AwardsWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AwardsWorkerSaveError"; } }
 export class AggregateWorkerSaveError extends Error { constructor(message: string, readonly uncertain = false) { super(message); this.name = "AggregateWorkerSaveError"; } }
 
-export type FilesSaveOperation = { signal: AbortSignal; isActive(): boolean; abandon(): void };
+export type FilesClientDiagnosticStage =
+  | "production_save_started" | "production_save_settled" | "submit_finally_reached"
+  | "storage_state_completed" | "pending_files_save_retry_selected" | "pending_files_save_retry_started"
+  | "pending_files_save_retry_settled" | "new_upload_selected" | "file_read_started" | "file_read_completed"
+  | "digest_started" | "digest_completed" | "pending_identity_ready" | "session_started" | "session_completed"
+  | "headers_constructed" | "upload_fetch_invoking" | "upload_fetch_settled";
+export type FilesClientDiagnosticCategory =
+  | "created" | "reused" | "resolved" | "rejected" | "http_response" | "timeout_or_cancelled";
+export type FilesSaveOperation = {
+  signal: AbortSignal;
+  isActive(): boolean;
+  abandon(): void;
+  diagnostic?(stage: FilesClientDiagnosticStage, locale?: Locale, category?: FilesClientDiagnosticCategory): void;
+};
 
 export function createFilesSaveOperation(): FilesSaveOperation {
   const controller = new AbortController();
   let active = true;
+  const diagnosticEnabled = import.meta.env.MODE === "qa";
+  let diagnosticStartedAt: number | null = null;
+  if (diagnosticEnabled) {
+    try { diagnosticStartedAt = globalThis.performance.now(); } catch { /* Diagnostics are optional. */ }
+  }
   return {
     signal: controller.signal,
     isActive: () => active,
     abandon() { if (!active) return; active = false; controller.abort(); },
+    diagnostic(stage, locale, category) {
+      if (!diagnosticEnabled || diagnosticStartedAt === null) return;
+      try {
+        const elapsed = globalThis.performance.now() - diagnosticStartedAt;
+        if (!Number.isFinite(elapsed)) return;
+        const record: { stage: FilesClientDiagnosticStage; locale?: Locale; elapsed_ms: number; category?: FilesClientDiagnosticCategory } = {
+          stage,
+          elapsed_ms: Math.max(0, Math.round(elapsed)),
+        };
+        if (locale === "zh" || locale === "en") record.locale = locale;
+        if (category && ["created", "reused", "resolved", "rejected", "http_response", "timeout_or_cancelled"].includes(category)) record.category = category;
+        globalThis.console.info("d8_files_client_stage", record);
+      } catch { /* Diagnostic output must never affect save behavior. */ }
+    },
   };
 }
 
@@ -1709,17 +1741,32 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       const operation = suppliedOperation ?? createFilesSaveOperation();
       assertFilesSaveOperation(operation);
       let fileBuffer: ArrayBuffer;
-      try { fileBuffer = await awaitFilesPreflight(file.arrayBuffer(), operation, "file read", FILE_PREFLIGHT_TIMEOUT_MS); }
-      catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files file read failed before a request was sent. Keep the selected file and retry."); }
+      operation.diagnostic?.("file_read_started", locale);
+      try {
+        fileBuffer = await awaitFilesPreflight(file.arrayBuffer(), operation, "file read", FILE_PREFLIGHT_TIMEOUT_MS);
+        operation.diagnostic?.("file_read_completed", locale, "resolved");
+      } catch (error) {
+        operation.diagnostic?.("file_read_completed", locale, operation.isActive() ? "rejected" : "timeout_or_cancelled");
+        if (error instanceof AggregateWorkerSaveError) throw error;
+        throw new AggregateWorkerSaveError("The Files file read failed before a request was sent. Keep the selected file and retry.");
+      }
       assertFilesSaveOperation(operation);
       const bytes = new Uint8Array(fileBuffer);
       let digestBytes: ArrayBuffer;
-      try { digestBytes = await awaitFilesPreflight(crypto.subtle.digest("SHA-256", bytes), operation, "file verification", FILE_PREFLIGHT_TIMEOUT_MS); }
-      catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files file verification failed before a request was sent. Keep the selected file and retry."); }
+      operation.diagnostic?.("digest_started", locale);
+      try {
+        digestBytes = await awaitFilesPreflight(crypto.subtle.digest("SHA-256", bytes), operation, "file verification", FILE_PREFLIGHT_TIMEOUT_MS);
+        operation.diagnostic?.("digest_completed", locale, "resolved");
+      } catch (error) {
+        operation.diagnostic?.("digest_completed", locale, operation.isActive() ? "rejected" : "timeout_or_cancelled");
+        if (error instanceof AggregateWorkerSaveError) throw error;
+        throw new AggregateWorkerSaveError("The Files file verification failed before a request was sent. Keep the selected file and retry.");
+      }
       assertFilesSaveOperation(operation);
       const digest = [...new Uint8Array(digestBytes)].map(byte => byte.toString(16).padStart(2,"0")).join("");
       const key = `admin-files-upload-pending-v1:${resumeId}:${locale}`;
       let requestId: string;
+      let identityCategory: FilesClientDiagnosticCategory;
       try {
         const raw = globalThis.sessionStorage?.getItem(key);
         if (raw) {
@@ -1729,19 +1776,28 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
             || pending.fileSize !== file.size || pending.fileLastModified !== file.lastModified || typeof pending.requestId !== "string"
             || !/^[0-9a-f-]{36}$/i.test(pending.requestId)) throw new Error("pending file differs");
           requestId = pending.requestId;
+          identityCategory = "reused";
         } else {
           if (!globalThis.crypto?.randomUUID || !globalThis.sessionStorage) throw new Error("secure storage unavailable");
           requestId = globalThis.crypto.randomUUID().toLowerCase();
           globalThis.sessionStorage.setItem(key, JSON.stringify({ resumeId, locale, requestId, digest, fileName:file.name, fileSize:file.size, fileLastModified:file.lastModified }));
+          identityCategory = "created";
         }
       } catch { throw new AggregateWorkerSaveError("A pending PDF upload must be retried with the exact same file; keep the selection unchanged.", true); }
+      operation.diagnostic?.("pending_identity_ready", locale, identityCategory);
       assertFilesSaveOperation(operation);
       let session: Awaited<ReturnType<typeof supabase.auth.getSession>>;
+      operation.diagnostic?.("session_started", locale);
       try {
         const sessionPromise = supabase.auth.getSession();
         session = await awaitFilesPreflight(sessionPromise, operation, "session check", FILE_AUTH_TIMEOUT_MS);
       }
-      catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files session check failed before a request was sent. Keep the selected file and retry."); }
+      catch (error) {
+        operation.diagnostic?.("session_completed", locale, operation.isActive() ? "rejected" : "timeout_or_cancelled");
+        if (error instanceof AggregateWorkerSaveError) throw error;
+        throw new AggregateWorkerSaveError("The Files session check failed before a request was sent. Keep the selected file and retry.");
+      }
+      operation.diagnostic?.("session_completed", locale, "resolved");
       const { data, error } = session; const token = data.session?.access_token;
       if (error || typeof token !== "string" || !token) throw new AggregateWorkerSaveError("Your session could not be verified; keep the selected PDF unchanged.");
       let uploadHeaders: Headers;
@@ -1750,22 +1806,49 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         if (encodedFilename.length > FILE_UPLOAD_FILENAME_HEADER_MAX_LENGTH) throw new Error("filename too long");
         uploadHeaders = new Headers({ Authorization:`Bearer ${token}`, "Content-Type":"application/pdf", "X-Upload-Request-ID":requestId,
           [FILE_UPLOAD_FILENAME_HEADER]:encodedFilename });
+        operation.diagnostic?.("headers_constructed", locale);
       } catch {
+        operation.diagnostic?.("headers_constructed", locale, "rejected");
         throw new AggregateWorkerSaveError("PDF upload request could not be constructed; no request was sent. Keep the selected file and retry.");
       }
-      const { response, responseValue, errorCode } = await awaitFilesRequest(async signal => {
-        const issued = await fetch(`/api/admin/v1/files/upload?locale=${locale}`, { method:"POST", credentials:"omit",
-          headers:uploadHeaders, body:bytes, signal });
-        let decoded: unknown; let code: unknown;
-        if (issued.ok) {
-          try { decoded = await issued.json(); }
-          catch { throw new AggregateWorkerSaveError("PDF upload result is uncertain. Retry with the same selected file.", true); }
-        } else {
-          try { const body=await issued.clone().json() as Record<string,unknown>; code=(body.error as Record<string,unknown>|undefined)?.code; }
-          catch { /* the response status still determines the safe failure class */ }
+      let fetchSettlementLogged = false;
+      let requestResult: { response: Response; responseValue: unknown; errorCode: unknown };
+      try {
+        requestResult = await awaitFilesRequest(async signal => {
+          operation.diagnostic?.("upload_fetch_invoking", locale);
+          let issued: Response;
+          try {
+            issued = await fetch(`/api/admin/v1/files/upload?locale=${locale}`, { method:"POST", credentials:"omit",
+              headers:uploadHeaders, body:bytes, signal });
+            if (!fetchSettlementLogged) {
+              fetchSettlementLogged = true;
+              operation.diagnostic?.("upload_fetch_settled", locale, "http_response");
+            }
+          } catch (error) {
+            if (!fetchSettlementLogged) {
+              fetchSettlementLogged = true;
+              operation.diagnostic?.("upload_fetch_settled", locale, "rejected");
+            }
+            throw error;
+          }
+          let decoded: unknown; let code: unknown;
+          if (issued.ok) {
+            try { decoded = await issued.json(); }
+            catch { throw new AggregateWorkerSaveError("PDF upload result is uncertain. Retry with the same selected file.", true); }
+          } else {
+            try { const body=await issued.clone().json() as Record<string,unknown>; code=(body.error as Record<string,unknown>|undefined)?.code; }
+            catch { /* the response status still determines the safe failure class */ }
+          }
+          return { response: issued, responseValue: decoded, errorCode: code };
+        }, operation, "PDF upload", FILE_UPLOAD_TIMEOUT_MS);
+      } catch (error) {
+        if (!fetchSettlementLogged) {
+          fetchSettlementLogged = true;
+          operation.diagnostic?.("upload_fetch_settled", locale, "timeout_or_cancelled");
         }
-        return { response: issued, responseValue: decoded, errorCode: code };
-      }, operation, "PDF upload", FILE_UPLOAD_TIMEOUT_MS);
+        throw error;
+      }
+      const { response, responseValue, errorCode } = requestResult;
       if (!response.ok) {
         if (errorCode === "upload_candidate_cleaned") {
           try { const raw=globalThis.sessionStorage?.getItem(key); if(raw && (JSON.parse(raw) as Record<string,unknown>).requestId===requestId) globalThis.sessionStorage?.removeItem(key); } catch { /* keep unverifiable request identity */ }
