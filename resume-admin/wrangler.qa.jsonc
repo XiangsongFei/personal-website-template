@@ -8,6 +8,16 @@
     "ACTIVITY_LOG_V13B_FAILURE_REPORTING": "false",
     "D8_FILES_UPLOAD_DIAGNOSTICS": "true"
   },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": false,
+      "persist": true
+    }
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
