@@ -24,7 +24,7 @@ function setup(filesState: "ready" | "error") {
     loadAdminFeatureState: vi.fn(async (resumeId: string) => ({ resumeId, activityLogEnabled: true,
       introductionWriteMode: "direct" as const, introductionTrustedContextRequired: false })),
     loadAdminFilesWriteState: filesState === "ready"
-      ? vi.fn(async (resumeId: string) => ({ resumeId, domain: "files" as const, activityLogEnabled: true, writeMode: "rpc" as const, trustedContextRequired: true }))
+      ? vi.fn(async (resumeId: string) => ({ resumeId, domain: "files" as const, activityLogEnabled: true, writeMode: "rpc" as const, trustedContextRequired: true, storageProtocol: "intent_v1" as const }))
       : vi.fn(async () => { throw new Error("Files state unavailable"); }),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [target]),
     loadActivityLogPageV13C: vi.fn(async () => [sourceEvent]),

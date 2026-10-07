@@ -53,6 +53,7 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
       if (url.endsWith("/rpc/load_admin_files_restore_source_v1")) return Response.json([{ historical_reference: oldRef, already_completed: false }]);
       if (url === oldRef) return new Response(null, { status: 200 });
       if (url.endsWith("/rpc/restore_resume_files_from_event_v1")) return Response.json({ files: restored, superseded_reference: nextRef });
+      if (url.endsWith("/rpc/claim_resume_file_cleanup_v1")) return Response.json([]);
       return new Response(null, { status: 404 });
     }));
     expect(canonicalizeFilesRestore({ target_resume_id: resumeId, source_event_id: requestId, locale: "zh" }))
@@ -63,7 +64,7 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     expect(response.status, await response.clone().text()).toBe(200);
     expect(calls.map(call => call.url)).toEqual([
       "https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1", oldRef,
-      "https://local.test/rest/v1/rpc/restore_resume_files_from_event_v1",
+      "https://local.test/rest/v1/rpc/restore_resume_files_from_event_v1", "https://local.test/rest/v1/rpc/claim_resume_file_cleanup_v1",
     ]);
     const rpcBody = JSON.parse(String(calls[2]?.init?.body)) as Record<string, unknown>;
     expect(Object.keys(rpcBody).sort()).toEqual(["canonical_restore", "signature_hex", "signed_context", "source_event_id", "target_locale", "target_resume_id"].sort());
@@ -147,13 +148,14 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
         files: { translations: { zh: { portfolio_href: "https://local.test/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/resume_zh.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, en: { portfolio_href: "" } } },
         superseded_reference: "https://local.test/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/zh/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf",
       });
+      if (url.endsWith("/rpc/claim_resume_file_cleanup_v1")) return Response.json([]);
       return new Response(null, { status: 404 });
     }));
     const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
       request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
     }), env());
     expect(response.status, await response.clone().text()).toBe(200);
-    expect(urls).toHaveLength(2);
+    expect(urls).toHaveLength(3);
     expect(urls.some(url => url.includes("/storage/v1/object/"))).toBe(false);
   });
 
@@ -220,6 +222,7 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     ["files", "/api/admin/v1/files/save", "canonical_files", files],
   ] as const)("signs and proxies %s through its typed RPC only", async (domain, path, canonicalKey, aggregate) => {
     const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (domain === "files" && String(input).endsWith("/rpc/claim_resume_file_cleanup_v1")) return Response.json([]);
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
       expect(body.target_resume_id).toBe(resumeId);
@@ -231,8 +234,19 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     vi.stubGlobal("fetch", upstream);
     const response = await handleWorkerRequest(request(path, { request_id: requestId, resume_id: resumeId, [domain]: aggregate }), env());
     expect(response.status, await response.clone().text()).toBe(200);
-    expect(await response.json()).toEqual(aggregate);
-    expect(upstream).toHaveBeenCalledOnce();
+    const responseBody=await response.json();
+    expect(domain === "files" ? (responseBody as {files:unknown}).files : responseBody).toEqual(aggregate);
+    expect(upstream.mock.calls.filter(call=>String(call[0]).endsWith(`/rpc/save_resume_${domain}_v1`))).toHaveLength(1);
+  });
+
+  it("keeps a confirmed Files RPC success when post-commit Storage cleanup is unavailable",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      if(String(input).endsWith("/rpc/claim_resume_file_cleanup_v1")) return new Response("unavailable",{status:503});
+      return Response.json(files);
+    }));
+    const response=await handleWorkerRequest(request("/api/admin/v1/files/save",{request_id:requestId,resume_id:resumeId,files}),env());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({files,cleanup_warning:true});
   });
 
   it.each([

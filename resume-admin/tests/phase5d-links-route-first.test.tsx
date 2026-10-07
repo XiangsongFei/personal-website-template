@@ -41,7 +41,7 @@ function repository(overrides: Partial<ResumeSectionRepository> = {}) {
     loadContact: vi.fn().mockResolvedValue(fixtureSections.contact),
     loadLinks: vi.fn().mockResolvedValue(structuredClone(links)),
     loadAdminWebsiteLinksWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "website_links", writeMode: "direct", activityLogEnabled: false, trustedContextRequired: false }),
-    loadAdminFilesWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "files", writeMode: "direct", activityLogEnabled: false, trustedContextRequired: false }),
+    loadAdminFilesWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "files", writeMode: "direct", activityLogEnabled: false, trustedContextRequired: false, storageProtocol: "legacy" }),
     updateProfileSharedDetails: vi.fn(), updateProfileTranslation: vi.fn(), ...overrides,
   };
 }

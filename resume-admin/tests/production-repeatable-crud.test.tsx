@@ -9,7 +9,7 @@ import type { AdminAuthClient } from "../src/auth/supabase";
 import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
-import type { ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
+import type { AdminFilesWriteState, ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
 import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, LinksSection, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
@@ -112,10 +112,12 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     hasPendingProjectsWorkerSave: vi.fn(() => false), discardPendingProjectsSave: vi.fn(),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [{ resumeId, siteKey: "example-cv" as const, role: "owner" as const }]),
     loadAdminWebsiteLinksWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "website_links" as const, activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false })),
-    loadAdminFilesWriteState: vi.fn(async (targetResumeId: string) => ({ resumeId: targetResumeId, domain: "files" as const, activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false })),
-    saveFilesWithWorker: vi.fn(async (_targetResumeId: string, files: { translations: Record<Locale, { portfolio_href: string }> }) => structuredClone(files)),
+    loadAdminFilesWriteState: vi.fn(async (targetResumeId: string): Promise<AdminFilesWriteState> => ({ resumeId: targetResumeId, domain: "files", activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false, storageProtocol: "legacy" })),
+    saveFilesWithWorker: vi.fn(async (_targetResumeId: string, files: { translations: Record<Locale, { portfolio_href: string }> }) => ({ files:structuredClone(files),cleanupWarning:false })),
     hasPendingFilesWorkerSave: vi.fn(() => false),
-    retryPendingFilesWithWorker: vi.fn(async () => ({ translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } })),
+    retryPendingFilesWithWorker: vi.fn(async () => ({ files:{ translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } },cleanupWarning:false })),
+    uploadResumePdfWithWorker: vi.fn(async (targetResumeId: string, locale: Locale) => ({reference:managedPdfUrl(targetResumeId,locale,locale==="zh"?"cccccccc-cccc-4ccc-8ccc-cccccccccccc":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"),uploadRequestId:locale==="zh"?"11111111-1111-4111-8111-111111111111":"22222222-2222-4222-8222-222222222222"})),
+    cleanupResumePdfCandidatesWithWorker: vi.fn(async () => false), clearPendingResumePdfUpload: vi.fn(),
     deleteManagedResumePdf: vi.fn(async (targetResumeId: string, locale: Locale, reference: string): Promise<"deleted" | "already-absent" | "not-managed" | "still-referenced" | "unverified" | "failed"> => { void targetResumeId; void locale; void reference; return "deleted"; }),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
@@ -2569,10 +2571,13 @@ describe("Batch 6A production repeatable CRUD", () => {
     const target = "11111111-1111-4111-8111-111111111111";
     vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(5).buffer) } });
     const setup = makeRepository("skills");
-    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
     const links = structuredClone(fixtureSections.links);
     setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
-    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    setup.methods.uploadResumePdfWithWorker.mockImplementation(async (resume, locale) => ({
+      reference: managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+      uploadRequestId: locale === "zh" ? "11111111-1111-4111-8111-111111111111" : "22222222-2222-4222-8222-222222222222",
+    }));
     openLinksAtResume(setup.repository, links, target);
     selectBothPdfs();
     save();
@@ -2581,7 +2586,9 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, { translations: {
       zh: { portfolio_href: expect.stringContaining("/zh/") }, en: { portfolio_href: expect.stringContaining("/en/") },
-    } });
+    } }, { zh: "11111111-1111-4111-8111-111111111111", en: "22222222-2222-4222-8222-222222222222" });
+    expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledTimes(2);
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
     expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
   });
 
@@ -2589,21 +2596,60 @@ describe("Batch 6A production repeatable CRUD", () => {
     const target = "11111111-1111-4111-8111-111111111111";
     vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(6).buffer) } });
     const setup = makeRepository("skills");
-    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
     setup.methods.saveFilesWithWorker.mockRejectedValue(new Error("transaction rejected"));
     const links = structuredClone(fixtureSections.links);
     setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
-    setup.methods.uploadResumePdf.mockImplementation(async (resume, locale) => managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"));
+    setup.methods.uploadResumePdfWithWorker.mockImplementation(async (resume, locale) => ({reference:managedPdfUrl(resume, locale, locale === "zh" ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc" : "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+      uploadRequestId:locale==="zh"?"11111111-1111-4111-8111-111111111111":"22222222-2222-4222-8222-222222222222"}));
     openLinksAtResume(setup.repository, links, target);
     selectBothPdfs();
     save();
 
     expect(await screen.findByText(/Files save was rejected/)).toBeTruthy();
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).toHaveBeenCalledWith(target,["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]);
     expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
     expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
     expect(screen.getByText("Selected: resume-en.pdf")).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("keeps the accepted D-7 Storage path when Files is rpc but the fresh protocol state is legacy", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "legacy" });
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [pdfFile("%PDF legacy", "resume-en.pdf", 12)] } });
+    save();
+
+    await screen.findByText("Site & link changes saved.");
+    expect(setup.methods.loadAdminFilesWriteState).toHaveBeenCalledWith(target);
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, expect.objectContaining({ translations: expect.any(Object) }), {});
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when fresh Files storage-protocol state cannot be loaded", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockRejectedValue(new Error("protocol state unavailable"));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("English Resume PDF"), { target: { files: [pdfFile("%PDF stale", "resume-en.pdf", 13)] } });
+    save();
+
+    expect(await screen.findByText(/Files state could not be confirmed/)).toBeTruthy();
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
   });
 
   it("marks both pending PDF locales dirty and Cancel discards them without uploading", async () => {

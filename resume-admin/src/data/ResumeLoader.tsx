@@ -289,7 +289,9 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       if (state.resumeId !== target.resumeId || state.domain !== "files"
         || typeof state.activityLogEnabled !== "boolean"
         || (state.writeMode !== "direct" && state.writeMode !== "rpc")
-        || typeof state.trustedContextRequired !== "boolean") {
+        || typeof state.trustedContextRequired !== "boolean"
+        || (state.storageProtocol !== "legacy" && state.storageProtocol !== "intent_v1")
+        || (state.storageProtocol === "intent_v1" && (state.writeMode !== "rpc" || !state.activityLogEnabled || !state.trustedContextRequired))) {
         setActivityLogFilesState({ kind: "error" });
         return;
       }

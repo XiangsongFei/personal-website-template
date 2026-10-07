@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readAdminTarget } from "../auth/supabase";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
 import { canonicalizeProfile, profileAggregateFromSection, profileSectionFromAggregate, validateProfileAggregate, type ProfileAggregate } from "./profileAggregate";
-import { canonicalizeFiles, canonicalizeWebsiteLinks, type FilesAggregate, type WebsiteLinksAggregate, validateFilesAggregate, validateWebsiteLinksAggregate } from "./websiteFilesAggregate";
+import { canonicalizeFiles, canonicalizeWebsiteLinks, managedResumePdfObjectPath, type FilesAggregate, type WebsiteLinksAggregate, validateFilesAggregate, validateWebsiteLinksAggregate } from "./websiteFilesAggregate";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
   mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
@@ -61,11 +61,14 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadAdminWebsiteLinksWriteState?(resumeId: string): Promise<AdminDomainWriteState<"website_links">>;
   saveWebsiteLinksWithWorker?(resumeId: string, links: LinksSection): Promise<LinksSection>;
   hasPendingWebsiteLinksWorkerSave?(resumeId: string): boolean;
-  loadAdminFilesWriteState?(resumeId: string): Promise<AdminDomainWriteState<"files">>;
-  saveFilesWithWorker?(resumeId: string, files: FilesAggregate): Promise<FilesAggregate>;
+  loadAdminFilesWriteState?(resumeId: string): Promise<AdminFilesWriteState>;
+  saveFilesWithWorker?(resumeId: string, files: FilesAggregate, uploadRequestIds?: Partial<Record<Locale, string>>): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
+  uploadResumePdfWithWorker?(resumeId: string, locale: Locale, file: File): Promise<{ reference: string; uploadRequestId: string }>;
+  cleanupResumePdfCandidatesWithWorker?(resumeId: string, uploadRequestIds: string[]): Promise<boolean>;
+  clearPendingResumePdfUpload?(resumeId: string, locale: Locale, requestId: string): void;
   restoreFilesFromEvent?(resumeId: string, sourceEventId: string, locale: Locale): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   hasPendingFilesWorkerSave?(resumeId: string): boolean;
-  retryPendingFilesWithWorker?(resumeId: string): Promise<FilesAggregate>;
+  retryPendingFilesWithWorker?(resumeId: string): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
@@ -99,6 +102,7 @@ export type AdminFeatureState = {
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects" | "website_links" | "files"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
+export type AdminFilesWriteState = AdminDomainWriteState<"files"> & { storageProtocol: "legacy" | "intent_v1" };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
 export type AdminProfileWriteState = { resumeId: string; activityLogEnabled: boolean; profileWriteMode: "direct" | "rpc"; profileTrustedContextRequired: boolean };
@@ -818,26 +822,34 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       throw new AggregateWorkerSaveError("The Contact save result could not be confirmed. Retry the exact pending request.");
     }
   };
-  const saveSignedD7 = async (domain: "website_links" | "files", resumeId: string, value: WebsiteLinksAggregate | FilesAggregate): Promise<WebsiteLinksAggregate | FilesAggregate> => {
+  const saveSignedD7 = async (domain: "website_links" | "files", resumeId: string, value: WebsiteLinksAggregate | FilesAggregate,
+    uploadRequestIds: Partial<Record<Locale, string>> = {}): Promise<{ result: WebsiteLinksAggregate | FilesAggregate; cleanupWarning: boolean }> => {
     const canonical = domain === "website_links" ? canonicalizeWebsiteLinks(value) : canonicalizeFiles(value);
     if (new TextEncoder().encode(canonical).byteLength > (domain === "website_links" ? 65536 : 16384)) throw new AggregateWorkerSaveError("Website & Links / Files content exceeds the allowed request size.");
     const storageKey = `admin-${domain}-rpc-pending-v1:${resumeId}`;
-    let pending: { requestId: string; resumeId: string; canonical: string } | null = null;
+    let pending: { requestId: string; resumeId: string; canonical: string; uploadRequestIds: Partial<Record<Locale, string>> } | null = null;
     try {
       const raw = globalThis.sessionStorage?.getItem(storageKey);
       if (raw) {
         if (new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("oversize");
         const stored = JSON.parse(raw) as Record<string, unknown>;
-        if (Object.keys(stored).sort().join(",") !== "canonical,requestId,resumeId" || stored.resumeId !== resumeId
+        const hasUploadIds = Object.keys(stored).sort().join(",") === "canonical,requestId,resumeId,uploadRequestIds";
+        if ((!hasUploadIds && Object.keys(stored).sort().join(",") !== "canonical,requestId,resumeId") || stored.resumeId !== resumeId
           || stored.canonical !== canonical || typeof stored.requestId !== "string"
           || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stored.requestId)) throw new Error("mismatch");
-        pending = { requestId: stored.requestId, resumeId, canonical };
+        const persistedUploadIds = hasUploadIds ? stored.uploadRequestIds as Partial<Record<Locale, string>> : {};
+        if (!persistedUploadIds || typeof persistedUploadIds !== "object" || Object.entries(persistedUploadIds).some(([locale,id]) =>
+          !(["zh","en"].includes(locale) && typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)))
+          || JSON.stringify(persistedUploadIds) !== JSON.stringify(uploadRequestIds)) throw new Error("upload identities mismatch");
+        pending = { requestId: stored.requestId, resumeId, canonical, uploadRequestIds: persistedUploadIds };
       }
     } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely; keep the draft unchanged.`); }
     if (!pending) {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable.`);
-      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, canonical };
-      try { if (!globalThis.sessionStorage) throw new Error("unavailable"); globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pending)); }
+      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, canonical, uploadRequestIds };
+      try { if (!globalThis.sessionStorage) throw new Error("unavailable"); globalThis.sessionStorage.setItem(storageKey, JSON.stringify({
+        requestId: pending.requestId, resumeId, canonical, ...(domain === "files" && Object.keys(uploadRequestIds).length ? { uploadRequestIds } : {}),
+      })); }
       catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely.`); }
     }
     const { data, error } = await supabase.auth.getSession();
@@ -858,11 +870,18 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     let responseValue: unknown;
     try { responseValue = await response.json(); } catch { throw new AggregateWorkerSaveError(`The ${domain} result is uncertain. Retry the exact pending request.`, true); }
     try {
-      const validated = domain === "website_links" ? validateWebsiteLinksAggregate(responseValue) : validateFilesAggregate(responseValue);
+      let cleanupWarning = false; let rawAggregate = responseValue;
+      if (domain === "files") {
+        if (!responseValue || typeof responseValue !== "object" || Array.isArray(responseValue)) throw new Error("files response");
+        const responseRecord = responseValue as Record<string, unknown>;
+        if (typeof responseRecord.cleanup_warning !== "boolean") throw new Error("cleanup status");
+        cleanupWarning = responseRecord.cleanup_warning; rawAggregate = responseRecord.files;
+      }
+      const validated = domain === "website_links" ? validateWebsiteLinksAggregate(rawAggregate) : validateFilesAggregate(rawAggregate);
       const returnedCanonical = domain === "website_links" ? canonicalizeWebsiteLinks(validated) : canonicalizeFiles(validated);
       if (returnedCanonical !== canonical) throw new Error("mismatch");
       try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* exact replay remains safe */ }
-      return validated;
+      return { result: validated, cleanupWarning };
     } catch { throw new AggregateWorkerSaveError(`The ${domain} result could not be confirmed. Retry the exact pending request.`, true); }
   };
   return {
@@ -1546,19 +1565,86 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     hasPendingWebsiteLinksWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-website_links-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
     async loadAdminFilesWriteState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
-      const { data, error } = await supabase.rpc("load_admin_files_write_state", { target_resume_id: resumeId });
+      const { data, error } = await supabase.rpc("load_admin_files_storage_state_v1", { target_resume_id: resumeId });
       if (error) throw new Error("Unable to load Files write state");
       const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
       if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
         || (row.files_write_mode !== "direct" && row.files_write_mode !== "rpc")
         || typeof row.files_trusted_context_required !== "boolean"
-        || (row.files_write_mode === "direct" && row.files_trusted_context_required)) throw new Error("Invalid Files write state");
+        || (row.files_write_mode === "direct" && row.files_trusted_context_required)
+        || (row.storage_protocol !== "legacy" && row.storage_protocol !== "intent_v1")) throw new Error("Invalid Files write state");
+      if (row.storage_protocol === "intent_v1"
+        && (row.files_write_mode !== "rpc" || !row.activity_log_enabled || !row.files_trusted_context_required))
+        throw new Error("Invalid Files storage protocol state");
       return { resumeId, domain: "files" as const, activityLogEnabled: row.activity_log_enabled,
-        writeMode: row.files_write_mode, trustedContextRequired: row.files_trusted_context_required };
+        writeMode: row.files_write_mode, trustedContextRequired: row.files_trusted_context_required,
+        storageProtocol: row.storage_protocol };
     },
-    async saveFilesWithWorker(resumeId, files) {
+    async uploadResumePdfWithWorker(resumeId, locale, file) {
+      if (!resumeId || (locale !== "zh" && locale !== "en") || !(file instanceof File)) throw new AggregateWorkerSaveError("Invalid resume PDF upload.");
+      if (file.type !== "application/pdf" || file.size < 1 || file.size > 10 * 1024 * 1024) throw new AggregateWorkerSaveError("Resume PDF must be a non-empty PDF no larger than 10 MiB.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const digestBytes = await crypto.subtle.digest("SHA-256", bytes);
+      const digest = [...new Uint8Array(digestBytes)].map(byte => byte.toString(16).padStart(2,"0")).join("");
+      const key = `admin-files-upload-pending-v1:${resumeId}:${locale}`;
+      let requestId: string;
+      try {
+        const raw = globalThis.sessionStorage?.getItem(key);
+        if (raw) {
+          const pending = JSON.parse(raw) as Record<string, unknown>;
+          if (Object.keys(pending).sort().join(",") !== "digest,fileLastModified,fileName,fileSize,locale,requestId,resumeId"
+            || pending.resumeId !== resumeId || pending.locale !== locale || pending.digest !== digest || pending.fileName !== file.name
+            || pending.fileSize !== file.size || pending.fileLastModified !== file.lastModified || typeof pending.requestId !== "string"
+            || !/^[0-9a-f-]{36}$/i.test(pending.requestId)) throw new Error("pending file differs");
+          requestId = pending.requestId;
+        } else {
+          if (!globalThis.crypto?.randomUUID || !globalThis.sessionStorage) throw new Error("secure storage unavailable");
+          requestId = globalThis.crypto.randomUUID().toLowerCase();
+          globalThis.sessionStorage.setItem(key, JSON.stringify({ resumeId, locale, requestId, digest, fileName:file.name, fileSize:file.size, fileLastModified:file.lastModified }));
+        }
+      } catch { throw new AggregateWorkerSaveError("A pending PDF upload must be retried with the exact same file; keep the selection unchanged.", true); }
+      const { data, error } = await supabase.auth.getSession(); const token = data.session?.access_token;
+      if (error || typeof token !== "string" || !token) throw new AggregateWorkerSaveError("Your session could not be verified; keep the selected PDF unchanged.");
+      let response: Response;
+      try { response = await fetch(`/api/admin/v1/files/upload?locale=${locale}`, { method:"POST", credentials:"omit",
+        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/pdf", "X-Upload-Request-ID":requestId, "X-Original-Filename":file.name }, body:bytes,
+        signal:AbortSignal.timeout(60_000) }); }
+      catch { throw new AggregateWorkerSaveError("PDF upload result is uncertain. Retry with the same selected file.", true); }
+      if (!response.ok) {
+        let errorCode: unknown;
+        try { const errorBody=await response.clone().json() as Record<string,unknown>; errorCode=(errorBody.error as Record<string,unknown>|undefined)?.code; } catch { /* generic status is sufficient */ }
+        if (errorCode === "upload_candidate_cleaned") {
+          try { const raw=globalThis.sessionStorage?.getItem(key); if(raw && (JSON.parse(raw) as Record<string,unknown>).requestId===requestId) globalThis.sessionStorage?.removeItem(key); } catch { /* keep unverifiable request identity */ }
+        }
+        throw new AggregateWorkerSaveError(response.status>=500 ? "PDF upload result is uncertain. Retry with the same selected file."
+          : "The selected PDF could not be uploaded; keep the selection and request unchanged.", response.status>=500);
+      }
+      let responseValue: unknown; try { responseValue=await response.json(); } catch { throw new AggregateWorkerSaveError("PDF upload result is uncertain. Retry with the same selected file.",true); }
+      if (!responseValue || typeof responseValue!=="object" || Array.isArray(responseValue)) throw new AggregateWorkerSaveError("PDF upload response could not be confirmed.",true);
+      const value=responseValue as Record<string,unknown>;
+      if (typeof value.reference!=="string" || value.upload_request_id!==requestId
+        || !managedResumePdfObjectPath(supabaseUrl,resumeId,locale,value.reference)) throw new AggregateWorkerSaveError("PDF upload response could not be confirmed.",true);
+      return { reference:value.reference, uploadRequestId:requestId };
+    },
+    clearPendingResumePdfUpload(resumeId,locale,requestId) {
+      const key=`admin-files-upload-pending-v1:${resumeId}:${locale}`;
+      try { const raw=globalThis.sessionStorage?.getItem(key); if(raw && (JSON.parse(raw) as Record<string,unknown>).requestId===requestId) globalThis.sessionStorage.removeItem(key); }
+      catch { /* keep unverifiable pending identity */ }
+    },
+    async cleanupResumePdfCandidatesWithWorker(resumeId,uploadRequestIds) {
+      if (!resumeId || uploadRequestIds.length>2 || uploadRequestIds.some(id=>!/^[0-9a-f-]{36}$/i.test(id))) return true;
+      const {data,error}=await supabase.auth.getSession(); const token=data.session?.access_token;
+      if(error || typeof token!=="string" || !token) return true;
+      try {
+        const response=await fetch("/api/admin/v1/files/cleanup",{method:"POST",credentials:"omit",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+          body:JSON.stringify({upload_request_ids:uploadRequestIds}),signal:AbortSignal.timeout(30_000)});
+        if(!response.ok) return true; const result=await response.json() as Record<string,unknown>; return result.cleanup_warning!==false;
+      } catch { return true; }
+    },
+    async saveFilesWithWorker(resumeId, files, uploadRequestIds = {}) {
       if (!resumeId) throw new AggregateWorkerSaveError("Missing resume ID");
-      return await saveSignedD7("files", resumeId, validateFilesAggregate(files)) as FilesAggregate;
+      const result=await saveSignedD7("files", resumeId, validateFilesAggregate(files),uploadRequestIds);
+      return { files:result.result as FilesAggregate, cleanupWarning:result.cleanupWarning };
     },
     async restoreFilesFromEvent(resumeId, sourceEventId, locale) {
       if (!resumeId || !/^[0-9a-f-]{36}$/i.test(sourceEventId) || (locale !== "zh" && locale !== "en"))
@@ -1595,36 +1681,37 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       }
       let result: unknown;
       try { result = await response.json(); } catch { throw new AggregateWorkerSaveError("The Files restore result is uncertain. Retry the exact request.", true); }
-      let files: FilesAggregate; let supersededReference: string;
+      let files: FilesAggregate; let cleanupWarning: boolean;
       try {
         if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("result shape");
         const body = result as Record<string, unknown>;
         files = validateFilesAggregate(body.files);
-        if (typeof body.superseded_reference !== "string") throw new Error("cleanup reference");
-        supersededReference = body.superseded_reference;
+        if (typeof body.cleanup_warning !== "boolean") throw new Error("cleanup status");
+        cleanupWarning = body.cleanup_warning;
         try { globalThis.sessionStorage.removeItem(key); } catch { /* replay is safe */ }
       } catch { throw new AggregateWorkerSaveError("The Files restore result could not be confirmed. Retry the exact request.", true); }
-      let cleanupWarning = false;
-      if (supersededReference && supersededReference !== files.translations[locale].portfolio_href) {
-        try {
-          const cleanup = await createBatch6BRepositoryWrites(supabase, supabaseUrl ?? "").deleteManagedResumePdf?.(resumeId, locale, supersededReference);
-          cleanupWarning = cleanup !== "deleted" && cleanup !== "already-absent" && cleanup !== "not-managed";
-        } catch { cleanupWarning = true; }
-      }
       return { files, cleanupWarning };
     },
     hasPendingFilesWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
     async retryPendingFilesWithWorker(resumeId) {
       let value: unknown;
+      let pending: Record<string, unknown>;
       try {
         const raw = globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`);
         if (!raw || new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("missing");
-        const pending = JSON.parse(raw) as Record<string, unknown>;
-        if (Object.keys(pending).sort().join(",") !== "canonical,requestId,resumeId" || pending.resumeId !== resumeId || typeof pending.canonical !== "string") throw new Error("shape");
-        value = JSON.parse(pending.canonical);
-        if (canonicalizeFiles(value) !== pending.canonical) throw new Error("canonical");
+        const stored = JSON.parse(raw) as Record<string, unknown>;
+        const keys=Object.keys(stored).sort().join(",");
+        if ((keys!=="canonical,requestId,resumeId" && keys!=="canonical,requestId,resumeId,uploadRequestIds") || stored.resumeId !== resumeId
+          || typeof stored.canonical !== "string" || typeof stored.requestId!=="string" || !/^[0-9a-f-]{36}$/i.test(stored.requestId)) throw new Error("shape");
+        value = JSON.parse(stored.canonical);
+        if (canonicalizeFiles(value) !== stored.canonical) throw new Error("canonical");
+        if (stored.uploadRequestIds !== undefined && (!stored.uploadRequestIds || typeof stored.uploadRequestIds !== "object" || Array.isArray(stored.uploadRequestIds)
+          || Object.entries(stored.uploadRequestIds as Record<string,unknown>).some(([locale,id])=>!(["zh","en"].includes(locale)&&typeof id==="string"&&/^[0-9a-f-]{36}$/i.test(id as string))))) throw new Error("upload identity");
+        pending=stored;
       } catch { throw new AggregateWorkerSaveError("A pending Files request cannot be restored safely. Keep the current draft unchanged."); }
-      return await saveSignedD7("files", resumeId, validateFilesAggregate(value)) as FilesAggregate;
+      const uploadIds = (pending.uploadRequestIds && typeof pending.uploadRequestIds === "object" ? pending.uploadRequestIds : {}) as Partial<Record<Locale,string>>;
+      const result=await saveSignedD7("files", resumeId, validateFilesAggregate(value), uploadIds);
+      return { files:result.result as FilesAggregate, cleanupWarning:result.cleanupWarning };
     },
     async updateProfileSharedDetails(resumeId, shared) {
       if (typeof resumeId !== "string" || !resumeId) throw new Error("Missing resume ID");

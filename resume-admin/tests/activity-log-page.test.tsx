@@ -532,7 +532,7 @@ describe("Activity Log page", () => {
     const fileEvent: ActivityLogV13CEvent = { ...event("file-restore-anchor"), section: "files", entityType: "resume_file_set", entityId: null,
       entitySnapshot: { files: after }, changes: { files: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
     const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
-      loadAdminFilesWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true }),
+      loadAdminFilesWriteState: vi.fn().mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" }),
       loadActivityLogPageV13C: vi.fn().mockResolvedValue([fileEvent]),
       restoreFilesFromEvent: vi.fn().mockResolvedValue({ files: before, cleanupWarning: false }) } as unknown as ResumeRepository;
     vi.spyOn(window, "confirm").mockReturnValue(true);

@@ -89,6 +89,24 @@ function auth(identity: boolean, allowed = true): AdminAuthClient {
 afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
 describe("Stage 4D normalized read and mapping", () => {
+  it("loads one coherent Files writer and Storage protocol state and fails closed on unknown protocol", async () => {
+    const base = mockSupabase(databaseRows());
+    const response = { resume_id: resumeId, activity_log_enabled: true, files_write_mode: "rpc",
+      files_trusted_context_required: true, storage_protocol: "legacy" };
+    const rpc = vi.fn(async (name: string) => name === "load_admin_files_storage_state_v1"
+      ? { data: [response], error: null }
+      : { data: true, error: null });
+    const repository = createResumeRepository({ ...base.client, rpc } as unknown as SupabaseClient);
+    await expect(repository.loadAdminFilesWriteState!(resumeId)).resolves.toEqual({ resumeId, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "legacy" });
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("load_admin_files_storage_state_v1", { target_resume_id: resumeId });
+
+    const invalidRpc = vi.fn(async () => ({ data: [{ ...response, storage_protocol: "unknown" }], error: null }));
+    const invalidRepository = createResumeRepository({ ...base.client, rpc: invalidRpc } as unknown as SupabaseClient);
+    await expect(invalidRepository.loadAdminFilesWriteState!(resumeId)).rejects.toThrow("Invalid Files write state");
+  });
+
   it("loads site metadata and each section only from its declared tables", async () => {
     const sectionCases = [
       ["loadOverview", ["resume_profile_translations"]],
@@ -246,11 +264,11 @@ describe("Stage 4D normalized read and mapping", () => {
 
   it("exposes scoped reads and explicitly allowlisted production mutation paths", () => {
     const repository = createResumeRepository(mockSupabase(databaseRows()).client);
-    expect(Object.keys(repository).filter(key => !["discardPendingProjectsSave", "hasPendingProjectsWorkerSave", "loadAdminProjectsWriteState", "saveProjectsWithWorker", "discardPendingContactSave", "hasPendingContactWorkerSave", "loadAdminContactWriteState", "saveContactWithWorker", "deleteManagedResumePdf", "hasPendingFilesWorkerSave", "loadAdminFilesWriteState", "retryPendingFilesWithWorker", "saveFilesWithWorker", "restoreFilesFromEvent", "hasPendingWebsiteLinksWorkerSave", "loadAdminWebsiteLinksWriteState", "saveWebsiteLinksWithWorker"].includes(key)).sort()).toEqual(["updateEditableEntryPosition", "insertEditableEntry", "updateEditableTranslation", "insertEditableTranslation", "readEditableTranslation", "deleteEditableTranslation", "deleteEditableEntry", "deleteManagedProfilePhoto", "uploadProfilePhoto", "uploadResumePdf", "updateProjectPosition", "insertProject", "updateProjectTranslation", "insertProjectTranslation", "readProjectTranslation", "deleteProjectTranslation", "deleteProject", "updateProjectMethod", "insertProjectMethod", "readProjectMethodByPosition", "deleteProjectMethod", "updateFocusPosition", "insertFocus", "updateFocusTranslation", "insertFocusTranslation", "readFocusTranslation", "deleteFocusTranslation", "deleteFocus", "updateStatusPosition", "updateStatusType", "insertStatus", "updateStatusTranslation", "insertStatusTranslation", "readStatusTranslation", "deleteStatusTranslation", "deleteStatus", "updateContactAvailability", "updateContactLabel", "updatePublicLinks", "updateSiteText", "updateNavigationLabel", "load", "loadSiteMetadata", "loadAdminFeatureState", "saveIntroductionAtomically", "saveIntroductionWithWorker", "hasPendingIntroductionWorkerSave", "discardPendingIntroductionSave", "loadAdminAwardsWriteState", "saveAwardsWithWorker", "hasPendingAwardsWorkerSave", "discardPendingAwardsSave", "loadAdminEducationWriteState", "saveEducationWithWorker", "hasPendingEducationWorkerSave", "discardPendingEducationSave", "loadAdminExperienceWriteState", "saveExperienceWithWorker", "hasPendingExperienceWorkerSave", "discardPendingExperienceSave", "loadAdminSkillsWriteState", "saveSkillsWithWorker", "hasPendingSkillsWorkerSave", "discardPendingSkillsSave", "loadActivityLogPage", "loadActivityLogPageV12", "loadActivityLogPageV13C", "loadActivityLogAuthorizedTargets", "loadOverview", "loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks", "loadSiteText", "updateProfileSharedDetails", "updateProfileTranslation", "updateEducationEntry", "updateEducationTranslation", "insertEducationEntry", "insertEducationTranslation", "readEducationTranslation", "deleteEducationEntry", "discardPendingProfileSave", "hasPendingProfileWorkerSave", "loadAdminProfileWriteState", "saveProfileWithWorker"].sort());
+    expect(Object.keys(repository).filter(key => !["discardPendingProjectsSave", "hasPendingProjectsWorkerSave", "loadAdminProjectsWriteState", "saveProjectsWithWorker", "discardPendingContactSave", "hasPendingContactWorkerSave", "loadAdminContactWriteState", "saveContactWithWorker", "deleteManagedResumePdf", "hasPendingFilesWorkerSave", "loadAdminFilesWriteState", "retryPendingFilesWithWorker", "saveFilesWithWorker", "restoreFilesFromEvent", "hasPendingWebsiteLinksWorkerSave", "loadAdminWebsiteLinksWriteState", "saveWebsiteLinksWithWorker", "uploadResumePdfWithWorker", "cleanupResumePdfCandidatesWithWorker", "clearPendingResumePdfUpload"].includes(key)).sort()).toEqual(["updateEditableEntryPosition", "insertEditableEntry", "updateEditableTranslation", "insertEditableTranslation", "readEditableTranslation", "deleteEditableTranslation", "deleteEditableEntry", "deleteManagedProfilePhoto", "uploadProfilePhoto", "uploadResumePdf", "updateProjectPosition", "insertProject", "updateProjectTranslation", "insertProjectTranslation", "readProjectTranslation", "deleteProjectTranslation", "deleteProject", "updateProjectMethod", "insertProjectMethod", "readProjectMethodByPosition", "deleteProjectMethod", "updateFocusPosition", "insertFocus", "updateFocusTranslation", "insertFocusTranslation", "readFocusTranslation", "deleteFocusTranslation", "deleteFocus", "updateStatusPosition", "updateStatusType", "insertStatus", "updateStatusTranslation", "insertStatusTranslation", "readStatusTranslation", "deleteStatusTranslation", "deleteStatus", "updateContactAvailability", "updateContactLabel", "updatePublicLinks", "updateSiteText", "updateNavigationLabel", "load", "loadSiteMetadata", "loadAdminFeatureState", "saveIntroductionAtomically", "saveIntroductionWithWorker", "hasPendingIntroductionWorkerSave", "discardPendingIntroductionSave", "loadAdminAwardsWriteState", "saveAwardsWithWorker", "hasPendingAwardsWorkerSave", "discardPendingAwardsSave", "loadAdminEducationWriteState", "saveEducationWithWorker", "hasPendingEducationWorkerSave", "discardPendingEducationSave", "loadAdminExperienceWriteState", "saveExperienceWithWorker", "hasPendingExperienceWorkerSave", "discardPendingExperienceSave", "loadAdminSkillsWriteState", "saveSkillsWithWorker", "hasPendingSkillsWorkerSave", "discardPendingSkillsSave", "loadActivityLogPage", "loadActivityLogPageV12", "loadActivityLogPageV13C", "loadActivityLogAuthorizedTargets", "loadOverview", "loadProfile", "loadIntroduction", "loadEducation", "loadExperience", "loadProjects", "loadSkills", "loadAwards", "loadContact", "loadLinks", "loadSiteText", "updateProfileSharedDetails", "updateProfileTranslation", "updateEducationEntry", "updateEducationTranslation", "insertEducationEntry", "insertEducationTranslation", "readEducationTranslation", "deleteEducationEntry", "discardPendingProfileSave", "hasPendingProfileWorkerSave", "loadAdminProfileWriteState", "saveProfileWithWorker"].sort());
     expect(["loadAdminProjectsWriteState", "saveProjectsWithWorker", "hasPendingProjectsWorkerSave", "discardPendingProjectsSave"].every(key => Object.keys(repository).includes(key))).toBe(true);
     expect(["loadAdminContactWriteState", "saveContactWithWorker", "hasPendingContactWorkerSave", "discardPendingContactSave"].every(key => Object.keys(repository).includes(key))).toBe(true);
     expect(["loadAdminProfileWriteState", "saveProfileWithWorker", "hasPendingProfileWorkerSave", "discardPendingProfileSave"].every(key => Object.keys(repository).includes(key))).toBe(true);
-    expect(["loadAdminWebsiteLinksWriteState", "saveWebsiteLinksWithWorker", "hasPendingWebsiteLinksWorkerSave", "loadAdminFilesWriteState", "saveFilesWithWorker", "restoreFilesFromEvent", "retryPendingFilesWithWorker", "hasPendingFilesWorkerSave", "deleteManagedResumePdf"].every(key => Object.keys(repository).includes(key))).toBe(true);
+    expect(["loadAdminWebsiteLinksWriteState", "saveWebsiteLinksWithWorker", "hasPendingWebsiteLinksWorkerSave", "loadAdminFilesWriteState", "saveFilesWithWorker", "restoreFilesFromEvent", "retryPendingFilesWithWorker", "hasPendingFilesWorkerSave", "deleteManagedResumePdf", "uploadResumePdfWithWorker", "cleanupResumePdfCandidatesWithWorker", "clearPendingResumePdfUpload"].every(key => Object.keys(repository).includes(key))).toBe(true);
     const source = readFileSync(resolve("src/data/resumeRepository.ts"), "utf8");
     expect(source).not.toMatch(/\.upsert\s*\(/);
     expect(source.match(/\.update\s*\(/g)).toHaveLength(6);
@@ -269,7 +287,6 @@ describe("V1.3D-7 Files historical restore repository boundary", () => {
   afterEach(() => vi.unstubAllGlobals());
   const restoreResumeId = "ea111111-1111-4111-8111-111111111111";
   const legacy = `https://local.supabase.invalid/storage/v1/object/public/resume-files/${restoreResumeId}/resume_en.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
-  const managed = `https://local.supabase.invalid/storage/v1/object/public/resume-files/${restoreResumeId}/en/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf`;
   const restored = { translations: { zh: { portfolio_href: "https://example.invalid/qa-resume-zh.pdf" }, en: { portfolio_href: legacy } } };
 
   function repositoryFor(fetchImpl: typeof fetch, removeResult: unknown = { data: [{ name: `${resumeId}/en/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.pdf` }], error: null }) {
@@ -289,7 +306,7 @@ describe("V1.3D-7 Files historical restore repository boundary", () => {
 
   it("reuses the exact pending request after an ambiguous response and cleans only an unreferenced managed candidate after confirmation", async () => {
     const responses = [new Response("temporary upstream failure", { status: 503 }),
-      Response.json({ files: restored, superseded_reference: managed })];
+      Response.json({ files: restored, cleanup_warning: false })];
     const requests: Array<{ body: Record<string, unknown> }> = [];
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       requests.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> });
@@ -307,17 +324,20 @@ describe("V1.3D-7 Files historical restore repository boundary", () => {
     expect(Object.keys(requests[0]!.body).sort()).toEqual(["locale", "request_id", "resume_id", "source_event_id"]);
     expect(result).toEqual({ files: restored, cleanupWarning: false });
     expect(window.sessionStorage.getItem(pendingKey)).toBeNull();
-    expect(client.from).toHaveBeenCalledWith("resume_locale_content");
+    expect(client.from).not.toHaveBeenCalled();
+    expect(client.storage.from).not.toHaveBeenCalled();
   });
 
   it("reports cleanup failure separately after a confirmed restore and never tries to delete the restored legacy reference", async () => {
-    const fetchMock = vi.fn(async () => Response.json({ files: restored, superseded_reference: managed })) as unknown as typeof fetch;
-    const { repository } = repositoryFor(fetchMock, { data: null, error: { message: "cleanup unavailable" } });
+    const fetchMock = vi.fn(async () => Response.json({ files: restored, cleanup_warning: true })) as unknown as typeof fetch;
+    const { repository, client } = repositoryFor(fetchMock);
     const result = await repository.restoreFilesFromEvent!(restoreResumeId, "e1111111-1111-4111-8111-111111111111", "en");
     expect(result).toEqual({ files: restored, cleanupWarning: true });
+    expect(client.from).not.toHaveBeenCalled();
+    expect(client.storage.from).not.toHaveBeenCalled();
 
     const legacyRestore = { translations: { zh: restored.translations.zh, en: { portfolio_href: legacy } } };
-    const noCleanup = repositoryFor(vi.fn(async () => Response.json({ files: legacyRestore, superseded_reference: legacy })) as unknown as typeof fetch);
+    const noCleanup = repositoryFor(vi.fn(async () => Response.json({ files: legacyRestore, cleanup_warning: false })) as unknown as typeof fetch);
     await expect(noCleanup.repository.restoreFilesFromEvent!(restoreResumeId, "e2222222-2222-4222-8222-222222222222", "en"))
       .resolves.toMatchObject({ files: legacyRestore, cleanupWarning: false });
     expect(noCleanup.client.from).not.toHaveBeenCalled();

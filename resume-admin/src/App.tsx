@@ -2687,41 +2687,71 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
   if (filesLocales.length) {
     try { fileState = await repository.loadAdminFilesWriteState?.(resumeId) ?? null; }
     catch { return partialNotice("Files state could not be confirmed. The selected PDFs remain available."); }
-    if (!fileState || fileState.resumeId !== resumeId || fileState.domain !== "files") return partialNotice("Files state is unavailable. The selected PDFs remain available.");
+    if (!fileState || fileState.resumeId !== resumeId || fileState.domain !== "files"
+      || (fileState.storageProtocol !== "legacy" && fileState.storageProtocol !== "intent_v1"))
+      return partialNotice("Files state is unavailable. The selected PDFs remain available.");
+    if (fileState.storageProtocol === "intent_v1" && fileState.writeMode !== "rpc")
+      return partialNotice("Files Storage authorization state is inconsistent. The selected PDFs remain available.");
     if (fileState.writeMode === "rpc" && (!fileState.activityLogEnabled || !fileState.trustedContextRequired || !repository.saveFilesWithWorker)) return partialNotice("Secure Files RPC saving is not fully enabled. The selected PDFs remain available.");
     if (fileState.writeMode === "rpc" && Object.values(directPending).some(Boolean)) return partialNotice("A prior direct Files request needs reconciliation before RPC-mode saving.");
     const oldRefs = { zh: baseline.translations.zh.portfolioHref, en: baseline.translations.en.portfolioHref };
     let saved: FilesAggregate;
     if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId)) {
       if (!repository.retryPendingFilesWithWorker) throw new Error("A pending Files request requires exact retry support.");
-      saved = await repository.retryPendingFilesWithWorker(resumeId);
+      const retryResult = await repository.retryPendingFilesWithWorker(resumeId);
+      saved = retryResult.files;
       confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
       confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
       return { __productionSaveNotice: true, value: confirmed, warning: false, keepProductionDraft: true,
-        message: "The pending Files request was confirmed. Your current file selection remains unsaved; review it before saving again." };
+        message: `${retryResult.cleanupWarning ? "The Files request was confirmed; Storage cleanup needs attention. " : ""}The pending Files request was confirmed. Your current file selection remains unsaved; review it before saving again.` };
     }
     if (fileState.writeMode === "rpc") {
-      if (!repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
+      const useStorageIntent = fileState.storageProtocol === "intent_v1";
+      if (useStorageIntent && (!fileState.activityLogEnabled || !fileState.trustedContextRequired || !repository.uploadResumePdfWithWorker))
+        return partialNotice("Secure Files Storage authorization is not fully enabled. The selected PDFs remain available.");
+      if (!useStorageIntent && !repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
       const refs = { ...oldRefs };
-      try { for (const locale of selectedLocales) refs[locale] = await repository.uploadResumePdf(resumeId, locale, pdfFiles[locale]!); }
+      const uploadRequestIds: Partial<Record<Locale,string>> = {};
+      try {
+        for (const locale of selectedLocales) {
+          if (useStorageIntent) {
+            const uploaded = await repository.uploadResumePdfWithWorker!(resumeId, locale, pdfFiles[locale]!);
+            refs[locale] = uploaded.reference;
+            uploadRequestIds[locale] = uploaded.uploadRequestId;
+          } else {
+            refs[locale] = await repository.uploadResumePdf!(resumeId, locale, pdfFiles[locale]!);
+          }
+        }
+      }
       catch { return partialNotice("PDF upload failed; authoritative references remain unchanged and your selection is retained."); }
       saved = { translations: { zh: { portfolio_href: refs.zh }, en: { portfolio_href: refs.en } } };
-      try { saved = await repository.saveFilesWithWorker!(resumeId, saved); }
+      let cleanupWarning = false;
+      try {
+        const result = await repository.saveFilesWithWorker!(resumeId, saved, useStorageIntent ? uploadRequestIds : {});
+        saved = result.files;
+        cleanupWarning = result.cleanupWarning;
+      }
       catch (error) {
         const uncertain = error instanceof AggregateWorkerSaveError && (error.uncertain || error.message.includes("conflicts"));
         let candidateCleanupWarning = false;
-        if (!uncertain) for (const locale of selectedLocales) try {
+        if (!uncertain && useStorageIntent && repository.cleanupResumePdfCandidatesWithWorker)
+          candidateCleanupWarning = await repository.cleanupResumePdfCandidatesWithWorker(resumeId,Object.values(uploadRequestIds));
+        if (!uncertain && !useStorageIntent) for (const locale of selectedLocales) try {
           const cleanup = await repository.deleteManagedResumePdf?.(resumeId, locale, refs[locale]);
           candidateCleanupWarning ||= cleanupNeedsWarning(cleanup ?? "unverified") || cleanup === "still-referenced";
         } catch { candidateCleanupWarning = true; }
+        if (!uncertain && useStorageIntent && !candidateCleanupWarning) for (const locale of selectedLocales) {
+          const id=uploadRequestIds[locale]; if(id) repository.clearPendingResumePdfUpload?.(resumeId,locale,id);
+        }
         const rejection = "Files save was rejected; old authoritative references were retained and your selections remain available.";
         return partialNotice(uncertain ? "Files save is uncertain; keep this request and do not upload again. Candidate cleanup was deferred." : `${rejection}${candidateCleanupWarning ? " Candidate Storage cleanup needs attention." : ""}`);
       }
       confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
       confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
       for (const locale of selectedLocales) confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pdfFiles[locale]!.name };
-      let cleanupWarning = false;
-      for (const locale of selectedLocales) if (oldRefs[locale] && oldRefs[locale] !== saved.translations[locale].portfolio_href && managedResumePdfObjectPath(import.meta.env.VITE_SUPABASE_URL, resumeId, locale, oldRefs[locale])) {
+      if (useStorageIntent) for (const locale of selectedLocales) { const id=uploadRequestIds[locale]; if(id) repository.clearPendingResumePdfUpload?.(resumeId,locale,id); }
+      else for (const locale of selectedLocales) if (oldRefs[locale] && oldRefs[locale] !== saved.translations[locale].portfolio_href
+        && managedResumePdfObjectPath(import.meta.env.VITE_SUPABASE_URL, resumeId, locale, oldRefs[locale])) {
         try { cleanupWarning ||= cleanupNeedsWarning(await repository.deleteManagedResumePdf?.(resumeId, locale, oldRefs[locale]) ?? "unverified"); }
         catch { cleanupWarning = true; }
       }

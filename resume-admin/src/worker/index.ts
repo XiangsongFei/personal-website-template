@@ -20,6 +20,9 @@ const SAVE_PROFILE_PATH = `${API_ROOT}/profile/save`;
 const SAVE_WEBSITE_LINKS_PATH = `${API_ROOT}/website-links/save`;
 const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
 const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
+const UPLOAD_FILES_PATH = `${API_ROOT}/files/upload`;
+const CLEANUP_FILES_PATH = `${API_ROOT}/files/cleanup`;
+const RESUME_PDF_LIMIT = 10 * 1024 * 1024;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
 const UPSTREAM_BODY_LIMIT = 512 * 1024;
@@ -1257,8 +1260,175 @@ async function restoreFilesFromEvent(request: Request, env: WorkerEnv): Promise<
     if (!isPlainObject(responseBody) || !isPlainObject(responseBody.files) || typeof responseBody.superseded_reference !== "string") throw new Error("shape");
     const files = validateFilesAggregate(responseBody.files);
     if (!sourceBody[0].already_completed && files.translations[parsed.locale].portfolio_href !== sourceBody[0].historical_reference) throw new Error("reference");
-    return Response.json({ files, superseded_reference: responseBody.superseded_reference }, { headers: { "Cache-Control": "no-store" } });
+    const cleanupWarning = await processFilesCleanup(request, env, targetResumeId).catch(() => true);
+    return Response.json({ files, cleanup_warning: cleanupWarning }, { headers: { "Cache-Control": "no-store" } });
   } catch { throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Files restore result."); }
+}
+
+function pdfObjectName(resumeId: string, locale: "zh" | "en"): string {
+  if (!crypto.randomUUID) throw apiError(503, "upload_unavailable", "Secure PDF upload is unavailable.");
+  return `${resumeId}/${locale}/${crypto.randomUUID().toLowerCase()}.pdf`;
+}
+
+function uploadCanonical(resumeId: string, locale: "zh" | "en", requestId: string, size: number, digest: string): string {
+  return JSON.stringify({ byte_size: size, content_sha256: digest, locale, request_id: requestId, resume_id: resumeId, version: 1 });
+}
+
+function base64Utf8(value: string): string {
+  const bytes = UTF8.encode(value); let binary = "";
+  for (let offset=0; offset<bytes.length; offset+=0x8000) binary += String.fromCharCode(...bytes.subarray(offset,offset+0x8000));
+  return btoa(binary);
+}
+
+async function userRpc(request: Request, env: WorkerEnv, functionName: string, body: Record<string, unknown>, limit = 32 * 1024): Promise<{ response: Response; value: unknown }> {
+  const { header: authorization } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env);
+  let response: Response;
+  try {
+    response = await fetch(`${supabase.baseUrl}/rest/v1/rpc/${functionName}`, { method: "POST", headers: {
+      Authorization: authorization, apikey: supabase.publishableKey, "Content-Type": "application/json", Accept: "application/json",
+    }, body: JSON.stringify(body), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  } catch { throw apiError(502, "upstream_unavailable", "The data service is unavailable."); }
+  const value = await readJsonResponse(response, limit);
+  return { response, value };
+}
+
+async function resolveFilesStorageTarget(request: Request, env: WorkerEnv): Promise<string> {
+  const { response, value } = await userRpc(request, env, "resolve_admin_files_storage_target_v1", {});
+  if (!response.ok || typeof value !== "string" || !UUID_PATTERN.test(value))
+    throw apiError(response.status === 401 || response.status === 403 ? response.status : 403, "files_target_unavailable", "An authorized Files target is unavailable.");
+  return value.toLowerCase();
+}
+
+function storageHeaders(request: Request, env: WorkerEnv): Headers {
+  const { header: authorization } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env);
+  return new Headers({ Authorization: authorization, apikey: supabase.publishableKey });
+}
+
+async function verifyStoredPdf(request: Request, env: WorkerEnv, objectName: string, expectedDigest: string, expectedSize: number): Promise<boolean> {
+  const supabase = validateSupabaseConfig(env);
+  let response: Response;
+  try {
+    response = await fetch(`${supabase.baseUrl}/storage/v1/object/authenticated/resume-files/${objectName.split("/").map(encodeURIComponent).join("/")}`,
+      { method: "GET", headers: storageHeaders(request, env), redirect: "manual", signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  } catch { return false; }
+  if (!response.ok) return false;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return bytes.byteLength === expectedSize && bytes.byteLength <= RESUME_PDF_LIMIT
+    && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d
+    && await sha256HexBytes(bytes) === expectedDigest;
+}
+
+async function sha256HexBytes(value: Uint8Array): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", copyToArrayBuffer(value));
+  return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function uploadResumeFile(request: Request, env: WorkerEnv): Promise<Response> {
+  const url = new URL(request.url);
+  if ([...url.searchParams.keys()].some(key => key !== "locale") || url.searchParams.getAll("locale").length !== 1)
+    throw apiError(400, "invalid_upload_request", "Only a PDF locale may be selected.");
+  const locale = url.searchParams.get("locale");
+  const requestId = request.headers.get("x-upload-request-id");
+  const originalFilename = request.headers.get("x-original-filename");
+  if ((locale !== "zh" && locale !== "en") || !requestId || !UUID_PATTERN.test(requestId))
+    throw apiError(400, "invalid_upload_request", "A supported locale and upload request UUID are required.");
+  if (!originalFilename || !originalFilename.trim() || originalFilename.length>255 || UTF8.encode(originalFilename).byteLength>512
+    || [...originalFilename].some(character => character.charCodeAt(0)<32 || character.charCodeAt(0)===127))
+    throw apiError(400,"invalid_upload_request","A valid PDF filename is required.");
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/pdf")
+    throw apiError(415, "invalid_pdf_type", "Resume files must use application/pdf.");
+  const bytes = await readBoundedBody(request, RESUME_PDF_LIMIT);
+  if (!bytes.byteLength) throw apiError(422, "empty_pdf", "The selected PDF is empty.");
+  if (bytes[0] !== 0x25 || bytes[1] !== 0x50 || bytes[2] !== 0x44 || bytes[3] !== 0x46 || bytes[4] !== 0x2d)
+    throw apiError(422, "invalid_pdf_signature", "The selected file does not have a PDF signature.");
+  const resumeId = await resolveFilesStorageTarget(request, env);
+  const digest = await sha256HexBytes(bytes);
+  const canonical = uploadCanonical(resumeId, locale, requestId.toLowerCase(), bytes.byteLength, digest);
+  const { keyId, key } = getSigningConfig(env); const issuedAt = Math.floor(Date.now() / 1000);
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: tokenActor(request.headers.get("authorization")).actorId,
+    resume_id: resumeId, domain: "files", operation: "update", request_id: requestId.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...getTrustedNetworkContext(request) };
+  const signed = await signContext(context, key);
+  const candidateName = pdfObjectName(resumeId, locale);
+  const prepared = await userRpc(request, env, "prepare_resume_file_upload_v1", { target_resume_id: resumeId, target_locale: locale,
+    target_request_id: requestId.toLowerCase(), candidate_object_name: candidateName, target_byte_size: bytes.byteLength,
+    target_content_sha256: digest, canonical_upload: canonical, signed_context: signed.serialized, signature_hex: signed.signatureHex });
+  if (!prepared.response.ok || !Array.isArray(prepared.value) || prepared.value.length !== 1 || !isPlainObject(prepared.value[0])
+    || typeof prepared.value[0].object_name !== "string" || typeof prepared.value[0].upload_status !== "string"
+    || !new RegExp(`^${resumeId}/${locale}/[0-9a-f-]{36}\\.pdf$`).test(prepared.value[0].object_name)
+    || !["prepared", "uploaded", "consumed", "cleanup_pending", "cleaned", "expired"].includes(prepared.value[0].upload_status)) {
+    if (isV13BIdempotencyConflict(prepared.response, prepared.value)) throw apiError(409, "upload_request_conflict", "This upload request UUID was used with different PDF bytes.");
+    throw apiError(prepared.response.status >= 400 && prepared.response.status < 500 ? 422 : 502, "upload_not_authorized", "The PDF upload was not authorized.");
+  }
+  const objectName = prepared.value[0].object_name;
+  if (prepared.value[0].upload_status === "cleanup_pending" || prepared.value[0].upload_status === "expired") {
+    const requested = await userRpc(request, env, "request_resume_file_candidate_cleanup_v1", {
+      target_resume_id: resumeId, target_request_ids: [requestId.toLowerCase()],
+    });
+    if (!requested.response.ok) throw apiError(502, "upload_cleanup_uncertain", "The prior PDF candidate cleanup could not be reconciled.");
+    if (await processFilesCleanup(request, env, resumeId)) throw apiError(504, "upload_cleanup_uncertain", "The prior PDF candidate cleanup is still pending. Retry the same request.");
+    throw apiError(409, "upload_candidate_cleaned", "The prior PDF candidate was cleaned. Save again to create a new upload request.");
+  }
+  if (prepared.value[0].upload_status === "cleaned")
+    throw apiError(409, "upload_candidate_cleaned", "The prior PDF candidate was cleaned. Save again to create a new upload request.");
+  if (prepared.value[0].upload_status === "prepared") {
+    const supabase = validateSupabaseConfig(env);
+    const objectUrl = `${supabase.baseUrl}/storage/v1/object/resume-files/${objectName.split("/").map(encodeURIComponent).join("/")}`;
+    let stored = false;
+    try {
+      const headers = storageHeaders(request, env); headers.set("Content-Type", "application/pdf"); headers.set("x-upsert", "false");
+      headers.set("x-metadata",base64Utf8(JSON.stringify({originalFilename})));
+      const upload = await fetch(objectUrl, { method: "POST", headers, body: copyToArrayBuffer(bytes), redirect: "manual", signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+      stored = upload.ok;
+      if (!stored && upload.status !== 409) throw apiError(upload.status >= 500 ? 502 : 422, "storage_upload_failed", "PDF upload to Storage failed.");
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      // A retry may reconcile a completed insert without ever overwriting it.
+    }
+    if (!(await verifyStoredPdf(request, env, objectName, digest, bytes.byteLength)))
+      throw apiError(504, "storage_upload_uncertain", "The upload result is uncertain. Retry the same request UUID with the same PDF.");
+    const completed = await userRpc(request, env, "complete_resume_file_upload_v1", { target_resume_id: resumeId, target_request_id: requestId.toLowerCase() });
+    if (!completed.response.ok || completed.value !== true) throw apiError(504, "upload_completion_uncertain", "The uploaded PDF is awaiting reconciliation. Retry the same request UUID.");
+  } else if (!(await verifyStoredPdf(request, env, objectName, digest, bytes.byteLength))) {
+    throw apiError(409, "upload_candidate_mismatch", "The existing upload request does not match the supplied PDF.");
+  }
+  const reference = `${validateSupabaseConfig(env).baseUrl}/storage/v1/object/public/resume-files/${objectName}`;
+  return Response.json({ reference, upload_request_id: requestId.toLowerCase() }, { headers: { "Cache-Control": "no-store" } });
+}
+
+async function processFilesCleanup(request: Request, env: WorkerEnv, resumeId: string): Promise<boolean> {
+  const claimId = crypto.randomUUID().toLowerCase();
+  const claimed = await userRpc(request, env, "claim_resume_file_cleanup_v1", { target_resume_id: resumeId, target_claim_id: claimId }, 16 * 1024);
+  if (!claimed.response.ok || !Array.isArray(claimed.value)) return true;
+  const supabase = validateSupabaseConfig(env); let warning = false;
+  for (const row of claimed.value) {
+    if (!isPlainObject(row) || typeof row.cleanup_id !== "string" || !UUID_PATTERN.test(row.cleanup_id)
+      || typeof row.object_name !== "string" || !new RegExp(`^${resumeId}/(zh|en)/[0-9a-f-]{36}\\.pdf$`).test(row.object_name)) { warning = true; continue; }
+    const url = `${supabase.baseUrl}/storage/v1/object/resume-files/${row.object_name.split("/").map(encodeURIComponent).join("/")}`;
+    let deleted = false;
+    try { const response = await fetch(url, { method: "DELETE", headers: storageHeaders(request, env), redirect: "manual", signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) }); deleted = response.ok || response.status === 404; }
+    catch { /* lease expires and a later exact reconciliation may retry */ }
+    if (!deleted) { warning = true; continue; }
+    const completed = await userRpc(request, env, "complete_resume_file_cleanup_v1", { target_resume_id: resumeId,
+      target_cleanup_id: row.cleanup_id, target_claim_id: claimId });
+    if (!completed.response.ok || completed.value !== true) warning = true;
+  }
+  return warning;
+}
+
+async function cleanupResumeFileCandidates(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 4096);
+  if (request.headers.get("content-type")?.split(";",1)[0].trim().toLowerCase() !== "application/json") throw apiError(400,"invalid_content_type","A JSON request body is required.");
+  let body: unknown; try { body = JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(rawBody)); } catch { throw apiError(400,"invalid_json","Request body must contain valid JSON."); }
+  if (!isPlainObject(body) || Object.keys(body).join(",") !== "upload_request_ids" || !Array.isArray(body.upload_request_ids)
+    || body.upload_request_ids.length>2 || body.upload_request_ids.some(id=>typeof id!=="string"||!UUID_PATTERN.test(id))) throw apiError(400,"invalid_cleanup_request","Only upload request UUIDs are accepted.");
+  const resumeId = await resolveFilesStorageTarget(request,env);
+  const requested = await userRpc(request,env,"request_resume_file_candidate_cleanup_v1",{target_resume_id:resumeId,target_request_ids:body.upload_request_ids.map(id=>(id as string).toLowerCase())});
+  if (!requested.response.ok) throw apiError(422,"cleanup_not_authorized","Candidate cleanup was not authorized.");
+  const cleanupWarning = await processFilesCleanup(request,env,resumeId);
+  return Response.json({cleanup_warning:cleanupWarning},{headers:{"Cache-Control":"no-store"}});
 }
 
 async function saveWebsiteLinksOrFiles(request: Request, env: WorkerEnv, domain: "website_links" | "files"): Promise<Response> {
@@ -1313,6 +1483,10 @@ async function saveWebsiteLinksOrFiles(request: Request, env: WorkerEnv, domain:
   } catch { throw apiError(502, "invalid_upstream_response", `The data service returned an invalid ${domain} result.`); }
   if (UTF8.encode(JSON.stringify(responseBody)).byteLength > 128 * 1024)
     throw apiError(502, "invalid_upstream_response", `The data service returned an oversized ${domain} result.`);
+  if (domain === "files") {
+    const cleanupWarning = await processFilesCleanup(request, env, (parsed.resume_id as string).toLowerCase()).catch(() => true);
+    return Response.json({ files: responseBody, cleanup_warning: cleanupWarning }, { headers: { "Cache-Control": "no-store" } });
+  }
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -1323,7 +1497,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1342,6 +1516,8 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");
     if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
+    if (url.pathname === UPLOAD_FILES_PATH) return await uploadResumeFile(request, env);
+    if (url.pathname === CLEANUP_FILES_PATH) return await cleanupResumeFileCandidates(request, env);
     return await saveExperienceOrSkills(request, env, url.pathname === SAVE_EXPERIENCE_PATH ? "experience" : "skills");
   } catch (error) {
     if (error instanceof ApiError) return errorResponse(error);
