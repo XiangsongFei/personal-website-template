@@ -9,6 +9,11 @@ type OrderedParent = { resumeId: string; entryId: string; position: number; sour
 type Translation<K> = { resumeId: string; entryId: string; locale: Locale; translation: K };
 type MethodRow = { resumeId: string; projectId: string; methodId: string; locale: Locale; position: number; value: string };
 export type ManagedResumePdfCleanupResult = "deleted" | "already-absent" | "not-managed" | "still-referenced" | "unverified" | "failed";
+export type LegacyFilesOperation = { signal: AbortSignal; isActive(): boolean; abandon(): void };
+type LegacyFilesError = Error & { uncertain: boolean };
+const LEGACY_FILES_PREFLIGHT_TIMEOUT_MS = 15_000;
+const LEGACY_FILES_UPLOAD_TIMEOUT_MS = 60_000;
+const LEGACY_FILES_CLEANUP_TIMEOUT_MS = 30_000;
 let uploadIdCounter = 0;
 const tableSpec = {
   focus: { parent: "resume_contact_focus_items", translations: "resume_contact_focus_translations", fk: "focus_item_id" },
@@ -45,6 +50,41 @@ function createUploadId(): string {
 function fillWithMathRandom(bytes: Uint8Array): void {
   for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
 }
+function legacyFilesError(message: string, uncertain = false): LegacyFilesError { return Object.assign(new Error(message), { uncertain }); }
+function newLegacyFilesOperation(): LegacyFilesOperation {
+  const controller = new AbortController(); let active = true;
+  return { signal: controller.signal, isActive: () => active, abandon() { if (!active) return; active = false; controller.abort(); } };
+}
+function assertLegacyFilesOperation(operation: LegacyFilesOperation): void {
+  if (!operation.isActive() || operation.signal.aborted) throw legacyFilesError("The legacy Files operation was cancelled before its next request.");
+}
+function awaitLegacyFilesPreflight<T>(pending: PromiseLike<T> | T, operation: LegacyFilesOperation, step: string, timeoutMs = LEGACY_FILES_PREFLIGHT_TIMEOUT_MS): Promise<T> {
+  assertLegacyFilesOperation(operation);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (action: () => void) => { if (settled) return; settled = true; clearTimeout(timer); operation.signal.removeEventListener("abort", onAbort); action(); };
+    const onAbort = () => finish(() => reject(legacyFilesError(`Legacy Files ${step} was cancelled before a Storage request was issued.`)));
+    const timer = setTimeout(() => finish(() => { operation.abandon(); reject(legacyFilesError(`Legacy Files ${step} timed out before a Storage request was issued.`)); }), timeoutMs);
+    operation.signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(pending).then(value => finish(() => { try { assertLegacyFilesOperation(operation); resolve(value); } catch (error) { reject(error); } }), error => finish(() => reject(error)));
+  });
+}
+function awaitLegacyFilesRequest<T>(request: () => PromiseLike<T> | T, operation: LegacyFilesOperation, step: string, timeoutMs: number): Promise<T> {
+  assertLegacyFilesOperation(operation);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (action: () => void) => { if (settled) return; settled = true; clearTimeout(timer); operation.signal.removeEventListener("abort", onAbort); action(); };
+    const fail = () => finish(() => reject(legacyFilesError(`${step} outcome is uncertain. Preserve the same legacy PDF candidate for reconciliation.`, true)));
+    const onAbort = () => fail();
+    const timer = setTimeout(() => { operation.abandon(); fail(); }, timeoutMs);
+    operation.signal.addEventListener("abort", onAbort, { once: true });
+    let issued: PromiseLike<T> | T;
+    try { issued = request(); } catch { fail(); return; }
+    Promise.resolve(issued).then(value => finish(() => { try { assertLegacyFilesOperation(operation); resolve(value); } catch { reject(legacyFilesError(`${step} outcome is uncertain after cancellation. Preserve the same legacy PDF candidate for reconciliation.`, true)); } }), () => fail());
+  });
+}
+function legacyPdfIdentityKey(resumeId: string, locale: Locale): string { return `admin-legacy-files-upload-v1:${resumeId}:${locale}`; }
+function isUuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value); }
 function checkedRow(data: Row | null, resumeId: string, id?: string): Row {
   if (!data || data.resume_id !== resumeId || (id !== undefined && data.id !== id)) throw new Error("Production write was not confirmed");
   return data;
@@ -144,27 +184,91 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
       if (!data.publicUrl || !/^https?:\/\//i.test(data.publicUrl)) throw new Error("Profile photo public URL was not returned.");
       return data.publicUrl;
     },
-    uploadResumePdf: async (resumeId: string, locale: Locale, file: File): Promise<string> => {
+    uploadResumePdf: async (resumeId: string, locale: Locale, file: File, suppliedOperation?: LegacyFilesOperation): Promise<string> => {
       assertIdentity(resumeId);
       validateLocale(locale);
       if (!(file instanceof File) || file.type !== "application/pdf") throw new Error("Resume PDF must be a PDF file.");
       if (file.size > 10 * 1024 * 1024) throw new Error("Resume PDF must be 10 MB or smaller.");
-      const path = `${resumeId}/${locale}/${createUploadId()}.pdf`;
+      const operation = suppliedOperation ?? newLegacyFilesOperation();
+      assertLegacyFilesOperation(operation);
+      const fileBuffer = await awaitLegacyFilesPreflight(file.arrayBuffer(), operation, "file read");
+      assertLegacyFilesOperation(operation);
+      const digestBuffer = await awaitLegacyFilesPreflight(globalThis.crypto.subtle.digest("SHA-256", fileBuffer), operation, "file verification");
+      assertLegacyFilesOperation(operation);
+      const digest = Array.from(new Uint8Array(digestBuffer), byte => byte.toString(16).padStart(2, "0")).join("");
+      const identityKey = legacyPdfIdentityKey(resumeId, locale);
+      let path: string;
+      try {
+        const raw = globalThis.sessionStorage?.getItem(identityKey);
+        if (raw) {
+          const pending = JSON.parse(raw) as Record<string, unknown>;
+          if (Object.keys(pending).sort().join(",") !== "digest,fileLastModified,fileName,fileSize,locale,path,resumeId"
+            || pending.resumeId !== resumeId || pending.locale !== locale || pending.digest !== digest
+            || pending.fileName !== file.name || pending.fileSize !== file.size || pending.fileLastModified !== file.lastModified
+            || typeof pending.path !== "string" || !pending.path.startsWith(`${resumeId}/${locale}/`)
+            || !isUuid(pending.path.slice(`${resumeId}/${locale}/`.length).replace(/\.pdf$/, "")) || !pending.path.endsWith(".pdf"))
+            throw legacyFilesError("An earlier legacy PDF candidate is unresolved. Re-select the exact same file; a different file cannot reuse its candidate identity.");
+          path = pending.path;
+        } else {
+          if (!globalThis.sessionStorage) throw new Error("session storage unavailable");
+          path = `${resumeId}/${locale}/${createUploadId()}.pdf`;
+          globalThis.sessionStorage.setItem(identityKey, JSON.stringify({ resumeId, locale, path, digest, fileName: file.name,
+            fileSize: file.size, fileLastModified: file.lastModified }));
+        }
+      } catch (error) {
+        if (error instanceof Error && "uncertain" in error) throw error;
+        throw legacyFilesError("The legacy PDF candidate identity could not be stored safely; no Storage upload was issued.");
+      }
+      assertLegacyFilesOperation(operation);
       const bucket = client.storage.from("resume-files");
-      const { error } = await bucket.upload(path, file, { upsert: false, contentType: "application/pdf", cacheControl: "31536000", metadata: { originalFilename: file.name } });
-      if (error) throw new Error("Resume PDF upload failed.");
+      const result = await awaitLegacyFilesRequest(() => bucket.upload(path, file, { upsert: false, contentType: "application/pdf", cacheControl: "31536000", metadata: { originalFilename: file.name } }), operation, "Legacy PDF upload", LEGACY_FILES_UPLOAD_TIMEOUT_MS);
+      if (result.error) {
+        assertLegacyFilesOperation(operation);
+        let recovered: { data: Blob | null; error: unknown };
+        try { recovered = await awaitLegacyFilesRequest(() => bucket.download(path, {}, { cache: "no-store" }), operation, "Legacy PDF candidate verification", LEGACY_FILES_UPLOAD_TIMEOUT_MS); }
+        catch { throw legacyFilesError("Legacy PDF upload outcome is unresolved. Keep the same selected file; its persisted candidate identity is retained.", true); }
+        if (recovered.error || !recovered.data) throw legacyFilesError("Legacy PDF upload was not confirmed. Keep the same selected file; its persisted candidate identity is retained.");
+        let existingDigest: string;
+        try {
+          const existingBytes = await awaitLegacyFilesPreflight(recovered.data.arrayBuffer(), operation, "candidate verification");
+          const verified = await awaitLegacyFilesPreflight(globalThis.crypto.subtle.digest("SHA-256", existingBytes), operation, "candidate verification");
+          existingDigest = Array.from(new Uint8Array(verified), byte => byte.toString(16).padStart(2, "0")).join("");
+        } catch { throw legacyFilesError("Legacy PDF candidate verification timed out or failed. Its upload result remains uncertain; keep the same selected file and candidate identity.", true); }
+        if (existingDigest !== digest) throw legacyFilesError("The persisted legacy PDF candidate contains different bytes. Do not replace it automatically; reconcile this candidate before continuing.", true);
+      }
       const { data } = bucket.getPublicUrl(path);
       if (!data.publicUrl || !managedResumePdfObjectPath(supabaseUrl, resumeId, locale, data.publicUrl)) throw new Error("Resume PDF public URL was not canonical.");
       return data.publicUrl;
     },
-    deleteManagedResumePdf: async (resumeId: string, locale: Locale, reference: string): Promise<ManagedResumePdfCleanupResult> => {
+    clearPendingLegacyResumePdfUpload(resumeId: string, locale: Locale, reference: string) {
+      const path = managedResumePdfObjectPath(supabaseUrl, resumeId, locale, reference);
+      if (!path) return;
+      const key = legacyPdfIdentityKey(resumeId, locale);
+      try {
+        const raw = globalThis.sessionStorage?.getItem(key);
+        if (!raw) return;
+        const pending = JSON.parse(raw) as Record<string, unknown>;
+        if (pending.resumeId === resumeId && pending.locale === locale && pending.path === path) globalThis.sessionStorage.removeItem(key);
+      } catch { /* retain unverifiable candidate identity */ }
+    },
+    deleteManagedResumePdf: async (resumeId: string, locale: Locale, reference: string, suppliedOperation?: LegacyFilesOperation): Promise<ManagedResumePdfCleanupResult> => {
       assertIdentity(resumeId); validateLocale(locale);
       const objectPath = managedResumePdfObjectPath(supabaseUrl, resumeId, locale, reference);
       if (!objectPath) return "not-managed";
-      const { data: rows, error: readError } = await client.from("resume_locale_content").select("portfolio_href").eq("resume_id", resumeId).in("locale", ["zh", "en"]);
+      const operation = suppliedOperation ?? newLegacyFilesOperation();
+      let read: { data: { portfolio_href: unknown }[] | null; error: unknown };
+      try {
+        const readPromise = client.from("resume_locale_content").select("portfolio_href").eq("resume_id", resumeId).in("locale", ["zh", "en"]);
+        read = await awaitLegacyFilesPreflight(readPromise, operation, "cleanup reference check", LEGACY_FILES_CLEANUP_TIMEOUT_MS);
+      } catch { return "unverified"; }
+      const { data: rows, error: readError } = read;
       if (readError || !Array.isArray(rows) || rows.length !== 2) return "unverified";
       if (rows.some(row => row.portfolio_href === reference)) return "still-referenced";
-      const { data, error } = await client.storage.from("resume-files").remove([objectPath]);
+      if (!operation.isActive() || operation.signal.aborted) return "unverified";
+      let removed: { data: unknown[] | null; error: unknown };
+      try { removed = await awaitLegacyFilesRequest(() => client.storage.from("resume-files").remove([objectPath]), operation, "Legacy PDF cleanup", LEGACY_FILES_CLEANUP_TIMEOUT_MS); }
+      catch { return "unverified"; }
+      const { data, error } = removed;
       if (error || !Array.isArray(data) || data.length > 1) return "failed";
       return data.length === 1 ? "deleted" : "already-absent";
     },

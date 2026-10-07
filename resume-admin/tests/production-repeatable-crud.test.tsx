@@ -9,7 +9,7 @@ import type { AdminAuthClient } from "../src/auth/supabase";
 import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
-import type { AdminFilesWriteState, ResumeRepository, ResumeSectionRepository, EditableRepeatableSection } from "../src/data/resumeRepository";
+import { AggregateWorkerSaveError, createFilesSaveOperation, createResumeRepository, type AdminFilesWriteState, type FilesSaveOperation, type ResumeRepository, type ResumeSectionRepository, type EditableRepeatableSection } from "../src/data/resumeRepository";
 import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, LinksSection, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
@@ -117,14 +117,16 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     hasPendingFilesWorkerSave: vi.fn(() => false),
     retryPendingFilesWithWorker: vi.fn(async () => ({ files:{ translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } },cleanupWarning:false })),
     uploadResumePdfWithWorker: vi.fn(async (targetResumeId: string, locale: Locale) => ({reference:managedPdfUrl(targetResumeId,locale,locale==="zh"?"cccccccc-cccc-4ccc-8ccc-cccccccccccc":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"),uploadRequestId:locale==="zh"?"11111111-1111-4111-8111-111111111111":"22222222-2222-4222-8222-222222222222"})),
-    cleanupResumePdfCandidatesWithWorker: vi.fn(async () => false), clearPendingResumePdfUpload: vi.fn(),
+    cleanupResumePdfCandidatesWithWorker: vi.fn(async (...args: [string, string[], FilesSaveOperation?]) => { void args; return false; }), clearPendingResumePdfUpload: vi.fn(),
     deleteManagedResumePdf: vi.fn(async (targetResumeId: string, locale: Locale, reference: string): Promise<"deleted" | "already-absent" | "not-managed" | "still-referenced" | "unverified" | "failed"> => { void targetResumeId; void locale; void reference; return "deleted"; }),
     saveIntroductionAtomically: vi.fn(async (_resumeId: string, draft: IntroItem[]) => {
       if (options.failIntroductionRpc) throw new Error("Introduction atomic write failed");
       return structuredClone(draft);
     }),
     saveIntroductionWithWorker: vi.fn(async (_resumeId: string, draft: IntroItem[]) => structuredClone(draft)),
-    uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale) => pdfCandidateUrl(targetResumeId, locale)),
+    uploadResumePdf: vi.fn(async (targetResumeId: string, locale: Locale, file: File, operation?: FilesSaveOperation) => {
+      void file; void operation; return pdfCandidateUrl(targetResumeId, locale);
+    }),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile), loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -188,7 +190,7 @@ function selectBothPdfs() {
   fireEvent.change(screen.getByLabelText("English Resume PDF"), { target: { files: [en] } });
   return { zh, en };
 }
-afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); window.sessionStorage.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Batch 6A production repeatable CRUD", () => {
   it.each([
@@ -2383,7 +2385,7 @@ describe("Batch 6A production repeatable CRUD", () => {
 
     await screen.findByText("Site & link changes saved.");
     expect(methods.uploadResumePdf).toHaveBeenCalledTimes(1);
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "zh", file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "zh", file, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { portfolioHref: savedPdfUrl });
     expect(screen.getByRole("link", { name: "Current PDF: spa-resume-zh.pdf" }).getAttribute("href")).toBe(savedPdfUrl);
     expect(screen.queryByText("Selected: spa-resume-zh.pdf")).toBeNull();
@@ -2408,7 +2410,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     save();
     await screen.findByText("Site & link changes saved.");
     expect(screen.getByText("No unsaved changes")).toBeTruthy();
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, locale, file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, locale, file, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, locale, {
       portfolioHref: savedPdfUrl,
     });
@@ -2478,7 +2480,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(authoritative.translations[savedLocale].portfolioHref).toContain(`/${savedLocale}/`);
     expect(authoritative.translations[failedLocale].portfolioHref).toBe(original[failedLocale]);
     expect(setup.methods.updateSiteText.mock.calls.map(([, locale]) => locale)).toEqual(["zh", "en"]);
-    expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, failedLocale, expect.stringContaining(`/${failedLocale}/`));
+    expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, failedLocale, expect.stringContaining(`/${failedLocale}/`), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(screen.queryByText(`Selected: ${selected[savedLocale].name}`)).toBeNull();
     expect(screen.getByText(`Selected: ${selected[failedLocale].name}`)).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
@@ -2527,7 +2529,7 @@ describe("Batch 6A production repeatable CRUD", () => {
       fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF zh", "resume-zh.pdf", 10)] } });
       save();
       expect(await screen.findByText(/Chinese PDF was not saved/)).toBeTruthy();
-      expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, "zh", expect.stringContaining("/zh/cccccccc-"));
+      expect(setup.methods.deleteManagedResumePdf).toHaveBeenCalledWith(target, "zh", expect.stringContaining("/zh/cccccccc-"), expect.objectContaining({ signal: expect.any(AbortSignal) }));
       expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
       if (cleanupResult === "failed") expect(screen.getByRole("alert").textContent).toMatch(/Storage cleanup needs attention/i);
       else expect(screen.getByRole("alert").textContent).not.toMatch(/Storage cleanup needs attention/i);
@@ -2586,10 +2588,291 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, { translations: {
       zh: { portfolio_href: expect.stringContaining("/zh/") }, en: { portfolio_href: expect.stringContaining("/en/") },
-    } }, { zh: "11111111-1111-4111-8111-111111111111", en: "22222222-2222-4222-8222-222222222222" });
+    } }, { zh: "11111111-1111-4111-8111-111111111111", en: "22222222-2222-4222-8222-222222222222" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledTimes(2);
     expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
     expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
+  it("releases the save UI and retains the selected PDF after a definite pre-request timeout", async () => {
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    setup.methods.uploadResumePdfWithWorker.mockRejectedValue(new AggregateWorkerSaveError("The Files session check timed out before a request was sent. Keep the selected file and retry."));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, resumeId);
+    const selected = pdfFile("%PDF timeout", "resume-zh.pdf", 11);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [selected] } });
+
+    save();
+
+    expect(await screen.findByText(/timed out before a request was sent/i)).toBeTruthy();
+    expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(links.translations.zh.portfolioHref).toBe(fixtureSections.links.translations.zh.portfolioHref);
+  });
+
+  it("bounds a combined Website & Links plus PDF preflight and prevents late PDF mutation", async () => {
+    const setup = makeRepository("skills");
+    let resolveWebsiteState!: (value: never) => void;
+    setup.methods.loadAdminWebsiteLinksWriteState.mockImplementation(() => new Promise(resolve => { resolveWebsiteState = resolve as (value: never) => void; }));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, resumeId);
+    const linkedinUrl = await screen.findByLabelText("LinkedIn URL") as HTMLInputElement;
+    fireEvent.change(linkedinUrl, { target: { value: "https://changed.example.test" } });
+    const file = pdfFile("%PDF combined wait", "combined-zh.pdf", 12);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+
+    vi.useFakeTimers();
+    save();
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+
+    expect(screen.getByRole("alert").textContent).toMatch(/Website & Links state check timed out before a request was sent/i);
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText("Selected: combined-zh.pdf")).toBeTruthy();
+    expect(linkedinUrl.value).toBe("https://changed.example.test");
+    expect(setup.methods.loadAdminFilesWriteState).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.updatePublicLinks).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(setup.methods.updateNavigationLabel).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    resolveWebsiteState({} as never);
+    await act(async () => { await Promise.resolve(); });
+    expect(setup.methods.loadAdminFilesWriteState).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("keeps a timed-out issued Website & Links save ambiguous and fences its late result from a newer PDF save", async () => {
+    const setup = makeRepository("skills");
+    const target = resumeId;
+    const websiteRequestId = "11111111-1111-4111-8111-111111111111";
+    const originalCrypto = globalThis.crypto;
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: originalCrypto.subtle });
+    const rpc = vi.fn(async (name: string) => {
+      if (name === "load_admin_website_links_write_state") return { data: [{ resume_id: target,
+        activity_log_enabled: true, website_links_write_mode: "rpc", website_links_trusted_context_required: true }], error: null };
+      throw new Error(`Unexpected RPC ${name}`);
+    });
+    const realWebsiteRepository = createResumeRepository({
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) },
+      rpc,
+    } as unknown as import("@supabase/supabase-js").SupabaseClient, "https://storage.example.test");
+    let resolveFirstRequest!: (response: Response) => void;
+    const websiteRequests: Array<{ body: Record<string, unknown>; signal: AbortSignal }> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== "/api/admin/v1/website-links/save") throw new Error(`Unexpected request ${String(input)}`);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      websiteRequests.push({ body, signal: init?.signal as AbortSignal });
+      if (websiteRequests.length === 1) return new Promise<Response>(resolve => { resolveFirstRequest = resolve; });
+      return Promise.resolve(Response.json(body.website_links));
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    Object.assign(setup.repository, {
+      loadAdminWebsiteLinksWriteState: realWebsiteRepository.loadAdminWebsiteLinksWriteState,
+      saveWebsiteLinksWithWorker: realWebsiteRepository.saveWebsiteLinksWithWorker,
+    });
+    const links = structuredClone(fixtureSections.links);
+    links.navigation = links.navigation.map((item, index) => ({ ...item,
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}` }));
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("LinkedIn URL"), { target: { value: "https://changed.example.test" } });
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF combined ambiguous", "combined-zh.pdf", 17)] } });
+
+    vi.useFakeTimers();
+    save();
+    await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+    expect(fetchMock, screen.queryByRole("alert")?.textContent ?? "save produced no request or alert").toHaveBeenCalledOnce();
+    expect(websiteRequests).toHaveLength(1);
+    expect(websiteRequests[0]?.body).toMatchObject({ request_id: websiteRequestId, resume_id: target });
+    expect(websiteRequests[0]?.signal.aborted).toBe(false);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.getByRole("alert").textContent).toMatch(/Website & Links save result is uncertain.*request timed out/i);
+    expect(websiteRequests[0]?.signal.aborted).toBe(true);
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText("Selected: combined-zh.pdf")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    expect(setup.methods.loadAdminFilesWriteState).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    vi.useRealTimers();
+    save();
+    await screen.findByText("Site & link changes saved.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(websiteRequests[1]?.body.request_id).toBe(websiteRequestId);
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+
+    await act(async () => { resolveFirstRequest(Response.json(websiteRequests[0]?.body.website_links)); await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    expect(screen.getByText("Site & link changes saved.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Current PDF: combined-zh.pdf" }).getAttribute("href")).toContain("/zh/");
+  });
+
+  it("releases the UI on a never-settling Files write-state read and retains the PDF draft", async () => {
+    const setup = makeRepository("skills");
+    let resolveFilesState!: (value: never) => void;
+    setup.methods.loadAdminFilesWriteState.mockImplementation(() => new Promise(resolve => { resolveFilesState = resolve as (value: never) => void; }));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, resumeId);
+    const file = pdfFile("%PDF state wait", "state-timeout-zh.pdf", 13);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+
+    vi.useFakeTimers();
+    save();
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+
+    expect(screen.getByRole("alert").textContent).toMatch(/write-state check timed out before a request was sent/i);
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText("Selected: state-timeout-zh.pdf")).toBeTruthy();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    resolveFilesState({} as never);
+    await act(async () => { await Promise.resolve(); });
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("fences cleanup after Links unmount while cleanup session acquisition is pending", async () => {
+    let resolveSession!: (value: never) => void;
+    const session = new Promise<never>(resolve => { resolveSession = resolve; });
+    const client = { auth: { getSession: vi.fn(() => session) }, rpc: vi.fn() };
+    const realCleanup = createResumeRepository(client as never, "https://storage.example.test").cleanupResumePdfCandidatesWithWorker!;
+    const setup = makeRepository("skills");
+    const uploadId = "11111111-1111-4111-8111-111111111111";
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    setup.methods.uploadResumePdfWithWorker.mockResolvedValue({ reference: managedPdfUrl(resumeId, "zh", uploadId), uploadRequestId: uploadId });
+    setup.methods.saveFilesWithWorker.mockRejectedValue(new Error("known rejected save"));
+    setup.methods.cleanupResumePdfCandidatesWithWorker.mockImplementation((target, ids, operation) => realCleanup(target, ids, operation ?? createFilesSaveOperation()));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    const fetchMock = vi.fn() as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    openLinksAtResume(setup.repository, links, resumeId);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF cleanup race", "cleanup-race.pdf", 15)] } });
+    save();
+    await waitFor(() => expect(setup.methods.cleanupResumePdfCandidatesWithWorker).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("link", { name: "Overview" }));
+    await screen.findByRole("heading", { name: "Overview" });
+    resolveSession({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000 } }, error: null } as never);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).toHaveBeenCalledOnce();
+  });
+
+  it("ignores an old Files-state resolution after a newer retry has completed", async () => {
+    const setup = makeRepository("skills");
+    let resolveOldState!: (value: AdminFilesWriteState) => void;
+    let stateCalls = 0;
+    setup.methods.loadAdminFilesWriteState.mockImplementation(async target => {
+      stateCalls += 1;
+      if (stateCalls === 1) return new Promise<AdminFilesWriteState>(resolve => { resolveOldState = resolve; });
+      return { resumeId: target, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" };
+    });
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, resumeId);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF retry", "retry-zh.pdf", 16)] } });
+
+    vi.useFakeTimers();
+    save();
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByText("Selected: retry-zh.pdf")).toBeTruthy();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+    save();
+    await screen.findByText("Site & link changes saved.");
+    expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    resolveOldState({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(screen.getByText("Site & link changes saved.")).toBeTruthy();
+    expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+  });
+
+  it("completes a successful intent_v1 UI save through the real Files repository methods", async () => {
+    const setup = makeRepository("skills");
+    const target = "11111111-1111-4111-8111-111111111111";
+    const uploadId = "11111111-1111-4111-8111-111111111111";
+    const saveId = "22222222-2222-4222-8222-222222222222";
+    const objectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const reference = managedPdfUrl(target, "zh", objectId);
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce(uploadId).mockReturnValueOnce(saveId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
+    const rpc = vi.fn(async (name: string) => name === "load_admin_files_storage_state_v1"
+      ? { data: [{ resume_id: target, activity_log_enabled: true, files_write_mode: "rpc", files_trusted_context_required: true, storage_protocol: "intent_v1" }], error: null }
+      : { data: null, error: { message: "unexpected RPC" } });
+    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const realFilesRepository = createResumeRepository(client, "https://storage.example.test");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/v1/files/upload")) {
+        const headers = init?.headers as Record<string, string>;
+        return Response.json({ reference, upload_request_id: headers["X-Upload-Request-ID"] });
+      }
+      if (url === "/api/admin/v1/files/save") return Response.json({ files: { translations: {
+        zh: { portfolio_href: reference }, en: { portfolio_href: fixtureSections.links.translations.en.portfolioHref },
+      } }, cleanup_warning: false });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.assign(setup.repository, {
+      loadAdminFilesWriteState: realFilesRepository.loadAdminFilesWriteState,
+      uploadResumePdfWithWorker: realFilesRepository.uploadResumePdfWithWorker,
+      saveFilesWithWorker: realFilesRepository.saveFilesWithWorker,
+      clearPendingResumePdfUpload: realFilesRepository.clearPendingResumePdfUpload,
+    });
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    const file = pdfFile("%PDF UI repository integration", "integration-zh.pdf", 14);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+
+    save();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByText("Site & link changes saved.");
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/admin/v1/files/upload");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/admin/v1/files/save");
+    expect((fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal).aborted).toBe(false);
+    expect((fetchMock.mock.calls[1]?.[1]?.signal as AbortSignal).aborted).toBe(false);
+    expect(screen.queryByText("Selected: integration-zh.pdf")).toBeNull();
+    expect(screen.getByRole("link", { name: "Current PDF: integration-zh.pdf" }).getAttribute("href")).toBe(reference);
+    expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${target}`)).toBeNull();
+    expect(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${target}:zh`)).toBeNull();
   });
 
   it("retains RPC-mode dual-locale selections and references when the transactional save fails", async () => {
@@ -2608,7 +2891,7 @@ describe("Batch 6A production repeatable CRUD", () => {
 
     expect(await screen.findByText(/Files save was rejected/)).toBeTruthy();
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledTimes(1);
-    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).toHaveBeenCalledWith(target,["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]);
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).toHaveBeenCalledWith(target,["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"],expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
     expect(screen.getByText("Selected: resume-zh.pdf")).toBeTruthy();
     expect(screen.getByText("Selected: resume-en.pdf")).toBeTruthy();
@@ -2627,12 +2910,136 @@ describe("Batch 6A production repeatable CRUD", () => {
     save();
 
     await screen.findByText("Site & link changes saved.");
-    expect(setup.methods.loadAdminFilesWriteState).toHaveBeenCalledWith(target);
+    expect(setup.methods.loadAdminFilesWriteState).toHaveBeenCalledWith(target,expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce();
     expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
-    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, expect.objectContaining({ translations: expect.any(Object) }), {});
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledWith(target, expect.objectContaining({ translations: expect.any(Object) }), {}, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
     expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
+  it("keeps a successful legacy-protocol Files RPC save successful and retains the superseded managed object", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://storage.example.test");
+    const target = "11111111-1111-4111-8111-111111111111";
+    const oldReference = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const newReference = managedPdfUrl(target, "zh", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "legacy" });
+    setup.methods.uploadResumePdf.mockResolvedValue(newReference);
+    setup.methods.saveFilesWithWorker.mockImplementation(async (_resumeId, aggregate) => ({ files: structuredClone(aggregate), cleanupWarning: true }));
+    setup.methods.deleteManagedResumePdf.mockResolvedValue("deleted");
+    setup.methods.cleanupResumePdfCandidatesWithWorker.mockResolvedValue(true);
+    const links = structuredClone(fixtureSections.links);
+    links.translations.zh.portfolioHref = oldReference;
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF legacy cleanup", "legacy-cleanup.pdf", 15)] } });
+    save();
+
+    expect(await screen.findByText("Site & link changes saved.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.cleanupResumePdfCandidatesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(screen.queryByText("Selected: legacy-cleanup.pdf")).toBeNull();
+    expect(screen.getByRole("link", { name: "Current PDF: legacy-cleanup.pdf" }).getAttribute("href")).toBe(newReference);
+    expect(oldReference).toContain("/zh/");
+  });
+
+  it("bounds direct PDF fingerprint reads and releases saving without a late upload", async () => {
+    vi.useFakeTimers();
+    let resolveRead!: (value: ArrayBuffer) => void;
+    const read = new Promise<ArrayBuffer>(resolve => { resolveRead = resolve; });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    const file = new File(["%PDF delayed direct"], "direct-delayed.pdf", { type: "application/pdf", lastModified: 42 });
+    Object.defineProperty(file, "arrayBuffer", { configurable: true, value: () => read });
+    openLinksAtResume(setup.repository, links);
+    fireEvent.change(screen.getByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
+    save();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    resolveRead(new TextEncoder().encode("%PDF delayed direct").buffer);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("fences a direct PDF digest that resolves after the save operation is cancelled", async () => {
+    let resolveDigest!: (value: ArrayBuffer) => void;
+    const digest = new Promise<ArrayBuffer>(resolve => { resolveDigest = resolve; });
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(() => digest) } });
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    const view = openLinksAtResume(setup.repository, links);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF late digest", "late-digest.pdf", 43)] } });
+    save();
+    await waitFor(() => expect(crypto.subtle.digest).toHaveBeenCalledOnce());
+    view.unmount();
+    resolveDigest(new Uint8Array(32).buffer);
+    await Promise.resolve(); await Promise.resolve();
+    expect(setup.methods.uploadResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile or clean up after a direct save operation is cancelled in flight", async () => {
+    let resolveWrite!: () => void;
+    const issuedWrite = new Promise<void>(resolve => { resolveWrite = resolve; });
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn(async () => new Uint8Array(32).fill(9).buffer) } });
+    const target = "11111111-1111-4111-8111-111111111111";
+    const setup = makeRepository("skills");
+    const links = structuredClone(fixtureSections.links);
+    links.translations.zh.portfolioHref = managedPdfUrl(target, "zh", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const loadLinks = vi.fn().mockResolvedValue(links);
+    setup.repository.loadLinks = loadLinks;
+    setup.methods.uploadResumePdf.mockResolvedValue(managedPdfUrl(target, "zh", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    setup.methods.updateSiteText.mockImplementation(() => issuedWrite);
+    const view = openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF cancelled write", "cancelled.pdf", 44)] } });
+    save();
+    await waitFor(() => expect(setup.methods.updateSiteText).toHaveBeenCalledOnce());
+    const referenceChecksBeforeCancel = loadLinks.mock.calls.length;
+    const operation = setup.methods.uploadResumePdf.mock.calls[0]?.[3];
+    expect(operation).toMatchObject({ signal: expect.any(AbortSignal) });
+    view.unmount();
+    await act(async () => { resolveWrite(); await issuedWrite; await Promise.resolve(); });
+    expect(setup.methods.updateSiteText).toHaveBeenCalledOnce();
+    expect(loadLinks).toHaveBeenCalledTimes(referenceChecksBeforeCancel);
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+  });
+
+  it("retains the selected legacy PDF and does not retry or clean an uncertain issued upload", async () => {
+    const target = "11111111-1111-4111-8111-111111111111";
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId: target, domain: "files", activityLogEnabled: true,
+      writeMode: "rpc", trustedContextRequired: true, storageProtocol: "legacy" });
+    setup.methods.uploadResumePdf.mockRejectedValue(Object.assign(
+      new Error("Legacy PDF upload outcome is unresolved. Keep the same selected file; its persisted candidate identity is retained."),
+      { uncertain: true },
+    ));
+    const links = structuredClone(fixtureSections.links);
+    setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
+    openLinksAtResume(setup.repository, links, target);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF unresolved", "legacy-unresolved.pdf", 16)] } });
+
+    save();
+
+    expect(await screen.findByText(/outcome is unresolved.*persisted candidate identity is retained/i)).toBeTruthy();
+    expect(screen.getByText("Selected: legacy-unresolved.pdf")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.deleteManagedResumePdf).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
   });
 
   it("fails closed when fresh Files storage-protocol state cannot be loaded", async () => {
@@ -2775,7 +3182,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "en", file);
+    expect(methods.uploadResumePdf).toHaveBeenCalledWith(resumeId, "en", file, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("preserves existing PDF hrefs and saves unrelated Links fields without uploading", async () => {
