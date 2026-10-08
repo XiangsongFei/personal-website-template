@@ -3,6 +3,7 @@ import { readAdminTarget } from "../auth/supabase";
 import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./resumeBatch6bRepository";
 import { canonicalizeProfile, profileAggregateFromSection, profileSectionFromAggregate, validateProfileAggregate, type ProfileAggregate } from "./profileAggregate";
 import { canonicalizeFiles, canonicalizeWebsiteLinks, managedResumePdfObjectPath, type FilesAggregate, type WebsiteLinksAggregate, validateFilesAggregate, validateWebsiteLinksAggregate } from "./websiteFilesAggregate";
+import { validateRestorePreviewContract, type RestorePreviewDomain, type RestorePreviewJson } from "./restorePreviewContract";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
   mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
@@ -78,6 +79,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV13C?(resumeId: string, pageSize: number, filters: ActivityLogV13CFilters, cursor?: ActivityLogV13CCursor): Promise<ActivityLogV13CEvent[]>;
   loadVersionHistoryPage?(resumeId: string, pageSize: number, cursor?: VersionHistoryCursor): Promise<VersionHistoryPage>;
+  previewRestore?(input: RestorePreviewRequest): Promise<RestorePreview>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -113,6 +115,22 @@ export class IntroductionWorkerSaveError extends Error {
 }
 export class AwardsWorkerSaveError extends Error { constructor(message: string) { super(message); this.name = "AwardsWorkerSaveError"; } }
 export class AggregateWorkerSaveError extends Error { constructor(message: string, readonly uncertain = false) { super(message); this.name = "AggregateWorkerSaveError"; } }
+export type RestorePreviewErrorCode = "unauthenticated" | "target_not_authorized" | "activity_log_disabled" | "restore_disabled"
+  | "restore_configuration_disabled" | "source_ineligible" | "current_state_ineligible" | "preview_unavailable" | "invalid_response";
+export class RestorePreviewError extends Error {
+  constructor(readonly code: RestorePreviewErrorCode) {
+    super(code === "unauthenticated" ? "Sign in to preview this history entry."
+      : code === "target_not_authorized" ? "This target is not available for Restore preview."
+        : code === "activity_log_disabled" ? "Version History is not enabled for this target."
+          : code === "restore_disabled" ? "Restore preview is not enabled for this target."
+          : code === "restore_configuration_disabled" ? "Restore preview is not available for this domain."
+            : code === "source_ineligible" ? "This history entry is not eligible for Restore preview."
+              : code === "current_state_ineligible" ? "The current domain state cannot be previewed safely."
+                : code === "invalid_response" ? "The Restore preview response could not be verified."
+                  : "Restore preview could not be prepared.");
+    this.name = "RestorePreviewError";
+  }
+}
 
 export type FilesSaveOperation = { signal: AbortSignal; isActive(): boolean; abandon(): void };
 
@@ -281,6 +299,19 @@ export type VersionHistoryPage = {
   entries: VersionHistoryEntry[];
   hasMore: boolean;
   nextCursor: VersionHistoryCursor | null;
+};
+
+export type { RestorePreviewDomain, RestorePreviewJson } from "./restorePreviewContract";
+export type RestorePreviewRequest = { resumeId: string; sourceEventId: string };
+export type RestorePreview = {
+  status: "ready" | "no_change";
+  sourceEventId: string;
+  sourceOccurredAt: string;
+  domain: RestorePreviewDomain;
+  historicalState: RestorePreviewJson;
+  currentState: RestorePreviewJson;
+  comparison: { before: RestorePreviewJson; after: RestorePreviewJson };
+  expectedCurrentDigest: string;
 };
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
@@ -639,6 +670,30 @@ function isVersionHistoryJson(value: unknown): value is VersionHistoryJson {
   if (isVersionHistoryScalar(value)) return true;
   if (Array.isArray(value)) return value.every(isVersionHistoryJson);
   return isRecord(value) && Object.values(value).every(isVersionHistoryJson);
+}
+
+const RESTORE_PREVIEW_ERROR_CODES: readonly RestorePreviewErrorCode[] = ["unauthenticated", "target_not_authorized", "activity_log_disabled", "restore_disabled",
+  "restore_configuration_disabled", "source_ineligible", "current_state_ineligible", "preview_unavailable"];
+
+function mapRestorePreviewResponse(value: unknown, expectedEventId: string): RestorePreview {
+  const validated = validateRestorePreviewContract(value, expectedEventId);
+  if (!validated || new TextEncoder().encode(JSON.stringify(validated)).byteLength > 256 * 1024) throw new RestorePreviewError("invalid_response");
+  return {
+    status: validated.status,
+    sourceEventId: validated.source_event_id,
+    sourceOccurredAt: validated.source_occurred_at,
+    domain: validated.domain,
+    historicalState: validated.historical_state,
+    currentState: validated.current_state,
+    comparison: { before: validated.comparison.before, after: validated.comparison.after },
+    expectedCurrentDigest: validated.expected_current_digest,
+  };
+}
+
+function restorePreviewErrorCode(value: unknown): RestorePreviewErrorCode | null {
+  if (!isRecord(value) || !isRecord(value.error) || typeof value.error.code !== "string") return null;
+  return RESTORE_PREVIEW_ERROR_CODES.includes(value.error.code as RestorePreviewErrorCode)
+    ? value.error.code as RestorePreviewErrorCode : null;
 }
 
 function versionHistoryEntityMatches(domain: VersionHistoryDomain, entityType: string, version: number): boolean {
@@ -1512,6 +1567,27 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         hasMore: page.hasMore,
         nextCursor: page.hasMore && last ? { occurredAt: last.occurredAt, eventId: last.eventId } : null,
       };
+    },
+    async previewRestore(input) {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!input || !uuid.test(input.resumeId) || !uuid.test(input.sourceEventId)) throw new RestorePreviewError("invalid_response");
+      let sessionResult: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>;
+      try { sessionResult = await supabase.auth.getSession(); }
+      catch { throw new RestorePreviewError("unauthenticated"); }
+      const token = sessionResult.data.session?.access_token;
+      if (sessionResult.error || typeof token !== "string" || !token) throw new RestorePreviewError("unauthenticated");
+      let response: Response;
+      try {
+        response = await fetch("/api/admin/v1/restore/preview", { method: "POST", credentials: "omit",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ resume_id: input.resumeId, source_event_id: input.sourceEventId }),
+          signal: AbortSignal.timeout(15_000) });
+      } catch { throw new RestorePreviewError("preview_unavailable"); }
+      let payload: unknown;
+      try { payload = await response.json() as unknown; }
+      catch { throw new RestorePreviewError("invalid_response"); }
+      if (!response.ok) throw new RestorePreviewError(restorePreviewErrorCode(payload) ?? "preview_unavailable");
+      return mapRestorePreviewResponse(payload, input.sourceEventId);
     },
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");

@@ -1,4 +1,5 @@
 import { managedProfilePhotoObjectPath } from "../data/profilePhotoStorage";
+import { validateRestorePreviewContract } from "../data/restorePreviewContract";
 import { canonicalizeProfile, validateProfileAggregate } from "../data/profileAggregate";
 import { canonicalizeFiles, canonicalizeWebsiteLinks, validateFilesAggregate, validateWebsiteLinksAggregate } from "../data/websiteFilesAggregate";
 import {
@@ -20,6 +21,7 @@ const SAVE_PROFILE_PATH = `${API_ROOT}/profile/save`;
 const SAVE_WEBSITE_LINKS_PATH = `${API_ROOT}/website-links/save`;
 const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
 const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
+const RESTORE_PREVIEW_PATH = `${API_ROOT}/restore/preview`;
 const UPLOAD_FILES_PATH = `${API_ROOT}/files/upload`;
 const CLEANUP_FILES_PATH = `${API_ROOT}/files/cleanup`;
 const RESUME_PDF_LIMIT = 10 * 1024 * 1024;
@@ -1360,6 +1362,66 @@ async function userRpc(request: Request, env: WorkerEnv, functionName: string, b
   return { response, value };
 }
 
+function validateRestorePreview(value: unknown, sourceEventId: string): Record<string, unknown> {
+  const validated = validateRestorePreviewContract(value, sourceEventId);
+  if (!validated || UTF8.encode(JSON.stringify(validated)).byteLength > 256 * 1024) {
+    throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Restore preview.");
+  }
+  return validated;
+}
+
+function restorePreviewUpstreamFailure(response: Response, value: unknown): ApiError {
+  const row = isPlainObject(value) ? value : {};
+  const code = typeof row.code === "string" ? row.code : "";
+  const message = typeof row.message === "string" ? row.message : "";
+  if (response.status === 401 || (code === "42501" && message === "Authentication required"))
+    return apiError(401, "unauthenticated", "Sign in to preview this history entry.");
+  if (code === "42501" && message === "Restore is disabled for this target")
+    return apiError(403, "restore_disabled", "Restore preview is not enabled for this target.");
+  if (code === "42501" && message === "Activity Log is disabled for this target")
+    return apiError(403, "activity_log_disabled", "Version History is not enabled for this target.");
+  if (code === "42501" && message === "Restore write configuration is not enabled")
+    return apiError(403, "restore_configuration_disabled", "Restore preview is not available for this domain.");
+  if (code === "42501") return apiError(403, "target_not_authorized", "This target is not available for Restore preview.");
+  if (code === "22023" && message === "Current domain state is not eligible for Restore")
+    return apiError(422, "current_state_ineligible", "The current domain state cannot be previewed safely.");
+  if (code === "22023") return apiError(422, "source_ineligible", "This history entry is not eligible for Restore preview.");
+  return apiError(response.status >= 500 ? 502 : 422, "preview_unavailable", "Restore preview could not be prepared.");
+}
+
+async function previewRestore(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 4096);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "resume_id,source_event_id"
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.source_event_id !== "string" || !UUID_PATTERN.test(parsed.source_event_id))
+    throw apiError(400, "invalid_request", "Restore preview requires only resume_id and source_event_id UUIDs.");
+
+  const resumeId = parsed.resume_id.toLowerCase();
+  const sourceEventId = parsed.source_event_id.toLowerCase();
+  const authorized = await userRpc(request, env, "activity_log_authorized_targets", {}, 16 * 1024);
+  if (!authorized.response.ok || !Array.isArray(authorized.value))
+    throw apiError(403, "target_not_authorized", "This target is not available for Restore preview.");
+  if (authorized.value.some(row => !isPlainObject(row) || Object.keys(row).sort().join(",") !== "resume_id,role,site_key"
+    || typeof row.resume_id !== "string" || !UUID_PATTERN.test(row.resume_id)
+    || !((row.site_key === "example-cv-qa" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
+    throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
+  const targetIds = authorized.value.map(row => (row as Record<string, unknown>).resume_id as string).map(id => id.toLowerCase());
+  if (new Set(targetIds).size !== targetIds.length) throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
+  const matching = authorized.value.filter(row => (row as Record<string, unknown>).resume_id === resumeId);
+  if (matching.length !== 1)
+    throw apiError(403, "target_not_authorized", "This target is not available for Restore preview.");
+
+  const preview = await userRpc(request, env, "preview_restore_v1", { target_resume_id: resumeId, source_event_id: sourceEventId }, 300 * 1024);
+  if (!preview.response.ok) throw restorePreviewUpstreamFailure(preview.response, preview.value);
+  const result = validateRestorePreview(preview.value, sourceEventId);
+  return Response.json(result, { headers: { "Cache-Control": "no-store" } });
+}
+
 async function resolveFilesStorageTarget(request: Request, env: WorkerEnv): Promise<string> {
   const { response, value } = await userRpc(request, env, "resolve_admin_files_storage_target_v1", {});
   if (!response.ok || typeof value !== "string" || !UUID_PATTERN.test(value))
@@ -1597,7 +1659,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1618,6 +1680,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");
     if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
+    if (url.pathname === RESTORE_PREVIEW_PATH) return await previewRestore(request, env);
     if (url.pathname === UPLOAD_FILES_PATH) {
       try {
         const response = await uploadResumeFile(request, env, uploadDiagnostic);

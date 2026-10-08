@@ -184,7 +184,7 @@ BEGIN
 
   denied := false;
   BEGIN
-    TRUNCATE cms_private.activity_log_events;
+    TRUNCATE cms_private.activity_log_restore_links, cms_private.activity_log_events;
   EXCEPTION WHEN SQLSTATE '55000' THEN denied := true;
   END;
   PERFORM public.rls_test_assert(denied, 'event truncation is rejected by immutable trigger');
