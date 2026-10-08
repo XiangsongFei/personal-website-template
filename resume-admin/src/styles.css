@@ -753,6 +753,18 @@ main{color:#242424}
 .version-history-value-list{display:grid;gap:6px;margin:0;padding-left:20px}
 .version-history-unavailable,.version-history-reference-note{margin:14px 0 0;color:#69788c;font-size:12px;line-height:1.55}
 .version-history-more{margin-top:18px}
+.version-history-restore-preview{margin-top:14px}
+.restore-dialog-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgb(16 24 40 / 58%)}
+.restore-dialog{width:min(900px,100%);max-height:min(90vh,900px);overflow:auto;padding:22px;border:1px solid #d9e0e9;border-radius:12px;background:#fff;box-shadow:0 24px 70px rgb(16 24 40 / 28%);outline:none}
+.restore-dialog:focus-visible{outline:3px solid #3975c6;outline-offset:3px}
+.restore-dialog>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.restore-dialog>header h2{margin:0;font-size:20px}
+.restore-dialog>p{color:#536176;line-height:1.55}
+.restore-dialog-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}
+.restore-dialog-comparison>section{min-width:0;max-height:38vh;overflow:auto;padding:14px;border:1px solid #dfe5ed;border-radius:8px;background:#fafbfc}
+.restore-dialog-comparison h3{margin:0 0 12px;font-size:14px}
+.restore-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+@media(max-width:640px){.restore-dialog-backdrop{align-items:end;padding:8px}.restore-dialog{max-height:94vh;padding:16px;border-radius:12px 12px 8px 8px}.restore-dialog-comparison{grid-template-columns:1fr}.restore-dialog-comparison>section{max-height:28vh}.restore-dialog-actions{flex-direction:column-reverse}.restore-dialog-actions .button{width:100%}}
 @media(max-width:640px){.version-history-entry-heading{flex-direction:column;gap:4px}.version-history-field{grid-template-columns:1fr;gap:4px}.version-history-field dd{grid-template-columns:1fr}.version-history-aggregate{grid-template-columns:1fr}.version-history-value-object>div{grid-template-columns:1fr;gap:3px}}
 @media(min-width:641px){.configuration-required-state{width:calc(50vw + 50% - 24px);max-width:none}.configuration-required-state .system-state-description{max-width:none;white-space:nowrap}}
 @media(max-width:640px){.system-state-content h1{font-size:28px}.system-state-actions{gap:10px;margin-top:20px}}

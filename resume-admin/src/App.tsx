@@ -23,6 +23,7 @@ import { formatBeijingTimestamp } from "./overviewFormat";
 import { SystemStateContent } from "./SystemState";
 import { ActivityLogPage } from "./ActivityLogPage";
 import { VersionHistoryPage } from "./VersionHistoryPage";
+import type { RestorePreviewDomain } from "./data/restorePreviewContract";
 
 const navigation = [
   { label: "Overview", path: "/overview" },
@@ -42,6 +43,10 @@ const previewRouteByPath: Partial<Record<string, PreviewSection>> = {
 };
 const previewSections: PreviewSection[] = ["profile", "introduction", "education", "experience", "projects", "skills", "awards", "contact", "links"];
 const DESKTOP_EDITOR_ONLY_QUERY = "(min-width: 861px) and (max-width: 1279px) and (pointer: fine)";
+const restoreSectionForDomain: Record<RestorePreviewDomain, SectionKey> = {
+  awards: "awards", experience: "experience", skills: "skills", education: "education",
+  projects: "projects", contact: "contact", website_links: "links",
+};
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches);
@@ -364,11 +369,14 @@ const EditorContext = createContext<{
   onBilingualCancel: (changedKeys: Set<string>) => void;
   onBilingualSave: (changedKeys: Set<string>) => void;
   interactionLocked: boolean;
+  beginRestoreDomainWrite: (section: SectionKey, resumeId: string) => (() => void);
+  canRestoreDomain: (domain: RestorePreviewDomain, resumeId: string) => { allowed: boolean; message?: string };
+  reconcileRestoredDomain: (domain: RestorePreviewDomain, resumeId: string) => Promise<void>;
   snapshotDataRevision: number;
   onSnapshotRebased: () => void;
 }>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, siteTextTranslations: null, siteTextResumeId: null, onSiteTextChanged: null, sectionTextDrafts: {}, setSectionTextDrafts: () => {}, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
-  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, interactionLocked: false, snapshotDataRevision: 0, onSnapshotRebased: () => {}, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
+  profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, interactionLocked: false, beginRestoreDomainWrite: () => () => {}, canRestoreDomain: () => ({ allowed: false, message: "Restore safety could not be verified." }), reconcileRestoredDomain: async () => { throw new Error("Restore reconciliation is unavailable."); }, snapshotDataRevision: 0, onSnapshotRebased: () => {}, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
 const EditorElementScrollContext = createContext(false);
 
@@ -671,11 +679,14 @@ function SectionForm<T>({ section, title, description, initial, children, produc
         return;
       }
       if (saveLock.current) return; saveLock.current = true; setSaving(true); setSaveError(false);
+      const restoreDomainSections = new Set<SectionKey>(["awards", "experience", "skills", "education", "projects", "contact", "links"]);
+      const releaseRestoreWrite = restoreDomainSections.has(section)
+        ? context.beginRestoreDomainWrite(section, context.additionalResumeId ?? context.resume?.resumeId ?? "") : () => {};
       const operation = createFilesSaveOperation(); saveOperation.current = operation;
       const operationIsMounted = () => saveOperation.current === operation;
       try { const sectionTextSaved = sectionText ? await sectionText.save() : true; const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved); const result = await productionSave(editor.draft, editor.saved, operation); if (!operationIsMounted()) return; const notice = result && typeof result === "object" && "__productionSaveNotice" in result ? result as ProductionSaveNotice<T> : null; const confirmed: T = notice ? notice.value : ((result as T | void) ?? editor.draft); context.onBilingualSave(changedKeys); editor.confirm(confirmed); if (notice?.keepProductionDraft) onProductionPartialSaved?.(notice.savedPdfLocales ?? []); else onProductionSaved?.(); setSaveError(Boolean(notice?.warning) || !sectionTextSaved); editor.setMessage(notice?.message ?? (sectionTextSaved ? section === "introduction" ? "Introduction changes saved." : section === "projects" ? "Project changes saved." : section === "skills" ? "Skill changes saved." : section === "awards" ? "Award changes saved." : section === "contact" ? "Contact changes saved." : section === "links" ? "Site & link changes saved." : "Changes saved to production." : "Section content saved. Some section text remains unsaved; retry to finish.")); context.onAdditionalChanged?.(section, context.additionalResumeId ?? "", confirmed); }
       catch (error) { if (!operationIsMounted()) return; setSaveError(true); editor.setMessage(error instanceof Error ? error.message : section === "introduction" ? "Introduction changes could not be saved. Please retry." : section === "contact" ? "Contact changes could not be saved. Your changes remain unsaved; please retry." : "Production save failed. Your changes remain unsaved; please retry."); }
-      finally { if (operationIsMounted()) { operation.abandon(); saveOperation.current = null; saveLock.current = false; setSaving(false); } }
+      finally { releaseRestoreWrite(); if (operationIsMounted()) { operation.abandon(); saveOperation.current = null; saveLock.current = false; setSaving(false); } }
       return;
     }
     const changedKeys = collectChangedBilingualFieldKeys(section, editor.draft, editor.saved);
@@ -830,7 +841,7 @@ type ProductionRepeatableProps = {
 function ProductionRepeatableSection({ section, resumeId, items, repository, drafts, onChanged, onReload,
   title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false, sectionText }: ProductionRepeatableProps) {
   const { t, locale } = useUiLocale();
-  const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave } = useContext(EditorContext);
+  const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave, beginRestoreDomainWrite } = useContext(EditorContext);
   const stored = drafts.get(section) as ProductionListState | undefined;
   const [editor, setEditor] = useState<ProductionListState>(() => stored?.marker === "production-list" ? clone(stored) : {
     marker: "production-list", baseline: clone(items), draft: clone(items),
@@ -876,6 +887,8 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       stateUpdate(current => ({ ...current, notice: "Introduction changes could not be saved. Please retry.", error: true })); return;
     }
     saving.current = true;
+    const releaseRestoreWrite = section === "experience" || section === "projects" || section === "skills" || section === "awards"
+      ? beginRestoreDomainWrite(section, resumeId) : () => {};
     let sectionTextSaveFailed = false;
     let sectionTextSaveSucceeded: boolean | null = null;
     let projectsRpcSaveStarted = false;
@@ -1189,7 +1202,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
         error: true };
       working = { ...working, saving: false };
       commit(working);
-    } finally { saving.current = false; }
+    } finally { saving.current = false; releaseRestoreWrite(); }
   };
   const cancel = () => {
     if (hasRecovery || editor.saving) return;
@@ -2005,6 +2018,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     if (!repository || !methodsReady || editor.saving) return;
     let confirmedParentCreated = false;
     let educationLabelSavedSeparately = false;
+    const releaseRestoreWrite = context.beginRestoreDomainWrite("education", resumeId);
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
       const writeState = await repository.loadAdminEducationWriteState!(resumeId);
@@ -2167,6 +2181,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         : message;
       setEditor(current => current ? { ...current, notice: visibleMessage, error: true } : current);
     } finally {
+      releaseRestoreWrite();
       setEditor(current => current ? { ...current, saving: false } : current);
     }
   };
@@ -3120,6 +3135,19 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const restoredScrollIdentity = useRef<string | null>(null);
   const drafts = useRef(new Map<string, unknown>());
+  const restoreDomainWrites = useRef(new Map<string, number>());
+  const beginRestoreDomainWrite = useCallback((section: SectionKey, resumeId: string) => {
+    const key = `${resumeId}:${section}`;
+    restoreDomainWrites.current.set(key, (restoreDomainWrites.current.get(key) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = restoreDomainWrites.current.get(key) ?? 0;
+      if (count <= 1) restoreDomainWrites.current.delete(key);
+      else restoreDomainWrites.current.set(key, count - 1);
+    };
+  }, []);
   const [sectionTextDrafts, setSectionTextDrafts] = useState<Partial<Record<SectionTextPage, SectionTextDraftState>>>({});
   const [previewDrafts, setPreviewDrafts] = useState<PreviewDrafts>({});
   const [previewLocale, setPreviewLocale] = useState<Locale | null>(null);
@@ -3137,6 +3165,90 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const initialEducation = educationSection ?? resume?.sections.education ?? null;
     return initialEducation ? initialEducationEditorState(initialEducation) : null;
   });
+  const canRestoreDomain = useCallback((domain: RestorePreviewDomain, targetResumeId: string) => {
+    const section = restoreSectionForDomain[domain];
+    if (!productionMode || !repository || !targetResumeId || (resume?.resumeId !== targetResumeId && additionalResumeId !== targetResumeId && educationResumeId !== targetResumeId))
+      return { allowed: false, message: "Restore safety could not be verified for the current target. Refresh the Admin and try again." };
+    if ((restoreDomainWrites.current.get(`${targetResumeId}:${section}`) ?? 0) > 0)
+      return { allowed: false, message: "This domain is currently being saved. Wait for the save to finish before restoring." };
+    const pendingChecks: Partial<Record<RestorePreviewDomain, ((id: string) => boolean) | undefined>> = {
+      awards: repository.hasPendingAwardsWorkerSave, experience: repository.hasPendingExperienceWorkerSave,
+      skills: repository.hasPendingSkillsWorkerSave, education: repository.hasPendingEducationWorkerSave,
+      projects: repository.hasPendingProjectsWorkerSave, contact: repository.hasPendingContactWorkerSave,
+      website_links: repository.hasPendingWebsiteLinksWorkerSave,
+    };
+    const pendingCheck = pendingChecks[domain];
+    if (!pendingCheck) return { allowed: false, message: "Restore safety could not be verified because pending saves cannot be checked." };
+    try {
+      if (pendingCheck(targetResumeId)) return { allowed: false, message: "This domain has an unresolved save. Resolve that save before restoring." };
+    } catch { return { allowed: false, message: "Restore safety could not be verified because pending saves cannot be checked." }; }
+
+    const canonicalSections = resume?.resumeId === targetResumeId ? resume.sections : null;
+    let canonical: unknown;
+    if (domain === "education") {
+      if (educationResumeId === targetResumeId && educationSection) canonical = educationSection;
+      else if (canonicalSections) canonical = canonicalSections.education;
+    } else {
+      const additionalValue = additionalSections[section as keyof typeof additionalSections];
+      if (additionalResumeId === targetResumeId && additionalValue !== undefined) canonical = additionalValue;
+      else if (canonicalSections) canonical = canonicalSections[section as keyof typeof canonicalSections];
+    }
+    if (canonical === undefined || canonical === null)
+      return { allowed: false, message: "The current domain state is not fully loaded. Refresh the Admin before restoring." };
+
+    const stored = drafts.current.get(section) as Record<string, unknown> | undefined;
+    if (stored) {
+      if (stored.marker === "production-list") {
+        if (!Array.isArray(stored.baseline) || !Array.isArray(stored.draft) || Boolean(stored.saving)
+          || JSON.stringify(stored.baseline) !== JSON.stringify(stored.draft)
+          || (stored.partialCreates && Object.keys(stored.partialCreates as object).length > 0))
+          return { allowed: false, message: "Save or discard this domain's unsaved changes before restoring." };
+      } else if ("saved" in stored && "draft" in stored) {
+        if (JSON.stringify(stored.saved) !== JSON.stringify(stored.draft))
+          return { allowed: false, message: "Save or discard this domain's unsaved changes before restoring." };
+      } else return { allowed: false, message: "Restore safety could not be verified for this domain's draft." };
+    }
+    if (domain === "education" && educationEditor) {
+      if (educationResumeId !== targetResumeId || educationEditor.saving || educationEditor.deleting
+        || Object.keys(educationEditor.partialCreates).length > 0
+        || JSON.stringify(educationEditor.baseline) !== JSON.stringify(educationEditor.draft))
+        return { allowed: false, message: "Save or discard this domain's unsaved changes before restoring." };
+    }
+    const previewValue = previewDrafts[section as PreviewSection];
+    if (previewValue !== undefined && JSON.stringify(previewValue) !== JSON.stringify(canonical))
+      return { allowed: false, message: "Save or discard this domain's unsaved changes before restoring." };
+    const textPage = domain === "website_links" || domain === "contact" ? null : domain as SectionTextPage;
+    const textState = textPage ? sectionTextDrafts[textPage] : null;
+    if (textState && (["zh", "en"] as const).some(locale => Object.keys(textState.draft[locale]).some(key =>
+      textState.draft[locale][key as SectionTextKey] !== textState.baseline[locale][key as SectionTextKey])))
+      return { allowed: false, message: "Save or discard this domain's unsaved section text before restoring." };
+    return { allowed: true };
+  }, [productionMode, repository, resume, additionalResumeId, educationResumeId, educationSection, additionalSections, educationEditor, previewDrafts, sectionTextDrafts]);
+
+  const reconcileRestoredDomain = useCallback(async (domain: RestorePreviewDomain, targetResumeId: string) => {
+    if (!repository || !targetResumeId || (resume?.resumeId !== targetResumeId && additionalResumeId !== targetResumeId && educationResumeId !== targetResumeId))
+      throw new Error("The restored domain could not be reconciled for the current target.");
+    let value: unknown;
+    switch (domain) {
+      case "awards": if (!repository.loadAwards) throw new Error("Awards reload is unavailable."); value = await repository.loadAwards(targetResumeId); break;
+      case "experience": if (!repository.loadExperience) throw new Error("Experience reload is unavailable."); value = await repository.loadExperience(targetResumeId); break;
+      case "skills": if (!repository.loadSkills) throw new Error("Skills reload is unavailable."); value = await repository.loadSkills(targetResumeId); break;
+      case "education": if (!repository.loadEducation) throw new Error("Education reload is unavailable."); value = await repository.loadEducation(targetResumeId); break;
+      case "projects": if (!repository.loadProjects) throw new Error("Projects reload is unavailable."); value = await repository.loadProjects(targetResumeId); break;
+      case "contact": if (!repository.loadContact) throw new Error("Contact reload is unavailable."); value = await repository.loadContact(targetResumeId); break;
+      case "website_links": if (!repository.loadLinks) throw new Error("Website & Links reload is unavailable."); value = await repository.loadLinks(targetResumeId); break;
+    }
+    const section = restoreSectionForDomain[domain];
+    drafts.current.delete(section);
+    if (domain === "education") {
+      const items = value as EducationItem[];
+      setEducationEditor(initialEducationEditorState(items));
+      onEducationChanged?.(targetResumeId, items);
+    } else {
+      onAdditionalChanged?.(section, targetResumeId, value);
+      setPreviewDrafts(current => ({ ...current, [section as PreviewSection]: clone(value) }));
+    }
+  }, [repository, resume, additionalResumeId, educationResumeId, onEducationChanged, onAdditionalChanged]);
   const appliedSnapshotRevision = useRef(snapshotDataRevision);
   useLayoutEffect(() => {
     if (appliedSnapshotRevision.current === snapshotDataRevision) return;
@@ -3749,7 +3861,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, siteTextTranslations, siteTextResumeId, onSiteTextChanged, sectionTextDrafts, setSectionTextDrafts, onReloadAdditional,
     repository, onProfileSaved, onProfileTranslationSaved, pdfFiles, setPdfFiles, pdfErrors, setPdfErrors, profileEditor, setProfileEditor,
     profilePhotoDraft, setProfilePhotoDraft, profilePhotoError, setProfilePhotoError, onProfilePhotoUrlChanged,
-    bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll, interactionLocked, snapshotDataRevision,
+    bilingualReviews, onBilingualFieldEdit, onBilingualReviewConfirm, onBilingualCancel, onBilingualSave, preservePreviewScroll, interactionLocked,
+    beginRestoreDomainWrite, canRestoreDomain, reconcileRestoredDomain, snapshotDataRevision,
     educationEditor, setEducationEditor, previewDrafts, canonicalPreview, onRequestCanonicalPreview, previewModes, previewFocusRequests, workspaceSwitcherHost, onPreviewModeChange, onPreviewDraftChanged, previewLocale, setPreviewLocale, profileRequests, onSnapshotRebased }}><div className={`app-shell${isPreviewRoute ? " has-preview-workspace" : ""}${editorOnlyDesktop ? " is-editor-only-desktop" : ""}`}>
     <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className={`sidebar${menuOpen ? " is-open" : ""}`} id="cms-sidebar">
@@ -3808,7 +3921,8 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
             filesRestoreReady={activityLogFilesRestoreReady} onRouteDataFresh={onActivityLogRouteFresh ?? undefined} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/version-history" element={activityLogEnabled
-          ? <VersionHistoryPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository} />
+          ? <VersionHistoryPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository}
+            canRestoreDomain={canRestoreDomain} onRestoreApplied={domain => reconcileRestoredDomain(domain, additionalResumeId ?? resume?.resumeId ?? "")} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />
         <Route path="/profile" element={<PreviewWorkspace section="profile"><Profile /></PreviewWorkspace>} /><Route path="/introduction" element={<PreviewWorkspace section="introduction"><Introduction /></PreviewWorkspace>} />

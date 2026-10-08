@@ -1,5 +1,6 @@
 import { managedProfilePhotoObjectPath } from "../data/profilePhotoStorage";
 import { validateRestorePreviewContract } from "../data/restorePreviewContract";
+import { validateRestoreMutationResult } from "../data/restoreMutationContract";
 import { canonicalizeProfile, validateProfileAggregate } from "../data/profileAggregate";
 import { canonicalizeFiles, canonicalizeWebsiteLinks, validateFilesAggregate, validateWebsiteLinksAggregate } from "../data/websiteFilesAggregate";
 import {
@@ -22,6 +23,7 @@ const SAVE_WEBSITE_LINKS_PATH = `${API_ROOT}/website-links/save`;
 const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
 const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
 const RESTORE_PREVIEW_PATH = `${API_ROOT}/restore/preview`;
+const RESTORE_APPLY_PATH = `${API_ROOT}/restore/apply`;
 const UPLOAD_FILES_PATH = `${API_ROOT}/files/upload`;
 const CLEANUP_FILES_PATH = `${API_ROOT}/files/cleanup`;
 const RESUME_PDF_LIMIT = 10 * 1024 * 1024;
@@ -94,6 +96,20 @@ interface SignedContext {
   country_code: string | null;
   region: string | null;
   city: string | null;
+}
+
+interface RestoreSignedContext {
+  context_version: 1;
+  key_id: string;
+  actor_user_id: string;
+  resume_id: string;
+  domain: "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "website_links";
+  operation: "restore";
+  request_id: string;
+  source_event_id: string;
+  expected_current_digest: string;
+  issued_at: number;
+  expires_at: number;
 }
 
 class ApiError extends Error {
@@ -309,7 +325,7 @@ function getSigningConfig(env: WorkerEnv): { keyId: string; key: Uint8Array } {
   return { keyId, key: decodeHex(keyHex) };
 }
 
-export async function signContext(context: SignedContext, key: Uint8Array): Promise<{ serialized: string; signatureHex: string }> {
+export async function signContext(context: SignedContext | RestoreSignedContext, key: Uint8Array): Promise<{ serialized: string; signatureHex: string }> {
   const serialized = serializePostgresJsonbObject(context);
   const cryptoKey = await crypto.subtle.importKey("raw", copyToArrayBuffer(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", cryptoKey, copyToArrayBuffer(UTF8.encode(serialized)));
@@ -1412,7 +1428,7 @@ async function previewRestore(request: Request, env: WorkerEnv): Promise<Respons
     throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
   const targetIds = authorized.value.map(row => (row as Record<string, unknown>).resume_id as string).map(id => id.toLowerCase());
   if (new Set(targetIds).size !== targetIds.length) throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
-  const matching = authorized.value.filter(row => (row as Record<string, unknown>).resume_id === resumeId);
+  const matching = authorized.value.filter(row => String((row as Record<string, unknown>).resume_id).toLowerCase() === resumeId);
   if (matching.length !== 1)
     throw apiError(403, "target_not_authorized", "This target is not available for Restore preview.");
 
@@ -1420,6 +1436,120 @@ async function previewRestore(request: Request, env: WorkerEnv): Promise<Respons
   if (!preview.response.ok) throw restorePreviewUpstreamFailure(preview.response, preview.value);
   const result = validateRestorePreview(preview.value, sourceEventId);
   return Response.json(result, { headers: { "Cache-Control": "no-store" } });
+}
+
+function restoreMutationFailure(response: Response, value: unknown): ApiError {
+  const row = isPlainObject(value) ? value : {};
+  const code = typeof row.code === "string" ? row.code : "";
+  const message = typeof row.message === "string" ? row.message : "";
+  if (response.status === 401 || (code === "42501" && message === "Authentication required"))
+    return apiError(401, "unauthenticated", "Sign in to restore this history entry.");
+  if (code === "40001") return apiError(409, "stale_preview", "The content changed after Preview. Get a fresh Preview before restoring.");
+  if (code === "23505") return apiError(409, "idempotency_conflict", "This Restore request conflicts with an earlier request. Get a fresh Preview.");
+  if (code === "55000") return apiError(409, "restore_request_pending", "The exact Restore request is still unresolved. Retry only that request.");
+  if (code === "42501") {
+    if (message === "Restore is disabled for this target") return apiError(403, "restore_disabled", "Restore is not enabled for this target.");
+    if (message === "Restore write configuration is not enabled") return apiError(403, "restore_configuration_disabled", "Restore is not available for this domain.");
+    if (message === "Invalid signed Restore request" || message === "Signed Restore domain mismatch")
+      return apiError(503, "restore_signing_unavailable", "The Restore request could not be verified.");
+    return apiError(403, "target_not_authorized", "This target is not available for Restore.");
+  }
+  if (code === "22023") {
+    if (message === "Restore request has expired; use a new request ID") return apiError(409, "restore_request_expired", "This Restore request expired. Get a fresh Preview to start again.");
+    return apiError(422, "restore_ineligible", "This history entry or current state is not eligible for Restore.");
+  }
+  return apiError(502, "restore_unavailable", "Restore could not be completed safely.");
+}
+
+const RESTORE_MUTATION_DOMAINS = ["awards", "experience", "skills", "education", "projects", "contact", "website_links"] as const;
+
+function validateRestoreMutationDomain(value: unknown): RestoreSignedContext["domain"] | null {
+  return typeof value === "string" && (RESTORE_MUTATION_DOMAINS as readonly string[]).includes(value)
+    ? value as RestoreSignedContext["domain"] : null;
+}
+
+function restoreResolverFailure(response: Response, value: unknown): ApiError {
+  const row = isPlainObject(value) ? value : {};
+  const code = typeof row.code === "string" ? row.code : "";
+  const message = typeof row.message === "string" ? row.message : "";
+  if (response.status === 401 || (code === "42501" && message === "Authentication required"))
+    return apiError(401, "unauthenticated", "Sign in to restore this history entry.");
+  if (code === "42501") {
+    if (message === "Restore is disabled for this target") return apiError(403, "restore_disabled", "Restore is not enabled for this target.");
+    if (message === "Restore write configuration is not enabled") return apiError(403, "restore_configuration_disabled", "Restore is not available for this domain.");
+    return apiError(403, "target_not_authorized", "This target is not available for Restore.");
+  }
+  if (code === "22023") return apiError(422, "restore_ineligible", "This history entry is not eligible for Restore.");
+  return apiError(502, "restore_unavailable", "Restore could not be completed safely.");
+}
+
+async function applyRestore(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 4096);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "expected_current_digest,request_id,resume_id,source_event_id"
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.source_event_id !== "string" || !UUID_PATTERN.test(parsed.source_event_id)
+    || typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.expected_current_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_current_digest))
+    throw apiError(400, "invalid_request", "Restore requires only target, source, digest, and request UUIDs.");
+
+  const resumeId = parsed.resume_id.toLowerCase();
+  const sourceEventId = parsed.source_event_id.toLowerCase();
+  const requestId = parsed.request_id.toLowerCase();
+  const expectedDigest = parsed.expected_current_digest;
+  const { actorId } = tokenActor(request.headers.get("authorization"));
+  const authorized = await userRpc(request, env, "activity_log_authorized_targets", {}, 16 * 1024);
+  if (!authorized.response.ok) {
+    if (authorized.response.status === 401) throw apiError(401, "unauthenticated", "Sign in to restore this history entry.");
+    if (authorized.response.status === 403) throw apiError(403, "target_not_authorized", "This target is not available for Restore.");
+    throw apiError(502, "restore_unavailable", "Restore could not be completed safely.");
+  }
+  if (!Array.isArray(authorized.value)) throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
+  if (authorized.value.some(row => !isPlainObject(row) || Object.keys(row).sort().join(",") !== "resume_id,role,site_key"
+    || typeof row.resume_id !== "string" || !UUID_PATTERN.test(row.resume_id)
+    || !((row.site_key === "example-cv-qa" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
+    throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
+  const matching = authorized.value.filter(row => String((row as Record<string, unknown>).resume_id).toLowerCase() === resumeId);
+  if (matching.length !== 1) throw apiError(403, "target_not_authorized", "This target is not available for Restore.");
+
+  // Resolve only the source domain, independently of current aggregate state, so a
+  // completed exact retry can reach the transactional Restore RPC for idempotent replay.
+  const resolved = await userRpc(request, env, "resolve_restore_domain_v1", {
+    target_resume_id: resumeId, source_event_id: sourceEventId,
+  }, 1024);
+  if (!resolved.response.ok) throw restoreResolverFailure(resolved.response, resolved.value);
+  const domain = validateRestoreMutationDomain(resolved.value);
+  if (!domain) throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Restore domain.");
+  let signed: { serialized: string; signatureHex: string };
+  try {
+    const { keyId, key } = getSigningConfig(env);
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const context: RestoreSignedContext = {
+      context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: resumeId, domain,
+      operation: "restore", request_id: requestId, source_event_id: sourceEventId,
+      expected_current_digest: expectedDigest, issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS,
+    };
+    signed = await signContext(context, key);
+  } catch { throw apiError(503, "restore_signing_unavailable", "The Restore request could not be verified."); }
+  let result: { response: Response; value: unknown };
+  try {
+    result = await userRpc(request, env, "restore_domain_v1", {
+      target_resume_id: resumeId, source_event_id: sourceEventId, expected_current_digest: expectedDigest,
+      request_id: requestId, signed_context: signed.serialized, signature_hex: signed.signatureHex,
+    }, 16 * 1024);
+  } catch {
+    // Once the mutation RPC is invoked, a transport failure cannot prove rollback.
+    throw apiError(504, "restore_outcome_unknown", "The Restore result is unknown. Retry only the exact same request.");
+  }
+  if (!result.response.ok) throw restoreMutationFailure(result.response, result.value);
+  const validated = validateRestoreMutationResult(result.value, sourceEventId);
+  if (!validated || validated.domain !== domain)
+    throw apiError(502, "invalid_upstream_response", "The Restore result could not be verified. Retry only the exact same request.");
+  return Response.json(validated, { headers: { "Cache-Control": "no-store" } });
 }
 
 async function resolveFilesStorageTarget(request: Request, env: WorkerEnv): Promise<string> {
@@ -1659,7 +1789,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1681,6 +1811,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");
     if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
     if (url.pathname === RESTORE_PREVIEW_PATH) return await previewRestore(request, env);
+    if (url.pathname === RESTORE_APPLY_PATH) return await applyRestore(request, env);
     if (url.pathname === UPLOAD_FILES_PATH) {
       try {
         const response = await uploadResumeFile(request, env, uploadDiagnostic);

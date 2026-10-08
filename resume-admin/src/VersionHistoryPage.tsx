@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ResumeRepository, VersionHistoryComparison, VersionHistoryDomain, VersionHistoryEntry, VersionHistoryJson, VersionHistoryPage as VersionHistoryPageResult } from "./data/resumeRepository";
+import { RestoreMutationError, RestorePreviewError, type RestoreMutationRequest, type RestorePreview, type ResumeRepository, type VersionHistoryComparison, type VersionHistoryDomain, type VersionHistoryEntry, type VersionHistoryJson, type VersionHistoryPage as VersionHistoryPageResult } from "./data/resumeRepository";
+import type { RestorePreviewDomain } from "./data/restorePreviewContract";
+import type { RestoreMutationResult } from "./data/restoreMutationContract";
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { useUiLocale } from "./uiLocale";
 
@@ -21,6 +23,12 @@ const entityLabels: Record<string, string> = {
   contact_section: "Contact", profile_settings: "Profile details", profile_image: "Profile photo reference",
   public_link: "Public link", website_links_settings: "Website & Links", resume_file: "Resume file reference", resume_file_set: "Resume files",
 };
+const RESTORE_DOMAINS: readonly RestorePreviewDomain[] = ["awards", "experience", "skills", "education", "projects", "contact", "website_links"];
+
+function canOfferRestore(entry: VersionHistoryEntry): boolean {
+  return entry.payloadVersion === 2 && entry.operation === "update" && RESTORE_DOMAINS.includes(entry.domain as RestorePreviewDomain)
+    && entry.comparison.kind === "aggregate";
+}
 
 function fieldLabel(value: string): string {
   if (value === "zh") return "Chinese";
@@ -60,7 +68,12 @@ function Comparison({ comparison, event, t }: { comparison: VersionHistoryCompar
   </div>;
 }
 
-export function VersionHistoryPage({ resumeId, repository }: { resumeId: string | null; repository: ResumeRepository | null }) {
+export type RestoreGuard = (domain: RestorePreviewDomain, resumeId: string) => { allowed: boolean; message?: string };
+
+export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onRestoreApplied }: {
+  resumeId: string | null; repository: ResumeRepository | null; canRestoreDomain?: RestoreGuard;
+  onRestoreApplied?: (domain: RestorePreviewDomain, result: RestoreMutationResult) => Promise<void> | void;
+}) {
   const { t } = useUiLocale();
   const [entries, setEntries] = useState<VersionHistoryEntry[]>([]);
   const [nextPage, setNextPage] = useState<VersionHistoryPageResult["nextCursor"]>(null);
@@ -69,6 +82,15 @@ export function VersionHistoryPage({ resumeId, repository }: { resumeId: string 
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [moreError, setMoreError] = useState(false);
+  const [restoreEntry, setRestoreEntry] = useState<VersionHistoryEntry | null>(null);
+  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [restorePhase, setRestorePhase] = useState<"idle" | "loading" | "ready" | "no_change" | "submitting" | "outcome_unknown" | "stale" | "completed" | "error">("idle");
+  const [restoreMessage, setRestoreMessage] = useState("");
+  const [pendingRestore, setPendingRestore] = useState<RestoreMutationRequest | null>(null);
+  const [restoreResult, setRestoreResult] = useState<RestoreMutationResult | null>(null);
+  const restoreDialog = useRef<HTMLElement>(null);
+  const restoreOpLock = useRef(false);
+  const restoreTrigger = useRef<HTMLButtonElement | null>(null);
   const requestGeneration = useRef(0);
 
   const loadFirstPage = useCallback(async () => {
@@ -106,6 +128,116 @@ export function VersionHistoryPage({ resumeId, repository }: { resumeId: string 
     }
   };
 
+  const openRestorePreview = async (entry: VersionHistoryEntry, trigger: HTMLButtonElement) => {
+    if (!resumeId || !repository?.previewRestore || !repository.getPendingRestoreAttempt) return;
+    restoreTrigger.current = trigger;
+    setRestoreEntry(entry); setRestorePreview(null); setRestoreResult(null); setRestoreMessage(""); setPendingRestore(null);
+    try {
+      const pending = repository.getPendingRestoreAttempt(resumeId, entry.eventId);
+      if (pending) {
+        setPendingRestore(pending); setRestorePhase("outcome_unknown");
+        setRestoreMessage("A previous Restore request has an unresolved outcome. Retry that exact request before starting another Restore attempt.");
+        return;
+      }
+      setRestorePhase("loading");
+      const preview = await repository.previewRestore({ resumeId, sourceEventId: entry.eventId });
+      setRestorePreview(preview); setRestorePhase(preview.status === "ready" ? "ready" : "no_change");
+    } catch (error) {
+      setRestorePhase("error");
+      setRestoreMessage(error instanceof RestorePreviewError ? error.message : "Restore Preview could not be prepared.");
+    }
+  };
+
+  const settleRestore = async (request: RestoreMutationRequest, mode: "new" | "retry", alreadyLocked = false) => {
+    if (!repository?.restoreDomain || (restoreOpLock.current && !alreadyLocked)) return;
+    restoreOpLock.current = true; setRestorePhase("submitting"); setRestoreMessage("");
+    try {
+      const result = await repository.restoreDomain(request, mode);
+      setPendingRestore(null); setRestoreResult(result);
+      if (result.status === "no_change") {
+        setRestorePhase("no_change");
+        setRestoreMessage("The current domain already matches the selected historical state. Nothing was changed.");
+      } else {
+        setRestorePhase("completed");
+        setRestoreMessage("This domain was restored. A new Version History entry was recorded.");
+        try { await onRestoreApplied?.(result.domain, result); }
+        catch { setRestoreMessage("Restore completed, but the current view could not be refreshed. Reload this domain before editing it."); }
+        void loadFirstPage();
+      }
+    } catch (error) {
+      if (error instanceof RestoreMutationError) {
+        if (error.code === "stale_preview") {
+          setPendingRestore(null); setRestorePhase("stale"); setRestoreMessage(error.message);
+        } else if (error.uncertain || error.code === "restore_request_pending" || error.code === "pending_conflict" || error.code === "idempotency_conflict") {
+          setRestorePhase("outcome_unknown"); setRestoreMessage(error.message);
+          try { setPendingRestore(repository.getPendingRestoreAttempt?.(request.resumeId, request.sourceEventId) ?? request); }
+          catch { setPendingRestore(request); }
+        } else {
+          setPendingRestore(null); setRestorePhase("error"); setRestoreMessage(error.message);
+        }
+      } else {
+        setRestorePhase("outcome_unknown"); setRestoreMessage("The Restore result is unknown. Retry only the exact same request."); setPendingRestore(request);
+      }
+    } finally { restoreOpLock.current = false; }
+  };
+
+  const confirmRestore = async () => {
+    if (!resumeId || !restorePreview || restorePreview.status !== "ready" || !restoreEntry || restorePhase !== "ready") return;
+    if (restoreOpLock.current) return;
+    if (!repository?.restoreDomain) { setRestorePhase("error"); setRestoreMessage("Restore submission is unavailable. No change was made."); return; }
+    const guard = canRestoreDomain?.(restorePreview.domain, resumeId);
+    if (guard && !guard.allowed) { setRestoreMessage(guard.message ?? "Save or discard this domain's unsaved changes before restoring."); return; }
+    if (!globalThis.crypto?.randomUUID) { setRestorePhase("error"); setRestoreMessage("Secure Restore requests are unavailable in this browser."); return; }
+    let requestId: string;
+    try { requestId = globalThis.crypto.randomUUID().toLowerCase(); }
+    catch { setRestorePhase("error"); setRestoreMessage("Secure Restore requests are unavailable in this browser."); return; }
+    restoreOpLock.current = true;
+    await settleRestore({ resumeId, sourceEventId: restoreEntry.eventId, expectedCurrentDigest: restorePreview.expectedCurrentDigest,
+      requestId }, "new", true);
+  };
+
+  const retryPendingRestore = async () => {
+    if (!resumeId || !pendingRestore || !restoreEntry || restoreOpLock.current) return;
+    const guard = canRestoreDomain?.(restoreEntry.domain as RestorePreviewDomain, resumeId);
+    if (guard && !guard.allowed) { setRestoreMessage(guard.message ?? "Save or discard this domain's unsaved changes before restoring."); return; }
+    await settleRestore(pendingRestore, "retry");
+  };
+
+  const refreshRestorePreview = async () => {
+    if (!restoreEntry || !resumeId || !repository?.previewRestore) return;
+    setRestorePhase("loading"); setRestoreMessage("");
+    try {
+      const preview = await repository.previewRestore({ resumeId, sourceEventId: restoreEntry.eventId });
+      setRestorePreview(preview); setRestorePhase(preview.status === "ready" ? "ready" : "no_change");
+    } catch (error) {
+      setRestorePhase("stale");
+      setRestoreMessage(error instanceof RestorePreviewError ? error.message : "A fresh Restore Preview could not be prepared.");
+    }
+  };
+
+  const closeRestore = useCallback(() => {
+    if (restorePhase === "submitting") return;
+    setRestoreEntry(null); setRestorePreview(null); setPendingRestore(null); setRestorePhase("idle"); setRestoreMessage("");
+    restoreTrigger.current?.focus();
+  }, [restorePhase]);
+
+  useEffect(() => {
+    if (!restoreEntry) return;
+    const initialControl = restoreDialog.current?.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (initialControl) initialControl.focus(); else restoreDialog.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && restorePhase !== "submitting") { event.preventDefault(); closeRestore(); }
+      if (event.key !== "Tab" || !restoreDialog.current) return;
+      const controls = Array.from(restoreDialog.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!controls.length) { event.preventDefault(); return; }
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [restoreEntry, restorePhase, closeRestore]);
+
   return <section className="page-section version-history-page" aria-busy={loading || loadingMore}>
     <header className="page-heading"><div><p className="eyebrow">{t("Resume history")}</p><h1>{t("Version History")}</h1>
       <p className="version-history-intro">{t("A chronological record of successful, supported content changes.")}</p></div></header>
@@ -121,10 +253,35 @@ export function VersionHistoryPage({ resumeId, repository }: { resumeId: string 
                 </div><time dateTime={entry.occurredAt}>{formatBeijingTimestamp(entry.occurredAt)}</time></header>
                 {(entry.domain === "files" || entry.entityType === "profile_image") && <p className="version-history-reference-note">{t(entry.domain === "files" ? "Historical file reference recorded; file availability is unknown." : "Historical photo reference recorded; file availability is unknown.")}</p>}
                 <Comparison comparison={entry.comparison} event={entry} t={t} />
+                {canOfferRestore(entry) && <button className="button secondary version-history-restore-preview" type="button"
+                  onClick={event => void openRestorePreview(entry, event.currentTarget)}>{t("Preview restore")}</button>}
               </article>
             </li>)}</ol>
             {moreError && <div className="version-history-state" role="alert"><p>{t("Unable to load more Version History entries.")}</p><button className="button secondary" type="button" onClick={() => void loadMore()}>{t("Retry loading more")}</button></div>}
             {hasMore && <button className="button secondary version-history-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? t("Loading…") : t("Load more")}</button>}
           </>}
+    {restoreEntry && <div className="restore-dialog-backdrop"><section className="restore-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="restore-dialog-title" aria-describedby="restore-dialog-description" tabIndex={-1} ref={restoreDialog}>
+      <header><h2 id="restore-dialog-title">{t("Restore one domain")}</h2><button type="button" className="button secondary" onClick={closeRestore} disabled={restorePhase === "submitting"}>{t("Close")}</button></header>
+      <p id="restore-dialog-description">{restorePreview ? `${t(domainLabels[restorePreview.domain])} · ${formatBeijingTimestamp(restorePreview.sourceOccurredAt)}` : t(domainLabels[restoreEntry.domain])}</p>
+      <p>{t("Only this domain will change. The current state will be replaced with the historical state recorded before this event. Other domains and files will not be restored.")}</p>
+      {restorePreview && <div className="restore-dialog-comparison" aria-label={t("Current and historical target state")}>
+        <section><h3>{t("Current state")}</h3><JsonValue value={restorePreview.currentState} t={t} path="restore-current" /></section>
+        <section><h3>{t("Historical target state — before this event")}</h3><JsonValue value={restorePreview.historicalState} t={t} path="restore-target" /></section>
+      </div>}
+      {restorePhase === "loading" && <p role="status">{t("Preparing Restore Preview…")}</p>}
+      {restorePhase === "submitting" && <p role="status">{t("Applying Restore…")}</p>}
+      {restoreMessage && <p role={restorePhase === "error" || restorePhase === "stale" || restorePhase === "outcome_unknown" ? "alert" : "status"}>{t(restoreMessage)}</p>}
+      {restorePhase === "ready" && restorePreview?.status === "ready" && <div className="restore-dialog-actions">
+        <button type="button" className="button secondary" onClick={closeRestore}>{t("Cancel")}</button>
+        <button type="button" className="button danger" onClick={() => void confirmRestore()}>{t("Restore this domain")}</button>
+      </div>}
+      {restorePhase === "outcome_unknown" && pendingRestore && <button type="button" className="button primary" onClick={() => void retryPendingRestore()}>
+        {t("Retry the same Restore request")}</button>}
+      {restorePhase === "stale" && <button type="button" className="button secondary" onClick={() => void refreshRestorePreview()}>
+        {t("Get a fresh Preview")}</button>}
+      {restorePhase === "no_change" && restorePreview?.status === "no_change" && <p role="status">{t("This domain already matches the historical state. Nothing was changed.")}</p>}
+      {restorePhase === "completed" && restoreResult?.status === "restored" && <p className="restore-complete-detail">{t("Restore completed for this domain only.")}</p>}
+    </section></div>}
   </section>;
 }

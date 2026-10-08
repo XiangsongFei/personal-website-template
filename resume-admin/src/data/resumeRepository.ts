@@ -4,6 +4,7 @@ import { createBatch6BRepositoryWrites, type Batch6BWriteRepository } from "./re
 import { canonicalizeProfile, profileAggregateFromSection, profileSectionFromAggregate, validateProfileAggregate, type ProfileAggregate } from "./profileAggregate";
 import { canonicalizeFiles, canonicalizeWebsiteLinks, managedResumePdfObjectPath, type FilesAggregate, type WebsiteLinksAggregate, validateFilesAggregate, validateWebsiteLinksAggregate } from "./websiteFilesAggregate";
 import { validateRestorePreviewContract, type RestorePreviewDomain, type RestorePreviewJson } from "./restorePreviewContract";
+import { validateRestoreMutationResult, type RestoreMutationResult } from "./restoreMutationContract";
 import {
   mapAwardRows, mapContactRows, mapEducationRows, mapExperienceRows, mapIntroductionRows,
   mapLinksRows, mapOverviewRows, mapProfileRows, mapProjectRows, mapResumeRows, mapResumeSiteMetadata, mapSiteTextRows,
@@ -29,6 +30,12 @@ export const resumeTables = [
 
 export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   load(): Promise<LoadedResume>;
+  loadEducation?(resumeId: string): Promise<EducationItem[]>;
+  loadExperience?(resumeId: string): Promise<ExperienceItem[]>;
+  loadProjects?(resumeId: string): Promise<ProjectItem[]>;
+  loadSkills?(resumeId: string): Promise<SkillItem[]>;
+  loadAwards?(resumeId: string): Promise<AwardItem[]>;
+  loadContact?(resumeId: string): Promise<ContactSection>;
   loadLinks?(resumeId: string): Promise<LinksSection>;
   loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
   loadAdminAwardsWriteState?(resumeId: string): Promise<AdminAwardsWriteState>;
@@ -80,6 +87,8 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadActivityLogPageV13C?(resumeId: string, pageSize: number, filters: ActivityLogV13CFilters, cursor?: ActivityLogV13CCursor): Promise<ActivityLogV13CEvent[]>;
   loadVersionHistoryPage?(resumeId: string, pageSize: number, cursor?: VersionHistoryCursor): Promise<VersionHistoryPage>;
   previewRestore?(input: RestorePreviewRequest): Promise<RestorePreview>;
+  getPendingRestoreAttempt?(resumeId: string, sourceEventId: string): RestoreMutationRequest | null;
+  restoreDomain?(input: RestoreMutationRequest, mode: "new" | "retry"): Promise<RestoreMutationResult>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -313,6 +322,29 @@ export type RestorePreview = {
   comparison: { before: RestorePreviewJson; after: RestorePreviewJson };
   expectedCurrentDigest: string;
 };
+export type RestoreMutationRequest = { resumeId: string; sourceEventId: string; expectedCurrentDigest: string; requestId: string };
+export type RestoreMutationErrorCode = "unauthenticated" | "target_not_authorized" | "restore_disabled" | "restore_configuration_disabled"
+  | "restore_ineligible" | "stale_preview" | "idempotency_conflict" | "restore_request_pending" | "restore_request_expired"
+  | "restore_signing_unavailable" | "restore_unavailable" | "outcome_unknown" | "invalid_response" | "pending_conflict" | "storage_unavailable";
+export class RestoreMutationError extends Error {
+  constructor(readonly code: RestoreMutationErrorCode, readonly uncertain = false) {
+    super(code === "unauthenticated" ? "Sign in again before restoring this history entry."
+      : code === "target_not_authorized" || code === "restore_disabled" ? "Restore is not available for this target."
+        : code === "restore_configuration_disabled" ? "Restore is not available for this domain."
+          : code === "restore_ineligible" ? "This history entry or current state cannot be restored safely."
+            : code === "stale_preview" ? "The content changed after Preview. Get a fresh Preview before restoring."
+              : code === "idempotency_conflict" ? "This request conflicts with an earlier Restore attempt. Do not retry with a changed request."
+                : code === "restore_request_pending" ? "The Restore request is still unresolved. Retry only the exact same request."
+                  : code === "restore_request_expired" ? "This Restore request expired. Get a fresh Preview to start again."
+                    : code === "restore_signing_unavailable" ? "The Restore request could not be verified."
+                      : code === "pending_conflict" ? "An earlier Restore attempt for this entry must be resolved first."
+                        : code === "storage_unavailable" ? "This browser cannot safely retain the exact Restore request; nothing was submitted."
+                          : code === "outcome_unknown" ? "The Restore result is unknown. Retry only the exact same request."
+                            : code === "invalid_response" ? "The Restore result could not be verified. Retry only the exact same request."
+                              : "Restore could not be completed safely.");
+    this.name = "RestoreMutationError";
+  }
+}
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
 export interface ResumeSectionRepository {
@@ -674,6 +706,46 @@ function isVersionHistoryJson(value: unknown): value is VersionHistoryJson {
 
 const RESTORE_PREVIEW_ERROR_CODES: readonly RestorePreviewErrorCode[] = ["unauthenticated", "target_not_authorized", "activity_log_disabled", "restore_disabled",
   "restore_configuration_disabled", "source_ineligible", "current_state_ineligible", "preview_unavailable"];
+const RESTORE_MUTATION_ERROR_CODES: readonly RestoreMutationErrorCode[] = ["unauthenticated", "target_not_authorized", "restore_disabled",
+  "restore_configuration_disabled", "restore_ineligible", "stale_preview", "idempotency_conflict", "restore_request_pending",
+  "restore_request_expired", "restore_signing_unavailable", "restore_unavailable", "outcome_unknown", "invalid_response"];
+const RESTORE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function restorePendingKey(resumeId: string, sourceEventId: string): string {
+  return `admin-restore-v1-pending:${resumeId.toLowerCase()}:${sourceEventId.toLowerCase()}`;
+}
+function restoreRequestBody(input: RestoreMutationRequest) {
+  return { resume_id: input.resumeId.toLowerCase(), source_event_id: input.sourceEventId.toLowerCase(),
+    expected_current_digest: input.expectedCurrentDigest, request_id: input.requestId.toLowerCase() };
+}
+function readRestorePending(key: string): RestoreMutationRequest | null {
+  let raw: string | null;
+  try {
+    const storage = globalThis.sessionStorage;
+    if (!storage) throw new Error("Storage unavailable");
+    raw = storage.getItem(key);
+  } catch { throw new RestoreMutationError("storage_unavailable"); }
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!isRecord(value) || !hasExactKeys(value, ["resumeId", "sourceEventId", "expectedCurrentDigest", "requestId"])
+      || typeof value.resumeId !== "string" || !RESTORE_UUID.test(value.resumeId)
+      || typeof value.sourceEventId !== "string" || !RESTORE_UUID.test(value.sourceEventId)
+      || typeof value.requestId !== "string" || !RESTORE_UUID.test(value.requestId)
+      || typeof value.expectedCurrentDigest !== "string" || !/^[0-9a-f]{64}$/.test(value.expectedCurrentDigest)) {
+      throw new RestoreMutationError("pending_conflict");
+    }
+    return { resumeId: value.resumeId.toLowerCase(), sourceEventId: value.sourceEventId.toLowerCase(),
+      expectedCurrentDigest: value.expectedCurrentDigest, requestId: value.requestId.toLowerCase() };
+  } catch (error) {
+    if (error instanceof RestoreMutationError) throw error;
+    throw new RestoreMutationError("pending_conflict");
+  }
+}
+function restoreMutationErrorCode(value: unknown): RestoreMutationErrorCode | null {
+  if (!isRecord(value) || !isRecord(value.error) || typeof value.error.code !== "string") return null;
+  return RESTORE_MUTATION_ERROR_CODES.includes(value.error.code as RestoreMutationErrorCode)
+    ? value.error.code as RestoreMutationErrorCode : null;
+}
 
 function mapRestorePreviewResponse(value: unknown, expectedEventId: string): RestorePreview {
   const validated = validateRestorePreviewContract(value, expectedEventId);
@@ -1588,6 +1660,66 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       catch { throw new RestorePreviewError("invalid_response"); }
       if (!response.ok) throw new RestorePreviewError(restorePreviewErrorCode(payload) ?? "preview_unavailable");
       return mapRestorePreviewResponse(payload, input.sourceEventId);
+    },
+    getPendingRestoreAttempt(resumeId, sourceEventId) {
+      if (!RESTORE_UUID.test(resumeId) || !RESTORE_UUID.test(sourceEventId)) throw new RestoreMutationError("invalid_response");
+      return readRestorePending(restorePendingKey(resumeId, sourceEventId));
+    },
+    async restoreDomain(input, mode) {
+      if (!input || !RESTORE_UUID.test(input.resumeId) || !RESTORE_UUID.test(input.sourceEventId)
+        || !RESTORE_UUID.test(input.requestId) || !/^[0-9a-f]{64}$/.test(input.expectedCurrentDigest)) {
+        throw new RestoreMutationError("invalid_response");
+      }
+      let sessionResult: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>;
+      try { sessionResult = await supabase.auth.getSession(); } catch { throw new RestoreMutationError("unauthenticated"); }
+      const token = sessionResult.data.session?.access_token;
+      if (sessionResult.error || typeof token !== "string" || !token) throw new RestoreMutationError("unauthenticated");
+
+      const key = restorePendingKey(input.resumeId, input.sourceEventId);
+      const exact = restoreRequestBody(input);
+      const serialized = JSON.stringify({ resumeId: exact.resume_id, sourceEventId: exact.source_event_id,
+        expectedCurrentDigest: exact.expected_current_digest, requestId: exact.request_id });
+      const prior = readRestorePending(key);
+      if (mode === "retry") {
+        if (!prior || JSON.stringify(restoreRequestBody(prior)) !== JSON.stringify(exact)) throw new RestoreMutationError("pending_conflict");
+      } else if (prior) {
+        throw new RestoreMutationError("pending_conflict");
+      }
+      if (mode === "new") {
+        try {
+          const storage = globalThis.sessionStorage;
+          if (!storage) throw new Error("Storage unavailable");
+          storage.setItem(key, serialized);
+          if (storage.getItem(key) !== serialized) throw new Error("Storage verification failed");
+        } catch { throw new RestoreMutationError("storage_unavailable"); }
+      }
+      const clearExact = () => {
+        try {
+          const storage = globalThis.sessionStorage;
+          if (storage?.getItem(key) === serialized) storage.removeItem(key);
+        } catch { /* retain rather than risk deleting a newer attempt */ }
+      };
+      let response: Response;
+      try {
+        response = await fetch("/api/admin/v1/restore/apply", { method: "POST", credentials: "omit",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(exact), signal: AbortSignal.timeout(20_000) });
+      } catch { throw new RestoreMutationError("outcome_unknown", true); }
+      let payload: unknown;
+      try { payload = await response.json() as unknown; }
+      catch { throw new RestoreMutationError("outcome_unknown", true); }
+      if (!response.ok) {
+        const code = restoreMutationErrorCode(payload);
+        if (!code || (response.status >= 500 && code !== "restore_signing_unavailable") || code === "outcome_unknown" || code === "idempotency_conflict" || code === "restore_request_pending") {
+          throw new RestoreMutationError(code === "idempotency_conflict" ? code : code === "restore_request_pending" ? code : "outcome_unknown", true);
+        }
+        clearExact();
+        throw new RestoreMutationError(code);
+      }
+      const result = validateRestoreMutationResult(payload, input.sourceEventId);
+      if (!result) throw new RestoreMutationError("outcome_unknown", true);
+      clearExact();
+      return result;
     },
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");
