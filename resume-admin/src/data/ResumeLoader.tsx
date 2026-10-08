@@ -171,6 +171,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 }) {
   const location = useLocation();
   const isActivityLogRoute = location.pathname === "/activity-log";
+  const isVersionHistoryRoute = location.pathname === "/version-history";
   const initialPathname = useRef(location.pathname);
   const isDocumentReload = useRef(isDocumentReloadNavigation()).current;
   const routeSnapshot = initialSnapshot?.route === initialPathname.current ? initialSnapshot : null;
@@ -325,7 +326,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   // Non-Profile routes keep the existing complete snapshot and start it only when visited.
   useEffect(() => {
     if (!authReady) return;
-    if (isActivityLogRoute) return;
+    if (isActivityLogRoute || isVersionHistoryRoute) return;
     if (supportsCanonicalPreviewReads(repository) && isPreviewRoute) return;
     if ((isProfileRoute && supportsProfileReads(repository)) || (isEducationRoute && supportsEducationReads(repository)) || useSectionAdditional || useSectionOverview) return;
     let active = true;
@@ -345,7 +346,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       if (active) setFullSnapshotState("error");
     });
     return () => { active = false; };
-  }, [authReady, isActivityLogRoute, isProfileRoute, isEducationRoute, isPreviewRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume, authorizedTarget]);
+  }, [authReady, isActivityLogRoute, isVersionHistoryRoute, isProfileRoute, isEducationRoute, isPreviewRoute, useSectionAdditional, useSectionOverview, repository, sessionKey, fullAttempt, resume, authorizedTarget]);
 
   // Editors remain route-first. Fetch the remaining confirmed slices only when
   // the Preview is visible, reusing any section reads already in the session cache.
@@ -639,7 +640,9 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     && currentActivityLogFilesState && currentActivityLogPageFresh);
   const filesRestoreReady = Boolean(activityLogRouteDataFresh && currentActivityLogFilesState?.activityLogEnabled
     && currentActivityLogFilesState.writeMode === "rpc" && currentActivityLogFilesState.trustedContextRequired);
-  const currentRouteDataFresh = isActivityLogRoute ? activityLogRouteDataFresh : Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
+  const currentRouteDataFresh = isActivityLogRoute ? activityLogRouteDataFresh : isVersionHistoryRoute
+    ? Boolean(authReady && identityId && sessionKey && authorizedTarget && activeFeatureState)
+    : Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
     : location.pathname === "/education" ? educationState.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
       : additionalRouteKey ? additionalRouteState?.kind === "loaded" && (!useSectionTextRead || siteTextState.kind === "loaded")
         : false);
@@ -693,7 +696,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   const initialUsesOverviewRead = initialIsOverview && supportsOverviewReads(repository);
   const initialUsesAdditionalRead = supportsAdditionalReads(repository, initialAdditionalKey);
   const initialNeedsSectionText = sectionTextPaths.has(initialPath) && supportsSiteTextReads(repository);
-  const initialRouteReady = initialPath === "/activity-log"
+  const initialRouteReady = initialPath === "/activity-log" || initialPath === "/version-history"
     ? featureStateResult.status !== "loading"
     : initialUsesProfileRead
     ? profileState.kind === "loaded" || profileState.kind === "error"

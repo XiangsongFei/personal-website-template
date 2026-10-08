@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
+import type { ResumeRepository } from "../src/data/resumeRepository";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 afterEach(() => { cleanup(); window.sessionStorage.clear(); window.localStorage.removeItem(UI_LOCALE_KEY); });
@@ -25,6 +26,18 @@ describe("Stage 4B fixture shell", () => {
     expect(screen.queryByText(/production environment|production data|Published|editable modules|Content completeness/i)).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it("exposes Version History separately from Activity Log and loads its own route", async () => {
+    const repository = { loadVersionHistoryPage: vi.fn().mockResolvedValue({ entries: [], hasMore: false, nextCursor: null }) } as unknown as ResumeRepository;
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/version-history"]}><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" repository={repository} additionalResumeId="qa-resume"
+      activityLogEnabled /></MemoryRouter></UiLocaleProvider>);
+    const nav = screen.getByRole("navigation", { name: "CMS sections" });
+    expect(nav.querySelector('a[href="/activity-log"]')?.textContent).toBe("Activity Log");
+    expect(nav.querySelector('a[href="/version-history"]')?.textContent).toBe("Version History");
+    expect(await screen.findByRole("heading", { level: 1, name: "Version History" })).toBeTruthy();
+    expect(repository.loadVersionHistoryPage).toHaveBeenCalledWith("qa-resume", 25);
   });
 
   it.each([["en", "Resume Editor", "Home", "Resume", "Settings", "Site & Links"], ["zh", "简历编辑器", "首页", "简历内容", "设置", "网站与链接"]] as const)(

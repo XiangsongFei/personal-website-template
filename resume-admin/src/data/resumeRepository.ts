@@ -77,6 +77,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV13C?(resumeId: string, pageSize: number, filters: ActivityLogV13CFilters, cursor?: ActivityLogV13CCursor): Promise<ActivityLogV13CEvent[]>;
+  loadVersionHistoryPage?(resumeId: string, pageSize: number, cursor?: VersionHistoryCursor): Promise<VersionHistoryPage>;
   updateProfileSharedDetails(resumeId: string, shared: ProfileSection["shared"]): Promise<UpdatedProfileRow>;
   updateProfileTranslation(resumeId: string, locale: Locale, translation: ProfileTranslation): Promise<UpdatedProfileTranslationRow>;
   updateEducationEntry?(resumeId: string, entryId: string, changes: Partial<Pick<EducationItem, "position" | "entryType" | "category">>): Promise<UpdatedEducationEntryRow>;
@@ -254,6 +255,33 @@ export type ActivityLogV13CRejectedEvent = ActivityLogV13CCommon & {
   payloadVersion: null;
 };
 export type ActivityLogV13CEvent = ActivityLogV13CSuccessEvent | ActivityLogV13CRejectedEvent;
+
+export type VersionHistoryDomain = "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+export type VersionHistoryOperation = ActivityLogEvent["operation"];
+export type VersionHistoryCursor = { occurredAt: string; eventId: string };
+export type VersionHistoryScalar = string | number | boolean | null;
+export type VersionHistoryJson = VersionHistoryScalar | VersionHistoryJson[] | { [key: string]: VersionHistoryJson };
+export type VersionHistoryComparison =
+  | { kind: "entity_fields"; changes: Record<string, { before: VersionHistoryScalar; after: VersionHistoryScalar }> }
+  | { kind: "aggregate"; before: VersionHistoryJson; after: VersionHistoryJson }
+  | { kind: "unavailable" };
+export type VersionHistoryEntry = {
+  eventId: string;
+  occurredAt: string;
+  actorAccountLabel: string;
+  actorRole: "owner" | "qa";
+  domain: VersionHistoryDomain;
+  operation: VersionHistoryOperation;
+  payloadVersion: number;
+  entityType: string;
+  entityId: string | null;
+  comparison: VersionHistoryComparison;
+};
+export type VersionHistoryPage = {
+  entries: VersionHistoryEntry[];
+  hasMore: boolean;
+  nextCursor: VersionHistoryCursor | null;
+};
 
 /** Additional typed reads for future route-first loading; the current loader still calls load(). */
 export interface ResumeSectionRepository {
@@ -598,6 +626,103 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
 
     throw new Error("Invalid Activity Log response");
   });
+}
+
+const VERSION_HISTORY_ROW_KEYS = ["event_id", "occurred_at", "actor_account_label", "actor_role", "domain_key",
+  "operation", "payload_version", "entity_type", "entity_id", "comparison_kind", "comparison", "has_more"] as const;
+const VERSION_HISTORY_DOMAINS: readonly VersionHistoryDomain[] = ["awards", "experience", "skills", "education", "projects", "contact", "profile", "website_links", "files"];
+const VERSION_HISTORY_OPERATIONS: readonly VersionHistoryOperation[] = ["create", "update", "delete", "reorder", "upload", "remove"];
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+const isVersionHistoryScalar = (value: unknown): value is VersionHistoryScalar => value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+function isVersionHistoryJson(value: unknown): value is VersionHistoryJson {
+  if (isVersionHistoryScalar(value)) return true;
+  if (Array.isArray(value)) return value.every(isVersionHistoryJson);
+  return isRecord(value) && Object.values(value).every(isVersionHistoryJson);
+}
+
+function versionHistoryEntityMatches(domain: VersionHistoryDomain, entityType: string, version: number): boolean {
+  const contracts = {
+    awards: { v1: ["award_entry"], v2: ["award_list"] },
+    experience: { v1: ["experience_entry"], v2: ["experience_list"] },
+    skills: { v1: ["skill_group"], v2: ["skill_group_list"] },
+    education: { v1: ["education_entry"], v2: ["education_list"] },
+    projects: { v1: ["project_entry"], v2: ["project_list"] },
+    contact: { v1: ["contact_focus_item", "contact_status_item"], v2: ["contact_section"] },
+    profile: { v1: ["profile_settings", "profile_image"], v2: ["profile_settings"] },
+    website_links: { v1: ["public_link"], v2: ["website_links_settings"] },
+    files: { v1: ["resume_file"], v2: ["resume_file_set"] },
+  } satisfies Record<VersionHistoryDomain, { v1: string[]; v2: string[] }>;
+  if (version === 1) {
+    return contracts[domain].v1.includes(entityType);
+  }
+  if (version === 2) {
+    return contracts[domain].v2.includes(entityType);
+  }
+  return [...contracts[domain].v1, ...contracts[domain].v2].includes(entityType);
+}
+
+function mapVersionHistoryRows(value: unknown): { entries: VersionHistoryEntry[]; hasMore: boolean } {
+  const rawRows = rows(value, "Version History event");
+  if (rawRows.some(row => !hasExactKeys(row, VERSION_HISTORY_ROW_KEYS))) throw new Error("Invalid Version History response");
+  let pageHasMore = false;
+  const entries = rawRows.map(row => {
+    if (typeof row.event_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.event_id)
+      || typeof row.occurred_at !== "string" || !Number.isFinite(Date.parse(row.occurred_at))
+      || typeof row.actor_account_label !== "string" || !row.actor_account_label.trim()
+      || (row.actor_role !== "owner" && row.actor_role !== "qa")
+      || typeof row.domain_key !== "string" || !VERSION_HISTORY_DOMAINS.includes(row.domain_key as VersionHistoryDomain)
+      || typeof row.operation !== "string" || !VERSION_HISTORY_OPERATIONS.includes(row.operation as VersionHistoryOperation)
+      || typeof row.payload_version !== "number" || !Number.isInteger(row.payload_version) || row.payload_version < 1
+      || typeof row.entity_type !== "string" || (row.entity_id !== null && typeof row.entity_id !== "string")
+      || typeof row.has_more !== "boolean") throw new Error("Invalid Version History response");
+
+    const domain = row.domain_key as VersionHistoryDomain;
+    const version = row.payload_version;
+    const entityType = row.entity_type;
+    if (!versionHistoryEntityMatches(domain, entityType, version)) throw new Error("Invalid Version History response");
+    pageHasMore = row.has_more;
+
+    let comparison: VersionHistoryComparison;
+    if (row.comparison_kind === "unavailable") {
+      if (row.comparison !== null) throw new Error("Invalid Version History response");
+      comparison = { kind: "unavailable" };
+    } else if (row.comparison_kind === "entity_fields" && version === 1 && isRecord(row.comparison)
+      && hasExactKeys(row.comparison, ["changes"]) && isRecord(row.comparison.changes)) {
+      const changes: Record<string, { before: VersionHistoryScalar; after: VersionHistoryScalar }> = {};
+      for (const [field, rawChange] of Object.entries(row.comparison.changes)) {
+        if (!isRecord(rawChange) || !hasExactKeys(rawChange, ["before", "after"])
+          || !isVersionHistoryScalar(rawChange.before) || !isVersionHistoryScalar(rawChange.after)) {
+          throw new Error("Invalid Version History response");
+        }
+        changes[field] = { before: rawChange.before, after: rawChange.after };
+      }
+      if (Object.keys(changes).length === 0) throw new Error("Invalid Version History response");
+      if ((domain === "files" && entityType === "resume_file"
+          && Object.keys(changes).some(field => field !== "locale" && field !== "object_key"))
+        || (domain === "profile" && entityType === "profile_image"
+          && Object.keys(changes).some(field => field !== "object_key"))) {
+        throw new Error("Invalid Version History response");
+      }
+      comparison = { kind: "entity_fields", changes };
+    } else if (row.comparison_kind === "aggregate" && version === 2 && isRecord(row.comparison)
+      && hasExactKeys(row.comparison, ["before", "after"])
+      && isVersionHistoryJson(row.comparison.before) && isVersionHistoryJson(row.comparison.after)
+      && (Array.isArray(row.comparison.before) || isRecord(row.comparison.before))
+      && (Array.isArray(row.comparison.after) || isRecord(row.comparison.after))) {
+      comparison = { kind: "aggregate", before: row.comparison.before, after: row.comparison.after };
+    } else {
+      throw new Error("Invalid Version History response");
+    }
+
+    return {
+      eventId: row.event_id, occurredAt: row.occurred_at, actorAccountLabel: row.actor_account_label,
+      actorRole: row.actor_role as "owner" | "qa", domain, operation: row.operation as VersionHistoryOperation,
+      payloadVersion: version, entityType, entityId: row.entity_id as string | null, comparison,
+    };
+  });
+  if (rawRows.some(row => row.has_more !== pageHasMore)) throw new Error("Invalid Version History response");
+  return { entries, hasMore: pageHasMore };
 }
 
 async function readSiteRow(supabase: SupabaseClient): Promise<Record<string, unknown>> {
@@ -1364,6 +1489,29 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       });
       if (error) throw new Error("Unable to load Activity Log");
       return mapActivityLogV13CRows(data);
+    },
+    async loadVersionHistoryPage(resumeId, pageSize, cursor) {
+      if (!resumeId || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+        throw new Error("Invalid Version History page request");
+      }
+      if (cursor && (!Number.isFinite(Date.parse(cursor.occurredAt))
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.eventId))) {
+        throw new Error("Invalid Version History cursor");
+      }
+      const { data, error } = await supabase.rpc("read_version_history_v1", {
+        target_resume_id: resumeId,
+        page_limit: pageSize,
+        before_occurred_at: cursor?.occurredAt ?? null,
+        before_event_id: cursor?.eventId ?? null,
+      });
+      if (error) throw new Error("Unable to load Version History");
+      const page = mapVersionHistoryRows(data);
+      const last = page.entries.at(-1);
+      return {
+        entries: page.entries,
+        hasMore: page.hasMore,
+        nextCursor: page.hasMore && last ? { occurredAt: last.occurredAt, eventId: last.eventId } : null,
+      };
     },
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");

@@ -220,6 +220,20 @@ Object.assign(dictionary, {
   "Profile changes saved, but the previous profile photo could not be removed.": "个人资料修改已保存，但无法删除之前的个人照片。",
   "Some Profile changes could not be saved. Saved changes are kept; remaining changes are still unsaved.": "部分个人资料修改未能保存。已保存的修改已保留，其余修改仍未保存。",
   "Profile changes were not saved. Your edits remain; please retry.": "个人资料修改未能保存。修改已保留，请重试。",
+  "Version History": "版本历史", "Resume history": "简历历史",
+  "A chronological record of successful, supported content changes.": "按时间记录已成功保存且受支持的内容修改。",
+  "Loading Version History…": "正在加载版本历史……", "Unable to load Version History.": "无法加载版本历史。",
+  "No Version History entries have been recorded yet.": "暂未记录版本历史。", "Unable to load more Version History entries.": "无法加载更多版本历史。",
+  "Retry loading more": "重试加载更多", "Recorded change details are unavailable for this entry.": "此条记录的详细变更内容不可用。",
+  "Historical file reference recorded; file availability is unknown.": "已记录历史文件引用；文件是否仍可用尚不确定。",
+  "Historical photo reference recorded; file availability is unknown.": "已记录历史照片引用；文件是否仍可用尚不确定。",
+  "Not set": "未设置", "Empty string": "空字符串", Yes: "是", No: "否", "No recorded fields": "没有记录字段",
+  Created: "已创建", Updated: "已更新", Deleted: "已删除", Reordered: "已排序", Uploaded: "已上传", Removed: "已移除",
+  Awards: "荣誉奖项", Experience: "工作经历", Skills: "技能", Education: "教育经历", Projects: "项目经历",
+  Profile: "个人资料", "Website & Links": "网站与链接", Files: "文件", "Experience entry": "工作经历条目",
+  "Skill group": "技能分组", "Education entry": "教育经历条目", "Contact focus": "联系重点",
+  "Contact status": "联系状态", "Profile details": "个人资料详情", "Profile photo reference": "个人照片引用",
+  "Public link": "公开链接", "Resume file reference": "简历文件引用", "Resume files": "简历文件",
 });
 
 export function readUiLocale(): UiLocale {

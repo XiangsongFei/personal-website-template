@@ -22,6 +22,7 @@ import { freezeExistingScrollSnapshot, freezeScrollSnapshot, isDocumentReloadNav
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { SystemStateContent } from "./SystemState";
 import { ActivityLogPage } from "./ActivityLogPage";
+import { VersionHistoryPage } from "./VersionHistoryPage";
 
 const navigation = [
   { label: "Overview", path: "/overview" },
@@ -3278,9 +3279,10 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   }, [menuOpen]);
   const isOverviewRoute = location.pathname === "/" || location.pathname === "/overview";
   const isActivityLogRoute = location.pathname === "/activity-log";
+  const isVersionHistoryRoute = location.pathname === "/version-history";
   const needsSectionTextRoute = ["/education", "/experience", "/projects", "/skills", "/awards"].includes(location.pathname);
   const showOverviewRouteState = productionMode && overviewRouteFirst && isOverviewRoute && !resume && !overviewData;
-  const showFullSnapshotState = productionMode && !resume && !isActivityLogRoute && location.pathname !== "/profile" && location.pathname !== "/education" && !additionalRouteFirst && !(isOverviewRoute && overviewRouteFirst);
+  const showFullSnapshotState = productionMode && !resume && !isActivityLogRoute && !isVersionHistoryRoute && location.pathname !== "/profile" && location.pathname !== "/education" && !additionalRouteFirst && !(isOverviewRoute && overviewRouteFirst);
   const showEducationTextState = productionMode && location.pathname === "/education" && !resume
     && educationSection !== null && additionalRouteLoadState !== "loaded";
   const showAdditionalRouteState = productionMode && additionalRouteFirst && additionalRouteKey !== null && !resume
@@ -3771,7 +3773,10 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
             className={({ isActive }) => `sidebar-link${isActive ? " is-active" : ""}`}
             onClick={event => handleSidebarNavigation(item.path, event)}>{t(item.label)}</NavLink>)}
         </div>
-        {activityLogEnabled && <NavLink to="/activity-log" className={({ isActive }) => `sidebar-link activity-log-nav-link${isActive ? " is-active" : ""}`}>{t("Activity Log")}</NavLink>}
+        {activityLogEnabled && <>
+          <NavLink to="/activity-log" className={({ isActive }) => `sidebar-link activity-log-nav-link${isActive ? " is-active" : ""}`}>{t("Activity Log")}</NavLink>
+          <NavLink to="/version-history" className={({ isActive }) => `sidebar-link version-history-nav-link${isActive ? " is-active" : ""}`}>{t("Version History")}</NavLink>
+        </>}
         <PublicSiteLink className="sidebar-link sidebar-public-site-link" />
       </nav>
     </aside>
@@ -3801,6 +3806,9 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
         <Route path="/activity-log" element={activityLogEnabled
           ? <ActivityLogPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository}
             filesRestoreReady={activityLogFilesRestoreReady} onRouteDataFresh={onActivityLogRouteFresh ?? undefined} />
+          : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
+        <Route path="/version-history" element={activityLogEnabled
+          ? <VersionHistoryPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />
         <Route path="/profile" element={<PreviewWorkspace section="profile"><Profile /></PreviewWorkspace>} /><Route path="/introduction" element={<PreviewWorkspace section="introduction"><Introduction /></PreviewWorkspace>} />
