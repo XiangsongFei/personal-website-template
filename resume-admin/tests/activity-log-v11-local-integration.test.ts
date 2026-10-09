@@ -666,7 +666,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(failurePayload.target_request_id).toBe(v13RequestId);
     expect(Number(localSql(`SELECT count(*) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid`)))
       .toBe(v13BeforeFailureCount + 1);
-    expect(localSql(`SELECT count(*) || ':' || bool_and(actor_user_id='${actorId}'::uuid AND request_id='${v13RequestId}'::uuid AND event_kind='operation_failure' AND outcome='rejected' AND section_key='introduction' AND operation='update' AND failure_stage='idempotency' AND failure_code='idempotency_conflict' AND ip_network='203.0.113.0/24'::cidr) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid AND event_id='${expectedFailureEventId}'::uuid`))
+    expect(localSql(`SELECT count(*) || ':' || bool_and(actor_user_id='${actorId}'::uuid AND request_id='${v13RequestId}'::uuid AND event_kind='operation_failure' AND outcome='rejected' AND section_key='introduction' AND operation='update' AND failure_stage='idempotency' AND failure_code='idempotency_conflict' AND ip_network IS NULL AND country_code IS NULL AND region IS NULL AND city IS NULL) FROM cms_private.activity_log_system_events WHERE resume_id='${targetId}'::uuid AND event_id='${expectedFailureEventId}'::uuid`))
       .toBe("1:true");
 
     const replayedConflict = await invoke(v13ChangedItems, v13RequestId, undefined, targetId, undefined, undefined, undefined, true);
@@ -760,7 +760,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     const ipv6Save = await invoke(ipv6Items, localUuid(), undefined, targetId, "2001:db8:abcd:1234::1");
     expect(ipv6Save.response.status).toBe(200);
     expect((await readEvents())[0]).toMatchObject({ actor_user_id: actorId, resume_id: targetId, section_key: "introduction", operation: "update" });
-    expect(localSql(`SELECT EXISTS (SELECT 1 FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND ip_network='2001:db8:abcd::/48'::cidr AND country_code='US' AND region='Test Region' AND city='Test City')`)).toBe("t");
+    expect(localSql(`SELECT EXISTS (SELECT 1 FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND ip_network IS NULL AND country_code IS NULL AND region IS NULL AND city IS NULL)`)).toBe("t");
     expect((await readEvents())).toHaveLength(baselineEvents + 2);
 
     // Re-prove A -> B -> retry A through the Worker/PostgREST path. A adds a
@@ -1325,6 +1325,8 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
       VALUES ('${targetId}'::uuid,'website_links','trusted_network_context_v11',true),('${targetId}'::uuid,'files','trusted_network_context_v11',true);
       INSERT INTO cms_private.profile_photo_origin_config(singleton,origin) VALUES(true,'https://local.supabase.invalid')`);
+    expect(localSql(`SELECT COALESCE((SELECT protocol_key FROM cms_private.resume_files_storage_protocol WHERE resume_id='${targetId}'::uuid),'legacy')`))
+      .toBe("legacy");
     try {
       await uploadLocalResumePdf(legacyPath);
       expect(await readD7WriteState("website_links")).toMatchObject([{ resume_id: targetId, website_links_write_mode: "rpc", website_links_trusted_context_required: true }]);
@@ -1396,12 +1398,16 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
 
       const filesSaved = await invokeD7("files", filesChanged, filesRequestId);
       expect(filesSaved.response.status, JSON.stringify(filesSaved.body)).toBe(200);
-      expect(filesSaved.body).toEqual(filesChanged);
+      expect(filesSaved.body).toEqual({ files: filesChanged, cleanup_warning: true });
       expect(await readFiles()).toEqual(filesChanged);
       events = await readUnifiedEvents();
       expect(d7Count(events)).toBe(initialD7Count + 2);
       expect(events[0]).toMatchObject({ resume_id: targetId, section_key: "files", entity_type: "resume_file_set", entity_id: null, operation: "update", payload_version: 2 });
       expect((events[0]!.changes as Record<string, { before: unknown; after: unknown }>).files).toEqual({ before: filesBaseline, after: filesChanged });
+      expect(localSql(`SELECT count(*) || ':' || bool_and(actor_user_id='${actorId}'::uuid AND resume_id='${targetId}'::uuid
+        AND section_key='files' AND entity_type='resume_file_set' AND operation='update'
+        AND ip_network IS NULL AND country_code IS NULL AND region IS NULL AND city IS NULL)
+        FROM cms_private.activity_log_events WHERE id='${String(events[0]!.id)}'::uuid`)).toBe("1:true");
       const filesReplay = await invokeD7("files", filesChanged, filesRequestId);
       expect(filesReplay.response.status).toBe(200);
       expect(filesReplay.body).toEqual(filesSaved.body);
@@ -1418,7 +1424,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       const restoreRequestId = localUuid();
       const restored = await invokeFilesRestore(String(saveEvent!.id), restoreRequestId);
       expect(restored.response.status, JSON.stringify(restored.body)).toBe(200);
-      expect(restored.body).toEqual({ files: filesBaseline, superseded_reference: candidateReference });
+      expect(restored.body).toEqual({ files: filesBaseline, cleanup_warning: true });
       expect(await readFiles()).toEqual(filesBaseline);
       events = await readUnifiedEvents();
       expect(d7Count(events)).toBe(initialD7Count + 3);

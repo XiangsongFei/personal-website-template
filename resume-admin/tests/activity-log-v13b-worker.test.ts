@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleWorkerRequest, type WorkerEnv } from "../src/worker/index";
+import { decodeActivityLogV13Key, signActivityLogV13, type ActivityLogV13Fields } from "../src/worker/activityLogV13";
 
 const qaResume = "ea111111-1111-4111-8111-111111111111";
 const officialResume = "10000000-0000-4000-8000-000000000001";
@@ -32,12 +33,14 @@ function environment(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
 }
 
 function request(resumeId = qaResume): Request {
-  return new Request("https://admin.example.test/api/admin/v1/introduction/save", {
+  const value = new Request("https://admin.example.test/api/admin/v1/introduction/save", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${jwt()}`,
       "CF-Connecting-IP": "188.253.112.72",
+      "X-Forwarded-For": "203.0.113.99",
+      "X-Real-IP": "192.0.2.45",
     },
     body: JSON.stringify({
       request_id: requestId,
@@ -45,6 +48,8 @@ function request(resumeId = qaResume): Request {
       items: [{ id: null, zh: "synthetic QA content", en: "synthetic QA content" }],
     }),
   });
+  Object.defineProperty(value, "cf", { value: { country: "US", region: "Reporter region sentinel", city: "Reporter city sentinel" } });
+  return value;
 }
 
 function postgrestFailure(status: number, body: unknown): Response {
@@ -141,7 +146,7 @@ describe("V1.3B classification and reporter isolation", () => {
 });
 
 describe("V1.3B recorder request and best-effort retry", () => {
-  it("forwards the original bearer and bounded event fields without service_role or business payload", async () => {
+  it("signs null network metadata and forwards bounded event fields without service_role or business payload", async () => {
     const calls = installFetch(postgrestFailure(400, { code: "P13B1", message: "ignored" }));
     await invoke();
     const recorder = calls.find((call) => call.url.endsWith("/record_activity_log_system_failure"));
@@ -163,8 +168,32 @@ describe("V1.3B recorder request and best-effort retry", () => {
       target_operation: "update",
       target_failure_stage: "idempotency",
       target_failure_code: "idempotency_conflict",
-      target_ip_network: "188.253.112.0/24",
+      target_ip_network: null,
+      target_country_code: null,
+      target_region: null,
+      target_city: null,
     });
+    const signedFields: ActivityLogV13Fields = {
+      protocolVersion: Number(payload.target_protocol_version),
+      purpose: String(payload.target_purpose),
+      keyId: String(payload.target_key_id),
+      eventId: String(payload.target_event_id),
+      requestId: String(payload.target_request_id),
+      actorUserId: String(payload.target_actor_user_id),
+      resumeId: String(payload.target_resume_id),
+      eventKind: String(payload.target_event_kind),
+      outcome: String(payload.target_outcome),
+      sectionKey: String(payload.target_section_key),
+      operation: String(payload.target_operation),
+      failureStage: String(payload.target_failure_stage),
+      failureCode: String(payload.target_failure_code),
+      issuedAtEpoch: Number(payload.target_issued_at_epoch),
+      ipNetwork: payload.target_ip_network as null,
+      countryCode: payload.target_country_code as null,
+      region: payload.target_region as null,
+      city: payload.target_city as null,
+    };
+    expect(payload.target_signature_hex).toBe(await signActivityLogV13(signedFields, decodeActivityLogV13Key(v13TestKey)));
     expect(payload.target_event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(payload).not.toHaveProperty("items");
     expect(payload).not.toHaveProperty("canonical_items");

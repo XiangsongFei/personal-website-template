@@ -585,86 +585,8 @@ export function canonicalizeContact(contact: ContactAggregate): string {
   });
 }
 
-function parseIPv4(value: string): number[] | null {
-  const parts = value.split(".");
-  if (parts.length !== 4 || parts.some((part) => !/^(?:0|[1-9]\d{0,2})$/.test(part))) return null;
-  const octets = parts.map(Number);
-  if (octets.some((octet) => octet > 255)) return null;
-  return octets;
-}
-
-function parseIPv6(value: string): number[] | null {
-  if (!value.includes(":") || value.includes("%")) return null;
-  let input = value.toLowerCase();
-  const dotted = input.match(/(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (dotted) {
-    const octets = parseIPv4(dotted[1]);
-    if (!octets) return null;
-    const high = ((octets[0] << 8) | octets[1]).toString(16);
-    const low = ((octets[2] << 8) | octets[3]).toString(16);
-    input = input.slice(0, input.length - dotted[1].length) + `${high}:${low}`;
-  }
-  if ((input.match(/::/g) ?? []).length > 1) return null;
-  const hasCompression = input.includes("::");
-  const [leftPart, rightPart = ""] = hasCompression ? input.split("::") : [input, ""];
-  const left = leftPart ? leftPart.split(":") : [];
-  const right = rightPart ? rightPart.split(":") : [];
-  const groups = [...left, ...right];
-  if (groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
-  if (hasCompression ? groups.length >= 8 : groups.length !== 8) return null;
-  const zeros = hasCompression ? 8 - groups.length : 0;
-  return [...left.map((group) => Number.parseInt(group, 16)), ...Array(zeros).fill(0), ...right.map((group) => Number.parseInt(group, 16))];
-}
-
-function formatIPv6(groups: number[]): string {
-  let bestStart = -1;
-  let bestLength = 1;
-  for (let index = 0; index < groups.length;) {
-    if (groups[index] !== 0) { index += 1; continue; }
-    let end = index;
-    while (end < groups.length && groups[end] === 0) end += 1;
-    if (end - index > bestLength) { bestStart = index; bestLength = end - index; }
-    index = end;
-  }
-  if (bestStart < 0) return groups.map((group) => group.toString(16)).join(":");
-  const before = groups.slice(0, bestStart).map((group) => group.toString(16)).join(":");
-  const after = groups.slice(bestStart + bestLength).map((group) => group.toString(16)).join(":");
-  return `${before}::${after}`;
-}
-
-export function normalizeClientNetwork(value: string | null): string | null {
-  if (!value || value.trim() !== value || value.includes("/")) return null;
-  const ipv4 = parseIPv4(value);
-  if (ipv4) return `${ipv4[0]}.${ipv4[1]}.${ipv4[2]}.0/24`;
-  const ipv6 = parseIPv6(value);
-  if (!ipv6) return null;
-  ipv6[3] = 0;
-  ipv6[4] = 0;
-  ipv6[5] = 0;
-  ipv6[6] = 0;
-  ipv6[7] = 0;
-  return `${formatIPv6(ipv6)}/48`;
-}
-
-function optionalGeoString(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0 || UTF8.encode(value).byteLength > 128 || hasUnpairedSurrogate(value)) return null;
-  for (let index = 0; index < value.length; index += 1) {
-    const unit = value.charCodeAt(index);
-    if (unit <= 0x1f || (unit >= 0x7f && unit <= 0x9f)) return null;
-  }
-  return value;
-}
-
-export function getTrustedNetworkContext(request: Request): Pick<SignedContext, "ip_network" | "country_code" | "region" | "city"> {
-  const cloudflareRequest = request as Request & { cf?: { country?: unknown; region?: unknown; city?: unknown } };
-  const rawCountry = cloudflareRequest.cf?.country;
-  const country = typeof rawCountry === "string" ? rawCountry.toUpperCase() : "";
-  return {
-    ip_network: normalizeClientNetwork(request.headers.get("CF-Connecting-IP")),
-    country_code: /^[A-Z]{2}$/.test(country) ? country : null,
-    region: optionalGeoString(cloudflareRequest.cf?.region),
-    city: optionalGeoString(cloudflareRequest.cf?.city),
-  };
+export function getTrustedNetworkContext(): Pick<SignedContext, "ip_network" | "country_code" | "region" | "city"> {
+  return { ip_network: null, country_code: null, region: null, city: null };
 }
 
 function decodeBase64Url(segment: string): string {
@@ -907,7 +829,7 @@ async function saveIntroduction(request: Request, env: WorkerEnv): Promise<Respo
   const supabase = validateSupabaseConfig(env);
   const { keyId, key } = getSigningConfig(env);
   const issuedAt = Math.floor(Date.now() / 1000);
-  const network = getTrustedNetworkContext(request);
+  const network = getTrustedNetworkContext();
   const context: SignedContext = {
     context_version: 1,
     key_id: keyId,
@@ -987,7 +909,7 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
   if (UTF8.encode(canonical).byteLength > 4096) throw apiError(413, "canonical_payload_too_large", "Awards exceed the allowed size.");
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain: "awards", operation: "update",
     request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
@@ -1038,7 +960,7 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
     throw apiError(413, "canonical_payload_too_large", `${domain === "experience" ? "Experience" : "Skills"} exceeds the allowed size.`);
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain, operation: "update", request_id: parsed.request_id.toLowerCase(),
     mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
@@ -1085,7 +1007,7 @@ async function saveEducation(request: Request, env: WorkerEnv): Promise<Response
   if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Education exceeds the allowed size.");
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain: "education", operation: "update", request_id: parsed.request_id.toLowerCase(),
     mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
@@ -1128,7 +1050,7 @@ async function saveProjects(request: Request, env: WorkerEnv): Promise<Response>
   if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Projects exceeds the allowed size.");
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: parsed.resume_id.toLowerCase(),
     domain: "projects", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
     issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
@@ -1168,7 +1090,7 @@ async function saveContact(request: Request, env: WorkerEnv): Promise<Response> 
   if (UTF8.encode(canonical).byteLength > 196608) throw apiError(413, "canonical_payload_too_large", "Contact exceeds the allowed size.");
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: parsed.resume_id.toLowerCase(),
     domain: "contact", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
     issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
@@ -1222,7 +1144,7 @@ async function saveProfile(request: Request, env: WorkerEnv): Promise<Response> 
   const supabase = validateSupabaseConfig(env);
   const { keyId, key } = getSigningConfig(env);
   const issuedAt = Math.floor(Date.now() / 1000);
-  const network = getTrustedNetworkContext(request);
+  const network = getTrustedNetworkContext();
   const context: SignedContext = {
     context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: parsed.resume_id.toLowerCase(),
     domain: "profile", operation: "update", request_id: parsed.request_id.toLowerCase(),
@@ -1313,7 +1235,7 @@ async function restoreFilesFromEvent(request: Request, env: WorkerEnv): Promise<
     catch { throw apiError(502, "storage_check_unavailable", "The prior PDF could not be verified in Storage."); }
     if (!objectCheck.ok) throw apiError(422, "storage_object_missing", "The prior PDF is not available in Storage.");
   }
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId, resume_id: targetResumeId,
     domain: "files", operation: "update", request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
     issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
@@ -1804,7 +1726,7 @@ async function uploadResumeFile(request: Request, env: WorkerEnv, diagnostic?: F
   const { keyId, key } = getSigningConfig(env); const issuedAt = Math.floor(Date.now() / 1000);
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: tokenActor(request.headers.get("authorization")).actorId,
     resume_id: resumeId, domain: "files", operation: "update", request_id: requestId.toLowerCase(),
-    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...getTrustedNetworkContext(request) };
+    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...getTrustedNetworkContext() };
   const signed = await signContext(context, key);
   const candidateName = pdfObjectName(resumeId, locale);
   diagnostic?.mark("prepare_intent_rpc_started");
@@ -1923,7 +1845,7 @@ async function saveWebsiteLinksOrFiles(request: Request, env: WorkerEnv, domain:
     throw apiError(413, "canonical_payload_too_large", `${domain} exceeds the allowed size.`);
   const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
   const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
-  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext(request);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain, operation: "update", request_id: parsed.request_id.toLowerCase(),
     mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };

@@ -20,13 +20,6 @@ function rejectedEvent(id = "rejected-event"): ActivityLogV13CRejectedEvent {
     failureStage: "idempotency", failureCode: "idempotency_conflict", requestId: "request-qa-1",
     entityType: null, entityId: null, entitySnapshot: null, changes: null, payloadVersion: null };
 }
-function withLocation(base: ActivityLogEvent, location: Partial<Pick<ActivityLogEvent, "ipNetwork" | "countryCode" | "region" | "city">>): ActivityLogEvent {
-  return { ...base, ...location };
-}
-function visibleLocationText(): string {
-  const row = document.querySelector(".activity-log-location");
-  return row ? Array.from(row.childNodes).slice(0, 2).map(node => node.textContent ?? "").join("").trim() : "";
-}
 function renderPage(repository: ResumeRepository, filesRestoreReady = false) {
   const loadV13C = vi.fn(async (id: string, size: number, filters: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[2], cursor?: Parameters<NonNullable<ResumeRepository["loadActivityLogPageV13C"]>>[3]) => {
     const page = repository.loadActivityLogPageV13C
@@ -238,14 +231,18 @@ describe("Activity Log page", () => {
   );
 
   it("renders rejected system metadata without a changed-fields or entity presentation", async () => {
-    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "HK", city: "Hong Kong" };
+    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "QX", region: "System Region Sentinel", city: "System City Sentinel" };
     const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValue([rejected]) } as unknown as ResumeRepository;
     renderPage(repository);
     expect(await screen.findByText("Rejected operation")).toBeTruthy();
     expect(screen.getByText("Idempotency")).toBeTruthy();
     expect(screen.getByText("idempotency_conflict")).toBeTruthy();
     expect(screen.getByText("request-qa-1")).toBeTruthy();
-    expect(visibleLocationText()).toBe("Approximate IP location: Hong Kong, HK · 188.253.112.0/24");
+    expect(document.body.textContent).not.toContain("188.253.112.0/24");
+    expect(document.body.textContent).not.toContain("QX");
+    expect(document.body.textContent).not.toContain("System Region Sentinel");
+    expect(document.body.textContent).not.toContain("System City Sentinel");
+    expect(document.querySelector(".activity-log-location")).toBeNull();
     expect(screen.queryByText("View changed fields")).toBeNull();
     expect(screen.queryByText("introduction_paragraph")).toBeNull();
     expect(screen.queryByText("undefined")).toBeNull();
@@ -273,9 +270,9 @@ describe("Activity Log page", () => {
     expect(screen.getByText(/English.*Name.*Before: Old name.*After: New name/)).toBeTruthy();
   });
 
-  it("localizes rejected-event labels and the approximate-location label in Chinese", async () => {
+  it("omits historical network metadata from rejected system events in Chinese", async () => {
     window.localStorage.setItem(UI_LOCALE_KEY, "zh");
-    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "HK", city: "Hong Kong" };
+    const rejected = { ...rejectedEvent(), ipNetwork: "188.253.112.0/24", countryCode: "QX", region: "系统地区哨兵", city: "系统城市哨兵" };
     const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPageV13C: vi.fn().mockResolvedValue([rejected]) } as unknown as ResumeRepository;
     renderPage(repository);
     expect(await screen.findByText("操作被拒绝")).toBeTruthy();
@@ -283,7 +280,11 @@ describe("Activity Log page", () => {
     expect(screen.getByText("幂等性")).toBeTruthy();
     expect(screen.getByText("失败代码")).toBeTruthy();
     expect(screen.getByText("请求 ID")).toBeTruthy();
-    expect(visibleLocationText()).toBe("IP 大致位置：Hong Kong, HK · 188.253.112.0/24");
+    expect(document.body.textContent).not.toContain("188.253.112.0/24");
+    expect(document.body.textContent).not.toContain("系统地区哨兵");
+    expect(document.body.textContent).not.toContain("系统城市哨兵");
+    expect(document.body.textContent).not.toContain("QX");
+    expect(document.querySelector(".activity-log-location")).toBeNull();
   });
 
   it("continues a mixed-source page using source rank and preserves same-ID rows", async () => {
@@ -362,59 +363,30 @@ describe("Activity Log page", () => {
     expect(screen.queryByText("Update by QA · qa@example.test")).toBeNull();
   });
 
-  it("shows all event-time location parts in order with the English label", async () => {
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([withLocation(event("location-all", { text: { before: "Before", after: "After" } }), {
-      city: "San Francisco", region: "California", countryCode: "US", ipNetwork: "203.0.113.0/24",
-    })]) } as unknown as ResumeRepository;
+  it("hides all populated historical network and location fields in English while retaining event content", async () => {
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([{
+      ...event("location-all"),
+      city: "Sentinel City 7Q", region: "Sentinel Region 8R", countryCode: "ZZ", ipNetwork: "198.51.100.0/24",
+    }]) } as unknown as ResumeRepository;
     renderPage(repository);
-    await screen.findByText(/San Francisco, California, US/);
-    expect(visibleLocationText()).toBe("Approximate IP location: San Francisco, California, US · 203.0.113.0/24");
-    expect(document.querySelector(".activity-log-location")?.getAttribute("title")).toContain("not precise or GPS");
-    expect(document.querySelector(".activity-log-location")?.closest("details")).toBeNull();
-  });
-
-  it("omits a missing region and uses the Chinese IP location label", async () => {
-    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([withLocation(event("location-no-region"), {
-      city: "Hong Kong", countryCode: "HK", ipNetwork: "188.253.112.0/24",
-    })]) } as unknown as ResumeRepository;
-    renderPage(repository);
-    await screen.findByText(/Hong Kong, HK/);
-    expect(visibleLocationText()).toBe("IP 大致位置：Hong Kong, HK · 188.253.112.0/24");
-  });
-
-  it("shows geo-only metadata when there is no IP network", async () => {
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([withLocation(event("location-geo-only"), {
-      city: "San Francisco", region: "California", countryCode: "US",
-    })]) } as unknown as ResumeRepository;
-    renderPage(repository);
-    await screen.findByText(/San Francisco, California, US/);
-    expect(visibleLocationText()).toBe("Approximate IP location: San Francisco, California, US");
-  });
-
-  it("shows only the IP network when geographic metadata is absent", async () => {
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([withLocation(event("location-network-only"), {
-      ipNetwork: "188.253.112.0/24",
-    })]) } as unknown as ResumeRepository;
-    renderPage(repository);
-    await screen.findByText("188.253.112.0/24");
-    expect(visibleLocationText()).toBe("Approximate IP location: 188.253.112.0/24");
-  });
-
-  it("renders no location row for historical events whose four metadata fields are NULL", async () => {
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([event("historical-no-location")]) } as unknown as ResumeRepository;
-    renderPage(repository);
-    await screen.findByText(/Update by QA/);
+    expect(await screen.findByText(/Update by QA/)).toBeTruthy();
+    expect(document.body.textContent).toContain("Introduction");
+    for (const forbidden of ["Approximate IP location", "Approximate IP-derived location", "198.51.100.0/24", "Sentinel City 7Q", "Sentinel Region 8R", "ZZ"])
+      expect(document.body.textContent).not.toContain(forbidden);
     expect(document.querySelector(".activity-log-location")).toBeNull();
-    expect(screen.queryByText(/Unknown|未知|N\/A/)).toBeNull();
   });
 
-  it("omits location components that are empty strings", async () => {
-    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([withLocation(event("empty-location"), {
-      city: "  ", region: "", countryCode: "", ipNetwork: "",
-    })]) } as unknown as ResumeRepository;
+  it("hides all populated historical network and location fields in Chinese while retaining event content", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]), loadActivityLogPage: vi.fn().mockResolvedValue([{
+      ...event("location-no-region"),
+      city: "哨兵城市9X", region: "哨兵地区8Y", countryCode: "QZ", ipNetwork: "203.0.113.0/24",
+    }]) } as unknown as ResumeRepository;
     renderPage(repository);
-    await screen.findByText(/Update by QA/);
+    expect(await screen.findByText(/更新.*QA/)).toBeTruthy();
+    expect(document.body.textContent).toContain("个人简介");
+    for (const forbidden of ["IP 大致位置", "根据事件发生时", "203.0.113.0/24", "哨兵城市9X", "哨兵地区8Y", "QZ"])
+      expect(document.body.textContent).not.toContain(forbidden);
     expect(document.querySelector(".activity-log-location")).toBeNull();
   });
 

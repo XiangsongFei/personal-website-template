@@ -63,7 +63,30 @@ const result = spawnSync(vitest, ["run", "tests/activity-log-v11-local-integrati
 let networkCheckPassed = false;
 let cleanupPassed = true;
 try {
-  const networkVerified = psql(`SELECT EXISTS (SELECT 1 FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND ip_network='203.0.113.0/24'::cidr AND country_code='US' AND region='Test Region' AND city='Test City') AND EXISTS (SELECT 1 FROM cms_private.activity_log_events WHERE resume_id='${targetId}'::uuid AND ip_network='2001:db8:abcd::/48'::cidr AND country_code='US' AND region='Test Region' AND city='Test City') AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid='cms_private.activity_log_events'::regclass AND attnum>0 AND NOT attisdropped AND attname ~* '(signature|hmac|secret|key_material|signed_context)')`);
+  const networkVerified = psql(`WITH privacy_events AS (
+    SELECT actor_user_id, operation, section_key, entity_type, entity_id, entity_snapshot,
+      ip_network, country_code, region, city,
+      CASE
+        WHEN entity_snapshot @> '{"paragraphs":[{"text_zh":"D integration local item","text_en":"D integration local item"}]}'::jsonb THEN 'ipv4-input'
+        WHEN entity_snapshot @> '{"paragraphs":[{"text_zh":"D integration local item IPv6","text_en":"D integration local item"}]}'::jsonb THEN 'ipv6-input'
+      END AS input_case
+    FROM cms_private.activity_log_events
+    WHERE resume_id='${targetId}'::uuid
+      AND site_key_snapshot='example-cv-qa'
+      AND entity_type='introduction_paragraph'
+      AND entity_id='introduction'
+      AND (entity_snapshot @> '{"paragraphs":[{"text_zh":"D integration local item","text_en":"D integration local item"}]}'::jsonb
+        OR entity_snapshot @> '{"paragraphs":[{"text_zh":"D integration local item IPv6","text_en":"D integration local item"}]}'::jsonb)
+  )
+  SELECT count(*) = 2
+    AND count(*) FILTER (WHERE input_case='ipv4-input') = 1
+    AND count(*) FILTER (WHERE input_case='ipv6-input') = 1
+    AND bool_and(actor_user_id='10000000-0000-4000-8000-000000000002'::uuid AND operation='update'
+      AND section_key='introduction' AND entity_type='introduction_paragraph' AND entity_id='introduction'
+      AND ip_network IS NULL AND country_code IS NULL AND region IS NULL AND city IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid='cms_private.activity_log_events'::regclass
+      AND attnum>0 AND NOT attisdropped AND attname ~* '(signature|hmac|secret|key_material|signed_context)')
+  FROM privacy_events`);
   networkCheckPassed = networkVerified === "t";
 } catch {
   networkCheckPassed = false;

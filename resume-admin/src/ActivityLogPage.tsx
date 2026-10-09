@@ -285,14 +285,6 @@ export function describeProfileActivity(event: ActivityLogV13CEvent): Collection
   return lines;
 }
 
-function approximateIpLocation(event: Pick<ActivityLogEvent, "city" | "region" | "countryCode" | "ipNetwork">): string | null {
-  const geographicParts = [event.city, event.region, event.countryCode].map(value => value?.trim() ?? "").filter(Boolean);
-  const network = event.ipNetwork?.trim() ?? "";
-  const location = geographicParts.join(", ");
-  if (location && network) return `${location} · ${network}`;
-  return location || network || null;
-}
-
 export function ActivityLogPage({ resumeId, repository, filesRestoreReady = false, onRouteDataFresh }: {
   resumeId: string | null; repository: ResumeRepository | null; filesRestoreReady?: boolean;
   onRouteDataFresh?: (resumeId: string, fresh: boolean) => void;
@@ -417,9 +409,6 @@ export function ActivityLogPage({ resumeId, repository, filesRestoreReady = fals
                   <div><dt>{t("Request ID")}</dt><dd><code>{event.requestId}</code></dd></div>
                 </dl>
               </>}
-              {approximateIpLocation(event) && <p className="activity-log-location" title={t("Approximate IP-derived location from the event-time network; not precise or GPS location.")}>
-                <span>{t("Approximate IP location: ")}</span>{approximateIpLocation(event)}<span className="visually-hidden"> {t("Approximate IP-derived location")}</span>
-              </p>}
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "profile_settings" ? <dl>{describeProfileActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd>{line.field === "Profile photo" && isActivityLogProfilePhotoEvent(event)

@@ -5,7 +5,6 @@ import worker, {
   canonicalizeIntroduction,
   getTrustedNetworkContext,
   handleWorkerRequest,
-  normalizeClientNetwork,
   serializePostgresJsonbObject,
   sha256Hex,
   signContext,
@@ -218,11 +217,15 @@ describe("Activity Log V1.1 Worker authentication and trusted network context", 
     expect(response.status).toBe(401);
   });
 
-  it("forwards the original Bearer token and publishable apikey to only the V1.1 RPC", async () => {
+  it("forwards the original Bearer token and signs null network metadata despite edge and browser values", async () => {
     const originalToken = `Bearer ${jwt()}`;
     const upstream = vi.fn(async () => Response.json([]));
     vi.stubGlobal("fetch", upstream);
-    const response = await handleWorkerRequest(saveRequest(validBody(), { authorization: originalToken }), env());
+    const request = saveRequest(validBody(), { authorization: originalToken, headers: {
+      "CF-Connecting-IP": "198.51.100.73", "X-Forwarded-For": "203.0.113.99", "X-Real-IP": "192.0.2.45",
+    } }) as Request & { cf?: Record<string, unknown> };
+    request.cf = { country: "US", region: "Worker region sentinel", city: "Worker city sentinel" };
+    const response = await handleWorkerRequest(request, env());
     expect(response.status).toBe(200);
     const [url, init] = upstream.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://synthetic-project.supabase.co/rest/v1/rpc/save_resume_introduction_v11");
@@ -232,59 +235,32 @@ describe("Activity Log V1.1 Worker authentication and trusted network context", 
     const rpcBody = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(Object.keys(rpcBody)).toEqual(["target_resume_id", "canonical_items", "signed_context", "signature_hex"]);
     expect(rpcBody.target_resume_id).toBe(resumeId);
+    const signedContext = JSON.parse(String(rpcBody.signed_context)) as Record<string, unknown>;
+    expect(signedContext).toMatchObject({ context_version: 1, ip_network: null, country_code: null, region: null, city: null });
+    expect(Object.keys(signedContext).sort()).toEqual([
+      "actor_user_id", "city", "context_version", "domain", "expires_at", "ip_network", "issued_at", "key_id",
+      "mutation_digest", "operation", "region", "request_id", "resume_id", "country_code",
+    ].sort());
+    const key = Uint8Array.from(syntheticKeyHex.match(/.{2}/g)!.map(byte => Number.parseInt(byte, 16)));
+    const independentlySigned = await signContext(signedContext as unknown as Parameters<typeof signContext>[0], key);
+    expect(independentlySigned.serialized).toBe(rpcBody.signed_context);
+    expect(independentlySigned.signatureHex).toBe(rpcBody.signature_hex);
     expect(upstream.mock.calls).toHaveLength(1);
   });
 
-  it("uses CF-Connecting-IP and request.cf metadata, ignoring X-Forwarded-For and browser geo fields", () => {
-    const request = new Request("https://admin.example.test/api/admin/v1/introduction/save", {
-      headers: { "CF-Connecting-IP": "198.51.100.73", "X-Forwarded-For": "203.0.113.99", "X-Country": "FR" },
-    }) as Request & { cf?: Record<string, unknown> };
-    request.cf = { country: "us", region: "Region", city: "City", latitude: 10, longitude: 20 };
-    expect(getTrustedNetworkContext(request)).toEqual({
-      ip_network: "198.51.100.0/24", country_code: "US", region: "Region", city: "City",
-    });
+  it("always returns the four required metadata keys as null", () => {
+    expect(getTrustedNetworkContext()).toEqual({ ip_network: null, country_code: null, region: null, city: null });
   });
 
-  it("normalizes IPv4 and IPv6 networks and maps malformed or unavailable IP to null", () => {
-    expect(normalizeClientNetwork("203.0.113.45")).toBe("203.0.113.0/24");
-    expect(normalizeClientNetwork("2001:db8:abcd:1234::1")).toBe("2001:db8:abcd::/48");
-    expect(normalizeClientNetwork("2001:db8::192.0.2.1")).toBe("2001:db8::/48");
-    expect(normalizeClientNetwork("999.1.1.1")).toBeNull();
-    expect(normalizeClientNetwork("1.2.3")).toBeNull();
-    expect(normalizeClientNetwork("1.2.3.4:1234")).toBeNull();
-    expect(normalizeClientNetwork("203.0.113.1,198.51.100.2")).toBeNull();
-    expect(normalizeClientNetwork(" 1.2.3.4")).toBeNull();
-    expect(normalizeClientNetwork("01.02.03.04")).toBeNull();
-    expect(normalizeClientNetwork("1.2.3.04")).toBeNull();
-    expect(normalizeClientNetwork("255.255.255.255")).toBe("255.255.255.0/24");
-    expect(normalizeClientNetwork("0.0.0.0")).toBe("0.0.0.0/24");
-    expect(normalizeClientNetwork("not-an-ip")).toBeNull();
-    expect(normalizeClientNetwork(null)).toBeNull();
-  });
-
-  it("turns invalid optional network metadata into null", () => {
-    const request = new Request("https://admin.example.test/api/admin/v1/introduction/save", {
-      headers: { "CF-Connecting-IP": "invalid", "X-Forwarded-For": "198.51.100.5" },
-    }) as Request & { cf?: Record<string, unknown> };
-    request.cf = { country: "usa", region: `bad${String.fromCharCode(1)}`, city: "x".repeat(129) };
-    expect(getTrustedNetworkContext(request)).toEqual({ ip_network: null, country_code: null, region: null, city: null });
-    expect(getTrustedNetworkContext(new Request("https://admin.example.test"))).toEqual({
-      ip_network: null, country_code: null, region: null, city: null,
-    });
-  });
-
-  it("maps C0, DEL, C1, and oversized geo metadata to null while preserving valid Unicode", () => {
-    const request = (region: unknown, city: unknown) => {
-      const value = new Request("https://admin.example.test") as Request & { cf?: Record<string, unknown> };
-      value.cf = { region, city };
-      return getTrustedNetworkContext(value);
-    };
-    expect(request(`Region${String.fromCharCode(1)}`, "City").region).toBeNull();
-    expect(request("Region\u007f", "City").region).toBeNull();
-    expect(request("Region\u0085", "City").region).toBeNull();
-    expect(request("München 東京", "城市🙂").region).toBe("München 東京");
-    expect(request("é".repeat(64), "City").region).toBe("é".repeat(64));
-    expect(request("é".repeat(65), "City").region).toBeNull();
+  it("rejects browser-supplied network metadata rather than signing or persisting it", async () => {
+    const upstream = vi.fn(async () => Response.json([]));
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(saveRequest(validBody({
+      ip_network: "203.0.113.0/24", country_code: "US", region: "Browser region", city: "Browser city",
+    }), { headers: { "CF-Connecting-IP": "198.51.100.73", "X-Forwarded-For": "203.0.113.99", "X-Real-IP": "192.0.2.45" } }), env());
+    expect(response.status).toBe(400);
+    expect(await responseBody(response)).toMatchObject({ error: { code: "invalid_request" } });
+    expect(upstream).not.toHaveBeenCalled();
   });
 });
 
