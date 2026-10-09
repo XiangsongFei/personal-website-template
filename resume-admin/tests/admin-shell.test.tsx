@@ -94,6 +94,22 @@ describe("Stage 4B fixture shell", () => {
     expect(labels()).toEqual(["Example Project Outcome", "Example Academic Honour"]);
   });
 
+  it.each([
+    ["en", "Move up Chinese method 2", "Move down Chinese method 1", "Chinese methods 1"],
+    ["zh", "上移中文方法 2", "下移中文方法 1", "中文方法 1"],
+  ] as const)("localizes Projects method reorder names in %s without changing the reorder action", (locale, moveUp, moveDown, firstMethodLabel) => {
+    renderAt("/projects", locale);
+    const methodGroups = document.querySelectorAll(".projects-editor-scope .method-group");
+    const chineseMethods = methodGroups[0];
+    const values = () => Array.from(chineseMethods.querySelectorAll<HTMLInputElement>("input"), input => input.value);
+    expect(values()).toEqual(["数据整理", "指标分析"]);
+    expect(screen.getByRole("button", { name: moveUp })).toBeTruthy();
+    expect(screen.getByRole("button", { name: moveDown })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: moveUp }));
+    expect(values()).toEqual(["指标分析", "数据整理"]);
+    expect(screen.getByLabelText(firstMethodLabel)).toBeTruthy();
+  });
+
   it("marks edits dirty, reverts them, and saves fixture changes for this browser session", () => {
     const view = renderAt("/profile");
     const englishName = screen.getByLabelText("English Name") as HTMLInputElement;

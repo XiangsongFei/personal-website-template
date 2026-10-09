@@ -2328,10 +2328,11 @@ function Experience() {
 }
 
 function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPrefix, projectId }: { locale: Locale; methods: ProjectMethod[]; confirmedMethods?: ProjectMethod[]; onChange: (items: ProjectMethod[]) => void; idPrefix: string; projectId: string }) {
-  const { t } = useUiLocale();
+  const { t, locale: uiLocale } = useUiLocale();
   const context = useContext(EditorContext);
   const title = fieldLanguageIndicator(locale);
   const methodsTitle = t(locale === "zh" ? "Chinese methods" : "English methods");
+  const methodActionTitle = t(locale === "zh" ? "Chinese method" : "English method");
   const addLabel = locale === "zh" ? "Add Chinese method" : "Add English method";
   const move = (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -2353,8 +2354,8 @@ function MethodFields({ locale, methods, confirmedMethods = [], onChange, idPref
           context.onBilingualFieldEdit(identity, locale, value !== (confirmedMethods.find(entry => entry.id === method.id)?.value ?? ""));
           onChange(methods.map(entry => entry.id === method.id ? { ...entry, value } : entry));
         }} />
-      <div className="method-actions"><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={`Move ${methodsTitle} ${index + 1} up`}>↑</button>
-        <button type="button" disabled={index === methods.length - 1} onClick={() => move(index, 1)} aria-label={`Move ${methodsTitle} ${index + 1} down`}>↓</button>
+      <div className="method-actions"><button type="button" disabled={index === 0} onClick={() => move(index, -1)} aria-label={`${t("Move up")}${uiLocale === "zh" ? "" : " "}${methodActionTitle} ${index + 1}`}>↑</button>
+        <button type="button" disabled={index === methods.length - 1} onClick={() => move(index, 1)} aria-label={`${t("Move down")}${uiLocale === "zh" ? "" : " "}${methodActionTitle} ${index + 1}`}>↓</button>
         <button type="button" onClick={() => onChange(renumber(methods.filter(entry => entry.id !== method.id)))} aria-label={`${t("Delete")} ${methodsTitle} ${index + 1}`}>{t("Delete")}</button></div>
     </div>;
     })}

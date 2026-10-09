@@ -140,7 +140,7 @@ function ChangeItem({ item, domain, expanded, visibleFields, t, path = "0", rest
   const visibleChanges = expanded ? candidates : candidates.slice(0, Math.max(0, MAX_COLLAPSED_FIELDS - visibleFields.count));
   visibleFields.count += visibleChanges.length;
   if (item.state === "updated" && visibleChanges.length === 0 && item.children.length === 0) return null;
-  const label = item.label?.trim() || itemTypeLabels[item.itemType] || itemTypeLabels.recorded_item;
+  const label = item.label?.trim() || t(itemTypeLabels[item.itemType] || itemTypeLabels.recorded_item);
   return <section className={`version-history-change-item${item.state === "added" ? " is-added" : ""}${item.state === "removed" ? " is-removed" : ""}`}>
     <h3>{label}<span className="version-history-change-state">{t(itemStateLabel(item.state, restoreMode))}</span></h3>
     {visibleChanges.length > 0 && <div className="version-history-change-fields">

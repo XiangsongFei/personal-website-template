@@ -178,6 +178,47 @@ describe("Version History page human-readable presentation", () => {
     expect(screen.getByRole("article").textContent).not.toMatch(/\b(domain|entity id|event id|request id|idempotency|digest|resolver|payload version|object key|shared|translations)\b/i);
   });
 
+  it.each([
+    ["en", "Profile details", "Contact information"],
+    ["zh", "个人资料详情", "联系信息"],
+  ] as const)("localizes application-defined Version History headings in %s while preserving recorded values", async (locale, profileHeading, contactHeading) => {
+    if (locale === "zh") window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const profileState = (name: string) => ({
+      shared: { graduation_value: "", avatar_initials: "", footer_name: "", copyright: "", photo_url: null },
+      translations: {
+        en: { name, nav_about_label: "About", email_action_label: "Email", graduation_label: "Graduation", avatar_label: "Photo", contact_focus_heading: "Focus", contact_status_heading: "Status" },
+        zh: { name: "个人资料原文", nav_about_label: "关于", email_action_label: "邮箱", graduation_label: "毕业", avatar_label: "照片", contact_focus_heading: "关注", contact_status_heading: "状态" },
+      },
+    });
+    const profile = baseEntry({ domain: "profile", entityType: "profile_settings", payloadVersion: 2, entityId: null,
+      comparison: { kind: "aggregate", before: profileState("Recorded profile value before"), after: profileState("Recorded profile value after") } });
+    const contactState = (contactLabel: string) => ({
+      translations: { en: { contact_label: contactLabel, availability: "Available" }, zh: { contact_label: "联系方式原文", availability: "可联系" } },
+      focus: [], status: [],
+    });
+    const contact = baseEntry({ eventId: uuid(91), domain: "contact", entityType: "contact_settings", payloadVersion: 2, entityId: null,
+      comparison: { kind: "aggregate", before: contactState("Contact before"), after: contactState("Recorded contact value") } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([profile, contact]))));
+    expect(await screen.findByRole("heading", { name: new RegExp(`${profileHeading}.*${locale === "zh" ? "已修改" : "Updated"}`), level: 3 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: new RegExp(`${contactHeading}.*${locale === "zh" ? "已修改" : "Updated"}`), level: 3 })).toBeTruthy();
+    expect(screen.getByText("Recorded profile value after")).toBeTruthy();
+    expect(screen.getByText("Recorded contact value")).toBeTruthy();
+  });
+
+  it("does not translate historical item labels that happen to resemble interface text", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const before = [row(92, 0, "Earlier profile", "较早的个人资料"), row(93, 1, "Earlier contact", "较早的联系方式")];
+    const after = [row(92, 0, "Profile details", "个人资料"), row(93, 1, "Contact information", "联系方式")];
+    const event = baseEntry({ payloadVersion: 2, entityType: "award_list", entityId: null,
+      comparison: { kind: "aggregate", before, after } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([event]))));
+    await screen.findByRole("article");
+    expect(screen.getByRole("heading", { level: 3, name: /Profile details.*已修改/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: /Contact information.*已修改/ })).toBeTruthy();
+    expect(document.body.textContent).toContain("Profile details");
+    expect(document.body.textContent).toContain("Contact information");
+  });
+
   it("preserves English, Chinese, URL, and long recorded project values exactly in Chinese UI", async () => {
     const description = "Designed a forecasting model for holiday traffic.";
     const href = "https://example.com/MyEnglishPath";

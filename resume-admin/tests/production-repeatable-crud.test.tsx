@@ -1688,7 +1688,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   it("deletes and reorders project methods by their real locale-specific UUIDs", async () => {
     const repo = makeRepository("projects"); open({ path: "/projects" }, repo.repository);
     await screen.findByLabelText("English methods 2");
-    fireEvent.click(screen.getByRole("button", { name: "Move English methods 2 up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move up English method 2" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Chinese methods 1" }));
     save(); await screen.findByText("No unsaved changes");
     expect(repo.methods.deleteProjectMethod).toHaveBeenCalledWith(resumeId, "project-1", "method-zh-1", "zh");
@@ -1822,7 +1822,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(groups[0].querySelectorAll(".method-row")).toHaveLength(2);
     expect(groups[1].querySelectorAll(".method-row")).toHaveLength(2);
     expect(methodsGrid.querySelectorAll(".method-row.is-adaptive-stacked")).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "Move English methods 2 up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move up English method 2" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete Chinese methods 1" }));
     save(); await screen.findByText("No unsaved changes");
     expect(repo.methods.deleteProjectMethod).toHaveBeenCalledWith(resumeId, "project-1", "method-zh-1", "zh");

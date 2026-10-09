@@ -71,6 +71,37 @@ describe("Phase 5D Links route-first loading", () => {
     expect(desktopSplitRules).toContain(".editor-preview-layout[data-workspace-view=split] .links-editor-scope .links-section[data-editor-anchor=\"links:resume-files\"] .resume-file-grid{grid-template-columns:repeat(2,minmax(0,1fr))}");
     expect(css).not.toContain(".links-object-group[data-editor-anchor=\"links:linkedin\"] .links-inline-row{grid-template-columns");
     expect(css).toContain(".links-editor-scope .links-inline-field{display:grid;grid-template-columns:110px minmax(0,1fr);align-items:end;gap:12px");
+    const narrowContainerStart = css.indexOf("@container (max-width:620px){");
+    const narrowContainerEnd = css.indexOf("\n}", narrowContainerStart);
+    const narrowLinksCss = css.slice(narrowContainerStart, narrowContainerEnd);
+    expect(narrowLinksCss).toContain(".links-editor-scope .links-inline-field{grid-template-columns:110px minmax(0,1fr)}");
+    const narrowViewportStart = css.indexOf("@media (max-width:640px){");
+    const narrowViewportEnd = css.indexOf("\n}", narrowViewportStart);
+    const narrowViewportLinksCss = css.slice(narrowViewportStart, narrowViewportEnd);
+    expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-field{grid-template-columns:minmax(0,1fr)}");
+    expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:minmax(0,1fr)}");
+    expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-field>label,.links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>label{white-space:normal}");
+  });
+
+  it.each(["en", "zh"] as const)("keeps long Site & Links values editable in the %s UI and uses stacked narrow labels", async locale => {
+    const longEmail = "a.very.long.address.for.mobile@example.test";
+    const longGithub = "https://github.com/a-very-long-account-name/with-a-long-project-path";
+    const longLinks = structuredClone(links);
+    longLinks.shared.email = longEmail;
+    longLinks.shared.github = longGithub;
+    const repo = repository({ loadLinks: vi.fn().mockResolvedValue(longLinks) });
+    show(repo);
+    await screen.findByLabelText("URL");
+    if (locale === "zh") fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    const emailInput = screen.getByDisplayValue(longEmail) as HTMLInputElement;
+    const githubInput = screen.getByDisplayValue(longGithub) as HTMLInputElement;
+    expect(emailInput).toBeTruthy();
+    expect(githubInput).toBeTruthy();
+    fireEvent.change(emailInput, { target: { value: `${longEmail}.edited` } });
+    expect((screen.getByDisplayValue(`${longEmail}.edited`) as HTMLInputElement).value).toBe(`${longEmail}.edited`);
+    const scope = document.querySelector(".links-editor-scope")!;
+    expect(scope.querySelector(".links-object-group[data-editor-anchor=\"links:email\"] .links-inline-field")?.classList.contains("links-inline-field")).toBe(true);
+    expect(scope.querySelector(".links-object-group[data-editor-anchor=\"links:github\"] .links-inline-field")?.classList.contains("links-inline-field")).toBe(true);
   });
 
   it("uses one compact bilingual matrix header for the navigation label rows", async () => {

@@ -501,6 +501,12 @@ main{color:#242424}
   .education-editor-scope .bilingual-footer-grid,.experience-editor-scope .bilingual-footer-grid,.projects-editor-scope .bilingual-footer-grid,.skills-editor-scope .bilingual-footer-grid,.awards-editor-scope .bilingual-footer-grid,.contact-editor-scope .bilingual-footer-grid,.links-editor-scope .bilingual-footer-grid{grid-template-columns:minmax(0,1fr)}
 }
 
+@media (max-width:640px){
+  .links-editor-scope .links-inline-field{grid-template-columns:minmax(0,1fr)}
+  .links-editor-scope .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:minmax(0,1fr)}
+  .links-editor-scope .links-inline-field>label,.links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>label{white-space:normal}
+}
+
 /* Preserve layout-specific treatments; adaptive pairs are handled at all sizes below. */
 @media (min-width:861px) and (pointer:fine){
   .experience-editor-scope .experience-paired-field-heading-above .bilingual-field-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3.8cqi,30px)}
