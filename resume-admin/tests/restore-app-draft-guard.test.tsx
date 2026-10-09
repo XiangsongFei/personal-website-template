@@ -24,11 +24,22 @@ function renderApp(repository: ResumeRepository) {
     activityLogEnabled /></MemoryRouter></UiLocaleProvider>);
 }
 function mockRepository(domain: "awards" | "contact", overrides: Partial<ResumeRepository> = {}): ResumeRepository {
-  const aggregate = domain === "awards" ? fixtureSections.awards : fixtureSections.contact;
+  const currentState = domain === "awards" ? [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0,
+    zh: { name: "当前奖项", year: "2099" }, en: { name: "Current award", year: "2099" } }] : {
+    translations: { zh: { contact_label: "联系", availability: "当前状态" }, en: { contact_label: "Contact", availability: "Current status" } },
+    focus: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, zh: { title: "关注", detail: "" }, en: { title: "Focus", detail: "" } }],
+    status: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", position: 0, status_type: "open", zh: { title: "开放", detail: "" }, en: { title: "Open", detail: "" } }],
+  };
+  const historicalState = domain === "awards" ? [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0,
+    zh: { name: "当前奖项", year: "2099" }, en: { name: "Earlier award", year: "2099" } }] : {
+    translations: { zh: { contact_label: "联系", availability: "较早状态" }, en: { contact_label: "Contact", availability: "Earlier status" } },
+    focus: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, zh: { title: "关注", detail: "" }, en: { title: "Focus", detail: "" } }],
+    status: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", position: 0, status_type: "open", zh: { title: "开放", detail: "" }, en: { title: "Open", detail: "" } }],
+  };
   return {
     loadVersionHistoryPage: vi.fn().mockResolvedValue({ entries: [event(domain)], hasMore: false, nextCursor: null }),
     previewRestore: vi.fn().mockResolvedValue({ status: "ready", sourceEventId: eventId, sourceOccurredAt: "2026-10-05T02:10:04Z", domain,
-      historicalState: [], currentState: aggregate as never, comparison: { before: aggregate as never, after: [] }, expectedCurrentDigest: "a".repeat(64) }),
+      historicalState, currentState, comparison: { before: currentState, after: historicalState }, expectedCurrentDigest: "a".repeat(64) }),
     getPendingRestoreAttempt: vi.fn().mockReturnValue(null), restoreDomain: vi.fn().mockResolvedValue({ status: "restored", domain, source_event_id: eventId,
       result_event_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", occurred_at: "2026-10-08T02:10:04Z" }),
     hasPendingContactWorkerSave: vi.fn().mockReturnValue(false), hasPendingAwardsWorkerSave: vi.fn().mockReturnValue(false),
@@ -47,9 +58,9 @@ describe("App-owned Restore draft and in-flight guard", () => {
     renderApp(repository);
     fireEvent.change(await screen.findByLabelText("Chinese Availability"), { target: { value: "Unsaved contact draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Open history" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Preview restore" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Restore this domain" }));
-    expect((await screen.findByRole("status")).textContent).toContain("Save or discard this domain's unsaved changes");
+    fireEvent.click(await screen.findByRole("button", { name: "Preview what would be restored" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this section" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Save or discard your unsaved changes in this section before restoring.");
     expect(repository.restoreDomain).not.toHaveBeenCalled();
   });
 
@@ -60,9 +71,9 @@ describe("App-owned Restore draft and in-flight guard", () => {
     fireEvent.change(await screen.findByLabelText("Chinese Availability"), { target: { value: "Saving contact" } });
     fireEvent.click(screen.getByRole("button", { name: "Save contact changes" }));
     fireEvent.click(screen.getByRole("button", { name: "Open history" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Preview restore" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Restore this domain" }));
-    expect((await screen.findByRole("status")).textContent).toContain("currently being saved");
+    fireEvent.click(await screen.findByRole("button", { name: "Preview what would be restored" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this section" }));
+    expect((await screen.findByRole("status")).textContent).toContain("This section is being saved. Wait for the save to finish before restoring.");
     expect(repository.restoreDomain).not.toHaveBeenCalled();
     resolveWriteState({ resumeId, contactWriteMode: "rpc", activityLogEnabled: true, contactTrustedContextRequired: true });
   });
@@ -72,9 +83,9 @@ describe("App-owned Restore draft and in-flight guard", () => {
     renderApp(repository);
     fireEvent.change(await screen.findByLabelText("Chinese Availability"), { target: { value: "Keep this unrelated draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Open history" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Preview restore" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Restore this domain" }));
-    await screen.findByText("Restore completed for this domain only.");
+    fireEvent.click(await screen.findByRole("button", { name: "Preview what would be restored" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this section" }));
+    await screen.findByText("This section was restored. A new entry was added to Version History; earlier history remains unchanged.");
     fireEvent.click(screen.getByRole("button", { name: "Open contact" }));
     expect(await screen.findByLabelText("Chinese Availability")).toHaveProperty("value", "Keep this unrelated draft");
   });

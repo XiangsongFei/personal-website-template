@@ -138,7 +138,7 @@ describe("Profile history photo previews", () => {
     const awards = versionEntry({ domain: "awards", entityType: "award_list", payloadVersion: 2,
       comparison: { kind: "aggregate", before: [{ href: photoUrl }], after: [{ href: "https://example.test/a.pdf" }] } });
     render(<UiLocaleProvider><VersionHistoryPage resumeId={resumeId} repository={versionRepository(awards, resolve)} /></UiLocaleProvider>);
-    expect(await screen.findAllByText("Awards")).toHaveLength(2);
+    expect(await screen.findByRole("heading", { name: /Awards.*Updated/ })).toBeTruthy();
     expect(resolve).not.toHaveBeenCalled();
     cleanup();
 
@@ -168,6 +168,18 @@ describe("Profile history photo previews", () => {
     view.unmount();
   });
 
+  it("localizes unset and unavailable historical photo sides without exposing references", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    render(<UiLocaleProvider><ProfileHistoryPhotoPair resumeId={resumeId} eventId={eventId} occurredAt={occurredAt}
+      sides={{ before: noPhoto, after: unsupported }} repository={null} /></UiLocaleProvider>);
+    expect(screen.getByText("修改前")).toBeTruthy();
+    expect(screen.getByText("修改后")).toBeTruthy();
+    expect(screen.getByText("未设置")).toBeTruthy();
+    expect(screen.getByText("预览不可用")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(photoUrl);
+    expect(document.body.textContent).not.toContain(photoKey);
+  });
+
   it("maps resolver and network failures to the neutral unavailable state", async () => {
     const resolver = { resolveProfileHistoryImage: vi.fn(async () => { throw new Error("private upstream detail"); }) } as unknown as ResumeRepository;
     render(<UiLocaleProvider><ProfileHistoryPhoto resumeId={resumeId} eventId={eventId} occurredAt={occurredAt}
@@ -182,6 +194,17 @@ describe("Profile history photo previews", () => {
       side="after" value={photoValue} repository={repository} /></UiLocaleProvider>);
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Sign in again to view this preview.");
     expect(screen.queryByText("Preview unavailable")).toBeNull();
+  });
+
+  it("localizes the image sign-in state without exposing resolver details", async () => {
+    window.localStorage.setItem(UI_LOCALE_KEY, "zh");
+    const repository = { resolveProfileHistoryImage: vi.fn(async () => { throw new ProfileHistoryImageError("unauthenticated"); }) } as unknown as ResumeRepository;
+    render(<UiLocaleProvider><ProfileHistoryPhoto resumeId={resumeId} eventId={eventId} occurredAt={occurredAt}
+      side="after" value={photoValue} repository={repository} /></UiLocaleProvider>);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "请重新登录以查看此预览。");
+    expect(document.body.textContent).not.toContain("resolver");
+    expect(document.body.textContent).not.toContain(photoUrl);
+    expect(document.body.textContent).not.toContain(photoKey);
   });
 
   it("revokes replaced object URLs and prevents a stale event response from replacing the newer image", async () => {
