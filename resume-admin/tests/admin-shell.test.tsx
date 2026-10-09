@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -38,6 +39,25 @@ describe("Stage 4B fixture shell", () => {
     expect(nav.querySelector('a[href="/version-history"]')?.textContent).toBe("Version History");
     expect(await screen.findByRole("heading", { level: 1, name: "Version History" })).toBeTruthy();
     expect(repository.loadVersionHistoryPage).toHaveBeenCalledWith("qa-resume", 25);
+  });
+
+  it("keeps grouped and ungrouped sidebar destinations on the same typography contract", () => {
+    const styles = readFileSync("src/styles.css", "utf8");
+    expect(styles).toMatch(/\.sidebar-link\{[^}]*font-size:15px;line-height:1\.3;font-weight:400/);
+    expect(styles).not.toMatch(/\.sidebar-nav-group\s+\.sidebar-link\s*\{/);
+    expect(styles).toMatch(/\.sidebar-link\.is-active\{[^}]*font-weight:600\}/);
+    expect(styles).not.toMatch(/\.sidebar-link\.is-active\{[^}]*font-size:/);
+
+    const repository = { loadVersionHistoryPage: vi.fn().mockResolvedValue({ entries: [], hasMore: false, nextCursor: null }) } as unknown as ResumeRepository;
+    render(<UiLocaleProvider><MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test"
+      onSignOut={() => {}} signOutPending={false} signOutError="" repository={repository} additionalResumeId="qa-resume"
+      activityLogEnabled /></MemoryRouter></UiLocaleProvider>);
+    const navigation = screen.getByRole("navigation", { name: "CMS sections" });
+    for (const path of ["/overview", "/profile", "/links", "/activity-log", "/version-history"]) {
+      expect(navigation.querySelector(`a[href="${path}"]`)?.classList.contains("sidebar-link")).toBe(true);
+    }
+    expect(navigation.querySelector('a[href="/links"]')?.classList.contains("is-active")).toBe(true);
+    expect(navigation.querySelector('a[href="/overview"]')?.classList.contains("is-active")).toBe(false);
   });
 
   it.each([["en", "Resume Editor", "Home", "Resume", "Settings", "Site & Links"], ["zh", "简历编辑器", "首页", "简历内容", "设置", "网站与链接"]] as const)(

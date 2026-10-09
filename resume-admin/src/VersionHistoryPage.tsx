@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { RestoreMutationError, RestorePreviewError, type RestoreMutationRequest, type RestorePreview, type ResumeRepository, type VersionHistoryDomain, type VersionHistoryEntry, type VersionHistoryPage as VersionHistoryPageResult } from "./data/resumeRepository";
 import { presentVersionHistoryChange, type HistoryChangePresentation, type HistoryFieldChange, type HistoryFieldValue, type HistoryItemChange } from "./data/versionHistoryPresenter";
 import { presentRestorePreview, type RestorePreviewPresentation } from "./data/restorePreviewPresenter";
@@ -259,6 +259,7 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
   const restoreDialog = useRef<HTMLElement>(null);
   const restoreOpLock = useRef(false);
   const restoreTrigger = useRef<HTMLButtonElement | null>(null);
+  const restoreFocusAfterClose = useRef(false);
   const requestGeneration = useRef(0);
   const acceptPreview = (preview: RestorePreview, expectedEventId: string) => {
     const presentation = presentRestorePreview(preview, expectedEventId);
@@ -409,9 +410,16 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
 
   const closeRestore = useCallback(() => {
     if (restorePhase === "submitting") return;
+    restoreFocusAfterClose.current = true;
     setRestoreEntry(null); setRestorePreview(null); setPendingRestore(null); setRestorePhase("idle"); setRestoreMessage("");
-    restoreTrigger.current?.focus();
   }, [restorePhase]);
+
+  useLayoutEffect(() => {
+    if (restoreEntry || !restoreFocusAfterClose.current) return;
+    restoreFocusAfterClose.current = false;
+    const trigger = restoreTrigger.current;
+    if (trigger?.isConnected) trigger.focus();
+  }, [restoreEntry]);
 
   const restorePresentation = restoreEntry && restorePreview
     ? presentRestorePreview(restorePreview, restoreEntry.eventId) : null;
@@ -459,7 +467,8 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
     {restoreEntry && <div className="restore-dialog-backdrop"><section className="restore-dialog" role="dialog" aria-modal="true"
       aria-labelledby="restore-dialog-title" aria-describedby="restore-dialog-description" tabIndex={-1} ref={restoreDialog}>
       <header className="restore-dialog-heading"><div><p className="eyebrow">{t("Restore preview")}</p><h2 id="restore-dialog-title">{t(domainLabels[restorePresentation?.domain ?? restoreEntry.domain])}</h2></div>
-        <button type="button" className="button secondary" onClick={closeRestore} disabled={restorePhase === "submitting"}>{t("Cancel")}</button></header>
+        <button type="button" className="button secondary restore-dialog-close" aria-label={t("Close restore preview")}
+          onClick={closeRestore} disabled={restorePhase === "submitting"}><span aria-hidden="true">×</span></button></header>
       <p id="restore-dialog-description">{t("This preview shows how this section would look after restoring its earlier content. Only this section will change. Other sections will stay as they are.")}</p>
       {restorePhase === "loading" && <p role="status">{t("Preparing restore preview…")}</p>}
       {restorePhase === "submitting" && <p role="status">{t("Restoring this section…")}</p>}

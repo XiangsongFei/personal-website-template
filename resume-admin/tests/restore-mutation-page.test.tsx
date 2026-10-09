@@ -107,8 +107,53 @@ describe("Version History Restore presentation and state machine", () => {
     expect(within(dialog).getAllByText("当前内容", { selector: ".version-history-value-side-label" })).toHaveLength(2);
     expect(within(dialog).getAllByText("恢复后", { selector: ".version-history-value-side-label" })).toHaveLength(2);
     expect(within(dialog).getByRole("button", { name: "恢复此部分" })).toBeTruthy();
-    expect(within(dialog).getAllByRole("button", { name: "取消" })).toHaveLength(2);
+    expect(within(dialog).getByRole("button", { name: "关闭恢复预览" })).toBeTruthy();
+    expect(within(dialog).getAllByRole("button", { name: "取消" })).toHaveLength(1);
     expect(within(dialog).queryByText(/digest|idempotency|request id|RPC|trusted context|resolver|载荷版本|域|实体 ID/i)).toBeNull();
+  });
+
+  it("keeps keyboard focus inside Restore Preview and returns it to the trigger on Escape", async () => {
+    const repo = baseRepository();
+    renderPage(repo);
+    const trigger = await screen.findByRole("button", { name: "Preview what would be restored" });
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    const close = within(dialog).getByRole("button", { name: "Close restore preview" });
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    const restore = within(dialog).getByRole("button", { name: "Restore this section" });
+    expect(within(dialog).getAllByRole("button")).toEqual([close, cancel, restore]);
+    expect(close.querySelector("span")?.getAttribute("aria-hidden")).toBe("true");
+    expect(close.textContent).toBe("×");
+    close.focus();
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(restore);
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    cancel.focus();
+    expect(document.activeElement).toBe(cancel);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(repo.restoreDomain).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the Preview trigger when footer Cancel closes the dialog", async () => {
+    const repo = baseRepository();
+    renderPage(repo);
+    const trigger = await screen.findByRole("button", { name: "Preview what would be restored" });
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.click(cancel);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    expect(repo.restoreDomain).not.toHaveBeenCalled();
   });
 
   it("renders add, remove, and reorder outcomes without exposing positions", async () => {
@@ -444,7 +489,7 @@ describe("Version History Restore presentation and state machine", () => {
     expect(await screen.findByText("Your session has expired. Sign in again to continue.")).toBeTruthy();
   });
 
-  it("prevents a double mutation while submitting and restores focus on Cancel", async () => {
+  it("prevents a double mutation, disables closing while submitting, and restores focus", async () => {
     let finish!: (value: typeof restored) => void;
     const repo = baseRepository({ restoreDomain: vi.fn().mockReturnValue(new Promise(resolve => { finish = resolve; })) });
     renderPage(repo);
@@ -455,9 +500,14 @@ describe("Version History Restore presentation and state machine", () => {
     expect(repo.restoreDomain).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "Restore this section" })).toBeNull();
     expect(screen.getByRole("status").textContent).toContain("Restoring this section…");
+    expect(screen.getByRole("button", { name: "Close restore preview" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(repo.restoreDomain).toHaveBeenCalledOnce();
     finish(restored);
     await screen.findByText("This section was restored. A new entry was added to Version History; earlier history remains unchanged.");
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close restore preview" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });

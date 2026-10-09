@@ -249,7 +249,7 @@ Object.assign(dictionary, {
   "Portfolio label": "作品集标签", "Updated label": "更新时间标签", Label: "标签", "Graduation information": "毕业信息",
   "Skill content": "技能内容", "Recorded change": "记录的修改", "Avatar label": "头像名称",
   "Contact focus heading": "联系重点标题", "Contact status heading": "联系状态标题",
-  "Restore preview": "恢复预览", Current: "当前内容", "After restore": "恢复后",
+  "Restore preview": "恢复预览", "Close restore preview": "关闭恢复预览", Current: "当前内容", "After restore": "恢复后",
   "This preview shows how this section would look after restoring its earlier content. Only this section will change. Other sections will stay as they are.": "请在恢复前确认此部分将如何变化。恢复只会更改此部分，其他部分保持不变。",
   "Proposed section changes": "本次恢复将进行的修改", "Will be added": "将添加", "Will be removed": "将删除", "Will change": "将修改", "Order will change": "顺序将调整",
   "Only this section will be changed.": "仅会更改此部分。", "Earlier Version History entries will not be changed.": "之前的版本历史记录不会被修改。",
