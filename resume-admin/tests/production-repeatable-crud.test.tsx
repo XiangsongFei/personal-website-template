@@ -183,6 +183,12 @@ function pdfFile(content: string, name: string, lastModified = 1) {
   Object.defineProperty(file, "arrayBuffer", { value: async () => new TextEncoder().encode(content).buffer });
   return file;
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}
 function selectBothPdfs() {
   const zh = pdfFile("%PDF zh", "resume-zh.pdf", 10);
   const en = pdfFile("%PDF en", "resume-en.pdf", 20);
@@ -2417,6 +2423,75 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(new URL(savedPdfUrl).pathname).toBe(`/storage/v1/object/public/resume-files/${resumeId}/${locale}/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf`);
     expect(screen.getByRole("link", { name: `Current PDF: ${filename}` }).getAttribute("href")).toBe(savedPdfUrl);
     expect(screen.queryByText(`Selected: ${filename}`)).toBeNull();
+  });
+
+  it("locks only the Links editor during a pending PDF save and keeps the submitted File until success", async () => {
+    const setup = makeRepository("skills");
+    const upload = deferred<string>();
+    setup.methods.uploadResumePdf.mockReturnValueOnce(upload.promise);
+    const target = "11111111-1111-4111-8111-111111111111";
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), target);
+    const file = pdfFile("%PDF in-flight", "in-flight-zh.pdf", 31);
+    const picker = await screen.findByLabelText("Chinese Resume PDF") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [file] } });
+    expect(screen.getByText("Selected: in-flight-zh.pdf")).toBeTruthy();
+    const saveButton = screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(false);
+
+    save();
+    await waitFor(() => expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce());
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledWith(target, "zh", file, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(saveButton.disabled).toBe(true);
+    expect(saveButton.textContent).toBe("Saving…");
+    const form = document.querySelector<HTMLFormElement>(".links-editor-scope form")!;
+    const lock = form.querySelector<HTMLFieldSetElement>(".section-save-in-flight-lock")!;
+    expect(form.getAttribute("aria-busy")).toBe("true");
+    expect(lock.disabled).toBe(true);
+    expect(lock.getAttribute("aria-disabled")).toBe("true");
+    expect(picker.matches(":disabled")).toBe(true);
+    expect((screen.getByLabelText("Email address") as HTMLInputElement).matches(":disabled")).toBe(true);
+    const cancelButton = screen.getByRole("button", { name: "Cancel changes" }) as HTMLButtonElement;
+    expect(cancelButton.disabled).toBe(true);
+    fireEvent.click(cancelButton);
+    expect(screen.getByText("Selected: in-flight-zh.pdf")).toBeTruthy();
+    const overviewLink = screen.getByRole("link", { name: "Overview" });
+    expect(overviewLink.closest(".section-save-in-flight-lock")).toBeNull();
+
+    await act(async () => { upload.resolve(pdfCandidateUrl(target, "zh")); await upload.promise; });
+    await screen.findByText("No unsaved changes");
+    expect(screen.getByRole("link", { name: "Current PDF: in-flight-zh.pdf" }).getAttribute("href")).toBe(pdfCandidateUrl(target, "zh"));
+    expect(screen.queryByText("Selected: in-flight-zh.pdf")).toBeNull();
+    expect(lock.disabled).toBe(false);
+    expect(picker.matches(":disabled")).toBe(false);
+    expect(saveButton.disabled).toBe(true);
+    expect(form.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("unlocks Links after a failed PDF save and retains the original draft for retry", async () => {
+    const setup = makeRepository("skills");
+    const upload = deferred<string>();
+    setup.methods.uploadResumePdf.mockReturnValueOnce(upload.promise);
+    const target = "11111111-1111-4111-8111-111111111111";
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), target);
+    const file = pdfFile("%PDF retry after failure", "retry-after-failure.pdf", 32);
+    const picker = await screen.findByLabelText("Chinese Resume PDF") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [file] } });
+    save();
+    await waitFor(() => expect(setup.methods.uploadResumePdf).toHaveBeenCalledOnce());
+    expect(picker.matches(":disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Cancel changes" }).hasAttribute("disabled")).toBe(true);
+
+    await act(async () => { upload.reject(new Error("temporary upload failure")); await upload.promise.catch(() => undefined); });
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Selected: retry-after-failure.pdf")).toBeTruthy();
+    expect(picker.matches(":disabled")).toBe(false);
+    expect((screen.getByRole("button", { name: "Save site & link changes" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(document.querySelector(".links-editor-scope form")?.getAttribute("aria-busy")).not.toBe("true");
+
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(setup.methods.uploadResumePdf).toHaveBeenCalledTimes(2);
+    expect(setup.methods.uploadResumePdf).toHaveBeenLastCalledWith(target, "zh", file, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("saves both direct-mode Files locales independently and cleans only superseded managed objects", async () => {

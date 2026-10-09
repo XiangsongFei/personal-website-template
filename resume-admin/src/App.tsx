@@ -644,13 +644,14 @@ function EditorFooterState({ dirty, message = "", error = false }: { dirty: bool
 }
 
 type ProductionSaveNotice<T> = { __productionSaveNotice: true; value: T; message: string; warning: boolean; keepProductionDraft?: boolean; savedPdfLocales?: Locale[] };
-function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, onProductionPartialSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText }: {
+function SectionForm<T>({ section, title, description, initial, children, productionSave, productionDirty = false, onProductionCancel, onProductionSaved, onProductionPartialSaved, quietCancelNotice = false, hidePageHeading = false, hideSaveModeNotice = false, saveLabel, sectionText, lockEditingWhileSaving = false }: {
   section: SectionKey; title: string; description: string; initial: T;
   children: (value: T, onChange: (next: T | ((current: T) => T)) => void, confirmed: T) => ReactNode;
   productionSave?: (draft: T, baseline: T, operation?: FilesSaveOperation) => Promise<T | void | ProductionSaveNotice<T>>;
   productionDirty?: boolean; onProductionCancel?: () => void; onProductionSaved?: () => void; onProductionPartialSaved?: (savedLocales: Locale[]) => void; quietCancelNotice?: boolean;
   hidePageHeading?: boolean; hideSaveModeNotice?: boolean; saveLabel?: string;
   sectionText?: ReturnType<typeof useSectionText>;
+  lockEditingWhileSaving?: boolean;
 }) {
   const { t } = useUiLocale();
   const context = useContext(EditorContext);
@@ -702,10 +703,14 @@ function SectionForm<T>({ section, title, description, initial, children, produc
   const saveNotice = hiddenModeNotice ? "" : editor.notice || (hideSaveModeNotice ? "" : editor.production
     ? productionSave ? "" : "Local draft only. Production writes are disabled for this section."
     : "Fixture saves stay in this browser session.");
-  return <form className="page-section editor-form editor-workspace-route" onSubmit={event => { event.preventDefault(); void submit(); }}>
+  const content = children(editor.draft, editor.update, editor.saved);
+  return <form className="page-section editor-form editor-workspace-route" aria-busy={lockEditingWhileSaving ? saving : undefined} onSubmit={event => { event.preventDefault(); void submit(); }}>
       <EditorContentScroll formContent>
         {!hidePageHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
-        {children(editor.draft, editor.update, editor.saved)}
+        {lockEditingWhileSaving
+          ? <fieldset className="section-save-in-flight-lock" disabled={saving} aria-disabled={saving}
+            style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>{content}</fieldset>
+          : content}
       </EditorContentScroll>
       <EditorActionFooter>
         <div className="save-bar">
@@ -3000,6 +3005,7 @@ function Links() {
     experience: "Experience", projects: "Projects", skills: "Skills", awards: "Awards", contact: "Contact",
   };
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
+    lockEditingWhileSaving
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en || (typeof linksResumeId === "string" && hasDirectPdfPending(linksResumeId)))} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts} onProductionPartialSaved={clearSavedPdfDrafts}
     productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline, operation) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles, operation) : undefined}>
     {(links, onChange, confirmed) => <>
