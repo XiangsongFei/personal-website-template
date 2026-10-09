@@ -78,9 +78,12 @@ describe("Phase 5D Links route-first loading", () => {
     const narrowViewportStart = css.indexOf("@media (max-width:640px){");
     const narrowViewportEnd = css.indexOf("\n}", narrowViewportStart);
     const narrowViewportLinksCss = css.slice(narrowViewportStart, narrowViewportEnd);
+    expect(narrowViewportLinksCss).toContain(".links-editor-scope .field-grid.links-inline-row{grid-template-columns:minmax(0,1fr)}");
     expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-field{grid-template-columns:minmax(0,1fr)}");
+    expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-locale-fields .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:minmax(0,1fr)}");
     expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:minmax(0,1fr)}");
     expect(narrowViewportLinksCss).toContain(".links-editor-scope .links-inline-field>label,.links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>label{white-space:normal}");
+    expect(css).toContain(".links-editor-scope .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:repeat(2,minmax(0,1fr))}");
   });
 
   it.each(["en", "zh"] as const)("keeps long Site & Links values editable in the %s UI and uses stacked narrow labels", async locale => {

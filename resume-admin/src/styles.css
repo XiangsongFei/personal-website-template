@@ -502,7 +502,9 @@ main{color:#242424}
 }
 
 @media (max-width:640px){
+  .links-editor-scope .field-grid.links-inline-row{grid-template-columns:minmax(0,1fr)}
   .links-editor-scope .links-inline-field{grid-template-columns:minmax(0,1fr)}
+  .links-editor-scope .links-inline-locale-fields .paired-bilingual-single-line .bilingual-field-values{grid-template-columns:minmax(0,1fr)}
   .links-editor-scope .links-inline-locale-fields .bilingual-field-values .field{grid-template-columns:minmax(0,1fr)}
   .links-editor-scope .links-inline-field>label,.links-editor-scope .links-inline-locale-fields .bilingual-field-values .field>label{white-space:normal}
 }
