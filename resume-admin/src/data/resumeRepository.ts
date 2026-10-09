@@ -86,6 +86,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV13C?(resumeId: string, pageSize: number, filters: ActivityLogV13CFilters, cursor?: ActivityLogV13CCursor): Promise<ActivityLogV13CEvent[]>;
   loadVersionHistoryPage?(resumeId: string, pageSize: number, cursor?: VersionHistoryCursor): Promise<VersionHistoryPage>;
+  resolveProfileHistoryImage?(input: ProfileHistoryImageRequest, signal?: AbortSignal): Promise<Blob>;
   previewRestore?(input: RestorePreviewRequest): Promise<RestorePreview>;
   getPendingRestoreAttempt?(resumeId: string, sourceEventId: string): RestoreMutationRequest | null;
   restoreDomain?(input: RestoreMutationRequest, mode: "new" | "retry"): Promise<RestoreMutationResult>;
@@ -309,6 +310,19 @@ export type VersionHistoryPage = {
   hasMore: boolean;
   nextCursor: VersionHistoryCursor | null;
 };
+
+export type ProfileHistoryImageRequest = {
+  resumeId: string;
+  eventId: string;
+  occurredAt: string;
+  side: "before" | "after";
+};
+export type ProfileHistoryImageErrorCode = "unauthenticated" | "unavailable";
+export class ProfileHistoryImageError extends Error {
+  constructor(readonly code: ProfileHistoryImageErrorCode) {
+    super(code === "unauthenticated" ? "Sign in again to view this preview." : "Historical profile photo preview is unavailable.");
+  }
+}
 
 export type { RestorePreviewDomain, RestorePreviewJson } from "./restorePreviewContract";
 export type RestorePreviewRequest = { resumeId: string; sourceEventId: string };
@@ -1639,6 +1653,39 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         hasMore: page.hasMore,
         nextCursor: page.hasMore && last ? { occurredAt: last.occurredAt, eventId: last.eventId } : null,
       };
+    },
+    async resolveProfileHistoryImage(input, signal) {
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!input || !uuid.test(input.resumeId) || !uuid.test(input.eventId)
+        || !Number.isFinite(Date.parse(input.occurredAt)) || (input.side !== "before" && input.side !== "after")) {
+        throw new ProfileHistoryImageError("unavailable");
+      }
+      let sessionResult: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>;
+      try { sessionResult = await supabase.auth.getSession(); }
+      catch { throw new ProfileHistoryImageError("unauthenticated"); }
+      const token = sessionResult.data.session?.access_token;
+      if (sessionResult.error || typeof token !== "string" || !token) throw new ProfileHistoryImageError("unauthenticated");
+      let response: Response;
+      try {
+        response = await fetch("/api/admin/v1/version-history/profile-image", {
+          method: "POST", credentials: "omit", cache: "no-store", signal,
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ resume_id: input.resumeId, event_id: input.eventId, occurred_at: input.occurredAt, side: input.side }),
+        });
+      } catch {
+        if (signal?.aborted) throw new DOMException("The preview request was cancelled.", "AbortError");
+        throw new ProfileHistoryImageError("unavailable");
+      }
+      if (response.status === 401) throw new ProfileHistoryImageError("unauthenticated");
+      if (!response.ok) throw new ProfileHistoryImageError("unavailable");
+      const contentType = response.headers.get("content-type")?.trim().toLowerCase();
+      if (!(contentType === "image/jpeg" || contentType === "image/png" || contentType === "image/webp")) {
+        throw new ProfileHistoryImageError("unavailable");
+      }
+      let blob: Blob;
+      try { blob = await response.blob(); } catch { throw new ProfileHistoryImageError("unavailable"); }
+      if (blob.size < 1 || blob.size > 5 * 1024 * 1024) throw new ProfileHistoryImageError("unavailable");
+      return blob;
     },
     async previewRestore(input) {
       const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

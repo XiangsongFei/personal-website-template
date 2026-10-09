@@ -78,7 +78,8 @@ describe("Version History page", () => {
       comparison: { kind: "entity_fields", changes: { object_key: { before: "profile/old.jpg", after: "profile/new.jpg" } } } });
     renderPage(repositoryWith(vi.fn().mockResolvedValue(page([entry]))));
     expect(await screen.findByText("Historical photo reference recorded; file availability is unknown.")).toBeTruthy();
-    expect(screen.getByText("profile/old.jpg")).toBeTruthy();
+    expect(screen.getAllByText("Preview unavailable")).toHaveLength(2);
+    expect(document.body.textContent).not.toContain("profile/old.jpg");
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("button", { name: /restore|download|preview/i })).toBeNull();
   });

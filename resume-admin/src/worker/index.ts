@@ -24,8 +24,10 @@ const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
 const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
 const RESTORE_PREVIEW_PATH = `${API_ROOT}/restore/preview`;
 const RESTORE_APPLY_PATH = `${API_ROOT}/restore/apply`;
+const PROFILE_HISTORY_IMAGE_PATH = `${API_ROOT}/version-history/profile-image`;
 const UPLOAD_FILES_PATH = `${API_ROOT}/files/upload`;
 const CLEANUP_FILES_PATH = `${API_ROOT}/files/cleanup`;
+const PROFILE_HISTORY_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const RESUME_PDF_LIMIT = 10 * 1024 * 1024;
 const REQUEST_BODY_LIMIT = 512 * 1024;
 const CANONICAL_BODY_LIMIT = 256 * 1024;
@@ -38,6 +40,7 @@ const V13B_OFFICIAL_RESUME_ID = "10000000-0000-4000-8000-000000000001";
 const V13_PURPOSE = "activity_log_system_event_v13";
 const V13_KEY_ID = "activity_log_v13_failure_v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const GENERATED_UUID_PATH = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const LOCAL_ID_PATTERN = /^local-[0-9]+-[0-9]+$/;
 const UTF8 = new TextEncoder();
 
@@ -216,6 +219,10 @@ async function readBoundedBody(request: Request, limit: number): Promise<Uint8Ar
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
 function hasUnpairedSurrogate(value: string): boolean {
@@ -1378,6 +1385,177 @@ async function userRpc(request: Request, env: WorkerEnv, functionName: string, b
   return { response, value };
 }
 
+function profileHistoryImageUnavailable(): ApiError {
+  return apiError(404, "image_unavailable", "Historical image preview is unavailable.");
+}
+
+function incrementUuid(value: string): string | null {
+  const number = BigInt(`0x${value.replaceAll("-", "")}`);
+  const maximum = (1n << 128n) - 1n;
+  if (number === maximum) return null;
+  const hex = (number + 1n).toString(16).padStart(32, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function timestampEpochMicros(value: string): bigint | null {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match) return null;
+  const secondStart = Date.parse(`${match[1]}.000${match[3]}`);
+  if (!Number.isFinite(secondStart)) return null;
+  return BigInt(secondStart) * 1000n + BigInt((match[2] ?? "").padEnd(6, "0"));
+}
+
+function timestampPlusOneMicrosecond(value: string): string {
+  const parsed = timestampEpochMicros(value);
+  if (parsed === null) throw profileHistoryImageUnavailable();
+  const epochMicros = parsed + 1n;
+  let seconds = epochMicros / 1_000_000n;
+  let remainder = epochMicros % 1_000_000n;
+  if (remainder < 0n) { seconds -= 1n; remainder += 1_000_000n; }
+  try {
+    const second = new Date(Number(seconds * 1000n)).toISOString().slice(0, 19);
+    return `${second}.${remainder.toString().padStart(6, "0")}Z`;
+  } catch {
+    throw profileHistoryImageUnavailable();
+  }
+}
+
+function profilePhotoPathFromHistory(
+  env: WorkerEnv,
+  resumeId: string,
+  row: Record<string, unknown>,
+  side: "before" | "after",
+): string | null {
+  const baseUrl = validateSupabaseConfig(env).baseUrl;
+  let photoReference: string | null;
+  if (row.payload_version === 1 && row.entity_type === "profile_image" && row.comparison_kind === "entity_fields"
+    && isPlainObject(row.comparison) && hasExactKeys(row.comparison, ["changes"]) && isPlainObject(row.comparison.changes)
+    && hasExactKeys(row.comparison.changes, ["object_key"])) {
+    const change = row.comparison.changes.object_key;
+    if (!isPlainObject(change) || !hasExactKeys(change, ["before", "after"])) return null;
+    if (![change.before, change.after].every(value => value === null || typeof value === "string")) return null;
+    const objectKey = change[side];
+    if (objectKey === null) return null;
+    if (typeof objectKey !== "string") return null;
+    const objectKeyPattern = new RegExp(`^${resumeId}/profile/${GENERATED_UUID_PATH}\\.(?:jpg|jpeg|png|webp)$`);
+    if (!objectKeyPattern.test(objectKey)) return null;
+    photoReference = `${baseUrl}/storage/v1/object/public/profile-images/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
+  } else if (row.payload_version === 2 && row.entity_type === "profile_settings" && row.comparison_kind === "aggregate"
+    && isPlainObject(row.comparison) && hasExactKeys(row.comparison, ["before", "after"])) {
+    let before: ReturnType<typeof validateProfileAggregate>;
+    let after: ReturnType<typeof validateProfileAggregate>;
+    try {
+      before = validateProfileAggregate(row.comparison.before);
+      after = validateProfileAggregate(row.comparison.after);
+    } catch { return null; }
+    photoReference = (side === "before" ? before : after).shared.photo_url;
+  } else return null;
+  return managedProfilePhotoObjectPath(env.SUPABASE_URL, resumeId, photoReference);
+}
+
+async function readProfileHistoryImage(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 4096);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let body: unknown;
+  try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(body) || !hasExactKeys(body, ["resume_id", "event_id", "occurred_at", "side"])
+    || typeof body.resume_id !== "string" || !UUID_PATTERN.test(body.resume_id)
+    || typeof body.event_id !== "string" || !UUID_PATTERN.test(body.event_id)
+    || typeof body.occurred_at !== "string" || timestampEpochMicros(body.occurred_at) === null
+    || (body.side !== "before" && body.side !== "after")) {
+    throw apiError(400, "invalid_request", "A target, history entry, timestamp, and comparison side are required.");
+  }
+
+  const resumeId = body.resume_id.toLowerCase();
+  const eventId = body.event_id.toLowerCase();
+  const cursorEventId = incrementUuid(eventId);
+  const cursorOccurredAt = cursorEventId ? body.occurred_at : timestampPlusOneMicrosecond(body.occurred_at);
+  const history = await userRpc(request, env, "read_version_history_v1", {
+    target_resume_id: resumeId,
+    page_limit: 1,
+    before_occurred_at: cursorOccurredAt,
+    before_event_id: cursorEventId ?? "00000000-0000-0000-0000-000000000000",
+  }, 128 * 1024);
+  if (!history.response.ok) {
+    if (history.response.status === 401) throw apiError(401, "invalid_authorization", "A valid user access token is required.");
+    if (history.response.status === 403) throw apiError(403, "target_not_authorized", "This target is not available for Version History.");
+    throw profileHistoryImageUnavailable();
+  }
+  if (!Array.isArray(history.value) || history.value.length !== 1 || !isPlainObject(history.value[0]))
+    throw profileHistoryImageUnavailable();
+  const row = history.value[0];
+  if (!hasExactKeys(row, ["event_id", "occurred_at", "actor_account_label", "actor_role", "domain_key", "operation", "payload_version",
+    "entity_type", "entity_id", "comparison_kind", "comparison", "has_more"])
+    || typeof row.event_id !== "string" || row.event_id.toLowerCase() !== eventId
+    || typeof row.occurred_at !== "string" || timestampEpochMicros(row.occurred_at) !== timestampEpochMicros(body.occurred_at)
+    || typeof row.actor_account_label !== "string" || (row.actor_role !== "owner" && row.actor_role !== "qa")
+    || row.domain_key !== "profile" || row.operation !== "update" || row.entity_id !== null
+    || typeof row.entity_type !== "string" || typeof row.payload_version !== "number" || !Number.isInteger(row.payload_version)
+    || typeof row.has_more !== "boolean") throw profileHistoryImageUnavailable();
+
+  const objectPath = profilePhotoPathFromHistory(env, resumeId, row, body.side);
+  if (!objectPath) throw profileHistoryImageUnavailable();
+  const imageUrl = `${validateSupabaseConfig(env).baseUrl}/storage/v1/object/public/profile-images/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
+  let upstream: Response;
+  try {
+    upstream = await fetch(imageUrl, {
+      method: "GET",
+      headers: { Accept: "image/jpeg,image/png,image/webp" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch { throw profileHistoryImageUnavailable(); }
+
+  if (upstream.status !== 200) {
+    try { await upstream.body?.cancel(); } catch { /* response remains unavailable */ }
+    throw profileHistoryImageUnavailable();
+  }
+  const contentType = upstream.headers.get("content-type")?.trim().toLowerCase();
+  const expectedType = objectPath.endsWith(".jpg") || objectPath.endsWith(".jpeg") ? "image/jpeg"
+    : objectPath.endsWith(".png") ? "image/png" : "image/webp";
+  if (contentType !== expectedType) {
+    try { await upstream.body?.cancel(); } catch { /* response remains unavailable */ }
+    throw profileHistoryImageUnavailable();
+  }
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > PROFILE_HISTORY_IMAGE_MAX_BYTES)) {
+    try { await upstream.body?.cancel(); } catch { /* response remains unavailable */ }
+    throw profileHistoryImageUnavailable();
+  }
+  if (!upstream.body) throw profileHistoryImageUnavailable();
+
+  const reader = upstream.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > PROFILE_HISTORY_IMAGE_MAX_BYTES) {
+        await reader.cancel();
+        throw profileHistoryImageUnavailable();
+      }
+      chunks.push(value);
+    }
+  } catch {
+    try { await reader.cancel(); } catch { /* upstream stream is already closed */ }
+    throw profileHistoryImageUnavailable();
+  } finally { reader.releaseLock(); }
+  if (total === 0 || (contentLength !== null && Number(contentLength) !== total)) throw profileHistoryImageUnavailable();
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new Response(bytes, { status: 200, headers: {
+    "Content-Type": expectedType,
+    "Content-Length": String(total),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  } });
+}
+
 function validateRestorePreview(value: unknown, sourceEventId: string): Record<string, unknown> {
   const validated = validateRestorePreviewContract(value, sourceEventId);
   if (!validated || UTF8.encode(JSON.stringify(validated)).byteLength > 256 * 1024) {
@@ -1789,7 +1967,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1812,6 +1990,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === RESTORE_FILES_PATH) return await restoreFilesFromEvent(request, env);
     if (url.pathname === RESTORE_PREVIEW_PATH) return await previewRestore(request, env);
     if (url.pathname === RESTORE_APPLY_PATH) return await applyRestore(request, env);
+    if (url.pathname === PROFILE_HISTORY_IMAGE_PATH) return await readProfileHistoryImage(request, env);
     if (url.pathname === UPLOAD_FILES_PATH) {
       try {
         const response = await uploadResumeFile(request, env, uploadDiagnostic);

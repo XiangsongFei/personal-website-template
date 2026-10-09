@@ -752,6 +752,14 @@ main{color:#242424}
 .version-history-value-object dd{min-width:0;margin:0;color:#69788c;font-size:12px;overflow-wrap:anywhere}
 .version-history-value-list{display:grid;gap:6px;margin:0;padding-left:20px}
 .version-history-unavailable,.version-history-reference-note{margin:14px 0 0;color:#69788c;font-size:12px;line-height:1.55}
+.profile-history-photo-pair{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.profile-history-photo-pair>div{display:grid;align-content:start;gap:6px;min-width:88px;color:#536176;font-size:11px}
+.profile-history-photo-preview{display:grid;justify-items:start;gap:4px;color:#69788c;font-size:11px}
+.profile-history-photo-preview img,.profile-history-photo-state,.profile-history-photo-empty{box-sizing:border-box;width:72px;height:72px;border:1px solid #dfe5ed;border-radius:7px}
+.profile-history-photo-preview img{display:block;object-fit:cover;background:#f5f7fa}
+.profile-history-photo-state,.profile-history-photo-empty{display:grid;place-items:center;padding:5px;background:#fafbfc;color:#69788c;text-align:center;font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.profile-history-photo-preview>span{max-width:100px;overflow-wrap:anywhere}
+.version-history-aggregate .profile-history-photo-preview,.version-history-aggregate .profile-history-photo-state,.version-history-aggregate .profile-history-photo-empty{margin-top:8px}
 .version-history-more{margin-top:18px}
 .version-history-restore-preview{margin-top:14px}
 .restore-dialog-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgb(16 24 40 / 58%)}
@@ -766,6 +774,7 @@ main{color:#242424}
 .restore-dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 @media(max-width:640px){.restore-dialog-backdrop{align-items:end;padding:8px}.restore-dialog{max-height:94vh;padding:16px;border-radius:12px 12px 8px 8px}.restore-dialog-comparison{grid-template-columns:1fr}.restore-dialog-comparison>section{max-height:28vh}.restore-dialog-actions{flex-direction:column-reverse}.restore-dialog-actions .button{width:100%}}
 @media(max-width:640px){.version-history-entry-heading{flex-direction:column;gap:4px}.version-history-field{grid-template-columns:1fr;gap:4px}.version-history-field dd{grid-template-columns:1fr}.version-history-aggregate{grid-template-columns:1fr}.version-history-value-object>div{grid-template-columns:1fr;gap:3px}}
+@media(max-width:420px){.profile-history-photo-pair{gap:8px}.profile-history-photo-pair>div{min-width:76px}}
 @media(min-width:641px){.configuration-required-state{width:calc(50vw + 50% - 24px);max-width:none}.configuration-required-state .system-state-description{max-width:none;white-space:nowrap}}
 @media(max-width:640px){.system-state-content h1{font-size:28px}.system-state-actions{gap:10px;margin-top:20px}}
 @media(max-width:640px){.configuration-required-state{width:100%}.configuration-required-state .configuration-required-chinese-sentence{display:block}.configuration-required-state .system-state-description{white-space:normal}}

@@ -27,6 +27,13 @@ const dictionary: Record<string, string> = {
 };
 
 Object.assign(dictionary, {
+  "Historical profile photo": "历史头像",
+  "Loading preview…": "正在加载预览…",
+  "Preview unavailable": "预览不可用",
+  "Sign in again to view this preview.": "请重新登录以查看此预览。",
+});
+
+Object.assign(dictionary, {
   "Focus detail": "关注详情", "Status detail": "状态详情", "Focus entry": "关注项目", "Status entry": "状态项目",
   "Education entry removed from the draft. Save to apply the collection change.": "教育经历已从草稿中移除。保存后才会应用集合变更。",
   "Education RPC mode is not fully configured. Your draft remains available.": "教育经历 RPC 模式尚未完整配置，草稿仍会保留。",

@@ -3,6 +3,7 @@ import type { ActivityLogEvent, ActivityLogFilters, ActivityLogV13CCursor, Activ
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { useUiLocale } from "./uiLocale";
 import { validateFilesAggregate, validateWebsiteLinksAggregate } from "./data/websiteFilesAggregate";
+import { ProfileHistoryPhotoPair, UNAVAILABLE_PROFILE_PHOTO_SIDES, activityLogProfilePhotoSides, isActivityLogProfilePhotoEvent } from "./ProfileHistoryImage";
 
 const PAGE_SIZE = 25;
 const EMPTY_FILTERS: ActivityLogV13CFilters = { eventFilter: "all", section: "", operation: "", actorEmail: "", dateFrom: null, dateToExclusive: null, search: "" };
@@ -421,8 +422,13 @@ export function ActivityLogPage({ resumeId, repository, filesRestoreReady = fals
               </p>}
               {event.eventSource === "activity" && Object.keys(event.changes).length > 0 && <details><summary>{t("View changed fields")} ({Object.keys(event.changes).length})</summary>
                 {event.payloadVersion === 2 && event.entityType === "profile_settings" ? <dl>{describeProfileActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
-                  <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.field ?? "Profile")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
-                </div>)}</dl> :
+                  <dt>{t(line.kind)}</dt><dd>{line.field === "Profile photo" && isActivityLogProfilePhotoEvent(event)
+                    ? <ProfileHistoryPhotoPair resumeId={resumeId} eventId={event.id} occurredAt={event.occurredAt}
+                      sides={activityLogProfilePhotoSides(event) ?? UNAVAILABLE_PROFILE_PHOTO_SIDES} repository={repository} />
+                    : <span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.field ?? "Profile")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span>}</dd>
+                </div>)}</dl> : event.payloadVersion === 1 && event.entityType === "profile_image" && isActivityLogProfilePhotoEvent(event)
+                  ? <ProfileHistoryPhotoPair resumeId={resumeId} eventId={event.id} occurredAt={event.occurredAt}
+                    sides={activityLogProfilePhotoSides(event) ?? UNAVAILABLE_PROFILE_PHOTO_SIDES} repository={repository} /> :
                 event.payloadVersion === 2 && event.entityType === "award_list" ? <dl>{describeAwardsActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                   <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Award name")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
               </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "contact_section" ? <dl>{describeContactActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>

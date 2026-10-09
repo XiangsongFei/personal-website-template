@@ -4,6 +4,8 @@ import type { RestorePreviewDomain } from "./data/restorePreviewContract";
 import type { RestoreMutationResult } from "./data/restoreMutationContract";
 import { formatBeijingTimestamp } from "./overviewFormat";
 import { useUiLocale } from "./uiLocale";
+import { ProfileHistoryPhoto, ProfileHistoryPhotoPair, UNAVAILABLE_PROFILE_PHOTO_SIDES, isVersionHistoryProfilePhotoEntry, versionHistoryProfilePhotoSides } from "./ProfileHistoryImage";
+import { validateProfileAggregate } from "./data/profileAggregate";
 
 const PAGE_SIZE = 25;
 
@@ -55,7 +57,36 @@ function JsonValue({ value, t, path }: { value: VersionHistoryJson; t: (value: s
   </div>)}</dl>;
 }
 
-function Comparison({ comparison, event, t }: { comparison: VersionHistoryComparison; event: VersionHistoryEntry; t: (value: string) => string }) {
+function Comparison({ comparison, event, resumeId, repository, t }: {
+  comparison: VersionHistoryComparison; event: VersionHistoryEntry; resumeId: string | null; repository: ResumeRepository | null;
+  t: (value: string) => string;
+}) {
+  if (isVersionHistoryProfilePhotoEntry(event)) {
+    const sides = resumeId ? versionHistoryProfilePhotoSides(event) : null;
+    if (event.payloadVersion === 1) return <ProfileHistoryPhotoPair resumeId={resumeId} eventId={event.eventId}
+      occurredAt={event.occurredAt} sides={sides ?? UNAVAILABLE_PROFILE_PHOTO_SIDES} repository={repository} />;
+    if (comparison.kind !== "aggregate" || !sides) {
+      return <p className="version-history-unavailable">{t("Recorded change details are unavailable for this entry.")}</p>;
+    }
+    try {
+      const before = validateProfileAggregate(comparison.before);
+      const after = validateProfileAggregate(comparison.after);
+      const beforeShared = { graduation_value: before.shared.graduation_value, avatar_initials: before.shared.avatar_initials,
+        footer_name: before.shared.footer_name, copyright: before.shared.copyright };
+      const afterShared = { graduation_value: after.shared.graduation_value, avatar_initials: after.shared.avatar_initials,
+        footer_name: after.shared.footer_name, copyright: after.shared.copyright };
+      return <div className="version-history-aggregate">
+        <section><h3>{t("Before")}</h3><JsonValue value={{ ...before, shared: beforeShared }} t={t} path={`${event.eventId}-before`} />
+          <ProfileHistoryPhoto resumeId={resumeId} eventId={event.eventId} occurredAt={event.occurredAt} side="before" value={sides.before} repository={repository} />
+        </section>
+        <section><h3>{t("After")}</h3><JsonValue value={{ ...after, shared: afterShared }} t={t} path={`${event.eventId}-after`} />
+          <ProfileHistoryPhoto resumeId={resumeId} eventId={event.eventId} occurredAt={event.occurredAt} side="after" value={sides.after} repository={repository} />
+        </section>
+      </div>;
+    } catch {
+      return <p className="version-history-unavailable">{t("Recorded change details are unavailable for this entry.")}</p>;
+    }
+  }
   if (comparison.kind === "unavailable") return <p className="version-history-unavailable">{t("Recorded change details are unavailable for this entry.")}</p>;
   if (comparison.kind === "entity_fields") return <dl className="version-history-comparison">
     {Object.entries(comparison.changes).map(([field, change]) => <div className="version-history-field" key={field}>
@@ -252,7 +283,7 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
                   <p className="version-history-entity">{t(entityLabels[entry.entityType] ?? "Recorded item")}</p>
                 </div><time dateTime={entry.occurredAt}>{formatBeijingTimestamp(entry.occurredAt)}</time></header>
                 {(entry.domain === "files" || entry.entityType === "profile_image") && <p className="version-history-reference-note">{t(entry.domain === "files" ? "Historical file reference recorded; file availability is unknown." : "Historical photo reference recorded; file availability is unknown.")}</p>}
-                <Comparison comparison={entry.comparison} event={entry} t={t} />
+                <Comparison comparison={entry.comparison} event={entry} resumeId={resumeId} repository={repository} t={t} />
                 {canOfferRestore(entry) && <button className="button secondary version-history-restore-preview" type="button"
                   onClick={event => void openRestorePreview(entry, event.currentTarget)}>{t("Preview restore")}</button>}
               </article>
