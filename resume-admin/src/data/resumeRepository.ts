@@ -892,7 +892,27 @@ function pdfFilenameFallback(href: string): string {
   return href ? href.split(/[?#]/, 1)[0].split("/").filter(Boolean).at(-1) || href : "";
 }
 
-async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string, siteKey: string, locale: Locale, href: string): Promise<string> {
+function legacyResumePdfObjectPath(supabaseUrl: string | undefined, resumeId: string, siteKey: string, locale: Locale, href: string): string | null {
+  const path = siteKey === "example-cv" ? `example-cv/resume_${locale}.pdf` : resumePdfPath(resumeId, locale);
+  try {
+    const url = new URL(href);
+    const base = supabaseUrl ? new URL(supabaseUrl) : null;
+    const rawPath = /^https:\/\/[^/?#]*(\/[^?#]*)?(?:[?#]|$)/i.exec(href)?.[1] ?? "";
+    const hasOnlyCacheNonce = !url.search || /^\?cacheNonce=[A-Za-z0-9._~-]+$/.test(url.search);
+    if (url.protocol !== "https:" || url.username || url.password || url.hash || !hasOnlyCacheNonce
+      || (base && (base.protocol !== "https:" || base.username || base.password || base.search || base.hash
+        || !["", "/"].includes(base.pathname) || url.origin !== base.origin))
+      || rawPath !== url.pathname || url.pathname.includes("%") || url.pathname.includes("\\")) return null;
+    const acceptedPaths = [`/storage/v1/object/public/resume-files/${path}`];
+    // The Official custom public URL is an established historical form in Links fixtures.
+    if (siteKey === "example-cv") acceptedPaths.push(`/${path}`);
+    return acceptedPaths.includes(url.pathname) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readResumePdfFilename(supabase: SupabaseClient, supabaseUrl: string | undefined, resumeId: string, siteKey: string, locale: Locale, href: string): Promise<string> {
   const fallback = pdfFilenameFallback(href);
   if (!href) return fallback;
   const storage = supabase.storage as unknown as { from?: (bucket: string) => { info?: (path: string) => Promise<{ data: unknown; error: unknown }> } } | undefined;
@@ -900,15 +920,10 @@ async function readResumePdfFilename(supabase: SupabaseClient, resumeId: string,
   const bucket = storage.from("resume-files");
   // Some lightweight repository test doubles and older SDKs may not expose info().
   if (typeof bucket.info !== "function") return fallback;
+  const path = managedResumePdfObjectPath(supabaseUrl, resumeId, locale, href)
+    ?? legacyResumePdfObjectPath(supabaseUrl, resumeId, siteKey, locale, href);
+  if (!path) return fallback;
   try {
-    let path = resumePdfPath(resumeId, locale);
-    if (siteKey === "example-cv") {
-      try {
-        const url = new URL(href);
-        const legacySuffix = `/example-cv/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
-        if (url.pathname.endsWith(legacySuffix)) path = `example-cv/${locale === "zh" ? "resume_zh.pdf" : "resume_en.pdf"}`;
-      } catch { /* The resume link may be a relative or non-Storage URL. */ }
-    }
     const { data, error } = await bucket.info(path);
     if (error) return fallback;
     const metadata = data && typeof data === "object" ? (data as { metadata?: unknown }).metadata : undefined;
@@ -2027,7 +2042,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       ]);
       const mapped = mapLinksRows(links, localeContent, navigation, navigationTranslations, resumeId);
       const [zh, en] = await Promise.all(((["zh", "en"] as const).map(locale =>
-        readResumePdfFilename(supabase, resumeId, target.siteKey, locale, mapped.translations[locale].portfolioHref))));
+        readResumePdfFilename(supabase, supabaseUrl, resumeId, target.siteKey, locale, mapped.translations[locale].portfolioHref))));
       return { ...mapped, resumePdfFilenames: { zh, en } };
     },
     async loadSiteText(resumeId) {
