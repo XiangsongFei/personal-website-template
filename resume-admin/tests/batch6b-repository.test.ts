@@ -117,31 +117,14 @@ describe("Batch 6B scoped repository writes", () => {
       vi.unstubAllGlobals();
     }
   });
-  it("deletes only a canonical managed profile object from the profile-images bucket", async () => {
-    const db = database(); const repo = createResumeRepository(db.client, "https://project.example.test");
-    const url = "https://project.example.test/storage/v1/object/public/profile-images/11111111-1111-4111-8111-111111111111/profile/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
-    await expect(repo.deleteManagedProfilePhoto!("11111111-1111-4111-8111-111111111111", url)).resolves.toBe(true);
-    expect(db.storageFrom).toHaveBeenCalledWith("profile-images");
-    expect(db.storageRemove).toHaveBeenCalledExactlyOnceWith(["11111111-1111-4111-8111-111111111111/profile/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png"]);
-  });
-  it("never sends foreign or malformed profile URLs to Storage removal", async () => {
-    const db = database(); const repo = createResumeRepository(db.client, "https://project.example.test");
-    const urls = [
-      "https://external.example.test/storage/v1/object/public/profile-images/11111111-1111-4111-8111-111111111111/profile/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png",
-      "https://project.example.test/storage/v1/object/public/profile-images/22222222-2222-4222-8222-222222222222/profile/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png",
-      "https://project.example.test/storage/v1/object/public/profile-images/example-cv/profile/photo.png",
-      "https://project.example.test/storage/v1/object/public/profile-images/11111111-1111-4111-8111-111111111111/profile/%2e%2e%2fphoto.png",
-    ];
-    for (const url of urls) await expect(repo.deleteManagedProfilePhoto!("11111111-1111-4111-8111-111111111111", url)).resolves.toBe(false);
+  it("keeps Profile image uploads unique and never exposes a repository deletion operation", async () => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    const first = new File(["photo"], "portrait.png", { type: "image/png" });
+    const firstUrl = await repo.uploadProfilePhoto!(resumeId, first);
+    expect(firstUrl).toContain(`${resumeId}/profile/`);
+    expect(db.storageUpload).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^${resumeId}/profile/[0-9a-f-]{36}[.]png$`, "i")), first, { upsert: false, contentType: "image/png", cacheControl: "31536000" });
+    expect(repo).not.toHaveProperty("deleteManagedProfilePhoto");
     expect(db.storageRemove).not.toHaveBeenCalled();
-  });
-  it("does not report cleanup success if Storage deletion errors or returns no deleted object", async () => {
-    const db = database(); const repo = createResumeRepository(db.client, "https://project.example.test");
-    const url = "https://project.example.test/storage/v1/object/public/profile-images/11111111-1111-4111-8111-111111111111/profile/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
-    db.storageRemove.mockResolvedValueOnce({ data: [], error: null });
-    await expect(repo.deleteManagedProfilePhoto!("11111111-1111-4111-8111-111111111111", url)).rejects.toThrow("Profile photo cleanup was not confirmed.");
-    db.storageRemove.mockResolvedValueOnce({ data: [], error: new Error("storage unavailable") });
-    await expect(repo.deleteManagedProfilePhoto!("11111111-1111-4111-8111-111111111111", url)).rejects.toThrow("Profile photo cleanup was not confirmed.");
   });
   it("accepts only JPEG, PNG, and WebP up to 5 MB before contacting Storage", async () => {
     const db = database(); const repo = createResumeRepository(db.client);

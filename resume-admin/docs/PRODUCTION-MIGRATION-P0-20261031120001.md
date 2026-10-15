@@ -10,9 +10,11 @@ data, Activity Log event history, storage objects, or capability rows.
 - CLI staging copy: `resume-admin/supabase/migrations/20261031120001_p0_identity_scoped_activity_log.sql`
 - Runtime-test copy: `resume-admin/tests/rls-runtime/supabase/migrations/20261031120001_p0_identity_scoped_activity_log.sql`
 - Expected SHA-256: `da5a755e903a10693e7c5ba3924afaf0218aec156f8d86421e3aba2819186950`
-- The CLI staging directory must contain this one SQL migration only. The
-  runtime-only `20261031110000_test_only_installed_baseline_delta.sql` must
-  remain outside it.
+- The CLI staging directory contains individually reviewed release migrations,
+  including the later Profile image-retention migration. Apply only the P0 SQL
+  file named above when following this runbook; never bulk-stage this directory.
+  The runtime-only `20261031110000_test_only_installed_baseline_delta.sql` must
+  remain outside the CLI staging directory.
 
 ## Before execution
 
@@ -55,8 +57,9 @@ data, Activity Log event history, storage objects, or capability rows.
 - Do not run `supabase db push` as a substitute for this reviewed procedure.
   The Admin project has no root `supabase/config.toml` or checked-in release
   migration runner; the test runtime config is not a Production config.
-- Do not copy or stage `resume-admin/migrations` wholesale. It contains
-  historical migrations that are already represented in the remote ledger.
+- Do not copy or stage `resume-admin/migrations` or
+  `resume-admin/supabase/migrations` wholesale. They contain other reviewed or
+  historical migrations that are outside this operation.
 - Do not execute or stage any migration from
   `resume-admin/tests/rls-runtime/supabase/migrations`.
 - If the SQL aborts, stop and inspect the transaction result. Do not record the

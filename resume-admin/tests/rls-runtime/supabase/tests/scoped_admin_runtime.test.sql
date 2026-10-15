@@ -165,7 +165,7 @@ BEGIN
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('profile-images','example-cv/profile/owner-legacy.png','{"fixture":"owner"}');
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('resume-files','example-cv/resume_en.pdf','{"fixture":"owner"}');
   UPDATE storage.objects SET metadata='{"fixture":"owner-updated"}' WHERE bucket_id='profile-images' AND name='example-cv/profile/owner-legacy.png'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'owner can access intended official legacy Storage paths');
+  PERFORM public.rls_test_assert(affected=0, 'Owner cannot overwrite a retained Profile image');
   DELETE FROM storage.objects WHERE bucket_id='resume-files' AND name='example-cv/resume_en.pdf'; GET DIAGNOSTICS affected=ROW_COUNT;
   PERFORM public.rls_test_assert(affected=1, 'owner can delete intended official legacy Storage object');
 END $$;
@@ -297,7 +297,7 @@ BEGIN
 
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('profile-images','ea111111-1111-4111-8111-111111111111/profile/qa-photo.png','{"fixture":"qa"}');
   UPDATE storage.objects SET metadata='{"fixture":"qa-updated"}' WHERE bucket_id='profile-images' AND name='ea111111-1111-4111-8111-111111111111/profile/qa-photo.png'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'QA Storage namespace UPDATE allowed');
+  PERFORM public.rls_test_assert(affected=0, 'Test cannot overwrite a retained Profile image');
 
   denied := false;
   BEGIN
@@ -311,15 +311,11 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN denied := true;
   END;
   PERFORM public.rls_test_assert(denied, 'malformed Storage path denied');
-  denied := false;
-  BEGIN
-    UPDATE storage.objects SET name='20000000-0000-4000-8000-000000000001/profile/renamed.png'
-    WHERE bucket_id='profile-images' AND name='ea111111-1111-4111-8111-111111111111/profile/qa-photo.png';
-  EXCEPTION WHEN insufficient_privilege THEN denied := true;
-  END;
-  PERFORM public.rls_test_assert(denied, 'QA object move into official namespace denied by WITH CHECK');
+  UPDATE storage.objects SET name='20000000-0000-4000-8000-000000000001/profile/renamed.png'
+    WHERE bucket_id='profile-images' AND name='ea111111-1111-4111-8111-111111111111/profile/qa-photo.png'; GET DIAGNOSTICS affected=ROW_COUNT;
+  PERFORM public.rls_test_assert(affected=0, 'Test cannot move or overwrite a retained object into the Owner namespace');
   DELETE FROM storage.objects WHERE bucket_id='profile-images' AND name='ea111111-1111-4111-8111-111111111111/profile/qa-photo.png'; GET DIAGNOSTICS affected=ROW_COUNT;
-  PERFORM public.rls_test_assert(affected=1, 'QA Storage namespace DELETE allowed');
+  PERFORM public.rls_test_assert(affected=0, 'Test cannot delete a retained Profile image');
   INSERT INTO storage.objects(bucket_id,name,metadata) VALUES ('resume-files','ea111111-1111-4111-8111-111111111111/resume_en.pdf','{"fixture":"qa-pdf"}');
   UPDATE storage.objects SET metadata='{"fixture":"qa-pdf-updated"}' WHERE bucket_id='resume-files' AND name='ea111111-1111-4111-8111-111111111111/resume_en.pdf'; GET DIAGNOSTICS affected=ROW_COUNT;
   PERFORM public.rls_test_assert(affected=1, 'QA PDF namespace UPDATE allowed');
