@@ -1,0 +1,104 @@
+name: Resume Admin PR checks
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "resume-admin/**"
+      - ".github/workflows/resume-admin-pr.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resume-admin-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-worker:
+    name: Frontend, Worker, build, and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: resume-admin
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend and repository tests
+        run: npm test
+
+      - name: Run Worker tests
+        run: npm test -- tests/*-worker.test.ts
+
+      - name: Build with synthetic CI-only Supabase inputs
+        env:
+          VITE_SUPABASE_URL: https://ci-placeholder.invalid
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+        run: npm run build
+
+      - name: Audit dependencies
+        run: npm audit
+
+  migration-consistency:
+    name: Verify production migration staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Verify the one-file production migration scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration="20261031120001_p0_identity_scoped_activity_log.sql"
+          canonical="resume-admin/migrations/${migration}"
+          cli="resume-admin/supabase/migrations/${migration}"
+          runtime="resume-admin/tests/rls-runtime/supabase/migrations/${migration}"
+          test "$(find resume-admin/supabase/migrations -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')" = "1"
+          test -f "resume-admin/tests/rls-runtime/supabase/migrations/20261031110000_test_only_installed_baseline_delta.sql"
+          test ! -e "resume-admin/supabase/migrations/20261031110000_test_only_installed_baseline_delta.sql"
+          cmp "${canonical}" "${cli}"
+          cmp "${canonical}" "${runtime}"
+          printf '%s  %s\n' \
+            "da5a755e903a10693e7c5ba3924afaf0218aec156f8d86421e3aba2819186950" \
+            "${canonical}" | sha256sum --check
+
+  local-sql:
+    name: Local Supabase SQL tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: 2.119.0
+
+      - name: Start disposable test-only Supabase and run SQL tests
+        working-directory: resume-admin/tests/rls-runtime
+        run: |
+          supabase start
+          supabase db reset --local
+          supabase test db --local
