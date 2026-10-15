@@ -229,25 +229,115 @@ idempotency records.
 This migration is intentionally not present in
 `resume-admin/supabase/migrations`; do not add it to CLI staging and do not
 invoke a bulk migration command. The SQL is applied manually as the single
-reviewed file above. Reconcile only its version, and only after the transaction
-commit and all installed-object checks pass:
+reviewed file above.
+
+### Why a temporary staging directory is required
+
+Supabase CLI `2.119.0` requires a local file matching
+`supabase/migrations/<version>_*.sql` when `migration repair --status applied`
+is used. It reads that file to derive the migration name and statement list,
+then upserts the requested version into `supabase_migrations.schema_migrations`.
+It does not execute the migration SQL. In this CLI version, repair first probes
+the migration ledger table and may create/add its schema or columns if they are
+missing; it then resolves and reads the local file before beginning the
+version-row transaction. The prior command using `--workdir resume-admin`
+failed because the canonical file is under `resume-admin/migrations`, not
+`resume-admin/supabase/migrations`. This behavior was checked against the
+[v2.119.0 repair handler](https://github.com/supabase/cli/blob/v2.119.0/apps/cli/src/commands/migration/repair/repair.handler.ts)
+and [migration history implementation](https://github.com/supabase/cli/blob/v2.119.0/apps/cli/src/command-internal/migration-history.ts).
+
+Use a temporary work directory outside the repository with exactly one SQL
+file in its `supabase/migrations` directory. Do not add this migration to the
+canonical CLI migration directory. Set `RELEASE_CHECKOUT` to the clean checkout
+of the reviewed commit:
 
 ```sh
-supabase migration repair --status applied 20261031130000 \
-  --project-ref tkehttvppaqkybqehjbn --workdir resume-admin
+set -eu
+PROJECT_REF=tkehttvppaqkybqehjbn
+VERSION=20261031130000
+FILENAME=20261031130000_test_profile_signing_probe.sql
+EXPECTED_SHA256=8ca22ce3f3bf5c5a4b0805d914bbd9e6b283e3bd86b814e2eac1a47329dab855
+RELEASE_CHECKOUT=/absolute/path/to/clean/commit-125c24cffb859f2c6fbea5b0e3325521f9be8f67
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/test-profile-probe-ledger.XXXXXX")"
+
+cd "$RELEASE_CHECKOUT"
+test "$(git rev-parse HEAD)" = "125c24cffb859f2c6fbea5b0e3325521f9be8f67"
+test -z "$(git status --porcelain)"
+mkdir -p "$STAGE_DIR/supabase/migrations"
+cp "$RELEASE_CHECKOUT/resume-admin/migrations/$FILENAME" \
+  "$STAGE_DIR/supabase/migrations/$FILENAME"
+cmp "$RELEASE_CHECKOUT/resume-admin/migrations/$FILENAME" \
+  "$STAGE_DIR/supabase/migrations/$FILENAME"
+test "$(shasum -a 256 "$STAGE_DIR/supabase/migrations/$FILENAME" | awk '{print $1}')" = "$EXPECTED_SHA256"
+test "$(find "$STAGE_DIR/supabase/migrations" -type f -name '*.sql' | wc -l | tr -d '[:space:]')" = 1
 ```
 
-This command changes migration history only; it does not execute SQL. Do not
-include any other version in the command. Then reread the remote ledger:
+Before repair, verify the exact project, live ledger, and installed function as
+above. Also verify that the migration ledger table already has all columns the
+CLI requires; `migration repair` runs an idempotent setup probe and can issue
+ledger-table DDL if the table is missing or incomplete. Stop if this check is
+false so the approved operation remains limited to one version record:
+
+```sql
+SELECT
+  to_regclass('supabase_migrations.schema_migrations') IS NOT NULL AS ledger_exists,
+  (SELECT count(*) = 3
+   FROM pg_catalog.pg_attribute
+   WHERE attrelid = to_regclass('supabase_migrations.schema_migrations')
+     AND attname IN ('version', 'name', 'statements')
+     AND NOT attisdropped) AS ledger_columns_ready;
+```
+
+With the temporary stage in place, capture another live ledger listing
+immediately before repair:
+
+```sh
+supabase migration list --project-ref "$PROJECT_REF" \
+  --workdir "$STAGE_DIR" --output-format json
+```
+
+Require `20261031130000` to appear only in the local column and not in the
+remote column, with all previously observed remote versions unchanged. If it
+is already remote, stop without running repair.
+
+Use the exact staged directory and one version argument. The explicit project
+ref is required; never omit the version, because a no-version repair is a
+repair-all operation. Do not run `db push` before or after this command:
+
+```sh
+supabase migration repair --status applied "$VERSION" \
+  --project-ref "$PROJECT_REF" --workdir "$STAGE_DIR"
+```
+
+For this specific version and CLI behavior, the repair transaction inserts or
+updates only the requested `schema_migrations.version` row, with the name and
+parsed statements from the staged file. Because the version must be absent in
+the immediate preflight, it inserts one new row. It does not execute those
+statements or replay any migration. The temporary migration directory contains
+no historical files, so it cannot supply another version to this single-version
+command. Never substitute `supabase db push`, `migration repair` without a
+version, or a list of versions.
+
+Then reread the remote ledger using the same temporary work directory:
 
 ```sh
 supabase migration list --project-ref tkehttvppaqkybqehjbn \
-  --workdir resume-admin --output-format json
+  --workdir "$STAGE_DIR" --output-format json
 ```
 
-Require `20261031130000` exactly once as applied and verify every earlier
-remote version is unchanged. If SQL execution failed, was uncertain, or the
-installed function did not match, do not run ledger repair.
+Require `20261031130000` exactly once with matching local and remote entries.
+Confirm the earlier remote versions are unchanged. The other remote versions
+will have no matching local files in this temporary directory; that is expected.
+If SQL execution failed, was uncertain, the installed function did not match,
+the ledger table was incomplete, or any preflight differs, do not run ledger
+repair. Do not run `db push` to resolve the expected local/remote difference.
+Also confirm exactly one row for the version with a read-only query:
+
+```sh
+supabase db query --linked --project-ref "$PROJECT_REF" \
+  --workdir "$STAGE_DIR" --output-format json \
+  "SELECT count(*) = 1 AS recorded_once FROM supabase_migrations.schema_migrations WHERE version = '$VERSION'"
+```
 
 ## Post-migration checks
 
