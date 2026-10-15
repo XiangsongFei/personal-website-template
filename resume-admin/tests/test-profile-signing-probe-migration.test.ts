@@ -19,7 +19,7 @@ describe("Test Profile signing-probe retirement migration", () => {
 
   it("requires the expected function and postgres, then revokes and drops only that exact signature", () => {
     expect(cleanupCanonical).toContain("current_user <> 'postgres'");
-    expect(cleanupCanonical).toContain("probe.proowner = 'postgres'::regrole");
+    expect(cleanupCanonical).toContain("probe.proowner = 'postgres'::pg_catalog.regrole");
     expect(cleanupCanonical).toContain("probe.prosecdef IS TRUE");
     expect(cleanupCanonical).toContain("probe.proconfig = ARRAY['search_path=\"\"']::text[]");
     expect(cleanupCanonical).toContain("f6000000-0000-4000-8000-000000000001");

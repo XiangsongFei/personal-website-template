@@ -16,7 +16,7 @@ requirement; Restore stays disabled.
   `resume-admin/migrations/20261031140000_retire_test_profile_signing_probe.sql`
 - Local SQL-test mirror:
   `resume-admin/tests/rls-runtime/supabase/migrations/20261031140000_retire_test_profile_signing_probe.sql`
-- SHA-256: `774f7e029027ec82e679d316449b2a8a9e4b8c49aa4793016738e997251ca9ad`
+- SHA-256: `8958190bcc4c5ee4475a93dc6cba6602b7a7fd6f01549e92b205afd15baba84a`
 - Verify the checksum from the merged release before execution; do not edit
   either copy after review.
 

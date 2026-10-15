@@ -11,8 +11,8 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM pg_catalog.pg_proc AS probe
-    WHERE probe.oid = to_regprocedure('public.verify_test_profile_signing_probe_v1(text,text)')
-      AND probe.proowner = 'postgres'::regrole
+    WHERE probe.oid = pg_catalog.to_regprocedure('public.verify_test_profile_signing_probe_v1(text,text)')
+      AND probe.proowner = 'postgres'::pg_catalog.regrole
       AND probe.prosecdef IS TRUE
       AND probe.provolatile = 's'
       AND probe.proconfig = ARRAY['search_path=""']::text[]
