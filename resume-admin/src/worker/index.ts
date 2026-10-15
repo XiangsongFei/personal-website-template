@@ -19,6 +19,7 @@ const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
 const SAVE_PROJECTS_PATH = `${API_ROOT}/projects/save`;
 const SAVE_CONTACT_PATH = `${API_ROOT}/contact/save`;
 const SAVE_PROFILE_PATH = `${API_ROOT}/profile/save`;
+const PROFILE_SIGNING_PROBE_PATH = `${API_ROOT}/profile/signing-probe`;
 const SAVE_WEBSITE_LINKS_PATH = `${API_ROOT}/website-links/save`;
 const SAVE_FILES_PATH = `${API_ROOT}/files/save`;
 const RESTORE_FILES_PATH = `${API_ROOT}/files/restore`;
@@ -39,6 +40,11 @@ const V13B_QA_RESUME_ID = "ea111111-1111-4111-8111-111111111111";
 const V13B_OFFICIAL_RESUME_ID = "10000000-0000-4000-8000-000000000001";
 const V13_PURPOSE = "activity_log_system_event_v13";
 const V13_KEY_ID = "activity_log_v13_failure_v1";
+const PROFILE_SIGNING_PROBE_KEY_ID = "activity_log_v11_hmac_v1";
+const PROFILE_SIGNING_PROBE_PURPOSE = "test_profile_signing_probe_v1";
+const PROFILE_SIGNING_PROBE_DOMAIN = "example-cv:test-profile-signing-probe:v1\n";
+const PROFILE_SIGNING_PROBE_RESUME_ID = "f6000000-0000-4000-8000-000000000001";
+const PROFILE_SIGNING_PROBE_LIFETIME_SECONDS = 30;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const GENERATED_UUID_PATH = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const LOCAL_ID_PATTERN = /^local-[0-9]+-[0-9]+$/;
@@ -338,6 +344,58 @@ export async function signContext(context: SignedContext | RestoreSignedContext,
   const signature = await crypto.subtle.sign("HMAC", cryptoKey, copyToArrayBuffer(UTF8.encode(serialized)));
   const signatureHex = [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return { serialized, signatureHex };
+}
+
+function getProfileSigningProbeKey(env: WorkerEnv): Uint8Array {
+  const keyId = env.ACTIVITY_LOG_HMAC_KEY_ID;
+  const keyHex = env.ACTIVITY_LOG_HMAC_KEY;
+  // The Vault provider intentionally accepts only one 32-byte lowercase-hex key.
+  if (keyId !== PROFILE_SIGNING_PROBE_KEY_ID || !keyHex || !/^[0-9a-f]{64}$/.test(keyHex)) {
+    throw new Error("Signing probe unavailable");
+  }
+  return decodeHex(keyHex);
+}
+
+async function signProfileSigningProbe(serialized: string, key: Uint8Array): Promise<string> {
+  const cryptoKey = await crypto.subtle.importKey("raw", copyToArrayBuffer(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const message = PROFILE_SIGNING_PROBE_DOMAIN + serialized;
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, copyToArrayBuffer(UTF8.encode(message)));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function verifyTestProfileSigningCompatibility(request: Request, env: WorkerEnv): Promise<Response> {
+  const fail = () => Response.json({ result: "FAIL" }, { headers: { "Cache-Control": "no-store" } });
+  try {
+    if (request.method !== "POST" || new URL(request.url).search || (await readBoundedBody(request, 1)).byteLength !== 0) return fail();
+    const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+    const key = getProfileSigningProbeKey(env);
+    const supabase = validateSupabaseConfig(env);
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const context = {
+      context_version: 1,
+      purpose: PROFILE_SIGNING_PROBE_PURPOSE,
+      key_id: PROFILE_SIGNING_PROBE_KEY_ID,
+      actor_user_id: actorId,
+      resume_id: PROFILE_SIGNING_PROBE_RESUME_ID,
+      nonce: crypto.randomUUID().toLowerCase(),
+      issued_at: issuedAt,
+      expires_at: issuedAt + PROFILE_SIGNING_PROBE_LIFETIME_SECONDS,
+    };
+    const signedContext = JSON.stringify(context);
+    const signatureHex = await signProfileSigningProbe(signedContext, key);
+    const upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/verify_test_profile_signing_probe_v1`, {
+      method: "POST",
+      headers: { Authorization: authorization, apikey: supabase.publishableKey, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ signed_context: signedContext, signature_hex: signatureHex }),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!upstream.ok) return fail();
+    const result = await readJsonResponse(upstream, 16);
+    return Response.json({ result: result === true ? "PASS" : "FAIL" }, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    // Keep authentication, configuration, transport, and verification failures indistinguishable.
+    return fail();
+  }
 }
 
 function validateAwards(value: unknown): AwardsItem[] {
@@ -1887,6 +1945,7 @@ function isApiPath(pathname: string): boolean {
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
+  if (url.pathname === PROFILE_SIGNING_PROBE_PATH) return await verifyTestProfileSigningCompatibility(request, env);
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
   if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
