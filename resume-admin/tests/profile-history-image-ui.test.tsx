@@ -133,6 +133,22 @@ describe("Profile history photo previews", () => {
     expect(resolve).toHaveBeenCalledWith({ resumeId, eventId, occurredAt, side: "before" }, expect.any(AbortSignal));
   });
 
+  it("loads retained historical image references again after a history view remount", async () => {
+    const urls = setupObjectUrls();
+    const resolve = vi.fn(async () => new Blob(["retained historical image"], { type: "image/png" }));
+    const repository = { resolveProfileHistoryImage: resolve } as unknown as ResumeRepository;
+    const renderPair = () => render(<UiLocaleProvider><ProfileHistoryPhotoPair resumeId={resumeId} eventId={eventId} occurredAt={occurredAt}
+      sides={{ before: photoValue, after: photoValue }} repository={repository} /></UiLocaleProvider>);
+    const first = renderPair();
+    expect(await screen.findAllByAltText("Historical profile photo")).toHaveLength(2);
+    first.unmount();
+    const second = renderPair();
+    expect(await screen.findAllByAltText("Historical profile photo")).toHaveLength(2);
+    expect(resolve).toHaveBeenCalledTimes(4);
+    second.unmount();
+    expect(urls.revoke).toHaveBeenCalled();
+  });
+
   it("does not request non-Profile URLs, PDFs, arbitrary references, or null values", async () => {
     const resolve = vi.fn(async () => new Blob(["image"], { type: "image/png" }));
     const awards = versionEntry({ domain: "awards", entityType: "award_list", payloadVersion: 2,

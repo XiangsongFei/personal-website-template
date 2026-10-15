@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { FocusItem, LinksSection, Locale, ProjectItem, StatusItem } from "../model";
 import { profilePhotoExtension, validateProfilePhoto } from "./profilePhoto";
-import { managedProfilePhotoObjectPath } from "./profilePhotoStorage";
 import { managedResumePdfObjectPath } from "./websiteFilesAggregate";
 
 type Row = Record<string, unknown>;
@@ -164,14 +163,6 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
     checkedRow(data, resumeId, id);
   }
   return {
-    deleteManagedProfilePhoto: async (resumeId: string, photoUrl: string): Promise<boolean> => {
-      assertIdentity(resumeId);
-      const objectPath = managedProfilePhotoObjectPath(supabaseUrl, resumeId, photoUrl);
-      if (!objectPath) return false;
-      const { data, error } = await client.storage.from("profile-images").remove([objectPath]);
-      if (error || !Array.isArray(data) || data.length !== 1) throw new Error("Profile photo cleanup was not confirmed.");
-      return true;
-    },
     uploadProfilePhoto: async (resumeId: string, file: File): Promise<string> => {
       assertIdentity(resumeId);
       const validationError = validateProfilePhoto(file);
