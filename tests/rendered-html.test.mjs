@@ -4,15 +4,13 @@ import test from "node:test";
 import { resumeContent } from "../app/data/resume.ts";
 import { loadResumeContent } from "../app/data/resume-validation.ts";
 
-async function render() {
+async function requestWorker(request) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
+    request,
     {
       ASSETS: {
         fetch: async () => new Response("Not found", { status: 404 }),
@@ -22,6 +20,14 @@ async function render() {
       waitUntil() {},
       passThroughOnException() {},
     },
+  );
+}
+
+async function render() {
+  return requestWorker(
+    new Request("http://localhost/", {
+      headers: { accept: "text/html" },
+    }),
   );
 }
 
@@ -37,6 +43,26 @@ test("serves the current Public HTML shell with its metadata and favicon", async
     /<meta[^>]+name="description"[^>]+content="A public, bilingual portfolio template for data analytics and information systems work\."/i,
   );
   assert.match(html, /<link[^>]+rel="(?:icon|shortcut icon)"[^>]+href="\/favicon\.svg"/i);
+});
+
+test("returns a controlled response for a malformed progressive Server Action request", { timeout: 2_000 }, async () => {
+  const form = new FormData();
+  form.append("$ACTION_REF_0", "malformed-reference");
+  form.append("$ACTION_0:", '{"id":"not-a-real-action"}');
+
+  const response = await requestWorker(
+    new Request("http://localhost/", {
+      method: "POST",
+      headers: {
+        accept: "text/html",
+        origin: "http://localhost",
+      },
+      body: form,
+    }),
+  );
+
+  assert.equal(response.status, 404);
+  assert.equal(await response.text(), "Server action not found.");
 });
 
 test("falls back to the bundled bilingual resume when a successful response is invalid", async () => {
