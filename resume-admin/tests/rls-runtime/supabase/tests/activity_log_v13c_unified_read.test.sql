@@ -8,16 +8,16 @@ INSERT INTO cms_private.activity_log_events (
   entity_snapshot, changes, payload_version, ip_network, country_code, region, city
 ) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000a01','2026-10-11T12:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','introduction','introduction_paragraph','success-1',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','success-1',
    '{"position":1,"text":"snapshot-hidden"}','{"text":{"before":"before","after":"success-search-marker"}}',1,'188.253.112.0/24','HK',NULL,'Hong Kong'),
   ('aaaaaaaa-0000-4000-8000-000000000a02','2026-10-11T10:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','introduction','introduction_paragraph','collision-activity',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','collision-activity',
    '{"position":2,"text":"collision snapshot"}','{"text":{"before":"old","after":"collision activity"}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a03','2026-10-11T09:00:00Z','10000000-0000-4000-8000-000000000002',
-   'other@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','create','profile','profile_settings','success-3',
+   'other@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','create','profile','profile_settings','success-3',
    '{"avatar_initials":"QA"}','{}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a07','2026-10-11T06:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
    '{"awards":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","position":0,"zh":{"name":"奖项","year":"2025"},"en":{"name":"Award","year":"2025"}}]}',
    '{"awards":{"before":[],"after":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","position":0,"zh":{"name":"奖项","year":"2025"},"en":{"name":"Award","year":"2025"}}]}}',2,NULL,NULL,NULL,NULL);
 
@@ -27,16 +27,16 @@ INSERT INTO cms_private.activity_log_system_events (
   operation, failure_stage, failure_code, system_event_key, request_id,
   ip_network, country_code, region, city
 ) VALUES
-  ('aaaaaaaa-0000-4000-8000-000000000a04','2026-10-11T11:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+  ('aaaaaaaa-0000-4000-8000-000000000a04','2026-10-11T11:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    '10000000-0000-4000-8000-000000000002','qa@example.test','qa','operation_failure','rejected','introduction','update',
    'idempotency','idempotency_conflict',NULL,'bbbbbbbb-0000-4000-8000-000000000a04','188.253.112.0/24','HK',NULL,'Hong Kong'),
-  ('aaaaaaaa-0000-4000-8000-000000000a02','2026-10-11T10:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+  ('aaaaaaaa-0000-4000-8000-000000000a02','2026-10-11T10:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    '10000000-0000-4000-8000-000000000002','qa@example.test','qa','operation_failure','rejected','introduction','update',
    'trusted_context_validation','trusted_context_rejected',NULL,'bbbbbbbb-0000-4000-8000-000000000a02',NULL,NULL,NULL,NULL),
-  ('aaaaaaaa-0000-4000-8000-000000000a05','2026-10-11T08:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+  ('aaaaaaaa-0000-4000-8000-000000000a05','2026-10-11T08:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    '10000000-0000-4000-8000-000000000002','qa@example.test','qa','operation_failure','rejected','introduction','update',
    'database_validation','business_validation_rejected',NULL,'bbbbbbbb-0000-4000-8000-000000000a05',NULL,NULL,NULL,NULL),
-  ('aaaaaaaa-0000-4000-8000-000000000a06','2026-10-11T07:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+  ('aaaaaaaa-0000-4000-8000-000000000a06','2026-10-11T07:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    NULL,NULL,NULL,'system_change','applied',NULL,NULL,NULL,NULL,'resume_published',NULL,NULL,NULL,NULL,NULL);
 
 INSERT INTO cms_private.resume_capabilities(resume_id,capability_key,enabled)
@@ -274,9 +274,9 @@ VALUES ('10000000-0000-4000-8000-000000000004','owner',NULL);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000004',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000004","role":"authenticated"}',true);
-SELECT extensions.is(
-  (SELECT pg_catalog.count(*)::integer FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100)),
-  7, 'global owner can read QA only because the existing target helper explicitly authorizes owner scope'
+SELECT extensions.throws_ok(
+  $$SELECT * FROM public.read_activity_log_events_v13c('ea111111-1111-4111-8111-111111111111',100)$$,
+  '42501','Activity Log target is not authorized','Owner cannot read Test Activity Log events'
 );
 
 RESET ROLE;

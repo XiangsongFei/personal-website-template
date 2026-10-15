@@ -123,8 +123,8 @@ BEGIN
     site_key_snapshot, operation, section_key, entity_type, entity_id,
     entity_snapshot, changes
   ) VALUES
-    ('aaaaaaaa-0000-4000-8000-000000000001','2026-01-01T00:00:01Z','10000000-0000-4000-8000-000000000001','owner','ea111111-1111-4111-8111-111111111111','example-cv-qa','create','awards','award_entry','award-1','{"name":"Research Award","year":"2025","position":0}','{}'),
-    ('aaaaaaaa-0000-4000-8000-000000000002','2026-01-01T00:00:02Z','10000000-0000-4000-8000-000000000001','owner','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_entry','award-1','{"name":"Research Award","year":"2026","position":0}','{"year":{"before":"2025","after":"2026"}}'),
+    ('aaaaaaaa-0000-4000-8000-000000000001','2026-01-01T00:00:01Z','10000000-0000-4000-8000-000000000001','owner','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','create','awards','award_entry','award-1','{"name":"Research Award","year":"2025","position":0}','{}'),
+    ('aaaaaaaa-0000-4000-8000-000000000002','2026-01-01T00:00:02Z','10000000-0000-4000-8000-000000000001','owner','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_entry','award-1','{"name":"Research Award","year":"2026","position":0}','{"year":{"before":"2025","after":"2026"}}'),
     ('aaaaaaaa-0000-4000-8000-000000000003','2026-01-01T00:00:03Z','10000000-0000-4000-8000-000000000001','owner','ffffffff-1111-4111-8111-111111111111','example-cv','delete','awards','award_entry','orphaned-source-id','{"name":"Historical Award","year":"2020","position":1}','{}');
 
   denied := false;
@@ -200,22 +200,15 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 DO $owner_reads$
-DECLARE first_id uuid; first_time timestamptz; second_id uuid; second_time timestamptz; denied boolean;
+DECLARE denied boolean;
 BEGIN
-  PERFORM public.rls_test_assert((SELECT count(*)=1 AND min(site_key)='example-cv-qa' FROM public.activity_log_authorized_targets()), 'Owner sees only the enabled, authorized QA target');
-  SELECT event.id,event.occurred_at INTO first_id,first_time
-  FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',1) AS event;
-  PERFORM public.rls_test_assert(first_id='aaaaaaaa-0000-4000-8000-000000000002', 'read RPC returns newest event first');
-  SELECT event.id,event.occurred_at INTO second_id,second_time
-  FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',1,first_time,first_id) AS event;
-  PERFORM public.rls_test_assert(second_id='aaaaaaaa-0000-4000-8000-000000000001', 'keyset cursor returns the stable next event');
-  PERFORM public.rls_test_assert((SELECT count(*)=0 FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',50,second_time,second_id)), 'empty page is returned when history is exhausted');
+  PERFORM public.rls_test_assert(NOT EXISTS (SELECT 1 FROM public.activity_log_authorized_targets()), 'Owner receives no target while Owner Activity Log is disabled');
   denied := false;
   BEGIN
-    PERFORM * FROM public.read_activity_log_events('20000000-0000-4000-8000-000000000001',50);
+    PERFORM * FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',50);
   EXCEPTION WHEN SQLSTATE '42501' THEN denied := true;
   END;
-  PERFORM public.rls_test_assert(denied, 'Owner cannot read the disabled official target');
+  PERFORM public.rls_test_assert(denied, 'Owner cannot read Test Activity Log');
 END
 $owner_reads$;
 RESET ROLE;
@@ -227,7 +220,7 @@ SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001'
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 DO $owner_enabled_official$
 BEGIN
-  PERFORM public.rls_test_assert((SELECT count(*)=2 FROM public.activity_log_authorized_targets()), 'Owner target list includes each independently authorized enabled target');
+  PERFORM public.rls_test_assert((SELECT count(*)=1 AND min(site_key)='example-cv' AND min(role)='owner' FROM public.activity_log_authorized_targets()), 'Owner target list contains only the enabled Owner target');
   PERFORM public.rls_test_assert((SELECT count(*)=0 FROM public.read_activity_log_events('20000000-0000-4000-8000-000000000001',50)), 'Owner can read enabled official history');
 END
 $owner_enabled_official$;
@@ -244,14 +237,14 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 DO $qa_reads$
 DECLARE denied boolean;
 BEGIN
-  PERFORM public.rls_test_assert((SELECT count(*)=1 AND min(site_key)='example-cv-qa' FROM public.activity_log_authorized_targets()), 'QA lists only its bound enabled unpublished QA target');
+  PERFORM public.rls_test_assert((SELECT count(*)=1 AND min(site_key)='example-cv-qa-activity-log' AND min(role)='qa' FROM public.activity_log_authorized_targets()), 'Test lists only its bound enabled unpublished target');
   PERFORM public.rls_test_assert((SELECT count(*)=2 FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',50)), 'QA reads its own authorized QA history');
   denied := false;
   BEGIN
     PERFORM * FROM public.read_activity_log_events('20000000-0000-4000-8000-000000000001',50);
   EXCEPTION WHEN SQLSTATE '42501' THEN denied := true;
   END;
-  PERFORM public.rls_test_assert(denied, 'QA cannot read official even when official capability is enabled');
+  PERFORM public.rls_test_assert(denied, 'Test cannot read Owner even when Owner capability is enabled');
 END
 $qa_reads$;
 SELECT extensions.pass('QA cannot enumerate or read the official target');
@@ -301,12 +294,7 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 DO $non_admin_denied$
 DECLARE denied boolean;
 BEGIN
-  denied := false;
-  BEGIN
-    PERFORM * FROM public.activity_log_authorized_targets();
-  EXCEPTION WHEN SQLSTATE '42501' THEN denied := true;
-  END;
-  PERFORM public.rls_test_assert(denied, 'non-admin authenticated user cannot list Activity Log targets');
+  PERFORM public.rls_test_assert(NOT EXISTS (SELECT 1 FROM public.activity_log_authorized_targets()), 'non-admin authenticated user receives no Activity Log targets');
   denied := false;
   BEGIN
     PERFORM * FROM public.read_activity_log_events('ea111111-1111-4111-8111-111111111111',50);
@@ -326,7 +314,7 @@ BEGIN
   PERFORM public.rls_test_assert(public.is_resume_admin(), 'existing Admin gate remains unchanged');
   PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.get_admin_resume_target() WHERE site_key='example-cv' AND role='owner'), 'existing Owner target resolution remains official');
   PERFORM public.rls_test_assert(public.can_manage_resume('20000000-0000-4000-8000-000000000001'), 'existing Owner authorization still covers official target');
-  PERFORM public.rls_test_assert(public.can_manage_resume('ea111111-1111-4111-8111-111111111111'), 'existing Owner authorization still covers QA target');
+  PERFORM public.rls_test_assert(NOT public.can_manage_resume('ea111111-1111-4111-8111-111111111111'), 'Owner authorization excludes the Test target');
   PERFORM public.rls_test_assert((SELECT count(*)=1 FROM public.resume_profile WHERE resume_id='20000000-0000-4000-8000-000000000001'), 'published content read path remains intact');
   PERFORM public.rls_test_assert(has_table_privilege('authenticated','public.resume_intro_paragraphs','INSERT') AND has_table_privilege('authenticated','public.resume_intro_paragraphs','UPDATE') AND has_table_privilege('authenticated','public.resume_intro_paragraphs','DELETE'), 'current direct CMS DML grants remain intact');
 END

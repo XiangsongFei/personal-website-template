@@ -12,7 +12,7 @@ import { fixtureSections } from "../src/fixtures";
 import type { EducationItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
-const resumeId = "education-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111112";
 const identity: AdminIdentity = { id: "route-admin", email: "admin@example.test", sessionKey: "education-session" };
 const metadata: ResumeSiteMetadata = { resumeId, siteKey: "example-cv", isPublished: true, updatedAt: null };
 

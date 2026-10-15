@@ -11,7 +11,7 @@ import { fixtureSections } from "../src/fixtures";
 import { formatBeijingTimestamp } from "../src/overviewFormat";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
-const resumeId = "overview-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111117";
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;

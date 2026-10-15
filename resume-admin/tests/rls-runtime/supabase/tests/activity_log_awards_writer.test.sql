@@ -34,12 +34,16 @@ SELECT extensions.ok(EXISTS (SELECT 1 FROM pg_catalog.pg_policies WHERE schemana
 SELECT extensions.ok(NOT EXISTS (SELECT 1 FROM cms_private.resume_domain_requirements WHERE domain_key='awards'
     AND requirement_key='trusted_network_context_v11'), 'migration installs no Awards trusted-context activation row');
 SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
 SELECT extensions.ok(public.can_direct_write_awards('20000000-0000-4000-8000-000000000001'),
-  'Official-like Awards remain in direct mode after installation');
+  'Owner Awards remain in direct mode after installation');
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
 SELECT extensions.ok(public.can_direct_write_awards('ea111111-1111-4111-8111-111111111111'),
-  'QA Awards remain in direct mode after installation');
+  'Test Awards remain in direct mode after installation');
 WITH boundary_values AS (
   SELECT ('[' || '"' || repeat('x',8188) || '"' || ']')::jsonb AS within_limit,
     ('[' || '"' || repeat('x',8189) || '"' || ']')::jsonb AS over_limit

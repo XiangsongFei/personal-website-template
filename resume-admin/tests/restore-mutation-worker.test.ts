@@ -28,7 +28,7 @@ const mutation = { resume_id: qaResumeId, source_event_id: eventId, expected_cur
 const restored = { status: "restored", domain: "awards", source_event_id: eventId,
   result_event_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", occurred_at: "2026-10-08T02:10:04+00:00" };
 
-function mockRpc(final = Response.json(restored), targets = [{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }], resolvedDomain: unknown = "awards") {
+function mockRpc(final = Response.json(restored), targets = [{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }], resolvedDomain: unknown = "awards") {
   const calls: Array<{ url: string; body: Record<string, unknown>; authorization: string | null }> = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input); const headers = new Headers(init?.headers);
@@ -132,7 +132,7 @@ describe("generic Restore mutation Worker route", () => {
   it.each(["awards", "experience", "skills", "education", "projects", "contact", "website_links"] as const)(
     "accepts the allowed scalar domain %s and signs that resolver result", async domain => {
       const calls = mockRpc(Response.json({ status: "no_change", domain, source_event_id: eventId, result_event_id: null }),
-        [{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }], domain);
+        [{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }], domain);
       const response = await handleWorkerRequest(request(mutation), env());
       expect(response.status).toBe(200);
       expect(calls[1]?.url).toBe("https://local.test/rest/v1/rpc/resolve_restore_domain_v1");
@@ -159,7 +159,7 @@ describe("generic Restore mutation Worker route", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input); calls.push(url);
-      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]);
+      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]);
       if (url.endsWith("/rpc/resolve_restore_domain_v1")) return Response.json({ code: "22023", message: "Restore source is not eligible" }, { status: 400 });
       return Response.json(restored);
     }));
@@ -189,7 +189,7 @@ describe("generic Restore mutation Worker route", () => {
   });
 
   it("rejects an unauthorized target before resolver or mutation", async () => {
-    const calls = mockRpc(Response.json(restored), [{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]);
+    const calls = mockRpc(Response.json(restored), [{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]);
     const response = await handleWorkerRequest(request({ ...mutation, resume_id: officialResumeId }), env());
     expect(response.status).toBe(403);
     expect(calls.map(call => call.url)).toEqual(["https://local.test/rest/v1/rpc/activity_log_authorized_targets"]);

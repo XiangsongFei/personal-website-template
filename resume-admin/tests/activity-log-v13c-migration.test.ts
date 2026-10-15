@@ -74,7 +74,7 @@ describe("Activity Log V1.3C unified read migration", () => {
     expect(runtimeTest).toContain("system_change/applied events are excluded even for all");
     expect(runtimeTest).toContain("anonymous execution is denied by function ACL");
     expect(runtimeTest).toContain("QA cannot read Official target events");
-    expect(runtimeTest).toContain("global owner can read QA only because the existing target helper explicitly authorizes owner scope");
+    expect(runtimeTest).toContain("Owner cannot read Test Activity Log events");
     expect(runtimeTest).toContain("disabled Activity Log capability blocks unified reads");
     expect(runtimeTest).toContain("unified reads do not depend on the independent system-event capture capability");
     expect(runtimeTest).toContain("neither private event table is directly readable by API roles");

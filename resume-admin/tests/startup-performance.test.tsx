@@ -19,13 +19,13 @@ function deferred<T>() {
 }
 
 function harness(initial: AdminIdentity | null = adminA, load = vi.fn().mockResolvedValue({
-  resumeId: "resume-a", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: fixtureSections,
+  resumeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: fixtureSections,
 })) {
   let identity = initial;
   let listener: ((event: string, key: string | null) => void) | undefined;
   const client: AdminAuthClient = {
     getIdentity: vi.fn(async () => identity),
-    getAdminTarget: vi.fn().mockResolvedValue({ resumeId: "resume-a", siteKey: "example-cv", role: "owner" }),
+    getAdminTarget: vi.fn().mockResolvedValue({ resumeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", siteKey: "example-cv", role: "owner" }),
     signIn: vi.fn(async () => {
       identity = adminA;
       listener?.("SIGNED_IN", adminA.sessionKey);
@@ -36,8 +36,8 @@ function harness(initial: AdminIdentity | null = adminA, load = vi.fn().mockReso
   };
   const repository: ResumeRepository & ResumeSectionRepository = {
     load: load as ResumeRepository["load"],
-    loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId: "resume-a", siteKey: "example-cv", isPublished: true, updatedAt: null }),
-    loadAdminFeatureState: vi.fn(async (targetResumeId = "resume-a") => ({ resumeId: targetResumeId, activityLogEnabled: false, introductionWriteMode: "direct" as const, introductionTrustedContextRequired: false })),
+    loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", siteKey: "example-cv", isPublished: true, updatedAt: null }),
+    loadAdminFeatureState: vi.fn(async (targetResumeId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") => ({ resumeId: targetResumeId, activityLogEnabled: false, introductionWriteMode: "direct" as const, introductionTrustedContextRequired: false })),
     loadOverview: vi.fn().mockResolvedValue({ profileName: "Demo User" }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile),
     loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
@@ -137,7 +137,7 @@ describe("startup request coalescing", () => {
     await screen.findByRole("navigation", { name: "CMS sections" });
     expect(verify).toHaveBeenCalledTimes(2);
     expect(app.client.getAdminTarget).toHaveBeenCalledOnce();
-    await waitFor(() => expect(app.repository.loadAdminFeatureState).toHaveBeenCalledWith("resume-a"));
+    await waitFor(() => expect(app.repository.loadAdminFeatureState).toHaveBeenCalledWith("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
     await waitFor(() => expect(app.repository.loadProfile).toHaveBeenCalledOnce());
   });
 
@@ -226,7 +226,7 @@ describe("startup request coalescing", () => {
   it("shares the complete resume load across StrictMode replay, but Retry starts fresh", async () => {
     const failed = deferred<never>();
     const load = vi.fn().mockReturnValueOnce(failed.promise).mockResolvedValue({
-      resumeId: "resume-a", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: fixtureSections,
+      resumeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: fixtureSections,
     });
     const app = harness(adminA, load);
     app.render("/legacy-compat", true);
@@ -302,7 +302,7 @@ describe("startup request coalescing", () => {
     const admin = deferred<{ data: boolean; error: null }>();
     const getSession = vi.fn().mockResolvedValue({ data: { session }, error: null });
     const getUser = vi.fn(() => user.promise);
-    const targetResult = { data: [{ resume_id: "resume-a", site_key: "example-cv", role: "owner" }], error: null };
+    const targetResult = { data: [{ resume_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", site_key: "example-cv", role: "owner" }], error: null };
     const rpc = vi.fn((name: string) => name === "is_resume_admin" ? admin.promise : Promise.resolve(targetResult));
     const supabase = { auth: { getSession, getUser }, rpc } as unknown as SupabaseClient;
     const auth = createAdminAuthClient(supabase);
@@ -322,7 +322,7 @@ describe("startup request coalescing", () => {
     await expect(result).resolves.toEqual({
       identity: { id: "admin-a", email: "a@example.test", sessionKey: "admin-a:session-a" },
       allowed: true,
-      target: { resumeId: "resume-a", siteKey: "example-cv", role: "owner" },
+      target: { resumeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", siteKey: "example-cv", role: "owner" },
     });
     expect(getSession).toHaveBeenCalledTimes(2);
   });
@@ -334,7 +334,7 @@ describe("startup request coalescing", () => {
     };
     const user = deferred<{ data: { user: typeof session.user }; error: null }>();
     const admin = deferred<{ data: boolean; error: null }>();
-    const targetResult = { data: [{ resume_id: "resume-a", site_key: "example-cv", role: "owner" }], error: null };
+    const targetResult = { data: [{ resume_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", site_key: "example-cv", role: "owner" }], error: null };
     const supabase = {
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session }, error: null }),

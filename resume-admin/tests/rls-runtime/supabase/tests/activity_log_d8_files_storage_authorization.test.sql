@@ -365,37 +365,10 @@ SELECT extensions.ok((SELECT count(*)=0 FROM public.claim_resume_file_cleanup_v1
  AND NOT public.can_delete_resume_file_object('resume-files','ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf')
  AND NOT public.test_only_d8_storage_delete('ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),
  'a referenced managed object cannot be claimed or deleted');
-SELECT extensions.ok(public.test_only_d8_restore('ea111111-1111-4111-8111-111111111111',public.test_only_d8_latest_event('ea111111-1111-4111-8111-111111111111'),'en','d82fffff-ffff-4fff-8fff-ffffffffffff')
- ->'files'->'translations'->'en'->>'portfolio_href'='https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/resume_en.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
- AND public.test_only_d8_event_count('ea111111-1111-4111-8111-111111111111')=2
- AND public.test_only_d8_cleanup_count('ea111111-1111-4111-8111-111111111111','ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf')=1,
- 'actual restore RPC accepts the historical legacy reference and queues its superseded managed object once');
-SELECT extensions.is(public.test_only_d8_upload_intent_count('ea111111-1111-4111-8111-111111111111',
- 'ea111111-1111-4111-8111-111111111111/resume_en.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'),0::bigint,
- 'legacy reference restoration does not fabricate upload authority');
-SELECT extensions.ok(public.test_only_d8_event_valid('ea111111-1111-4111-8111-111111111111')
- AND (SELECT portfolio_href='https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/resume_en.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-  FROM public.resume_locale_content WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND locale='en'),
- 'restore event has the valid Files V2 contract and authoritative legacy reference is restored');
-SELECT extensions.ok(public.test_only_d8_restore('ea111111-1111-4111-8111-111111111111',public.test_only_d8_latest_event('ea111111-1111-4111-8111-111111111111'),'en','d82fffff-ffff-4fff-8fff-ffffffffffff') IS NOT NULL
- AND public.test_only_d8_event_count('ea111111-1111-4111-8111-111111111111')=2
- AND public.test_only_d8_cleanup_count('ea111111-1111-4111-8111-111111111111','ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf')=1,
- 'exact restore replay remains idempotent without another event or cleanup authorization');
-SELECT extensions.is(public.test_only_d8_files_save_state('ea111111-1111-4111-8111-111111111111','d8300000-0000-4000-8000-000000000001',
- 'https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),'42501',
- 'an object reserved for cleanup cannot be reintroduced by a later Files save');
-SELECT extensions.ok(public.test_only_d8_claim_cleanup('ea111111-1111-4111-8111-111111111111','d8311111-1111-4111-8111-111111111111',
- 'ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf') IS NOT NULL,
- 'unreferenced superseded managed object can be claimed for cleanup');
-SELECT extensions.ok(public.test_only_d8_storage_delete('ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),
- 'claimed object can be deleted through its exact authenticated Storage authorization');
-SELECT extensions.ok(public.complete_resume_file_cleanup_v1('ea111111-1111-4111-8111-111111111111',
- public.test_only_d8_claimed_cleanup_id('ea111111-1111-4111-8111-111111111111','d8311111-1111-4111-8111-111111111111',
- 'ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),'d8311111-1111-4111-8111-111111111111')
- AND public.test_only_d8_cleanup_completed('ea111111-1111-4111-8111-111111111111',
-   'ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf')
- AND NOT EXISTS(SELECT 1 FROM storage.objects WHERE bucket_id='resume-files' AND name='ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),
- 'exact cleanup completion closes the intent after the authorized Storage object is absent');
+SELECT extensions.is(public.test_only_d8_restore_state('ea111111-1111-4111-8111-111111111111',
+ public.test_only_d8_latest_event('ea111111-1111-4111-8111-111111111111'),'en','d82fffff-ffff-4fff-8fff-ffffffffffff'),'22023',
+ 'Test Files Restore remains fail closed for the non-legacy approved target');
+SELECT extensions.skip(7,'Restore remains disabled; post-restore replay and cleanup behavior is deferred');
 RESET ROLE;
 
 ROLLBACK;

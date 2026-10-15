@@ -6,6 +6,7 @@ BEGIN;
 DO $qa_fixture$
 DECLARE
   qa_id CONSTANT uuid := 'ea111111-1111-4111-8111-111111111111';
+  legacy_id CONSTANT uuid := 'ea555555-5555-4555-8555-555555555555';
   apply_reset CONSTANT boolean := true;
   official_count integer;
   official_id uuid;
@@ -38,12 +39,46 @@ BEGIN
     RAISE EXCEPTION 'Deterministic QA UUID must differ from the official resume ID';
   END IF;
 
-  SELECT count(*) INTO qa_key_count FROM public.resume_sites WHERE site_key = 'example-cv-qa';
+  -- The bootstrap's old QA root becomes the approved Test target in this
+  -- disposable database; the separate legacy root below stays unbound.
+  UPDATE public.resume_sites
+     SET site_key = 'example-cv-qa-activity-log', is_published = false
+   WHERE id = qa_id AND site_key = 'example-cv-qa' AND is_published IS FALSE;
+  IF NOT FOUND AND NOT EXISTS (
+    SELECT 1 FROM public.resume_sites
+     WHERE id = qa_id AND site_key = 'example-cv-qa-activity-log' AND is_published IS FALSE
+  ) THEN
+    RAISE EXCEPTION 'Bootstrap Test root could not be moved to the approved Test key';
+  END IF;
+
+  -- Separate synthetic legacy target used only to prove that the policy and
+  -- authorization helpers do not expose retained legacy data to either user.
+  INSERT INTO public.resume_sites (id, site_key, is_published)
+  VALUES (legacy_id, 'example-cv-qa', false)
+  ON CONFLICT (id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.resume_sites
+                  WHERE id = legacy_id AND site_key = 'example-cv-qa' AND is_published IS FALSE) THEN
+    RAISE EXCEPTION 'Synthetic legacy target fixture is missing or inconsistent';
+  END IF;
+  INSERT INTO public.resume_locale_content
+    (resume_id,locale,education_label,experience_label,project_heading,skills_label,honors_label,
+     contact_label,availability,portfolio_label,portfolio_href,kaggle_label,updated_at_label,linkedin_label,linkedin_href)
+  VALUES
+    (legacy_id,'zh','Legacy Education','Legacy Experience','Legacy Projects','Legacy Skills','Legacy Awards',
+     'Legacy Contact','Unavailable','Legacy Resume','https://example.invalid/legacy.pdf','Legacy','Updated','Legacy LinkedIn',''),
+    (legacy_id,'en','Legacy Education','Legacy Experience','Legacy Projects','Legacy Skills','Legacy Awards',
+     'Legacy Contact','Unavailable','Legacy Resume','https://example.invalid/legacy.pdf','Legacy','Updated','Legacy LinkedIn','');
+  INSERT INTO public.resume_intro_paragraphs (id, resume_id, position, source_key)
+  VALUES ('ea220000-0000-4000-8000-000000000001', legacy_id, 0, 'legacy-private-fixture');
+  INSERT INTO public.resume_intro_paragraph_translations (paragraph_id, resume_id, locale, text)
+  VALUES ('ea220000-0000-4000-8000-000000000001', legacy_id, 'en', 'Retained legacy fixture');
+
+  SELECT count(*) INTO qa_key_count FROM public.resume_sites WHERE site_key = 'example-cv-qa-activity-log';
   IF qa_key_count > 1 THEN
-    RAISE EXCEPTION 'Multiple QA roots use site_key=example-cv-qa';
+    RAISE EXCEPTION 'Multiple QA roots use site_key=example-cv-qa-activity-log';
   ELSIF qa_key_count = 1 THEN
     SELECT id, is_published INTO existing_qa_id, existing_published
-    FROM public.resume_sites WHERE site_key = 'example-cv-qa';
+    FROM public.resume_sites WHERE site_key = 'example-cv-qa-activity-log';
     IF existing_qa_id <> qa_id THEN
       RAISE EXCEPTION 'QA site_key is already bound to a different resume ID';
     END IF;
@@ -55,7 +90,7 @@ BEGIN
   SELECT count(*) INTO qa_id_count FROM public.resume_sites WHERE id = qa_id;
   IF qa_id_count = 1 THEN
     SELECT site_key INTO existing_key FROM public.resume_sites WHERE id = qa_id;
-    IF existing_key IS DISTINCT FROM 'example-cv-qa' THEN
+    IF existing_key IS DISTINCT FROM 'example-cv-qa-activity-log' THEN
       RAISE EXCEPTION 'Deterministic QA UUID already belongs to another site';
     END IF;
   END IF;
@@ -72,10 +107,10 @@ BEGIN
   ELSE
     IF qa_key_count = 0 AND qa_id_count = 0 THEN
       INSERT INTO public.resume_sites (id, site_key, is_published)
-      VALUES (qa_id, 'example-cv-qa', false);
+      VALUES (qa_id, 'example-cv-qa-activity-log', false);
     ELSIF qa_key_count <> 1 OR qa_id_count <> 1
       OR existing_qa_id IS DISTINCT FROM qa_id
-      OR existing_key IS DISTINCT FROM 'example-cv-qa'
+      OR existing_key IS DISTINCT FROM 'example-cv-qa-activity-log'
       OR existing_published IS DISTINCT FROM false THEN
       RAISE EXCEPTION 'QA root changed after preflight; refusing reset';
     END IF;

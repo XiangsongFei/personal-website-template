@@ -1524,7 +1524,7 @@ async function previewRestore(request: Request, env: WorkerEnv): Promise<Respons
     throw apiError(403, "target_not_authorized", "This target is not available for Restore preview.");
   if (authorized.value.some(row => !isPlainObject(row) || Object.keys(row).sort().join(",") !== "resume_id,role,site_key"
     || typeof row.resume_id !== "string" || !UUID_PATTERN.test(row.resume_id)
-    || !((row.site_key === "example-cv-qa" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
+    || !((row.site_key === "example-cv-qa-activity-log" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
     throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
   const targetIds = authorized.value.map(row => (row as Record<string, unknown>).resume_id as string).map(id => id.toLowerCase());
   if (new Set(targetIds).size !== targetIds.length) throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
@@ -1611,7 +1611,7 @@ async function applyRestore(request: Request, env: WorkerEnv): Promise<Response>
   if (!Array.isArray(authorized.value)) throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
   if (authorized.value.some(row => !isPlainObject(row) || Object.keys(row).sort().join(",") !== "resume_id,role,site_key"
     || typeof row.resume_id !== "string" || !UUID_PATTERN.test(row.resume_id)
-    || !((row.site_key === "example-cv-qa" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
+    || !((row.site_key === "example-cv-qa-activity-log" && row.role === "qa") || (row.site_key === "example-cv" && row.role === "owner"))))
     throw apiError(502, "invalid_upstream_response", "The data service returned invalid target authorization.");
   const matching = authorized.value.filter(row => String((row as Record<string, unknown>).resume_id).toLowerCase() === resumeId);
   if (matching.length !== 1) throw apiError(403, "target_not_authorized", "This target is not available for Restore.");

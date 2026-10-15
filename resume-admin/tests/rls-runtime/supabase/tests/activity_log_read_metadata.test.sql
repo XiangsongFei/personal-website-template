@@ -8,17 +8,17 @@ INSERT INTO cms_private.activity_log_events (
   entity_id, entity_snapshot, changes, ip_network, country_code, region, city
 ) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000701','2026-01-02T00:00:02Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    'update','introduction','introduction_paragraph','intro-1','{"position":0,"text":"Updated"}',
    '{"text":{"before":"Before","after":"After"}}','188.253.112.0/24','HK',NULL,'Hong Kong'),
   ('aaaaaaaa-0000-4000-8000-000000000702','2026-01-02T00:00:01Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
    'update','introduction','introduction_paragraph','intro-1','{"position":0,"text":"Historical"}',
    '{}',NULL,NULL,NULL,NULL);
 
 SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
-SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated"}',true);
 
 SELECT extensions.ok(
   (SELECT event.ip_network = '188.253.112.0/24'::cidr
@@ -46,7 +46,7 @@ SELECT extensions.ok(
 );
 SELECT extensions.throws_ok(
   $$SELECT * FROM public.read_activity_log_events('20000000-0000-4000-8000-000000000001', 1)$$,
-  '42501', 'Activity Log is disabled for this target', 'disabled official target remains inaccessible'
+  '42501', 'Activity Log target is outside the caller scope', 'Test cannot read the Owner target even when its capability is disabled'
 );
 
 RESET ROLE;

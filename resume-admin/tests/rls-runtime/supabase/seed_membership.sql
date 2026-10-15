@@ -2,7 +2,7 @@
 DO $seed_qa_member$
 DECLARE qa_id constant uuid := 'ea111111-1111-4111-8111-111111111111';
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.resume_sites WHERE id=qa_id AND site_key='example-cv-qa' AND is_published=false) THEN
+  IF NOT EXISTS (SELECT 1 FROM public.resume_sites WHERE id=qa_id AND site_key='example-cv-qa-activity-log' AND is_published=false) THEN
     RAISE EXCEPTION 'Local QA fixture root missing or unsafe';
   END IF;
   INSERT INTO cms_private.resume_write_modes (resume_id,domain_key,write_mode)
