@@ -35,11 +35,41 @@ describe("Activity Log repository RPC boundary", () => {
   });
 
   it("obtains Activity Log targets only through the existing authorization RPC", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: "qa-target", site_key: "example-cv-qa", role: "qa" }], error: null });
+    const qaResumeId = "22222222-2222-4222-8222-222222222222";
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }], error: null });
     await expect(repository(rpc).loadActivityLogAuthorizedTargets!()).resolves.toEqual([
-      { resumeId: "qa-target", siteKey: "example-cv-qa", role: "qa" },
+      { resumeId: qaResumeId, siteKey: "example-cv-qa-activity-log", role: "qa" },
     ]);
     expect(rpc).toHaveBeenCalledWith("activity_log_authorized_targets");
+  });
+
+  it.each([
+    { resume_id: "11111111-1111-4111-8111-111111111111", site_key: "example-cv", role: "owner" },
+    { resume_id: "22222222-2222-4222-8222-222222222222", site_key: "example-cv-qa-activity-log", role: "qa" },
+  ])("accepts the exact authorized Activity Log role/key pair: $role", async target => {
+    const rpc = vi.fn().mockResolvedValue({ data: [target], error: null });
+    await expect(repository(rpc).loadActivityLogAuthorizedTargets!()).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    { resume_id: "11111111-1111-4111-8111-111111111111", site_key: "example-cv-qa", role: "owner" },
+    { resume_id: "11111111-1111-4111-8111-111111111111", site_key: "example-cv-qa-activity-log", role: "owner" },
+    { resume_id: "22222222-2222-4222-8222-222222222222", site_key: "example-cv", role: "qa" },
+    { resume_id: "22222222-2222-4222-8222-222222222222", site_key: "example-cv-qa", role: "qa" },
+    { resume_id: "not-a-uuid", site_key: "example-cv", role: "owner" },
+    { resume_id: "22222222-2222-4222-8222-222222222222", site_key: "example-cv-qa-activity-log", role: "unknown" },
+  ])("rejects unauthorized or mismatched Activity Log target: $role/$site_key", async target => {
+    const rpc = vi.fn().mockResolvedValue({ data: [target], error: null });
+    await expect(repository(rpc).loadActivityLogAuthorizedTargets!()).rejects.toThrow("Invalid Activity Log target response");
+  });
+
+  it("rejects duplicate or conflicting Activity Log targets", async () => {
+    const owner = { resume_id: "11111111-1111-4111-8111-111111111111", site_key: "example-cv", role: "owner" };
+    const test = { resume_id: "22222222-2222-4222-8222-222222222222", site_key: "example-cv-qa-activity-log", role: "qa" };
+    for (const data of [[owner, owner], [owner, test]]) {
+      const rpc = vi.fn().mockResolvedValue({ data, error: null });
+      await expect(repository(rpc).loadActivityLogAuthorizedTargets!()).rejects.toThrow("Invalid Activity Log target response");
+    }
   });
 
   it("uses the typed atomic Introduction RPC and returns its canonical persisted rows", async () => {

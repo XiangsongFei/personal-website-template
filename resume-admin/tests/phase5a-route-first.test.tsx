@@ -10,7 +10,7 @@ import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import { fixtureSections } from "../src/fixtures";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
-const resumeId = "phase5a-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111113";
 const specs = {
   introduction: { path: "/introduction", title: "Introduction", loader: "loadIntroduction", parents: "resume_intro_paragraphs", translations: "resume_intro_paragraph_translations", fk: "paragraph_id", input: "Chinese Paragraph", value: "Dirty introduction draft" },
   experience: { path: "/experience", title: "Experience", loader: "loadExperience", parents: "resume_experience_entries", translations: "resume_experience_translations", fk: "experience_entry_id", input: "Chinese Organization", value: "Dirty experience draft" },

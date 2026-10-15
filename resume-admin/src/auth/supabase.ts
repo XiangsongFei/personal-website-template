@@ -1,7 +1,9 @@
 import { createClient, type AuthChangeEvent, type SupabaseClient } from "@supabase/supabase-js";
 
 export type AdminIdentity = { id: string; email: string | null; sessionKey: string };
-export type AdminTarget = { resumeId: string; siteKey: string; role: "owner" | "qa" };
+export type AdminTarget =
+  | { resumeId: string; siteKey: "example-cv"; role: "owner" }
+  | { resumeId: string; siteKey: "example-cv-qa-activity-log"; role: "qa" };
 export type AdminIdentityAndAccess = { identity: AdminIdentity | null; allowed: boolean; target?: AdminTarget | null };
 
 export interface AdminAuthClient {
@@ -16,6 +18,7 @@ export interface AdminAuthClient {
 }
 
 type SessionLike = { access_token: string; user: { id: string } };
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A stable, non-authoritative key used only to coalesce work within one Auth session. */
 function authSessionKey(session: SessionLike): string {
@@ -141,12 +144,14 @@ export async function readAdminTarget(supabase: SupabaseClient): Promise<AdminTa
   const row = Array.isArray(data) ? data.length === 1 ? data[0] : null : data;
   if (!row || typeof row !== "object") throw new Error("No authorized Admin resume target");
   const value = row as Record<string, unknown>;
-  if (typeof value.resume_id !== "string" || !value.resume_id
+  if (typeof value.resume_id !== "string" || !UUID_PATTERN.test(value.resume_id)
     || typeof value.site_key !== "string" || !value.site_key
     || (value.role !== "owner" && value.role !== "qa")
     || (value.role === "owner" && value.site_key !== "example-cv")
-    || (value.role === "qa" && value.site_key !== "example-cv-qa")) {
+    || (value.role === "qa" && value.site_key !== "example-cv-qa-activity-log")) {
     throw new Error("Invalid Admin resume target");
   }
-  return { resumeId: value.resume_id, siteKey: value.site_key, role: value.role };
+  return value.role === "owner"
+    ? { resumeId: value.resume_id, siteKey: "example-cv", role: "owner" }
+    : { resumeId: value.resume_id, siteKey: "example-cv-qa-activity-log", role: "qa" };
 }

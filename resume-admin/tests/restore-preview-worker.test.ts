@@ -60,7 +60,7 @@ describe("generic Restore preview Worker route", () => {
       const body = JSON.parse(String(init?.body)) as unknown;
       const headers = new Headers(init?.headers);
       calls.push({ url, body, authorization: headers.get("authorization") });
-      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]);
+      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]);
       if (url.endsWith("/rpc/preview_restore_v1")) return Response.json(preview);
       return Response.json({ code: "unexpected" }, { status: 404 });
     }));
@@ -82,7 +82,7 @@ describe("generic Restore preview Worker route", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       calls.push(String(input));
-      return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]);
+      return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]);
     }));
     for (const target of ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", officialResumeId]) {
       const response = await handleWorkerRequest(request({ resume_id: target, source_event_id: eventId }), env());
@@ -109,7 +109,7 @@ describe("generic Restore preview Worker route", () => {
 
   it("distinguishes a disabled Activity Log capability using only a safe error category", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/rpc/activity_log_authorized_targets")
-      ? Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }])
+      ? Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }])
       : Response.json({ code: "42501", message: "Activity Log is disabled for this target" }, { status: 403 })));
     const response = await handleWorkerRequest(request({ resume_id: qaResumeId, source_event_id: eventId }), env());
     expect(response.status).toBe(403);
@@ -120,7 +120,7 @@ describe("generic Restore preview Worker route", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input); calls.push(url);
-      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]);
+      if (url.endsWith("/rpc/activity_log_authorized_targets")) return Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]);
       return Response.json({ ...preview, actor_user_id: actorId });
     }));
     const response = await handleWorkerRequest(request({ resume_id: qaResumeId, source_event_id: eventId }), env());
@@ -137,7 +137,7 @@ describe("generic Restore preview Worker route", () => {
     ];
     for (const invalid of invalidResponses) {
       vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/rpc/activity_log_authorized_targets")
-        ? Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa", role: "qa" }]) : Response.json(invalid)));
+        ? Response.json([{ resume_id: qaResumeId, site_key: "example-cv-qa-activity-log", role: "qa" }]) : Response.json(invalid)));
       const response = await handleWorkerRequest(request({ resume_id: qaResumeId, source_event_id: eventId }), env());
       expect(response.status).toBe(502);
       await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_upstream_response" } });

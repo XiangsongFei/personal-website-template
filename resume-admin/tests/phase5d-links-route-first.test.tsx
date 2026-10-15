@@ -12,7 +12,7 @@ import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import { fixtureSections } from "../src/fixtures";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
-const resumeId = "links-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111116";
 const links = structuredClone(fixtureSections.links);
 function deferred<T>() {
   let resolve!: (value: T) => void;

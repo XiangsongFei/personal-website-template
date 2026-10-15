@@ -29,7 +29,7 @@ function mockAuth(identity: AdminIdentity | null, allowed = true, identityPromis
   let listener: ((event: string, sessionKey: string | null) => void) | undefined;
   const client: AdminAuthClient = {
     getIdentity: vi.fn(() => identityPromise ?? Promise.resolve(identity)),
-    getAdminTarget: vi.fn(async () => ({ resumeId: site.resumeId, siteKey: "example-cv", role: "owner" as const })),
+    getAdminTarget: vi.fn(async () => ({ resumeId: site.resumeId, siteKey: "example-cv" as const, role: "owner" as const })),
     isResumeAdmin: vi.fn(() => accessPromise ?? Promise.resolve(allowed)),
     signIn: vi.fn(),
     signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),

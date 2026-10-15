@@ -10,7 +10,7 @@ import { ResumeSectionStore } from "../src/data/resumeSectionStore";
 import { fixtureSections } from "../src/fixtures";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
-const resumeId = "contact-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111115";
 const contact = structuredClone(fixtureSections.contact);
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function auth(): AdminAuthClient { let listener: ((event: string, key: string | null) => void) | undefined; return {

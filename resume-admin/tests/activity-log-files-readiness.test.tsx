@@ -5,7 +5,7 @@ import { ResumeLoader } from "../src/data/ResumeLoader";
 import type { ActivityLogV13CEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UiLocaleProvider } from "../src/uiLocale";
 
-const target = { resumeId: "ea111111-1111-4111-8111-111111111111", siteKey: "example-cv-qa", role: "qa" as const };
+const target = { resumeId: "ea111111-1111-4111-8111-111111111111", siteKey: "example-cv-qa-activity-log" as const, role: "qa" as const };
 const sourceEventId = "9d4ef8ea-7f04-45a5-b794-a3e16db0d467";
 const originalFiles = { translations: { zh: { portfolio_href: "https://storage.example.test/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/zh/original.pdf" },
   en: { portfolio_href: "" } } };

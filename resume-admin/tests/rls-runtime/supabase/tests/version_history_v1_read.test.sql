@@ -44,25 +44,25 @@ INSERT INTO cms_private.activity_log_events (
   entity_snapshot, changes, payload_version, ip_network, country_code, region, city
 ) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000a10','2026-10-11T10:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_entry','award-1',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_entry','award-1',
    '{"position":0,"name":"Snapshot only","year":"2025"}','{"name":{"before":"Old","after":"New"}}',1,'188.253.112.0/24','HK',NULL,'Hong Kong'),
   ('aaaaaaaa-0000-4000-8000-000000000a11','2026-10-11T10:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
    '{"awards":[]}','{"awards":{"before":[],"after":[]}}',2,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a12','2026-10-11T09:00:00Z','10000000-0000-4000-8000-000000000002',
-   NULL,'qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','upload','files','profile_image','photo-1',
+   NULL,'qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','upload','files','profile_image','photo-1',
    '{"object_key":"qa/profile/photo.png","file_name":"private-photo.png","content_type":"image/png","size_bytes":17}',
    '{"object_key":{"before":"old-key","after":"new-key"}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a13','2026-10-11T08:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','files','resume_file_set',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','files','resume_file_set',NULL,
    '{"files":{"translations":{"zh":{"portfolio_href":"new-zh"},"en":{"portfolio_href":"en-ref"}}}}',
    '{"files":{"before":{"translations":{"zh":{"portfolio_href":"old-zh"},"en":{"portfolio_href":"en-ref"}}},"after":{"translations":{"zh":{"portfolio_href":"new-zh"},"en":{"portfolio_href":"en-ref"}}}}}',2,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a19','2026-10-11T08:30:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','upload','files','resume_file','private-file-name.pdf',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','upload','files','resume_file','private-file-name.pdf',
    '{"locale":"zh","object_key":"qa/resume/managed.pdf","file_name":"private-file-name.pdf","content_type":"application/pdf","size_bytes":99}',
    '{"locale":{"before":"zh","after":"zh"},"object_key":{"before":"old-ref","after":"new-ref"},"file_name":{"before":"old.pdf","after":"private-file-name.pdf"},"content_type":{"before":"application/pdf","after":"application/pdf"},"size_bytes":{"before":88,"after":99}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a16','2026-10-11T05:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','introduction','introduction_paragraph','intro-1',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','intro-1',
    '{"position":0,"text":"not in Version History V1"}','{"text":{"before":"a","after":"b"}}',1,NULL,NULL,NULL,NULL);
 
 INSERT INTO cms_private.activity_log_system_events (
@@ -70,7 +70,7 @@ INSERT INTO cms_private.activity_log_system_events (
   actor_role_snapshot, event_kind, outcome, section_key, operation, failure_stage,
   failure_code, request_id, ip_network
 ) VALUES (
-  'aaaaaaaa-0000-4000-8000-000000000a17','2026-10-11T04:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa',
+  'aaaaaaaa-0000-4000-8000-000000000a17','2026-10-11T04:00:00Z','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log',
   '10000000-0000-4000-8000-000000000002','qa@example.test','qa','operation_failure','rejected','introduction','update',
   'idempotency','idempotency_conflict','bbbbbbbb-0000-4000-8000-000000000a17','188.253.112.0/24'
 );
@@ -86,13 +86,13 @@ INSERT INTO cms_private.activity_log_events (
   entity_snapshot, changes, payload_version
 ) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000a14','2026-10-11T07:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
    '{"raw":"must-not-leak"}','{"raw":"must-not-leak"}',2),
   ('aaaaaaaa-0000-4000-8000-000000000a15','2026-10-11T06:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
    '{"future":"must-not-leak"}','{"future":"must-not-leak"}',99),
   ('aaaaaaaa-0000-4000-8000-000000000a18','2026-10-11T06:30:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','awards','award_list',NULL,
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
    '{"awards":[]}','{"awards":{"before":[],"after":[]}}',1);
 
 SET LOCAL ROLE authenticated;

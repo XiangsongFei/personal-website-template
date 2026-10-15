@@ -12,7 +12,7 @@ import { fixtureSections } from "../src/fixtures";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
 const identity: AdminIdentity = { id: "route-admin", email: "admin@example.test", sessionKey: "route-session" };
-const resumeId = "profile-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111118";
 const metadata: ResumeSiteMetadata = { resumeId, siteKey: "example-cv", isPublished: true, updatedAt: "2026-09-25T00:00:00Z" };
 
 function deferred<T>() {

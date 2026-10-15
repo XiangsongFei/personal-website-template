@@ -491,7 +491,7 @@ SELECT extensions.throws_ok(
   '42501',NULL,'authenticated cannot directly select the private event table'
 );
 SELECT extensions.throws_ok(
-  $$INSERT INTO cms_private.activity_log_system_events(event_id,occurred_at,resume_id,site_key_snapshot,event_kind,outcome,section_key,operation,failure_stage,failure_code,actor_user_id,actor_role_snapshot,request_id) VALUES ('aaaaaaaa-0000-4000-8000-000000000930',pg_catalog.now(),'ea111111-1111-4111-8111-111111111111','example-cv-qa','operation_failure','rejected','introduction','update','database_validation','business_validation_rejected','10000000-0000-4000-8000-000000000002','qa','bbbbbbbb-0000-4000-8000-000000000930')$$,
+  $$INSERT INTO cms_private.activity_log_system_events(event_id,occurred_at,resume_id,site_key_snapshot,event_kind,outcome,section_key,operation,failure_stage,failure_code,actor_user_id,actor_role_snapshot,request_id) VALUES ('aaaaaaaa-0000-4000-8000-000000000930',pg_catalog.now(),'ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','operation_failure','rejected','introduction','update','database_validation','business_validation_rejected','10000000-0000-4000-8000-000000000002','qa','bbbbbbbb-0000-4000-8000-000000000930')$$,
   '42501',NULL,'authenticated cannot directly insert private events'
 );
 RESET ROLE;
@@ -501,7 +501,7 @@ SELECT extensions.is((SELECT pg_catalog.count(*)::integer FROM cms_private.activ
 SELECT extensions.ok(
   (SELECT event.actor_user_id='10000000-0000-4000-8000-000000000002'::uuid
      AND event.actor_email_snapshot='qa@example.test' AND event.actor_role_snapshot='qa'
-     AND event.site_key_snapshot='example-cv-qa' AND event.request_id='bbbbbbbb-0000-4000-8000-000000000903'
+     AND event.site_key_snapshot='example-cv-qa-activity-log' AND event.request_id='bbbbbbbb-0000-4000-8000-000000000903'
      AND event.ip_network='188.253.112.0/24'::cidr AND event.country_code='HK'
      AND event.region IS NULL AND event.city='Hong Kong'
    FROM cms_private.activity_log_system_events AS event

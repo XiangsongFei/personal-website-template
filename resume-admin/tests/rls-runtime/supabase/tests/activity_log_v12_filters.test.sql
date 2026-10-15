@@ -8,22 +8,22 @@ INSERT INTO cms_private.activity_log_events (
   entity_snapshot, changes, ip_network, country_code, city
 ) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000801','2026-10-02T10:02:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','introduction','introduction_paragraph','literal_\\% \\_ %% __ %_ needle',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','literal_\\% \\_ %% __ %_ needle',
    '{"text":"snapshot-only-marker"}','{"text":{"before":"before","after":"50%_\\\\literal quote''s 管理员搜索"}}','188.253.112.0/24','HK','Hong Kong'),
   ('aaaaaaaa-0000-4000-8000-000000000802','2026-10-02T10:01:00Z','10000000-0000-4000-8000-000000000002',
-   'QA@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','upload','files','resume_file','resume.pdf',
+   'QA@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','upload','files','resume_file','resume.pdf',
    '{"file_name":"resume.pdf","content_type":"application/pdf","size_bytes":10}','{}',NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000803','2026-10-02T10:00:00Z','10000000-0000-4000-8000-000000000002',
-   NULL,'qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','delete','introduction','introduction_paragraph','intro-old',
+   NULL,'qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','delete','introduction','introduction_paragraph','intro-old',
    '{"text":"old"}','{}',NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000804','2026-10-02T10:03:00Z','10000000-0000-4000-8000-000000000002',
-   'cursor@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','create','projects','project_entry','cursor-low',
+   'cursor@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','create','projects','project_entry','cursor-low',
    '{}','{}',NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000805','2026-10-02T10:03:00Z','10000000-0000-4000-8000-000000000002',
-   'cursor@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','create','projects','project_entry','cursor-high',
+   'cursor@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','create','projects','project_entry','cursor-high',
    '{}','{}',NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000806','2026-10-02T09:59:00Z','10000000-0000-4000-8000-000000000002',
-   'decoy@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa','update','profile','profile_settings','literalX-decoy\\X',
+   'decoy@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','profile','profile_settings','literalX-decoy\\X',
    '{}','{}',NULL,NULL,NULL);
 
 SET LOCAL ROLE authenticated;

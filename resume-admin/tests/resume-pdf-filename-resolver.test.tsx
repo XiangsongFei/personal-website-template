@@ -51,7 +51,7 @@ function makeRepository(hrefs: { zh: string; en: string }, metadata: Record<stri
   const info = vi.fn(async (path: string) => Object.hasOwn(metadata, path)
     ? { data: { metadata: { originalFilename: metadata[path] } }, error: null }
     : { data: null, error: new Error("object metadata unavailable") });
-  const rpc = vi.fn(async () => ({ data: [{ resume_id: target, site_key: "example-cv-qa", role: "qa" }], error: null }));
+  const rpc = vi.fn(async () => ({ data: [{ resume_id: target, site_key: "example-cv-qa-activity-log", role: "qa" }], error: null }));
   const repository = createResumeRepository({ from, rpc, storage: { from: vi.fn(() => ({ info })) } } as unknown as SupabaseClient, origin);
   return { repository, info };
 }

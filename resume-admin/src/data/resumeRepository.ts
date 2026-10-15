@@ -247,7 +247,9 @@ export type ActivityLogFilters = {
 export type ActivityLogV13CCursor = { occurredAt: string; id: string; sourceRank: 1 | 2 };
 export type ActivityLogEventFilter = "all" | "successful" | "rejected";
 export type ActivityLogV13CFilters = ActivityLogFilters & { eventFilter: ActivityLogEventFilter };
-export type ActivityLogAuthorizedTarget = { resumeId: string; siteKey: "example-cv" | "example-cv-qa"; role: "owner" | "qa" };
+export type ActivityLogAuthorizedTarget =
+  | { resumeId: string; siteKey: "example-cv"; role: "owner" }
+  | { resumeId: string; siteKey: "example-cv-qa-activity-log"; role: "qa" };
 export type ActivityLogEvent = {
   id: string; occurredAt: string; actorEmail: string | null; actorRole: "owner" | "qa";
   operation: "create" | "update" | "delete" | "reorder" | "upload" | "remove";
@@ -873,7 +875,7 @@ async function readSiteRow(supabase: SupabaseClient): Promise<Record<string, unk
   if (error) throw new Error("Unable to load target resume site");
   if (!site || typeof site.id !== "string" || site.id !== target.resumeId || site.site_key !== target.siteKey
     || (target.role === "owner" && target.siteKey !== "example-cv")
-    || (target.role === "qa" && (target.siteKey !== "example-cv-qa" || site.is_published !== false))) {
+    || (target.role === "qa" && (target.siteKey !== "example-cv-qa-activity-log" || site.is_published !== false))) {
     throw new Error("Target resume site not found or does not match the authorized Admin target");
   }
   return site;
@@ -1786,10 +1788,17 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     async loadActivityLogAuthorizedTargets() {
       const { data, error } = await supabase.rpc("activity_log_authorized_targets");
       if (error) throw new Error("Unable to load Activity Log targets");
-      return rows(data, "Activity Log target").map(row => {
-        if (typeof row.resume_id !== "string" || (row.site_key !== "example-cv" && row.site_key !== "example-cv-qa")
-          || (row.role !== "owner" && row.role !== "qa")) throw new Error("Invalid Activity Log target response");
-        return { resumeId: row.resume_id, siteKey: row.site_key, role: row.role };
+      const targetRows = rows(data, "Activity Log target");
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (targetRows.length > 1) throw new Error("Invalid Activity Log target response");
+      return targetRows.map(row => {
+        if (typeof row.resume_id !== "string" || !uuid.test(row.resume_id))
+          throw new Error("Invalid Activity Log target response");
+        if (row.role === "owner" && row.site_key === "example-cv")
+          return { resumeId: row.resume_id, siteKey: row.site_key, role: row.role };
+        if (row.role === "qa" && row.site_key === "example-cv-qa-activity-log")
+          return { resumeId: row.resume_id, siteKey: row.site_key, role: row.role };
+        throw new Error("Invalid Activity Log target response");
       });
     },
     async loadOverview(resumeId) {

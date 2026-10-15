@@ -10,7 +10,7 @@ import type { AdminAuthClient } from "../src/auth/supabase";
 import { mapProfileRows, mapResumeRows, type ResumeRows } from "../src/data/resumeMapper";
 import { createResumeRepository, resumeTables, type ResumeRepository, type ResumeSectionRepository } from "../src/data/resumeRepository";
 
-const resumeId = "runtime-resume-id";
+const resumeId = "ea111111-1111-4111-8111-111111111119";
 const r = (fields: Record<string, unknown>) => ({ resume_id: resumeId, ...fields });
 
 function databaseRows(): ResumeRows {

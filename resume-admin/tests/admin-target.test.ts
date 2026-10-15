@@ -8,7 +8,7 @@ const qaId = "20000000-0000-4000-8000-000000000002";
 describe("trusted Admin target RPC", () => {
   it.each([
     [{ resume_id: ownerId, site_key: "example-cv", role: "owner" }, { resumeId: ownerId, siteKey: "example-cv", role: "owner" }],
-    [{ resume_id: qaId, site_key: "example-cv-qa", role: "qa" }, { resumeId: qaId, siteKey: "example-cv-qa", role: "qa" }],
+    [{ resume_id: qaId, site_key: "example-cv-qa-activity-log", role: "qa" }, { resumeId: qaId, siteKey: "example-cv-qa-activity-log", role: "qa" }],
   ] as const)("resolves the server-authorized membership target", async (row, expected) => {
     const rpc = vi.fn().mockResolvedValue({ data: [row], error: null });
     const target = await readAdminTarget({ rpc } as unknown as SupabaseClient);
@@ -21,10 +21,22 @@ describe("trusted Admin target RPC", () => {
     await expect(readAdminTarget({ rpc } as unknown as SupabaseClient)).rejects.toThrow("Invalid Admin resume target");
   });
 
+  it.each([
+    { resume_id: ownerId, site_key: "example-cv-qa", role: "owner" },
+    { resume_id: ownerId, site_key: "example-cv-qa-activity-log", role: "owner" },
+    { resume_id: qaId, site_key: "example-cv", role: "qa" },
+    { resume_id: qaId, site_key: "example-cv-qa", role: "qa" },
+    { resume_id: "not-a-uuid", site_key: "example-cv", role: "owner" },
+    { resume_id: qaId, site_key: "example-cv-qa-activity-log", role: "unknown" },
+  ])("rejects non-contract target rows: $role/$site_key", async row => {
+    const rpc = vi.fn().mockResolvedValue({ data: [row], error: null });
+    await expect(readAdminTarget({ rpc } as unknown as SupabaseClient)).rejects.toThrow("Invalid Admin resume target");
+  });
+
   it("fails closed if the RPC returns multiple targets", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [
       { resume_id: ownerId, site_key: "example-cv", role: "owner" },
-      { resume_id: qaId, site_key: "example-cv-qa", role: "qa" },
+      { resume_id: qaId, site_key: "example-cv-qa-activity-log", role: "qa" },
     ], error: null });
     await expect(readAdminTarget({ rpc } as unknown as SupabaseClient)).rejects.toThrow("No authorized Admin resume target");
   });

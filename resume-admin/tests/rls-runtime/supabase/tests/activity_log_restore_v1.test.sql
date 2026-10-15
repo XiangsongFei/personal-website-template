@@ -341,30 +341,26 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
-SELECT extensions.ok(public.can_manage_resume('ea111111-1111-4111-8111-111111111111')
+SELECT extensions.ok(NOT public.can_manage_resume('ea111111-1111-4111-8111-111111111111')
   AND public.can_manage_resume('20000000-0000-4000-8000-000000000001')
   AND cms_private.restore_expected_digest('ea111111-1111-4111-8111-111111111111','awards',
     cms_private.restore_current_aggregate('ea111111-1111-4111-8111-111111111111','awards'))
     <> cms_private.restore_expected_digest('20000000-0000-4000-8000-000000000001','awards',
       cms_private.restore_current_aggregate('ea111111-1111-4111-8111-111111111111','awards')),
-  'two authorized targets produce different digests for identical domain and canonical state');
+  'Owner can manage only its target while target digests remain distinct');
 SET LOCAL ROLE authenticated;
 INSERT INTO pg_temp.restore_cross_target_sources(target_key,event_id)
   VALUES('qa',public.test_only_restore_source('ea111111-1111-4111-8111-111111111111','awards',false)),
     ('official',public.test_only_restore_source('20000000-0000-4000-8000-000000000001','awards',true));
-INSERT INTO pg_temp.restore_target_preview(expected_digest)
-SELECT preview_value->>'expected_current_digest'
-FROM (SELECT public.preview_restore_v1('ea111111-1111-4111-8111-111111111111',
-  (SELECT event_id FROM pg_temp.restore_cross_target_sources WHERE target_key='qa')) AS preview_value) preview;
 CREATE TEMP TABLE restore_cross_target_before AS
-  SELECT public.test_only_restore_snapshot('20000000-0000-4000-8000-000000000001','awards','ea000000-0000-4000-8000-000000000912') AS snapshot;
+  SELECT public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000912') AS snapshot;
 GRANT SELECT ON pg_temp.restore_cross_target_before TO authenticated;
-SELECT extensions.isnt(public.test_only_restore_state('20000000-0000-4000-8000-000000000001',
-  (SELECT event_id FROM pg_temp.restore_cross_target_sources WHERE target_key='official'),
-  'ea000000-0000-4000-8000-000000000912',(SELECT expected_digest FROM pg_temp.restore_target_preview)),
-  '00000','a preview token from QA is rejected for the authorized Official-like target');
-SELECT extensions.is(public.test_only_restore_snapshot('20000000-0000-4000-8000-000000000001','awards','ea000000-0000-4000-8000-000000000912'),
-  (SELECT snapshot FROM pg_temp.restore_cross_target_before),'cross-target digest rejection has zero content, event, link, or ledger effects');
+SELECT extensions.isnt(public.test_only_restore_state('ea111111-1111-4111-8111-111111111111',
+  (SELECT event_id FROM pg_temp.restore_cross_target_sources WHERE target_key='qa'),
+  'ea000000-0000-4000-8000-000000000912'),
+  '00000','Owner cannot preview or mutate the Test target even when local Restore fixtures are enabled');
+SELECT extensions.is(public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000912'),
+  (SELECT snapshot FROM pg_temp.restore_cross_target_before),'Owner Test-target denial has zero content, event, link, or ledger effects');
 -- Restore the Official-like target's test-only configuration before later isolation assertions.
 RESET ROLE;
 DELETE FROM cms_private.resume_capabilities
