@@ -3,7 +3,7 @@ SELECT plan(4);
 
 SELECT ok(
   to_regprocedure('public.verify_test_profile_signing_probe_v1(text,text)') IS NULL,
-  'temporary signing-probe function is absent after the retirement migration'
+  'temporary signing-probe function is absent in the staged post-retirement schema'
 );
 
 SELECT ok(

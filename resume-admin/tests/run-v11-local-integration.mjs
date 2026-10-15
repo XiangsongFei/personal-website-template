@@ -6,12 +6,14 @@ import { spawnSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { withStagedLocalSupabase } from "./rls-runtime/stage-local-supabase.mjs";
 
 const adminRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const authContainer = "supabase_auth_example-cv-admin-rls-local-test";
-const dbContainer = "supabase_db_example-cv-admin-rls-local-test";
 const targetId = "ea111111-1111-4111-8111-111111111111";
 const officialId = "20000000-0000-4000-8000-000000000001";
+await withStagedLocalSupabase(async (stage, supabase) => {
+const authContainer = stage.authContainer;
+const dbContainer = stage.dbContainer;
 function psql(sql) {
   const result = spawnSync("docker", ["exec", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-c", sql], { encoding: "utf8" });
   if (result.status !== 0) throw new Error("Local-only test fixture SQL failed");
@@ -36,11 +38,12 @@ function token(claims) {
 }
 
 const now = Math.floor(Date.now() / 1000);
+supabase(["db", "reset", "--local"]);
 const childEnv = {
   ...process.env,
   V11_LOCAL_INTEGRATION: "1",
   V11_LOCAL_DB_CONTAINER: dbContainer,
-  V11_LOCAL_API_URL: "http://127.0.0.1:55421",
+  V11_LOCAL_API_URL: stage.apiUrl,
   V11_LOCAL_WORKER_SUPABASE_URL: "https://local.supabase.invalid",
   V11_LOCAL_PUBLISHABLE_KEY: token({ aud: "authenticated", role: "anon", iss: "local-test", iat: now, exp: now + 3600 }),
   V11_LOCAL_JWT_SECRET: jwtSecret,
@@ -102,14 +105,8 @@ try {
   cleanupPassed = false;
 }
 if (!networkCheckPassed) console.error("Local Worker network-context persistence check failed.");
-if (!cleanupPassed) console.error("Local requirement cleanup failed; reset only the isolated local test database before reuse.");
-// The immutable event table cannot be pruned by cleanup. Reset only this
-// documented, unlinked local runtime project so following SQL suites start
-// from the same clean seed and no D-generated event history remains.
-const reset = spawnSync("supabase", ["db", "reset", "--local"], {
-  cwd: resolve(adminRoot, "tests/rls-runtime/supabase"),
-  env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
-  stdio: "inherit",
+if (!cleanupPassed) console.error("Local requirement cleanup failed; the isolated project will be removed after ownership verification.");
+if (!cleanupPassed) throw new Error("Local integration fixture cleanup failed");
+if (!networkCheckPassed) throw new Error("Local Worker network-context persistence check failed");
+if (result.status !== 0) throw new Error(`Local Worker integration test failed with status ${result.status}`);
 });
-if (reset.status !== 0) console.error("Isolated local database cleanup reset failed.");
-process.exit(cleanupPassed && networkCheckPassed && reset.status === 0 ? (result.status ?? 1) : 1);

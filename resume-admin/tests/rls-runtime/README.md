@@ -1,9 +1,33 @@
-# TEST ONLY: local scoped-admin RLS runtime lab
+# Local Admin RLS runtime lab
 
-This project is deliberately separate from the Admin's application migrations. Its Supabase project id is `example-cv-admin-rls-local-test`; its TEST-ONLY ports are API `55421`, Postgres `55422`, DB shadow `55423`, Analytics `55427`, and Analytics vector `55428`. On this Mac, Docker publishes Kong, Postgres, and Analytics on wildcard HostIp addresses (`0.0.0.0` and `::`); this is not loopback-only. The temporary wildcard exposure was explicitly accepted for the synthetic local runtime test, and the stack must be stopped when testing ends. It has no remote project reference and must not be run with `supabase link`, `--linked`, `--project-ref`, or a production URL.
+This is a disposable, test-only Supabase project. The tracked `supabase/` tree is a template and is not a shared local database. Do not run `supabase start`, `supabase db reset`, or `supabase test db` directly from this directory.
 
-The bootstrap reconstructs only the schema needed for this security test from the verified production contract and migration. It is not a production schema dump. Unknown production details are approximated explicitly: `cms_admins` starts as a `user_id`-only RLS table without an Auth foreign key; the pre-migration `is_resume_admin()` helper checks that table; published reads are represented by a test-only `SECURITY DEFINER` helper; Storage objects are created directly in the local Storage metadata table rather than uploaded through the Storage API. Actual Supabase roles, `auth.uid()`, PostgreSQL constraints, and RLS policy execution come from the local Supabase stack.
+## Run SQL tests
 
-Synthetic identities use fixed UUIDs and JWT request-claim settings; no Auth endpoint is used. The official-like root and all its rows are synthetic. The current scoped-admin migration and QA fixture are mirrored for this lab, with the fixture's `apply_reset` switch changed from false to true only in its local seed copy. Before use, compare those mirrored files to `../../migrations/20261001_scoped_admin_access.sql` and `../../fixtures/qa_resume_reset.sql`.
+From the repository root, run:
 
-Run commands only from this directory with telemetry disabled and the local Docker context. Start with `supabase start` (without `--network-id`), then inspect the local DB container and confirm its project name, host port `55422`, and database `postgres` before any project SQL. Run `supabase db reset --local` followed by `supabase test db --local`. If the `pg_prove` helper image cannot be pulled, the same TEST-ONLY SQL can be run with `docker exec -i supabase_db_example-cv-admin-rls-local-test psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 -f /dev/stdin < supabase/tests/scoped_admin_runtime.test.sql`. The runtime test sets the transaction-local Storage delete flag that Supabase Storage normally supplies; the test still performs row operations under each synthetic role with RLS active. Never use `supabase db reset --linked` or remote flags.
+```sh
+node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
+```
+
+The staging utility copies the project into a newly created temporary directory, assigns a unique Supabase project ID and five free local ports, and validates the migration manifest before starting Docker. It retains migrations in their original order except for `20261031130000_test_profile_signing_probe.sql` and `20261031140000_retire_test_profile_signing_probe.sql`. The source migration files and static consistency tests remain in the repository unchanged. No replacement database state is added. The resulting schema must have no `verify_test_profile_signing_probe_v1` function while retaining the shared Activity Log key provider and normal Profile Save RPC and grant.
+
+The utility verifies that Supabase reports the selected loopback API and database ports before issuing `db reset` or SQL tests. Every Docker resource is recorded by exact ID/name and must have the run's unique Compose project label and must not have existed before startup before the utility can stop or remove it. It never uses global stop, reset, prune, or volume cleanup commands. If ownership cannot be proven, cleanup stops and the resources and ownership manifest are left for inspection.
+
+## Run the opt-in Worker/PostgREST integration test
+
+Install the Admin dependencies from the existing lockfile in the isolated development checkout, then run from the repository root:
+
+```sh
+node resume-admin/tests/run-v11-local-integration.mjs
+```
+
+The runner uses the same staging utility, resets only that run's temporary database, obtains local test signing material from that run's Auth container, and passes only loopback API settings to the Worker test. The test runner refuses any API URL outside `127.0.0.1`, any Worker Supabase origin other than its local fixture origin, or any database container that does not match the generated `pr1-` project. It does not reset the database afterward; the isolated project and its immutable local test events are removed through ownership-verified resource cleanup.
+
+## Fixture and safety notes
+
+The bootstrap reconstructs only the schema required by this security lab; it is not a production schema dump. It uses synthetic Owner-like and Test identities, an unpublished Test resume, and synthetic rows. The fixture's reset behavior applies only to its deterministic synthetic Test UUID in the disposable database. No Production URL, linked project reference, credential, Owner/Test account, or Production content is used.
+
+The `20261031130000_test_profile_signing_probe.sql` creation migration and `20261031140000_retire_test_profile_signing_probe.sql` retirement migration remain preserved as historical files, together with their static migration consistency tests. The stage excludes both so a local reset cannot replay creation of the retired probe. The SQL assertion checks the intended final schema directly and confirms normal signing and Profile Save behavior remain installed.
+
+If Docker, the Supabase CLI, loopback endpoint verification, or exact resource ownership checks fail, stop. Do not clean up existing Supabase projects or manually substitute a database state.
