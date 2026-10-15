@@ -1,4 +1,11 @@
-# Controlled Production procedure: Test Profile signing probe
+# Retired Production procedure: Test Profile signing probe
+
+> **Retired. Do not use this runbook or invoke the probe.** The signing
+> compatibility check completed successfully. The Admin Worker probe endpoint
+> is being removed, and its database verifier is scheduled for removal by the
+> forward-only migration documented in
+> [RETIRE-TEST-PROFILE-SIGNING-PROBE.md](RETIRE-TEST-PROFILE-SIGNING-PROBE.md).
+> The historical migration and this record are retained for audit purposes.
 
 This runbook covers only migration
 `20261031130000_test_profile_signing_probe.sql`. It adds the read-only,
