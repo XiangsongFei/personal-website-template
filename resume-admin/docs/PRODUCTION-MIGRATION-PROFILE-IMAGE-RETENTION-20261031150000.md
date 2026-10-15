@@ -37,11 +37,43 @@ CLI-staged, and runtime-test copies have this SHA-256:
 Confirm all three copies are byte-identical. Use the canonical file as the SQL
 input. Do not edit it or the copies.
 
-Verify the connected project ref is exactly `tkehttvppaqkybqehjbn`, and the
-read-only SQL identity query returns `current_user = 'postgres'`. Confirm the
-target version `20261031150000` is absent from the live migration ledger.
-Record the full remote migration list before execution. Do not change any
-existing ledger row.
+Verify the linked project before any database command. The CLI's linked
+project metadata must identify ref `tkehttvppaqkybqehjbn`; the authenticated
+project list must also contain that exact project ref (project name
+`example-cv-cms`). For example, resolve and check the linked ref, then list
+the authenticated projects:
+
+```sh
+set -eu
+PROJECT_REF=tkehttvppaqkybqehjbn
+RELEASE_CHECKOUT=/absolute/path/to/clean/reviewed-checkout
+LINKED_REF="$(jq -r '.ref // empty' \
+  "$RELEASE_CHECKOUT/resume-admin/supabase/.temp/linked-project.json")"
+test "$LINKED_REF" = "$PROJECT_REF"
+supabase projects list --output-format json
+```
+
+In the JSON output, confirm a project entry has both `id` equal to
+`tkehttvppaqkybqehjbn` and name `example-cv-cms`. Stop if the link metadata is
+missing, either check cannot be completed, the ref differs, or the expected
+project cannot be identified unambiguously. Do not infer the linked project
+from a successful connection or project name alone.
+
+With that same workdir and explicit ref, run this read-only identity query. The
+`--linked` flag is required by Supabase CLI 2.119.0 when `--project-ref` is
+provided. Require both returned values to equal `postgres`; stop on any other
+result:
+
+```sh
+supabase db query --linked --project-ref "$PROJECT_REF" \
+  --workdir "$RELEASE_CHECKOUT/resume-admin" \
+  "SELECT current_user AS current_user, current_database() AS current_database;" \
+  --output-format json
+```
+
+Confirm the target version `20261031150000` is absent from the live migration
+ledger. Record the full remote migration list before execution. Do not change
+any existing ledger row.
 
 Verify the live `storage.objects` policy catalog immediately before execution.
 Require exactly the four reviewed `cms_admin_scoped_profile_images_{select,
@@ -83,14 +115,16 @@ file-based query and one-version repair behavior this procedure relies on.
 If another version is installed, stop for review rather than assuming identical
 behavior.
 
-Run exactly this file-based SQL command from the clean release checkout:
+Run exactly this file-based SQL command from the clean release checkout. Both
+`--linked` and the explicit `--project-ref` are required by the verified
+Supabase CLI 2.119.0 invocation; do not remove either flag:
 
 ```sh
 PROJECT_REF=tkehttvppaqkybqehjbn
 RELEASE_CHECKOUT=/absolute/path/to/clean/reviewed-checkout
 SQL_FILE="$RELEASE_CHECKOUT/resume-admin/migrations/20261031150000_profile_image_history_retention.sql"
 
-supabase db query --project-ref "$PROJECT_REF" \
+supabase db query --linked --project-ref "$PROJECT_REF" \
   --workdir "$RELEASE_CHECKOUT/resume-admin" \
   --file "$SQL_FILE"
 ```
