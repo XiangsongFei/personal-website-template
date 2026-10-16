@@ -75,6 +75,33 @@ describe("Version History repository typed read contract", () => {
     await expect(repository(privateMetadata).loadVersionHistoryPage!("qa-resume", 25)).rejects.toThrow("Invalid Version History response");
   });
 
+  it("maps the recorded Introduction paragraph contract and rejects malformed identities and positions", async () => {
+    const paragraphId = "ea000000-0000-4000-8000-000000000016";
+    const intro = row({ domain_key: "introduction", payload_version: 1, entity_type: "introduction_paragraph", entity_id: "introduction",
+      comparison_kind: "introduction_fields", comparison: { changes: {
+        text_en: { before: [{ id: paragraphId, value: "Old English" }], after: [{ id: paragraphId, value: "New English" }] },
+        text_zh: { before: [{ id: paragraphId, value: "旧中文" }], after: [{ id: paragraphId, value: "新中文" }] },
+        position: { before: [{ id: paragraphId, value: 0 }], after: [{ id: paragraphId, value: 1 }] },
+      } } });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [intro], error: null })).loadVersionHistoryPage!("qa-resume", 25)).resolves.toMatchObject({
+      entries: [{ domain: "introduction", entityType: "introduction_paragraph", comparison: { kind: "introduction_fields", changes: {
+        text_en: { before: [{ id: paragraphId, value: "Old English" }], after: [{ id: paragraphId, value: "New English" }] },
+        text_zh: { before: [{ id: paragraphId, value: "旧中文" }], after: [{ id: paragraphId, value: "新中文" }] },
+        position: { before: [{ id: paragraphId, value: 0 }], after: [{ id: paragraphId, value: 1 }] },
+      } } }],
+    });
+    const malformed = row({ domain_key: "introduction", payload_version: 1, entity_type: "introduction_paragraph",
+      comparison_kind: "introduction_fields", comparison: { changes: {
+        position: { before: [{ id: paragraphId, value: null }], after: [{ id: paragraphId, value: "first" }] },
+      } } });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [malformed], error: null })).loadVersionHistoryPage!("qa-resume", 25))
+      .rejects.toThrow("Invalid Version History response");
+    const crossDomain = row({ domain_key: "profile", payload_version: 1, entity_type: "profile_settings", entity_id: null,
+      comparison_kind: "introduction_fields", comparison: { changes: { text_en: { before: [], after: [{ id: paragraphId, value: "bad" }] } } } });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [crossDomain], error: null })).loadVersionHistoryPage!("qa-resume", 25))
+      .rejects.toThrow("Invalid Version History response");
+  });
+
   it("uses bounded keyset RPC arguments and returns the last-row cursor only when more exists", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [row({ has_more: true })], error: null });
     const cursor: VersionHistoryCursor = { occurredAt: "2026-10-10T10:00:00Z", eventId: id2 };

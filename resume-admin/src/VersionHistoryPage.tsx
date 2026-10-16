@@ -12,7 +12,7 @@ const PAGE_SIZE = 25;
 
 const domainLabels: Record<VersionHistoryDomain, string> = {
   awards: "Awards", experience: "Experience", skills: "Skills", education: "Education",
-  projects: "Projects", contact: "Contact", profile: "Profile", website_links: "Website & Links", files: "Files",
+  projects: "Projects", contact: "Contact", profile: "Profile", website_links: "Website & Links", files: "Files", introduction: "Introduction",
 };
 
 const operationLabels: Record<VersionHistoryEntry["operation"], string> = {
@@ -25,7 +25,7 @@ const itemTypeLabels: Record<string, string> = {
   project: "Project", projects: "Projects", contact_focus: "Contact focus", contact_status: "Contact status",
   contact: "Contact information", profile_details: "Profile details", profile_photo: "Profile photo",
   public_link: "Public link", website_links: "Website & Links", navigation_item: "Navigation link", project_method: "Method",
-  recorded_item: "Recorded item",
+  introduction_paragraph: "Introduction paragraph", recorded_item: "Recorded item",
 };
 const RESTORE_DOMAINS: readonly RestorePreviewDomain[] = ["awards", "experience", "skills", "education", "projects", "contact", "website_links"];
 const MAX_COLLAPSED_FIELDS = 3;
@@ -54,7 +54,7 @@ function fieldLabelFor(domain: VersionHistoryDomain, itemType: string, key: stri
   if (key === "title" && domain === "skills") return "Skill group title";
   const labels: Record<string, string> = {
     name: "Name", year: "Year", organization: "Organization", role: "Role", period: "Period", location: "Location",
-    description: "Description", items: "Skill content", institution: "Institution", program: "Program", date: "Date", grade: "Grade",
+    description: "Description", items: "Skill content", institution: "Institution", program: "Program", date: "Date", grade: "Grade", text: "Text",
     course_title: "Course title", course_name: "Course title", course_description: "Course description", custom_category_label: "Category",
     education_category: "Category", entry_type: "Education type", subtitle: "Subtitle", href: "URL", url: "URL", methods: "Method",
     title: "Title",

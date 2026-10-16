@@ -250,7 +250,85 @@ function itemState(operation: VersionHistoryEntry["operation"]): HistoryItemStat
   return "updated";
 }
 
+function presentIntroductionV1(entry: VersionHistoryEntry): HistoryChangePresentation {
+  if (entry.domain !== "introduction" || entry.entityType !== "introduction_paragraph"
+    || entry.comparison.kind !== "introduction_fields" || entry.operation !== "update") return generic(entry);
+
+  type Change = NonNullable<typeof entry.comparison.changes.text_en>;
+  const changes = entry.comparison.changes;
+  const byId = new Map<string, { before: Partial<Record<"text_en" | "text_zh" | "position", VersionHistoryScalar>>;
+    after: Partial<Record<"text_en" | "text_zh" | "position", VersionHistoryScalar>> }>();
+  for (const key of ["text_en", "text_zh", "position"] as const) {
+    const change = changes[key] as Change | undefined;
+    if (!change) continue;
+    const beforeIds = new Set<string>(), afterIds = new Set<string>();
+    for (const item of change.before) {
+      if (beforeIds.has(item.id)) return generic(entry);
+      beforeIds.add(item.id);
+      const row = byId.get(item.id) ?? { before: {}, after: {} };
+      row.before[key] = item.value;
+      byId.set(item.id, row);
+    }
+    for (const item of change.after) {
+      if (afterIds.has(item.id)) return generic(entry);
+      afterIds.add(item.id);
+      const row = byId.get(item.id) ?? { before: {}, after: {} };
+      row.after[key] = item.value;
+      byId.set(item.id, row);
+    }
+    if (change.before.length !== change.after.length || change.before.some((item, index) => item.id !== change.after[index]?.id)) return generic(entry);
+  }
+  if (!byId.size) return generic(entry);
+
+  const structuralChange = [...byId.values()].some(row => {
+    const beforeExists = row.before.position !== undefined ? row.before.position !== null : Object.hasOwn(row.before, "text_en") || Object.hasOwn(row.before, "text_zh");
+    const afterExists = row.after.position !== undefined ? row.after.position !== null : Object.hasOwn(row.after, "text_en") || Object.hasOwn(row.after, "text_zh");
+    return beforeExists !== afterExists;
+  });
+  const common = [...byId.entries()].filter(([, row]) => typeof row.before.position === "number" && typeof row.after.position === "number");
+  const reorderedIds = new Set<string>();
+  if (!structuralChange) {
+    for (const [id, row] of common) if (row.before.position !== row.after.position) reorderedIds.add(id);
+  } else {
+    for (let left = 0; left < common.length; left++) for (let right = left + 1; right < common.length; right++) {
+      const [leftId, leftRow] = common[left]!, [rightId, rightRow] = common[right]!;
+      const oldOrder = Number(leftRow.before.position) - Number(rightRow.before.position);
+      const newOrder = Number(leftRow.after.position) - Number(rightRow.after.position);
+      if (oldOrder !== 0 && newOrder !== 0 && Math.sign(oldOrder) !== Math.sign(newOrder)) {
+        reorderedIds.add(leftId);
+        reorderedIds.add(rightId);
+      }
+    }
+  }
+
+  const items: HistoryItemChange[] = [];
+  for (const [id, row] of byId) {
+    const beforePosition = row.before.position, afterPosition = row.after.position;
+    const positionRecorded = beforePosition !== undefined || afterPosition !== undefined;
+    const beforeExists = positionRecorded ? beforePosition !== undefined && beforePosition !== null
+      : Object.hasOwn(row.before, "text_en") || Object.hasOwn(row.before, "text_zh");
+    const afterExists = positionRecorded ? afterPosition !== undefined && afterPosition !== null
+      : Object.hasOwn(row.after, "text_en") || Object.hasOwn(row.after, "text_zh");
+    const state: HistoryItemState = !beforeExists && afterExists ? "added"
+      : beforeExists && !afterExists ? "removed" : "updated";
+    if (!beforeExists && !afterExists) return generic(entry);
+    const fields: HistoryFieldChange[] = [];
+    for (const [key, locale] of [["text_en", "en"], ["text_zh", "zh"]] as const) {
+      const before = row.before[key], after = row.after[key];
+      if (!Object.hasOwn(row.before, key) && !Object.hasOwn(row.after, key)) continue;
+      if (state === "updated" && sameValue(before, after)) continue;
+      fields.push(field("text", locale, before, after, beforeExists && Object.hasOwn(row.before, key),
+        afterExists && Object.hasOwn(row.after, key), state));
+    }
+    if (state !== "updated" || fields.length > 0) items.push({ itemType: "introduction_paragraph", state, label: null, fields, children: [] });
+    if (reorderedIds.has(id)) items.push({ itemType: "introduction_paragraph", state: "reordered", label: null, fields: [], children: [] });
+  }
+  if (!items.length) return generic(entry);
+  return { domain: "introduction", operation: entry.operation, state: "changes", items };
+}
+
 function presentV1(entry: VersionHistoryEntry): HistoryChangePresentation {
+  if (entry.domain === "introduction" && entry.entityType === "introduction_paragraph") return presentIntroductionV1(entry);
   if (entry.comparison.kind !== "entity_fields" || !Object.keys(entry.comparison.changes).length || entry.domain === "files") return generic(entry);
   const changes = entry.comparison.changes;
   if (Object.values(changes).some(change => !isDict(change) || !exactKeys(change, ["before", "after"])

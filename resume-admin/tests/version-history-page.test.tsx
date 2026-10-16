@@ -43,6 +43,26 @@ describe("Version History page human-readable presentation", () => {
     expect(screen.queryByRole("button", { name: /restore|rollback/i })).toBeNull();
   });
 
+  it("renders Introduction Version History alongside Profile without Restore actions", async () => {
+    const introduction = baseEntry({ eventId: uuid(89), domain: "introduction", operation: "update", payloadVersion: 1,
+      entityType: "introduction_paragraph", entityId: "introduction", comparison: { kind: "introduction_fields", changes: {
+        text_en: { before: [{ id: uuid(1), value: "Earlier paragraph" }], after: [{ id: uuid(1), value: "Current paragraph" }] },
+        text_zh: { before: [{ id: uuid(1), value: "早期段落" }], after: [{ id: uuid(1), value: "当前段落" }] },
+      } } });
+    const profile = baseEntry({ eventId: uuid(88), domain: "profile", entityType: "profile_settings", payloadVersion: 1,
+      comparison: { kind: "entity_fields", changes: { footer_name: { before: "Before", after: "After" } } } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([introduction, profile]))));
+    expect(await screen.findByRole("heading", { name: /Introduction.*Updated/, level: 2 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Profile.*Updated/, level: 2 })).toBeTruthy();
+    expect(screen.getByText("Introduction paragraph")).toBeTruthy();
+    expect(screen.getByText("Current paragraph")).toBeTruthy();
+    expect(screen.getByText("Earlier paragraph")).toBeTruthy();
+    expect(screen.getByText("当前段落")).toBeTruthy();
+    expect(screen.getByText("早期段落")).toBeTruthy();
+    expect(screen.getAllByText("After").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /restore|rollback/i })).toBeNull();
+  });
+
   it("uses presenter changes only for V2 and hides aggregate structure and unchanged fields", async () => {
     const before = [row(1, 0, "Old English", "旧中文")];
     const after = [row(1, 0, "New English", "新中文")];

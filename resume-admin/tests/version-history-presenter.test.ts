@@ -248,6 +248,58 @@ describe("presentVersionHistoryChange", () => {
     expect(JSON.stringify(result)).not.toContain("restore");
   });
 
+  it("presents Introduction text, additions, deletions, and order changes from recorded paragraph identities", () => {
+    const base = (changes: Extract<VersionHistoryEntry["comparison"], { kind: "introduction_fields" }>["changes"]) => entry({
+      domain: "introduction", operation: "update", payloadVersion: 1, entityType: "introduction_paragraph", entityId: "introduction",
+      comparison: { kind: "introduction_fields", changes },
+    });
+    const edited = presentVersionHistoryChange(base({
+      text_en: { before: [{ id: idA, value: "Original English" }], after: [{ id: idA, value: "Updated English" }] },
+      text_zh: { before: [{ id: idA, value: "原中文" }], after: [{ id: idA, value: "新中文" }] },
+    }));
+    expect(edited).toMatchObject({ domain: "introduction", operation: "update", state: "changes" });
+    expect(edited.items[0]?.fields).toEqual([
+      { key: "text", locale: "en", kind: "updated", before: { recorded: true, value: "Original English" }, after: { recorded: true, value: "Updated English" } },
+      { key: "text", locale: "zh", kind: "updated", before: { recorded: true, value: "原中文" }, after: { recorded: true, value: "新中文" } },
+    ]);
+
+    const restored = presentVersionHistoryChange(base({
+      text_en: { before: [{ id: idA, value: "Updated English" }], after: [{ id: idA, value: "Original English" }] },
+    }));
+    expect(restored.items[0]?.fields[0]).toMatchObject({ before: { value: "Updated English" }, after: { value: "Original English" }, kind: "updated" });
+
+    const structural = presentVersionHistoryChange(base({
+      text_en: { before: [{ id: idA, value: "Removed" }, { id: idB, value: "Moved" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null }],
+        after: [{ id: idA, value: null }, { id: idB, value: "Moved" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: "Added" }] },
+      position: { before: [{ id: idA, value: 0 }, { id: idB, value: 1 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null }],
+        after: [{ id: idA, value: null }, { id: idB, value: 0 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: 1 }] },
+    }));
+    expect(structural.items.map(item => item.state)).toEqual(["removed", "added"]);
+    const reordered = presentVersionHistoryChange(base({
+      position: { before: [{ id: idA, value: 0 }, { id: idB, value: 1 }], after: [{ id: idA, value: 1 }, { id: idB, value: 0 }] },
+    }));
+    expect(reordered.items.map(item => item.state)).toEqual(["reordered", "reordered"]);
+    const insertionShift = presentVersionHistoryChange(base({
+      text_en: { before: [{ id: idA, value: "A" }, { id: idB, value: "B" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null }],
+        after: [{ id: idA, value: "A" }, { id: idB, value: "B" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: "New" }] },
+      position: { before: [{ id: idA, value: 0 }, { id: idB, value: 1 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null }],
+        after: [{ id: idA, value: 1 }, { id: idB, value: 2 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: 0 }] },
+    }));
+    expect(insertionShift.items.map(item => item.state)).toEqual(["added"]);
+    expect(JSON.stringify(structural)).not.toContain(idA);
+    expect(JSON.stringify(structural)).not.toContain(idB);
+    expect(JSON.stringify(structural)).not.toContain("position");
+    expect(JSON.stringify(structural)).not.toContain('"0"');
+  });
+
+  it("uses a generic fallback for malformed or unsupported Introduction comparisons", () => {
+    const malformed = entry({ domain: "introduction", payloadVersion: 1, entityType: "introduction_paragraph",
+      comparison: { kind: "introduction_fields", changes: { text_en: { before: [{ id: idA, value: "Old" }], after: [] } } } });
+    expect(presentVersionHistoryChange(malformed)).toMatchObject({ domain: "introduction", state: "generic", items: [] });
+    expect(presentVersionHistoryChange(entry({ domain: "introduction", payloadVersion: 1, entityType: "introduction_paragraph",
+      comparison: { kind: "unavailable" } })).state).toBe("generic");
+  });
+
   it("summarizes ordinary Profile updates without exposing photo references", () => {
     const profile = (footerName: string) => ({ shared: { graduation_value: "2020", avatar_initials: "A", footer_name: footerName, copyright: "©", photo_url: "https://example.test/private" },
       translations: Object.fromEntries(["en", "zh"].map(locale => [locale, { name: "Name", nav_about_label: "About", email_action_label: "Email", graduation_label: "Grad", avatar_label: "Avatar", contact_focus_heading: "Focus", contact_status_heading: "Status" }])) });
