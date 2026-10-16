@@ -61,6 +61,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run Admin lint
+        run: npm run lint
+
       - name: Run frontend and repository tests
         run: npm test
 
