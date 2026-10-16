@@ -279,6 +279,14 @@ describe("presentVersionHistoryChange", () => {
       position: { before: [{ id: idA, value: 0 }, { id: idB, value: 1 }], after: [{ id: idA, value: 1 }, { id: idB, value: 0 }] },
     }));
     expect(reordered.items.map(item => item.state)).toEqual(["reordered", "reordered"]);
+    const unchangedMiddleReordered = presentVersionHistoryChange(base({
+      position: { before: [
+        { id: idA, value: 0 }, { id: idB, value: 1 }, { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", value: 2 },
+      ], after: [
+        { id: idA, value: 2 }, { id: idB, value: 1 }, { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", value: 0 },
+      ] },
+    }));
+    expect(unchangedMiddleReordered.items.filter(item => item.state === "reordered")).toHaveLength(3);
     const insertionShift = presentVersionHistoryChange(base({
       text_en: { before: [{ id: idA, value: "A" }, { id: idB, value: "B" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null }],
         after: [{ id: idA, value: "A" }, { id: idB, value: "B" }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: "New" }] },

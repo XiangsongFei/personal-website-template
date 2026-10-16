@@ -280,24 +280,15 @@ function presentIntroductionV1(entry: VersionHistoryEntry): HistoryChangePresent
   }
   if (!byId.size) return generic(entry);
 
-  const structuralChange = [...byId.values()].some(row => {
-    const beforeExists = row.before.position !== undefined ? row.before.position !== null : Object.hasOwn(row.before, "text_en") || Object.hasOwn(row.before, "text_zh");
-    const afterExists = row.after.position !== undefined ? row.after.position !== null : Object.hasOwn(row.after, "text_en") || Object.hasOwn(row.after, "text_zh");
-    return beforeExists !== afterExists;
-  });
   const common = [...byId.entries()].filter(([, row]) => typeof row.before.position === "number" && typeof row.after.position === "number");
   const reorderedIds = new Set<string>();
-  if (!structuralChange) {
-    for (const [id, row] of common) if (row.before.position !== row.after.position) reorderedIds.add(id);
-  } else {
-    for (let left = 0; left < common.length; left++) for (let right = left + 1; right < common.length; right++) {
-      const [leftId, leftRow] = common[left]!, [rightId, rightRow] = common[right]!;
-      const oldOrder = Number(leftRow.before.position) - Number(rightRow.before.position);
-      const newOrder = Number(leftRow.after.position) - Number(rightRow.after.position);
-      if (oldOrder !== 0 && newOrder !== 0 && Math.sign(oldOrder) !== Math.sign(newOrder)) {
-        reorderedIds.add(leftId);
-        reorderedIds.add(rightId);
-      }
+  for (let left = 0; left < common.length; left++) for (let right = left + 1; right < common.length; right++) {
+    const [leftId, leftRow] = common[left]!, [rightId, rightRow] = common[right]!;
+    const oldOrder = Number(leftRow.before.position) - Number(rightRow.before.position);
+    const newOrder = Number(leftRow.after.position) - Number(rightRow.after.position);
+    if (oldOrder !== 0 && newOrder !== 0 && Math.sign(oldOrder) !== Math.sign(newOrder)) {
+      reorderedIds.add(leftId);
+      reorderedIds.add(rightId);
     }
   }
 

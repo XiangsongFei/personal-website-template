@@ -99,6 +99,42 @@ BEGIN
             AND s.section_key = 'introduction' AND s.entity_type = 'introduction_paragraph'
             AND s.entity_snapshot ? 'paragraphs'
             AND cms_private.activity_event_payload_is_allowed(s.entity_type, s.entity_snapshot, s.changes)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.jsonb_array_elements(
+                CASE WHEN pg_catalog.jsonb_typeof(s.entity_snapshot->'paragraphs') = 'array'
+                  THEN s.entity_snapshot->'paragraphs' ELSE '[]'::jsonb END
+              ) AS paragraph(value)
+              WHERE CASE WHEN pg_catalog.jsonb_typeof(paragraph.value->'position') = 'number' THEN
+                (paragraph.value->>'position')::numeric < 0
+                OR (paragraph.value->>'position')::numeric > 2147483647
+                OR (paragraph.value->>'position')::numeric <> pg_catalog.trunc((paragraph.value->>'position')::numeric)
+              ELSE true END
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM (
+                SELECT position_item.value->'value' AS position_value
+                FROM pg_catalog.jsonb_array_elements(
+                  CASE WHEN pg_catalog.jsonb_typeof(s.changes->'position'->'before') = 'array'
+                    THEN s.changes->'position'->'before' ELSE '[]'::jsonb END
+                ) AS position_item(value)
+                UNION ALL
+                SELECT position_item.value->'value' AS position_value
+                FROM pg_catalog.jsonb_array_elements(
+                  CASE WHEN pg_catalog.jsonb_typeof(s.changes->'position'->'after') = 'array'
+                    THEN s.changes->'position'->'after' ELSE '[]'::jsonb END
+                ) AS position_item(value)
+              ) AS positions
+              WHERE CASE
+                WHEN pg_catalog.jsonb_typeof(positions.position_value) = 'null' THEN false
+                WHEN pg_catalog.jsonb_typeof(positions.position_value) = 'number' THEN
+                  (positions.position_value #>> '{}')::numeric < 0
+                  OR (positions.position_value #>> '{}')::numeric > 2147483647
+                  OR (positions.position_value #>> '{}')::numeric <> pg_catalog.trunc((positions.position_value #>> '{}')::numeric)
+                ELSE true
+              END
+            )
             AND s.changes <> '{}'::jsonb THEN 'introduction_fields'
           WHEN s.payload_version = 1
             AND ((s.domain_key = 'awards' AND s.section_key = 'awards' AND s.entity_type = 'award_entry')
@@ -160,12 +196,17 @@ BEGIN
           ))
           OR s.payload_version NOT IN (1,2)
         )
+    ), bounded AS (
+      SELECT a.*
+      FROM adapted AS a
+      ORDER BY a.occurred_at DESC, a.id DESC
+      LIMIT page_limit + 1
     ), introduction_position_rows AS (
       -- For Introduction ordering changes, include unchanged paragraphs as anchors.
       -- The Activity Log intentionally records only changed positions; without these
       -- anchors the client cannot distinguish a mixed insertion/reorder accurately.
       SELECT a.id AS event_id, positions.paragraph_id, positions.before_position, positions.after_position
-      FROM (SELECT * FROM adapted WHERE comparison_kind = 'introduction_fields' AND changes ? 'position') AS a
+      FROM (SELECT * FROM bounded WHERE comparison_kind = 'introduction_fields' AND changes ? 'position') AS a
       CROSS JOIN LATERAL (
         SELECT COALESCE(snapshot_paragraph.id, changed_position.id) AS paragraph_id,
           CASE WHEN changed_position.id IS NOT NULL THEN changed_position.before_position ELSE snapshot_paragraph.position END AS before_position,
@@ -192,7 +233,7 @@ BEGIN
       ) AS position_change
       FROM introduction_position_rows
       GROUP BY event_id
-    ), limited AS (
+    ), bounded_with_comparison AS (
       SELECT
         a.*,
         CASE
@@ -208,14 +249,12 @@ BEGIN
           )
           ELSE NULL::jsonb
         END AS comparison
-      FROM adapted AS a
+      FROM bounded AS a
       LEFT JOIN introduction_position_comparison AS position_context ON position_context.event_id = a.id
-      ORDER BY a.occurred_at DESC, a.id DESC
-      LIMIT page_limit + 1
     ), ranked AS (
-      SELECT l.*, pg_catalog.row_number() OVER (ORDER BY l.occurred_at DESC, l.id DESC) AS row_number,
+      SELECT b.*, pg_catalog.row_number() OVER (ORDER BY b.occurred_at DESC, b.id DESC) AS row_number,
         pg_catalog.count(*) OVER () AS candidate_count
-      FROM limited AS l
+      FROM bounded_with_comparison AS b
     )
     SELECT ranked.id,
       ranked.occurred_at,
