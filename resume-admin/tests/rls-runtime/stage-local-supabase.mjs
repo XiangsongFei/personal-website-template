@@ -19,17 +19,113 @@ const excludedMigrations = new Set([
 ]);
 
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
+const safeSqlTestFailure = "SQL test failed; sanitized details unavailable.";
+const sqlErrorCategories = new Map([
+  ["42702", "ambiguous_column"],
+  ["42P01", "undefined_table"],
+  ["42703", "undefined_column"],
+  ["42883", "undefined_function"],
+  ["42501", "insufficient_privilege"],
+  ["42601", "syntax_error"],
+  ["23505", "unique_violation"],
+  ["23503", "foreign_key_violation"],
+  ["23514", "check_violation"],
+  ["22P02", "invalid_text_representation"],
+  ["22003", "numeric_value_out_of_range"],
+  ["3F000", "invalid_schema_name"],
+  ["42704", "undefined_object"],
+  ["57014", "query_canceled"],
+]);
 
 function run(command, args, options = {}) {
   const { spawn = spawnSync, discardOutput = false, failureMessage, ...spawnOptions } = options;
   const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
-  if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
+  const getFailureMessage = () => typeof failureMessage === "function"
+    ? failureMessage(result)
+    : failureMessage ?? `${command} could not be started; output suppressed.`;
+  if (result.error) throw new Error(getFailureMessage());
   if (result.status !== 0) {
-    if (failureMessage) throw new Error(failureMessage);
+    if (failureMessage) throw new Error(getFailureMessage());
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
   return discardOutput ? "" : result.stdout ?? "";
+}
+
+function stripAnsiEscapeSequences(output) {
+  let sanitized = "";
+  let inEscape = false;
+  for (const character of output) {
+    const code = character.charCodeAt(0);
+    if (!inEscape && code === 27) {
+      inEscape = true;
+      continue;
+    }
+    if (inEscape) {
+      if (code >= 0x40 && code <= 0x7e) inEscape = false;
+      continue;
+    }
+    sanitized += character;
+  }
+  return sanitized;
+}
+
+function summarizeSqlTestFailure(result, approvedTestFiles) {
+  const output = stripAnsiEscapeSequences(`${result?.stdout ?? ""}\n${result?.stderr ?? ""}`.slice(0, 1_000_000));
+  const approved = approvedTestFiles instanceof Set ? approvedTestFiles : new Set(approvedTestFiles);
+  let currentFile = null;
+  const assertions = [];
+  const errors = [];
+
+  for (const line of output.split(/\r?\n/)) {
+    const fileMatch = line.match(/(?:^|[\\/\s])([A-Za-z0-9][A-Za-z0-9_-]*\.test\.sql)(?=$|[:\s])/);
+    if (fileMatch && approved.has(fileMatch[1])) currentFile = fileMatch[1];
+
+    const assertionMatch = line.match(/^\s*not ok\s+([1-9]\d{0,8})(?:\s|$)/i);
+    if (assertionMatch) {
+      const record = { file: currentFile, index: assertionMatch[1] };
+      if (!assertions.some((item) => item.file === record.file && item.index === record.index)) assertions.push(record);
+    }
+
+    const errorMatch = line.match(/^\s*(?:psql:[^\r\n]*?:\d+:\s*)?(?:ERROR|FATAL):\s*(.*)$/i);
+    if (!errorMatch) continue;
+    const errorText = errorMatch[1];
+    const stateMatch = errorText.match(/^([0-9A-Z]{5})(?=\b|:)/i)
+      ?? errorText.match(/\bSQLSTATE\s*[:=]\s*([0-9A-Z]{5})\b/i);
+    let sqlstate = stateMatch?.[1]?.toUpperCase() ?? null;
+    let category = sqlstate ? sqlErrorCategories.get(sqlstate) ?? "other_sql_error" : null;
+    if (!category && /\bis ambiguous\b/i.test(errorText)) category = "ambiguous_column";
+    else if (!category && /\brelation\b.*\bdoes not exist\b/i.test(errorText)) category = "undefined_table";
+    else if (!category && /\bcolumn\b.*\bdoes not exist\b/i.test(errorText)) category = "undefined_column";
+    else if (!category && /\bfunction\b.*\bdoes not exist\b/i.test(errorText)) category = "undefined_function";
+    else if (!category && /\bpermission denied\b/i.test(errorText)) category = "insufficient_privilege";
+    else if (!category && /\bsyntax error\b/i.test(errorText)) category = "syntax_error";
+    if (category) {
+      const record = { file: currentFile, sqlstate, category };
+      if (!errors.some((item) => item.file === record.file && item.sqlstate === record.sqlstate && item.category === record.category)) errors.push(record);
+    }
+  }
+
+  const parts = [];
+  for (const assertion of assertions.slice(0, 5)) {
+    if (assertion.file) parts.push(`file=${assertion.file}`);
+    parts.push(`assertion=${assertion.index}`, "assertion_category=pgtap_assertion_failed");
+  }
+  for (const error of errors.slice(0, 5)) {
+    if (error.file && !parts.includes(`file=${error.file}`)) parts.push(`file=${error.file}`);
+    if (error.sqlstate) parts.push(`SQLSTATE=${error.sqlstate}`);
+    parts.push(`postgres_category=${error.category}`);
+  }
+  return parts.length ? `SQL test failed; ${parts.join("; ")}` : safeSqlTestFailure;
+}
+
+function approvedSqlTestFiles(stagedRoot) {
+  try {
+    return new Set(readdirSync(join(stagedRoot, "tests"))
+      .filter((file) => /^[A-Za-z0-9][A-Za-z0-9_-]*\.test\.sql$/.test(file)));
+  } catch {
+    return new Set();
+  }
 }
 
 function redactSecrets(output) {
@@ -299,11 +395,14 @@ function stageProject(stageRoot, projectId, ports) {
 }
 
 function runSupabase(context, args, options = {}) {
+  const isSqlTest = args[0] === "test" && args[1] === "db";
   const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
     env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
     stdio: "pipe",
     discardOutput: args[0] !== "status",
-    failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
+    failureMessage: args[0] === "start" ? safeStartFailure
+      : isSqlTest ? (result) => summarizeSqlTestFailure(result, approvedSqlTestFiles(context.stagedRoot))
+        : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
   if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
@@ -312,6 +411,39 @@ function runSupabase(context, args, options = {}) {
 }
 
 function runSecuritySelfTests() {
+  const approvedSqlFiles = new Set(["version_history_v1_read.test.sql"]);
+  const validSqlFailure = summarizeSqlTestFailure({
+    stdout: "tests/version_history_v1_read.test.sql ..\nnot ok 12 - Introduction text should be visible",
+    stderr: "",
+  }, approvedSqlFiles);
+  assert.equal(validSqlFailure, "SQL test failed; file=version_history_v1_read.test.sql; assertion=12; assertion_category=pgtap_assertion_failed");
+
+  const stateFailure = summarizeSqlTestFailure({
+    stdout: "",
+    stderr: "psql:/tmp/tests/version_history_v1_read.test.sql:118: ERROR: 42702: column reference \"event_id\" is ambiguous",
+  }, approvedSqlFiles);
+  assert.equal(stateFailure, "SQL test failed; file=version_history_v1_read.test.sql; SQLSTATE=42702; postgres_category=ambiguous_column");
+
+  const hostileFailure = summarizeSqlTestFailure({
+    stdout: [
+      "tests/version_history_v1_read.test.sql ..",
+      "not ok 7 - postgresql://secret-user:secret-pass@example.invalid/private database URL and user content",
+      "QUERY: SELECT 'do not print this SQL';",
+      "ERROR: 42702: credential=secret-token, SQLSTATE=42702",
+    ].join("\n"),
+    stderr: "SERVICE_ROLE_KEY=secret-service-key",
+  }, approvedSqlFiles);
+  assert.equal(hostileFailure, "SQL test failed; file=version_history_v1_read.test.sql; assertion=7; assertion_category=pgtap_assertion_failed; SQLSTATE=42702; postgres_category=ambiguous_column");
+  for (const secret of ["secret-user", "secret-pass", "private", "secret-token", "secret-service-key", "do not print this SQL", "user content"]) {
+    assert.doesNotMatch(hostileFailure, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  const unknownFailure = summarizeSqlTestFailure({
+    stdout: "postgresql://postgres:password@example.invalid/private\nSELECT 'sensitive content';",
+    stderr: "opaque CLI failure with token=not-for-logs",
+  }, approvedSqlFiles);
+  assert.equal(unknownFailure, safeSqlTestFailure);
+
   const validContainer = (hostIp) => ({
     Name: "/supabase_db_pr1-test",
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
@@ -388,7 +520,7 @@ function runSecuritySelfTests() {
     stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure,
   }), (error) => error.message === safeStartFailure && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
 
-  console.log("Staging security self-tests passed (Docker bindings and suppressed Supabase CLI credentials).");
+  console.log("Staging security self-tests passed (Docker bindings, suppressed Supabase CLI credentials, and sanitized SQL failure summaries).");
 }
 
 function verifyLocalStatus(context) {
