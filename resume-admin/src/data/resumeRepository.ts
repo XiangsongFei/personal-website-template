@@ -70,6 +70,7 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   saveWebsiteLinksWithWorker?(resumeId: string, links: LinksSection, operation?: FilesSaveOperation): Promise<LinksSection>;
   hasPendingWebsiteLinksWorkerSave?(resumeId: string): boolean;
   loadAdminFilesWriteState?(resumeId: string, operation?: FilesSaveOperation): Promise<AdminFilesWriteState>;
+  loadAdminFilesRestoreCapability?(resumeId: string): Promise<boolean>;
   saveFilesWithWorker?(resumeId: string, files: FilesAggregate, uploadRequestIds?: Partial<Record<Locale, string>>, operation?: FilesSaveOperation): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   uploadResumePdfWithWorker?(resumeId: string, locale: Locale, file: File, operation?: FilesSaveOperation): Promise<{ reference: string; uploadRequestId: string }>;
   cleanupResumePdfCandidatesWithWorker?(resumeId: string, uploadRequestIds: string[], operation?: FilesSaveOperation): Promise<boolean>;
@@ -2129,6 +2130,14 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return { resumeId, domain: "files" as const, activityLogEnabled: row.activity_log_enabled,
         writeMode: row.files_write_mode, trustedContextRequired: row.files_trusted_context_required,
         storageProtocol: row.storage_protocol };
+    },
+    async loadAdminFilesRestoreCapability(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const { data, error } = await supabase.rpc("load_admin_files_restore_capability_v1", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Files Restore capability");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (!row || typeof row.restore_enabled !== "boolean") throw new Error("Invalid Files Restore capability response");
+      return row.restore_enabled;
     },
     async uploadResumePdfWithWorker(resumeId, locale, file, suppliedOperation) {
       if (!resumeId || (locale !== "zh" && locale !== "en") || !(file instanceof File)) throw new AggregateWorkerSaveError("Invalid resume PDF upload.");

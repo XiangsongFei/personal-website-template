@@ -514,4 +514,17 @@ describe("Activity Log page", () => {
     fireEvent.click(button);
     await waitFor(() => expect(repository.restoreFilesFromEvent).toHaveBeenCalledWith(resumeId, "file-restore-anchor", "zh"));
   });
+
+  it("hides Files Restore controls when the independently loaded capability is not enabled", async () => {
+    const before = { translations: { zh: { portfolio_href: "https://storage.example.test/old.pdf" }, en: { portfolio_href: "" } } };
+    const after = { translations: { zh: { portfolio_href: "https://storage.example.test/new.pdf" }, en: { portfolio_href: "" } } };
+    const fileEvent: ActivityLogV13CEvent = { ...event("file-restore-disabled"), section: "files", entityType: "resume_file_set", entityId: null,
+      entitySnapshot: { files: after }, changes: { files: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([fileEvent]), restoreFilesFromEvent: vi.fn() } as unknown as ResumeRepository;
+    renderPage(repository, false);
+    await screen.findByRole("heading", { name: "Files" });
+    expect(screen.queryByRole("button", { name: /Restore .* PDF from this event/ })).toBeNull();
+    expect(repository.restoreFilesFromEvent).not.toHaveBeenCalled();
+  });
 });

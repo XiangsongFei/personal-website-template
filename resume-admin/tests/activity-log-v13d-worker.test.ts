@@ -28,17 +28,17 @@ const websiteLinks = {
 const files = { translations: { zh: { portfolio_href: "" }, en: { portfolio_href: "" } } };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-function jwt() {
+function jwt(subject = actorId) {
   const encode = (value: unknown) => btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: actorId, role: "authenticated" })}.synthetic`;
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: subject, role: "authenticated" })}.synthetic`;
 }
 function env(): WorkerEnv {
   return { ASSETS: { fetch: async () => new Response("asset") }, SUPABASE_URL: "https://local.test",
     SUPABASE_PUBLISHABLE_KEY: "synthetic", ACTIVITY_LOG_HMAC_KEY_ID: "activity_log_v11_hmac_v1", ACTIVITY_LOG_HMAC_KEY: key };
 }
-function request(path: string, body: unknown) {
+function request(path: string, body: unknown, subject = actorId) {
   return new Request(`https://qa-admin.test${path}`, { method: "POST", headers: {
-    "Content-Type": "application/json", Authorization: `Bearer ${jwt()}`,
+    "Content-Type": "application/json", Authorization: `Bearer ${jwt(subject)}`,
   }, body: JSON.stringify(body) });
 }
 
@@ -100,6 +100,50 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
       request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
     }), env());
+    expect(response.status).toBe(422);
+    expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1"]);
+  });
+
+  it.each([
+    ["missing source row", Response.json([]), 422],
+    ["malformed source row", Response.json([{ historical_reference: 17, already_completed: false }]), 422],
+    ["completed malformed source row", Response.json([{ historical_reference: "ignored", already_completed: "yes" }]), 422],
+  ])("stops before Storage, signing, mutation, or cleanup for %s", async (_case, upstreamResponse, expectedStatus) => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return upstreamResponse.clone();
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status).toBe(expectedStatus);
+    expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1"]);
+  });
+
+  it("does not continue after a failed source-RPC request", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input)); throw new Error("connection failed");
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: resumeId, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }), env());
+    expect(response.status).toBe(502);
+    expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1"]);
+  });
+
+  it.each([
+    { target: resumeId, actor: actorId },
+    { target: "20000000-0000-4000-8000-000000000001", actor: "10000000-0000-4000-8000-000000000001" },
+  ])("keeps disabled Restore fail-closed for the authorized target $target", async ({ target, actor }) => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input)); return Response.json({ code: "42501" }, { status: 403 });
+    }));
+    const response = await handleWorkerRequest(request("/api/admin/v1/files/restore", {
+      request_id: requestId, resume_id: target, source_event_id: "e1111111-1111-4111-8111-111111111111", locale: "zh",
+    }, actor), env());
     expect(response.status).toBe(422);
     expect(urls).toEqual(["https://local.test/rest/v1/rpc/load_admin_files_restore_source_v1"]);
   });

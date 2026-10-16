@@ -98,9 +98,6 @@ AS $function$ SELECT id FROM cms_private.activity_log_events WHERE resume_id=tar
 CREATE FUNCTION public.test_only_d7_event_is_valid(target_event_id uuid)
 RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path=''
 AS $function$ SELECT cms_private.activity_event_payload_v2_files_is_allowed(section_key,entity_type,entity_id,operation,entity_snapshot,changes) FROM cms_private.activity_log_events WHERE id=target_event_id $function$;
-CREATE FUNCTION public.test_only_add_storage_object(target_bucket text,target_name text)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=''
-AS $function$ INSERT INTO storage.objects(bucket_id,name,metadata) SELECT target_bucket,target_name,'{"fixture":"legacy-pdf"}' WHERE NOT EXISTS (SELECT 1 FROM storage.objects WHERE bucket_id=target_bucket AND name=target_name) $function$;
 CREATE FUNCTION public.test_only_d7_direct_locale_denied(target_resume uuid,target_field text)
 RETURNS boolean LANGUAGE plpgsql SET search_path=''
 AS $function$
@@ -131,14 +128,12 @@ $function$;
 REVOKE ALL ON FUNCTION public.test_only_d7_payload(uuid,text,text),public.test_only_d7_save(uuid,text,uuid,text),public.test_only_d7_state(uuid,text,uuid,text),
  public.test_only_d7_event_count(uuid,text),public.test_only_d7_event_valid(uuid,text),public.test_only_d7_direct_locale_denied(uuid,text),
  public.test_only_d7_latest_event(uuid,text),public.test_only_d7_event_for_after(uuid,text,text),public.test_only_d7_event_is_valid(uuid),
- public.test_only_add_storage_object(text,text),
  public.test_only_files_restore(uuid,uuid,text,uuid),public.test_only_files_restore_state(uuid,uuid,text,uuid),
  public.test_only_files_restore_source_state(uuid,uuid,text,uuid),
  public.test_only_files_reference_valid(text,uuid,text,text,text,boolean) FROM PUBLIC,anon,service_role;
 GRANT EXECUTE ON FUNCTION public.test_only_d7_payload(uuid,text,text),public.test_only_d7_save(uuid,text,uuid,text),public.test_only_d7_state(uuid,text,uuid,text),
  public.test_only_d7_event_count(uuid,text),public.test_only_d7_event_valid(uuid,text),public.test_only_d7_direct_locale_denied(uuid,text),
  public.test_only_d7_latest_event(uuid,text),public.test_only_d7_event_for_after(uuid,text,text),public.test_only_d7_event_is_valid(uuid),
- public.test_only_add_storage_object(text,text),
  public.test_only_files_restore(uuid,uuid,text,uuid),public.test_only_files_restore_state(uuid,uuid,text,uuid),
  public.test_only_files_restore_source_state(uuid,uuid,text,uuid),
  public.test_only_files_reference_valid(text,uuid,text,text,text,boolean) TO authenticated;
@@ -255,23 +250,22 @@ SELECT extensions.ok(public.test_only_files_restore_state('ea111111-1111-4111-81
 SELECT extensions.ok((SELECT count(*)=0 FROM storage.objects WHERE bucket_id='resume-files' AND name='ea111111-1111-4111-8111-111111111111/resume_en.pdf'),
  'legacy source object is initially absent from the exact expected bucket and name');
 SELECT extensions.is(public.test_only_files_restore_state('ea111111-1111-4111-8111-111111111111',
- public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','ea000000-0000-4000-8000-000000000712'),'22023',
- 'restore refuses mutation when the exact legacy Storage object is missing');
-SELECT public.test_only_add_storage_object('resume-files','ea111111-1111-4111-8111-111111111111/resume_en.pdf');
-SELECT extensions.ok((SELECT count(*)=1 FROM storage.objects WHERE bucket_id='resume-files' AND name='ea111111-1111-4111-8111-111111111111/resume_en.pdf'),
- 'legacy object metadata is installed for the positive restore path');
+ public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','ea000000-0000-4000-8000-000000000712'),'42501',
+ 'Restore-disabled capability blocks legacy mutation before Storage source inspection');
+SELECT extensions.ok((SELECT count(*)=0 FROM storage.objects WHERE bucket_id='resume-files' AND name='ea111111-1111-4111-8111-111111111111/resume_en.pdf'),
+ 'Restore-disabled checks do not create a legacy Storage object');
 SELECT extensions.is(public.test_only_files_restore_source_state('ea111111-1111-4111-8111-111111111111',
  public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','website_links'),'en','10000000-0000-4000-8000-000000000002'),'22023',
- 'a non-Files event cannot serve as a restore source');
+ 'private Files source validator rejects a non-Files event');
 SELECT extensions.is(public.test_only_files_restore_source_state('20000000-0000-4000-8000-000000000001',
  public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','10000000-0000-4000-8000-000000000002'),'22023',
- 'a Files event from another resume cannot be restored into this target');
+ 'private Files source validator rejects an event from another resume');
 SELECT extensions.is(public.test_only_files_restore_source_state('ea111111-1111-4111-8111-111111111111',
  public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','10000000-0000-4000-8000-000000000001'),'22023',
  'a Files event authored by another actor is rejected');
 SELECT extensions.is(public.test_only_files_restore_state('ea111111-1111-4111-8111-111111111111',
- public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','10000000-0000-4000-8000-000000000002'),'22023',
- 'Test Files Restore remains fail closed for the non-legacy approved target');
+ public.test_only_d7_latest_event('ea111111-1111-4111-8111-111111111111','files'),'en','10000000-0000-4000-8000-000000000002'),'42501',
+ 'Test Files Restore remains denied by its disabled capability');
 SELECT extensions.skip(2,'Restore mutation and replay assertions require a Restore-enabled target and are deferred');
 RESET ROLE;
 UPDATE public.resume_locale_content SET portfolio_href='https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/en/cccccccc-cccc-4ccc-8ccc-cccccccccccc.pdf'
@@ -279,8 +273,8 @@ UPDATE public.resume_locale_content SET portfolio_href='https://local.supabase.i
 SET LOCAL ROLE authenticated;
 SELECT extensions.is(public.test_only_files_restore_state('ea111111-1111-4111-8111-111111111111',
  public.test_only_d7_event_for_after('ea111111-1111-4111-8111-111111111111','files','https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/en/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf'),
- 'en','ea000000-0000-4000-8000-000000000714'),'22023',
- 'Test Files Restore rejects the unsupported legacy source mapping');
+ 'en','ea000000-0000-4000-8000-000000000714'),'42501',
+ 'Test Files Restore remains denied before unsupported source inspection');
 RESET ROLE;
 UPDATE public.resume_locale_content SET portfolio_href='https://local.supabase.invalid/storage/v1/object/public/resume-files/ea111111-1111-4111-8111-111111111111/resume_en.pdf?cacheNonce=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
  WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND locale='en';
