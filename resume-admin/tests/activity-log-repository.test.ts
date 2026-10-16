@@ -28,6 +28,25 @@ describe("Activity Log repository RPC boundary", () => {
     failure_code: "idempotency_conflict", request_id: "request-1",
     ip_network: null, country_code: null, region: null, city: null, ...overrides,
   });
+  it.each([
+    { data: [{ restore_enabled: true }], error: null, expected: true },
+    { data: [{ restore_enabled: false }], error: null, expected: false },
+  ])("loads only a well-formed target Restore capability", async ({ data, error, expected }) => {
+    const rpc = vi.fn().mockResolvedValue({ data, error });
+    await expect(repository(rpc).loadAdminFilesRestoreCapability!("qa-target")).resolves.toBe(expected);
+    expect(rpc).toHaveBeenCalledWith("load_admin_files_restore_capability_v1", { target_resume_id: "qa-target" });
+  });
+
+  it.each([null, [], [{ restore_enabled: null }], [{ restore_enabled: "true" }], [{ restore_enabled: true }, { restore_enabled: true }]])(
+    "fails closed for malformed Restore capability response %j", async data => {
+      const rpc = vi.fn().mockResolvedValue({ data, error: null });
+      await expect(repository(rpc).loadAdminFilesRestoreCapability!("qa-target")).rejects.toThrow("Invalid Files Restore capability response");
+    });
+
+  it("fails closed when the Restore capability RPC fails", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: new Error("denied") });
+    await expect(repository(rpc).loadAdminFilesRestoreCapability!("qa-target")).rejects.toThrow("Unable to load Files Restore capability");
+  });
   it("loads target-scoped server-owned capability and Introduction mode", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: false }], error: null });
     await expect(repository(rpc).loadAdminFeatureState!("qa-target")).resolves.toEqual({ resumeId: "qa-target", activityLogEnabled: true, introductionWriteMode: "rpc", introductionTrustedContextRequired: false });

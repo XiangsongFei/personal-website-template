@@ -18,7 +18,7 @@ const sourceEvent: ActivityLogV13CEvent = {
   eventSource: "activity", sourceRank: 1, payloadVersion: 2,
 };
 
-function setup(filesState: "ready" | "error") {
+function setup(filesState: "ready" | "error", capabilityState: "enabled" | "disabled" | "failed" | "missing" | "malformed" = "enabled") {
   const repository = {
     load: vi.fn(),
     loadAdminFeatureState: vi.fn(async (resumeId: string) => ({ resumeId, activityLogEnabled: true,
@@ -26,6 +26,11 @@ function setup(filesState: "ready" | "error") {
     loadAdminFilesWriteState: filesState === "ready"
       ? vi.fn(async (resumeId: string) => ({ resumeId, domain: "files" as const, activityLogEnabled: true, writeMode: "rpc" as const, trustedContextRequired: true, storageProtocol: "intent_v1" as const }))
       : vi.fn(async () => { throw new Error("Files state unavailable"); }),
+    ...(capabilityState === "missing" ? {} : { loadAdminFilesRestoreCapability: capabilityState === "enabled"
+      ? vi.fn(async () => true)
+      : capabilityState === "disabled" ? vi.fn(async () => false)
+        : capabilityState === "malformed" ? vi.fn(async () => "true" as unknown as boolean)
+          : vi.fn(async () => { throw new Error("Restore capability unavailable"); }) }),
     loadActivityLogAuthorizedTargets: vi.fn(async () => [target]),
     loadActivityLogPageV13C: vi.fn(async () => [sourceEvent]),
     restoreFilesFromEvent: vi.fn(async () => ({ files: originalFiles, cleanupWarning: false })),
@@ -59,4 +64,13 @@ describe("Activity Log Files restore route readiness", () => {
     expect(screen.queryByRole("button", { name: "Restore Chinese PDF from this event" })).toBeNull();
     expect(repository.restoreFilesFromEvent).not.toHaveBeenCalled();
   });
+
+  it.each(["disabled", "failed", "missing", "malformed"] as const)(
+    "hides Restore when the independent capability result is %s", async capabilityState => {
+      const { repository } = setup("ready", capabilityState);
+      expect(await screen.findByRole("heading", { name: "Files" })).toBeTruthy();
+      await waitFor(() => expect(repository.loadAdminFilesWriteState).toHaveBeenCalledWith(target.resumeId));
+      expect(screen.queryByRole("button", { name: "Restore Chinese PDF from this event" })).toBeNull();
+      expect(repository.restoreFilesFromEvent).not.toHaveBeenCalled();
+    });
 });

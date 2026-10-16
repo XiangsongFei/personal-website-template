@@ -366,8 +366,8 @@ SELECT extensions.ok((SELECT count(*)=0 FROM public.claim_resume_file_cleanup_v1
  AND NOT public.test_only_d8_storage_delete('ea111111-1111-4111-8111-111111111111/en/44444444-4444-4444-8444-444444444444.pdf'),
  'a referenced managed object cannot be claimed or deleted');
 SELECT extensions.is(public.test_only_d8_restore_state('ea111111-1111-4111-8111-111111111111',
- public.test_only_d8_latest_event('ea111111-1111-4111-8111-111111111111'),'en','d82fffff-ffff-4fff-8fff-ffffffffffff'),'22023',
- 'Test Files Restore remains fail closed for the non-legacy approved target');
+ public.test_only_d8_latest_event('ea111111-1111-4111-8111-111111111111'),'en','d82fffff-ffff-4fff-8fff-ffffffffffff'),'42501',
+ 'Test Files Restore remains denied by its disabled capability');
 SELECT extensions.skip(7,'Restore remains disabled; post-restore replay and cleanup behavior is deferred');
 RESET ROLE;
 

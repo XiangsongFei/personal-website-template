@@ -194,6 +194,9 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     kind: "loaded"; resumeId: string; siteKey: string; role: AdminTarget["role"]; identityId: string; sessionKey: string; locationKey: string;
     state: AdminDomainWriteState<"files">;
   }>({ kind: "idle" });
+  const [activityLogRestoreCapability, setActivityLogRestoreCapability] = useState<{ kind: "idle" | "loading" | "error" } | {
+    kind: "loaded"; resumeId: string; siteKey: string; role: AdminTarget["role"]; identityId: string; sessionKey: string; locationKey: string; enabled: boolean;
+  }>({ kind: "idle" });
   const [activityLogPageFreshness, setActivityLogPageFreshness] = useState<{
     resumeId: string; siteKey: string; role: AdminTarget["role"]; identityId: string; sessionKey: string; locationKey: string;
   } | null>(null);
@@ -299,6 +302,26 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       setActivityLogFilesState({ kind: "loaded", resumeId: target.resumeId, siteKey: target.siteKey, role: target.role,
         identityId, sessionKey, locationKey: location.key, state });
     }, () => { if (active) setActivityLogFilesState({ kind: "error" }); });
+    return () => { active = false; };
+  }, [authReady, identityId, isActivityLogRoute, location.key, repository, sessionKey, authorizedTarget]);
+
+  useEffect(() => {
+    let active = true;
+    const target = authorizedTarget;
+    if (!isActivityLogRoute) {
+      setActivityLogRestoreCapability({ kind: "idle" });
+      return () => { active = false; };
+    }
+    if (!authReady || !identityId || !sessionKey || !target || !repository?.loadAdminFilesRestoreCapability) {
+      setActivityLogRestoreCapability({ kind: "error" });
+      return () => { active = false; };
+    }
+    setActivityLogRestoreCapability({ kind: "loading" });
+    repository.loadAdminFilesRestoreCapability(target.resumeId).then(enabled => {
+      if (active && typeof enabled === "boolean") setActivityLogRestoreCapability({ kind: "loaded", resumeId: target.resumeId,
+        siteKey: target.siteKey, role: target.role, identityId, sessionKey, locationKey: location.key, enabled });
+      else if (active) setActivityLogRestoreCapability({ kind: "error" });
+    }, () => { if (active) setActivityLogRestoreCapability({ kind: "error" }); });
     return () => { active = false; };
   }, [authReady, identityId, isActivityLogRoute, location.key, repository, sessionKey, authorizedTarget]);
 
@@ -636,10 +659,16 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     && activityLogPageFreshness.resumeId === authorizedTarget.resumeId && activityLogPageFreshness.siteKey === authorizedTarget.siteKey
     && activityLogPageFreshness.role === authorizedTarget.role && activityLogPageFreshness.identityId === identityId
     && activityLogPageFreshness.sessionKey === sessionKey && activityLogPageFreshness.locationKey === location.key;
+  const currentActivityLogRestoreEnabled = isActivityLogRoute && authorizedTarget && activityLogRestoreCapability.kind === "loaded"
+    && activityLogRestoreCapability.resumeId === authorizedTarget.resumeId && activityLogRestoreCapability.siteKey === authorizedTarget.siteKey
+    && activityLogRestoreCapability.role === authorizedTarget.role && activityLogRestoreCapability.identityId === identityId
+    && activityLogRestoreCapability.sessionKey === sessionKey && activityLogRestoreCapability.locationKey === location.key
+    ? activityLogRestoreCapability.enabled : false;
   const activityLogRouteDataFresh = Boolean(authReady && identityId && sessionKey && activeFeatureState?.activityLogEnabled
     && currentActivityLogFilesState && currentActivityLogPageFresh);
   const filesRestoreReady = Boolean(activityLogRouteDataFresh && currentActivityLogFilesState?.activityLogEnabled
-    && currentActivityLogFilesState.writeMode === "rpc" && currentActivityLogFilesState.trustedContextRequired);
+    && currentActivityLogFilesState.writeMode === "rpc" && currentActivityLogFilesState.trustedContextRequired
+    && currentActivityLogRestoreEnabled);
   const currentRouteDataFresh = isActivityLogRoute ? activityLogRouteDataFresh : isVersionHistoryRoute
     ? Boolean(authReady && identityId && sessionKey && authorizedTarget && activeFeatureState)
     : Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 const migration = readFileSync("migrations/20261027_activity_log_files_legacy_restore.sql", "utf8");
 const mirror = readFileSync("tests/rls-runtime/supabase/migrations/20261027000000_activity_log_files_legacy_restore.sql", "utf8");
 const filesWriter = readFileSync("migrations/20261026_activity_log_files_writer.sql", "utf8");
+const capabilityMigration = readFileSync("migrations/20261101000000_files_restore_capability_enforcement.sql", "utf8");
+const capabilityMirror = readFileSync("tests/rls-runtime/supabase/migrations/20261101000000_files_restore_capability_enforcement.sql", "utf8");
 
 describe("V1.3D-7 Files legacy restoration migration", () => {
   it("keeps the runtime mirror exact and only adds a Files-specific restore surface", () => {
@@ -33,5 +35,20 @@ describe("V1.3D-7 Files legacy restoration migration", () => {
     expect(migration).toContain("'update','files','resume_file_set',NULL");
     expect(migration).toMatch(/REVOKE ALL ON FUNCTION public\.restore_resume_files_from_event_v1[\s\S]*?FROM PUBLIC,anon,authenticated,service_role/);
     expect(migration).toMatch(/GRANT EXECUTE ON FUNCTION public\.restore_resume_files_from_event_v1[\s\S]*?TO authenticated/);
+  });
+
+  it("mirrors the forward migration and denies Restore before source or idempotency access", () => {
+    expect(capabilityMirror).toBe(capabilityMigration);
+    expect(capabilityMigration).toContain("capability.enabled IS TRUE");
+    expect(capabilityMigration).toContain("Restore must remain disabled for the known Owner and Test targets");
+    expect(capabilityMigration).toContain("20000000-0000-4000-8000-000000000001");
+    expect(capabilityMigration).toContain("f6000000-0000-4000-8000-000000000001");
+    expect(capabilityMigration).toContain("admin.role='qa'");
+    expect(capabilityMigration).toMatch(/load_admin_files_restore_source_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?restore_enabled IS DISTINCT FROM true[\s\S]*?activity_log_idempotency/);
+    expect(capabilityMigration).toMatch(/restore_resume_files_from_event_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?restore_enabled IS DISTINCT FROM true[\s\S]*?FOR UPDATE[\s\S]*?activity_log_idempotency/);
+    expect(capabilityMigration).toMatch(/load_admin_files_restore_capability_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?COALESCE\([\s\S]*?capability.enabled[\s\S]*?false/);
+    expect(capabilityMigration).toMatch(/REVOKE ALL ON FUNCTION public\.load_admin_files_restore_capability_v1\(uuid\) FROM PUBLIC,anon,authenticated,service_role/);
+    expect(capabilityMigration).toMatch(/GRANT EXECUTE ON FUNCTION public\.load_admin_files_restore_capability_v1\(uuid\) TO authenticated/);
+    expect(capabilityMigration).not.toMatch(/(?:INSERT|UPDATE|DELETE)\s+INTO\s+cms_private\.resume_capabilities/i);
   });
 });
