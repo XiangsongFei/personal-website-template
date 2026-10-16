@@ -96,26 +96,6 @@ function readOwnedDatabaseLogs(context) {
   }
 }
 
-function enableOwnedDatabaseErrorVerbosity(context) {
-  try {
-    const inspect = spawnSync("docker", ["inspect", context.dbContainer], { encoding: "utf8" });
-    if (inspect.status !== 0 || inspect.error) return false;
-    const [container] = JSON.parse(inspect.stdout);
-    if (!container || container.Name?.replace(/^\//, "") !== context.dbContainer
-      || labelProject(container, "containers") !== context.projectId) return false;
-    const setVerbosity = spawnSync("docker", ["exec", "--user", "postgres", context.dbContainer,
-      "psql", "-X", "-d", "postgres", "-v", "ON_ERROR_STOP=1",
-      "-c", "ALTER SYSTEM SET log_error_verbosity = 'verbose'"], { encoding: "utf8" });
-    if (setVerbosity.status !== 0 || setVerbosity.error) return false;
-    const reload = spawnSync("docker", ["exec", "--user", "postgres", context.dbContainer,
-      "psql", "-X", "-d", "postgres", "-v", "ON_ERROR_STOP=1",
-      "-c", "SELECT pg_catalog.pg_reload_conf()"], { encoding: "utf8" });
-    return reload.status === 0 && !reload.error;
-  } catch {
-    return false;
-  }
-}
-
 function redactSecrets(output) {
   return output
     .replace(/("(?:PUBLISHABLE_KEY|SECRET_KEY|JWT_SECRET|ANON_KEY|SERVICE_ROLE_KEY|S3_PROTOCOL_ACCESS_KEY_ID|S3_PROTOCOL_ACCESS_KEY_SECRET)"\s*:\s*")[^"]+("?)/g, "$1[redacted]$2")
@@ -364,8 +344,6 @@ function stageProject(stageRoot, projectId, ports) {
   replaceSetting("analytics", "vector_port", ports.vector);
   config = config.replaceAll("http://127.0.0.1:55421", `http://127.0.0.1:${ports.api}`);
   writeFileSync(configPath, config);
-  const psqlrcPath = join(stageRoot, "psqlrc-diagnostics");
-  writeFileSync(psqlrcPath, "\\set VERBOSITY verbose\n");
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
   const expected = sourceMigrations.filter((name) => !excludedMigrations.has(name));
@@ -381,14 +359,14 @@ function stageProject(stageRoot, projectId, ports) {
   for (const migration of excludedMigrations) {
     if (existsSync(join(migrationDir, migration))) throw new Error(`Excluded migration unexpectedly staged: ${migration}`);
   }
-  return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports, psqlrcPath };
+  return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports };
 }
 
 function runSupabase(context, args, options = {}) {
   const isSqlTest = args[0] === "test" && args[1] === "db";
   const env = { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env };
-  if (isSqlTest && context.psqlrcPath) env.PSQLRC = context.psqlrcPath;
-  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
+  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId,
+    ...(isSqlTest ? ["--debug"] : []), ...args], {
     env,
     stdio: "pipe",
     discardOutput: args[0] !== "status",
@@ -632,9 +610,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     withStagedLocalSupabase(async (context, supabase) => {
       console.log(`Running SQL tests in disposable project ${context.projectId} on local port ${context.ports.db}.`);
       supabase(["db", "reset", "--local"]);
-      if (!enableOwnedDatabaseErrorVerbosity(context)) {
-        console.log("Could not enable verbose diagnostics for the owned disposable database; SQL tests will still run.");
-      }
       supabase(["test", "db", "--local"]);
     }).catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
