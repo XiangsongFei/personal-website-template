@@ -344,6 +344,8 @@ function stageProject(stageRoot, projectId, ports) {
   replaceSetting("analytics", "vector_port", ports.vector);
   config = config.replaceAll("http://127.0.0.1:55421", `http://127.0.0.1:${ports.api}`);
   writeFileSync(configPath, config);
+  const psqlrcPath = join(stageRoot, "psqlrc-diagnostics");
+  writeFileSync(psqlrcPath, "\\set VERBOSITY verbose\n");
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
   const expected = sourceMigrations.filter((name) => !excludedMigrations.has(name));
@@ -359,13 +361,15 @@ function stageProject(stageRoot, projectId, ports) {
   for (const migration of excludedMigrations) {
     if (existsSync(join(migrationDir, migration))) throw new Error(`Excluded migration unexpectedly staged: ${migration}`);
   }
-  return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports };
+  return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports, psqlrcPath };
 }
 
 function runSupabase(context, args, options = {}) {
   const isSqlTest = args[0] === "test" && args[1] === "db";
+  const env = { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env };
+  if (isSqlTest && context.psqlrcPath) env.PSQLRC = context.psqlrcPath;
   const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
-    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
+    env,
     stdio: "pipe",
     discardOutput: args[0] !== "status",
     failureMessage: args[0] === "start" ? safeStartFailure
@@ -404,6 +408,13 @@ function runSecuritySelfTests() {
   assert.match(syntaxFailure, /syntax error near ROLLBACK/);
   assert.match(syntaxFailure, /SQLSTATE: 42601/);
   assert.doesNotMatch(syntaxFailure, /private|syntax error at or near/);
+
+  const verboseClientFailure = summarizeSqlTestFailure({ status: 1,
+    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR:  42601: syntax error at or near \"ROLLBACK\"\nSTATEMENT: ROLLBACK; secret-value" });
+  assert.match(verboseClientFailure, /version_history_v1_read\.test\.sql:296/);
+  assert.match(verboseClientFailure, /syntax error near ROLLBACK/);
+  assert.match(verboseClientFailure, /SQLSTATE: 42601/);
+  assert.doesNotMatch(verboseClientFailure, /private|STATEMENT|secret-value/);
 
   const databaseLogFailure = summarizeSqlTestFailure({ status: 1, stdout: "" },
     "2026-10-16 14:00:00 UTC [42] ERROR:  42601: syntax error at or near \"ROLLBACK\"\nSTATEMENT: ROLLBACK; secret-value");
