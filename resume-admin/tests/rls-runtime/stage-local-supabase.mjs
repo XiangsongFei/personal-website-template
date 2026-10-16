@@ -81,16 +81,21 @@ function summarizeSqlTestFailure(result, databaseOutput = "") {
   return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
 }
 
-function readOwnedDatabaseLogs(context) {
+function isOwnedDiagnosticContainer(container, context) {
+  const id = resourceId(container, "containers");
+  const name = container?.Name?.replace(/^\//, "");
+  return typeof id === "string" && !context.preexistingContainerIds.has(id)
+    && labelProject(container, "containers") === context.projectId
+    && typeof name === "string" && name.includes(context.projectId);
+}
+
+function readOwnedSqlContainerLogs(context) {
   try {
-    const inspect = spawnSync("docker", ["inspect", context.dbContainer], { encoding: "utf8" });
-    if (inspect.status !== 0 || inspect.error) return "";
-    const [container] = JSON.parse(inspect.stdout);
-    if (!container || container.Name?.replace(/^\//, "") !== context.dbContainer
-      || labelProject(container, "containers") !== context.projectId) return "";
-    const logs = spawnSync("docker", ["logs", context.dbContainer], { encoding: "utf8" });
-    if (logs.error) return "";
-    return `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+    const ownedContainers = listKind("containers").filter((container) => isOwnedDiagnosticContainer(container, context));
+    return ownedContainers.map((container) => {
+      const logs = spawnSync("docker", ["logs", resourceId(container, "containers")], { encoding: "utf8" });
+      return logs.error ? "" : `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+    }).join("\n");
   } catch {
     return "";
   }
@@ -371,7 +376,7 @@ function runSupabase(context, args, options = {}) {
     stdio: "pipe",
     discardOutput: args[0] !== "status",
     failureMessage: args[0] === "start" ? safeStartFailure
-      : isSqlTest ? (result) => summarizeSqlTestFailure(result, readOwnedDatabaseLogs(context))
+      : isSqlTest ? (result) => summarizeSqlTestFailure(result, readOwnedSqlContainerLogs(context))
         : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
@@ -419,6 +424,19 @@ function runSecuritySelfTests() {
   assert.match(databaseLogFailure, /syntax error near ROLLBACK/);
   assert.match(databaseLogFailure, /SQLSTATE: 42601/);
   assert.doesNotMatch(databaseLogFailure, /STATEMENT|secret-value/);
+
+  const diagnosticContext = {
+    projectId: "pr1-123-abcd",
+    preexistingContainerIds: new Set(["preexisting"]),
+  };
+  const diagnosticContainer = (id, name, project) => ({
+    Id: id,
+    Name: `/${name}`,
+    Config: { Labels: { "com.docker.compose.project": project } },
+  });
+  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("created", "supabase_db_pr1-123-abcd", "pr1-123-abcd"), diagnosticContext), true);
+  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("preexisting", "supabase_db_pr1-123-abcd", "pr1-123-abcd"), diagnosticContext), false);
+  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("foreign", "supabase_db_other", "other"), diagnosticContext), false);
 
   const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
   assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
@@ -565,7 +583,8 @@ export async function withStagedLocalSupabase(callback) {
     const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
     const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
     if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    const resolved = { ...context, ...status, projectId, dbContainer, authContainer };
+    const resolved = { ...context, ...status, projectId, dbContainer, authContainer,
+      preexistingContainerIds: before.containers };
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;
