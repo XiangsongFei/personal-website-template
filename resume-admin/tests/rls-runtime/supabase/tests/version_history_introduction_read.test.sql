@@ -1,6 +1,6 @@
 -- TEST ONLY: isolated Introduction history reader contract.
 BEGIN;
-SELECT extensions.plan(14);
+SELECT extensions.plan(13);
 
 DO $seeded_targets$
 BEGIN
@@ -49,6 +49,8 @@ INSERT INTO cms_private.activity_log_events (
 -- Defensive unknown and malformed history is tested only inside this rollback-only transaction.
 ALTER TABLE cms_private.activity_log_events DROP CONSTRAINT activity_log_events_payload_version_check;
 ALTER TABLE cms_private.activity_log_events DROP CONSTRAINT activity_log_payload_allowlist_check;
+-- The unknown-version fixture also needs to bypass the section/version pairing check.
+ALTER TABLE cms_private.activity_log_events DROP CONSTRAINT activity_log_entity_section_check;
 INSERT INTO cms_private.activity_log_events (
   id, occurred_at, actor_user_id, actor_email_snapshot, actor_role_snapshot,
   resume_id, site_key_snapshot, operation, section_key, entity_type, entity_id,

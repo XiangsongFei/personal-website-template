@@ -40,7 +40,7 @@ function summarizeSqlFailure(output) {
     .replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted-db-url]")
     .replace(/\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+\b/g, "[redacted-key]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted-jwt]");
-  return safe.split(/\r?\n/).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim())
+  return safe.split(/\r?\n/).map((line) => line.trim())
     .filter((line) => /\.test\.sql\b|^not ok\b|^# (?:Failed|Looks like)|\b(?:ERROR|FATAL):\s|^Test Summary Report|^Result: FAIL/i.test(line))
     .slice(0, 60).map((line) => line.slice(0, 300)).join("\n");
 }
