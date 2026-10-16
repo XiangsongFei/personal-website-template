@@ -28,7 +28,7 @@ function jwt(sub = actorId): string {
 
 function env(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
   return {
-    ASSETS: { fetch: vi.fn(async () => new Response("asset fallback", { status: 200 })) },
+    ASSETS: { fetch: vi.fn(async () => new Response("asset fallback", { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })) },
     SUPABASE_URL: "https://synthetic-project.supabase.co",
     SUPABASE_PUBLISHABLE_KEY: "sb_publishable_synthetic",
     ACTIVITY_LOG_HMAC_KEY_ID: "local-test-v1",
@@ -67,13 +67,40 @@ describe("Activity Log V1.1 Worker routes and static assets", () => {
     ["/", "GET"],
     ["/login", "GET"],
     ["/admin/profile/deep", "GET"],
-    ["/assets/index-example.js", "GET"],
   ])("uses static asset fallback for %s", async (path, method) => {
     const bindings = env();
     const request = new Request(`https://admin.example.test${path}`, { method });
     const response = await worker.fetch(request, bindings);
     expect(await response.text()).toBe("asset fallback");
     expect(bindings.ASSETS.fetch).toHaveBeenCalledWith(request);
+  });
+
+  it.each([
+    ["/assets/index-BwbHGD-E.js", "text/javascript; charset=utf-8"],
+    ["/assets/index-kbMw2qpH.js", "text/javascript; charset=utf-8"],
+    ["/assets/index-aDbUTyzC.css", "text/css; charset=utf-8"],
+  ])("preserves a present static asset and its MIME type at %s", async (path, contentType) => {
+    const asset = new Response("verified asset bytes", { headers: { "Content-Type": contentType } });
+    const bindings = env({ ASSETS: { fetch: vi.fn(async () => asset) } });
+    const request = new Request(`https://admin.example.test${path}`);
+    const response = await worker.fetch(request, bindings);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(contentType);
+    expect(await response.text()).toBe("verified asset bytes");
+  });
+
+  it.each(["/assets/missing.js", "/assets/missing.css"])("returns 404 instead of SPA HTML for missing asset %s", async (path) => {
+    const bindings = env();
+    const response = await worker.fetch(new Request(`https://admin.example.test${path}`), bindings);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).not.toContain("asset fallback");
+  });
+
+  it("runs the Worker before static asset fallback for /assets paths", () => {
+    const wranglerConfig = readFileSync(resolve(process.cwd(), "wrangler.jsonc"), "utf8");
+    expect(wranglerConfig).toMatch(/"run_worker_first"\s*:\s*\[[^\]]*"\/assets\/\*"/);
   });
 
   it("routes the exact POST endpoint to the V1.1 handler", async () => {
