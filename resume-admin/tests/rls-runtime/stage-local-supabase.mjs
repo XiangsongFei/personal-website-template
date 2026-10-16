@@ -53,9 +53,22 @@ function summarizeSqlTestFailure(result) {
   const assertionNumbers = [...new Set([...output.matchAll(/^\s*not ok\s+(\d+)(?:\s|$)/gim)].map((match) => match[1]))];
   const sqlLocations = [...new Map([...output.matchAll(/(?:^|[\\/])([A-Za-z0-9_.-]+\.sql):(\d+):\s*(?:ERROR|FATAL):/gim)]
     .map((match) => [`${match[1]}:${match[2]}`, `${match[1]}:${match[2]}`]))].map(([, location]) => location);
+  const sqlStates = [...new Set([...output.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi)].map((match) => match[1].toUpperCase()))];
+  const errorCategory = /\bsyntax error\b/i.test(output) ? "syntax error"
+    : /\bpermission denied\b/i.test(output) ? "permission denied"
+      : /\bdoes not exist\b/i.test(output) ? "missing database object"
+        : /\b(?:cannot|could not) roll ?back\b/i.test(output) ? "rollback error"
+          : /current transaction is aborted/i.test(output) ? "transaction aborted"
+            : /\b(?:violates .* constraint|duplicate key)\b/i.test(output) ? "constraint violation"
+              : /\b(?:invalid input syntax|cannot cast|out of range)\b/i.test(output) ? "invalid input or cast"
+                : /\b(?:canceling statement|statement timeout|query canceled)\b/i.test(output) ? "query canceled or timed out"
+                  : /\bERROR\s*:/i.test(output) ? "PostgreSQL error"
+                    : null;
   const details = [];
   if (assertionNumbers.length) details.push(`failed assertion number(s): ${assertionNumbers.join(", ")}`);
   if (sqlLocations.length) details.push(`SQL error location(s): ${sqlLocations.join(", ")}`);
+  if (errorCategory) details.push(`error category: ${errorCategory}`);
+  if (sqlStates.length) details.push(`SQLSTATE: ${sqlStates.join(", ")}`);
   return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
 }
 
@@ -351,6 +364,14 @@ function runSecuritySelfTests() {
   assert.match(sqlFailureSummary, /assertion number\(s\): 14/);
   assert.match(sqlFailureSummary, /version_history_v1_read\.test\.sql:188/);
   assert.doesNotMatch(sqlFailureSummary, /PR-controlled|sensitive SQL|connection data|private/);
+
+  const categorizedFailure = summarizeSqlTestFailure({
+    status: 1,
+    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR: cannot rollback while a transaction is active; SQLSTATE: 25001; secret-value",
+  });
+  assert.match(categorizedFailure, /rollback error/);
+  assert.match(categorizedFailure, /SQLSTATE: 25001/);
+  assert.doesNotMatch(categorizedFailure, /private|cannot rollback|secret-value/);
 
   const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
   assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
