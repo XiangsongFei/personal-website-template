@@ -102,6 +102,21 @@ describe("Version History repository typed read contract", () => {
       .rejects.toThrow("Invalid Version History response");
   });
 
+  it("validates Introduction text using Unicode code points like the writer", async () => {
+    const paragraphId = "ea000000-0000-4000-8000-000000000016";
+    const withText = (value: string) => row({ domain_key: "introduction", payload_version: 1,
+      entity_type: "introduction_paragraph", entity_id: "introduction", comparison_kind: "introduction_fields",
+      comparison: { changes: { text_en: {
+        before: [{ id: paragraphId, value: "old" }], after: [{ id: paragraphId, value },
+        ],
+      } } },
+    });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [withText("😀".repeat(6001))], error: null }))
+      .loadVersionHistoryPage!("qa-resume", 25)).resolves.toMatchObject({ entries: [{ domain: "introduction" }] });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [withText("😀".repeat(12001))], error: null }))
+      .loadVersionHistoryPage!("qa-resume", 25)).rejects.toThrow("Invalid Version History response");
+  });
+
   it("uses bounded keyset RPC arguments and returns the last-row cursor only when more exists", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [row({ has_more: true })], error: null });
     const cursor: VersionHistoryCursor = { occurredAt: "2026-10-10T10:00:00Z", eventId: id2 };

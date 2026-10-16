@@ -53,6 +53,8 @@ describe("Version History V1 read contract", () => {
     expect(introductionMigration).toContain("event.site_key_snapshot = authorized_site_key");
     expect(introductionMigration).toContain("s.section_key = 'introduction' AND s.entity_type = 'introduction_paragraph'");
     expect(introductionMigration).toContain("THEN 'introduction_fields'");
+    expect(introductionMigration).toContain("introduction_position_rows");
+    expect(introductionMigration).toContain("position_context.position_change");
     expect(introductionMigration).toContain("pg_catalog.jsonb_build_object('changes', a.changes)");
     expect(introductionMigration).toMatch(/REVOKE ALL ON FUNCTION public\.read_version_history_v1[\s\S]*?FROM PUBLIC, anon, authenticated, service_role/);
     expect(introductionMigration).toMatch(/GRANT EXECUTE ON FUNCTION public\.read_version_history_v1[\s\S]*?TO authenticated/);
@@ -61,8 +63,8 @@ describe("Version History V1 read contract", () => {
   });
 
   it("contains local runtime coverage for payload adaptation, privacy, ordering, and isolation", () => {
-    expect(runtimeTest).toContain("extensions.plan(31)");
-    for (const phrase of ["V1 keeps only recorded entity fields", "V2 returns exact aggregate before/after", "legacy Files V1 exposes only locale and object reference", "Profile photo history exposes recorded reference changes only", "Introduction V1 exposes validated bilingual paragraph fields", "malformed Introduction snapshot is retained only as a safe generic row", "known payload version with a mismatched entity contract is excluded", "unknown payload version returns generic entry", "malformed known payload returns generic entry", "keyset pages have no duplicates or skipped entries", "QA cannot read Official Version History", "disabled Activity Log capability blocks Version History"]) {
+    expect(runtimeTest).toContain("extensions.plan(32)");
+    for (const phrase of ["V1 keeps only recorded entity fields", "V2 returns exact aggregate before/after", "legacy Files V1 exposes only locale and object reference", "Profile photo history exposes recorded reference changes only", "Introduction V1 exposes validated bilingual changes and mixed structural order changes", "Introduction ordering comparison includes unchanged paragraph anchors", "malformed Introduction snapshot is retained only as a safe generic row", "known payload version with a mismatched entity contract is excluded", "unknown payload version returns generic entry", "malformed known payload returns generic entry", "keyset pages have no duplicates or skipped entries", "QA cannot read Official Version History", "disabled Activity Log capability blocks Version History"]) {
       expect(runtimeTest).toContain(phrase);
     }
   });

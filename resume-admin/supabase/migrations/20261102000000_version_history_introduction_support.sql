@@ -160,10 +160,44 @@ BEGIN
           ))
           OR s.payload_version NOT IN (1,2)
         )
+    ), introduction_position_rows AS (
+      -- For Introduction ordering changes, include unchanged paragraphs as anchors.
+      -- The Activity Log intentionally records only changed positions; without these
+      -- anchors the client cannot distinguish a mixed insertion/reorder accurately.
+      SELECT a.id AS event_id, positions.paragraph_id, positions.before_position, positions.after_position
+      FROM (SELECT * FROM adapted WHERE comparison_kind = 'introduction_fields' AND changes ? 'position') AS a
+      CROSS JOIN LATERAL (
+        SELECT COALESCE(snapshot_paragraph.id, changed_position.id) AS paragraph_id,
+          CASE WHEN changed_position.id IS NOT NULL THEN changed_position.before_position ELSE snapshot_paragraph.position END AS before_position,
+          CASE WHEN snapshot_paragraph.id IS NOT NULL THEN snapshot_paragraph.position ELSE changed_position.after_position END AS after_position
+        FROM (
+          SELECT paragraph.value->>'id' AS id, (paragraph.value->>'position')::integer AS position
+          FROM pg_catalog.jsonb_array_elements(a.entity_snapshot->'paragraphs') AS paragraph(value)
+        ) AS snapshot_paragraph
+        FULL JOIN (
+          SELECT before_item.value->>'id' AS id,
+            (before_item.value->>'value')::integer AS before_position,
+            (after_item.value->>'value')::integer AS after_position
+          FROM pg_catalog.jsonb_array_elements(a.changes->'position'->'before') AS before_item(value)
+          JOIN pg_catalog.jsonb_array_elements(a.changes->'position'->'after') AS after_item(value)
+            ON after_item.value->>'id' = before_item.value->>'id'
+        ) AS changed_position ON changed_position.id = snapshot_paragraph.id
+      ) AS positions
+    ), introduction_position_comparison AS (
+      SELECT event_id, pg_catalog.jsonb_build_object(
+        'before', pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', paragraph_id, 'value', before_position)
+          ORDER BY (before_position IS NULL), COALESCE(before_position, after_position), paragraph_id),
+        'after', pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', paragraph_id, 'value', after_position)
+          ORDER BY (before_position IS NULL), COALESCE(before_position, after_position), paragraph_id)
+      ) AS position_change
+      FROM introduction_position_rows
+      GROUP BY event_id
     ), limited AS (
       SELECT
         a.*,
         CASE
+          WHEN a.comparison_kind = 'introduction_fields' AND position_context.position_change IS NOT NULL
+            THEN pg_catalog.jsonb_build_object('changes', a.changes || pg_catalog.jsonb_build_object('position', position_context.position_change))
           WHEN a.comparison_kind = 'introduction_fields' THEN pg_catalog.jsonb_build_object('changes', a.changes)
           WHEN a.comparison_kind = 'entity_fields' AND a.domain_key IN ('files','profile') AND a.entity_type IN ('resume_file','profile_image')
             THEN pg_catalog.jsonb_build_object('changes', a.changes - ARRAY['file_name','content_type','size_bytes'])
@@ -175,6 +209,7 @@ BEGIN
           ELSE NULL::jsonb
         END AS comparison
       FROM adapted AS a
+      LEFT JOIN introduction_position_comparison AS position_context ON position_context.event_id = a.id
       ORDER BY a.occurred_at DESC, a.id DESC
       LIMIT page_limit + 1
     ), ranked AS (

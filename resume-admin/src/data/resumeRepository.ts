@@ -832,7 +832,7 @@ function mapIntroductionChanges(value: unknown): Extract<VersionHistoryCompariso
           || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id) || ids.has(item.id)
           || (key === "position" ? item.value !== null && (typeof item.value !== "number" || !Number.isSafeInteger(item.value) || item.value < 0)
             : typeof item.value !== "string" && item.value !== null)
-          || (typeof item.value === "string" && item.value.length > 12000)) {
+          || (typeof item.value === "string" && Array.from(item.value).length > 12000)) {
           throw new Error("Invalid Introduction history changes");
         }
         ids.add(item.id);

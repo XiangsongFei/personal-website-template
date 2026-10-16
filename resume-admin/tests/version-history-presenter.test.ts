@@ -286,6 +286,17 @@ describe("presentVersionHistoryChange", () => {
         after: [{ id: idA, value: 1 }, { id: idB, value: 2 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: 0 }] },
     }));
     expect(insertionShift.items.map(item => item.state)).toEqual(["added"]);
+    const insertedAndReordered = presentVersionHistoryChange(base({
+      position: { before: [
+        { id: idA, value: 0 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: null },
+        { id: idB, value: 1 }, { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", value: 2 },
+      ], after: [
+        { id: idA, value: 2 }, { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", value: 0 },
+        { id: idB, value: 1 }, { id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", value: 3 },
+      ] },
+    }));
+    expect(insertedAndReordered.items.filter(item => item.state === "added")).toHaveLength(1);
+    expect(insertedAndReordered.items.filter(item => item.state === "reordered")).toHaveLength(2);
     expect(JSON.stringify(structural)).not.toContain(idA);
     expect(JSON.stringify(structural)).not.toContain(idB);
     expect(JSON.stringify(structural)).not.toContain("position");
