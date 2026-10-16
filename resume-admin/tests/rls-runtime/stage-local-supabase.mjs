@@ -51,18 +51,21 @@ function summarizeSqlTestFailure(result) {
   }
   const exitCode = Number.isInteger(result.status) ? result.status : "unknown";
   const assertionNumbers = [...new Set([...output.matchAll(/^\s*not ok\s+(\d+)(?:\s|$)/gim)].map((match) => match[1]))];
+  const errorLines = output.split(/\r?\n/).filter((line) => /\b(?:ERROR|FATAL):/i.test(line));
+  const errors = errorLines.join("\n").toLowerCase();
   const sqlLocations = [...new Map([...output.matchAll(/(?:^|[\\/])([A-Za-z0-9_.-]+\.sql):(\d+):\s*(?:ERROR|FATAL):/gim)]
     .map((match) => [`${match[1]}:${match[2]}`, `${match[1]}:${match[2]}`]))].map(([, location]) => location);
   const sqlStates = [...new Set([...output.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi)].map((match) => match[1].toUpperCase()))];
-  const errorCategory = /\bsyntax error\b/i.test(output) ? "syntax error"
-    : /\bpermission denied\b/i.test(output) ? "permission denied"
-      : /\bdoes not exist\b/i.test(output) ? "missing database object"
-        : /\b(?:cannot|could not) roll ?back\b/i.test(output) ? "rollback error"
-          : /current transaction is aborted/i.test(output) ? "transaction aborted"
-            : /\b(?:violates .* constraint|duplicate key)\b/i.test(output) ? "constraint violation"
-              : /\b(?:invalid input syntax|cannot cast|out of range)\b/i.test(output) ? "invalid input or cast"
-                : /\b(?:canceling statement|statement timeout|query canceled)\b/i.test(output) ? "query canceled or timed out"
-                  : /\bERROR\s*:/i.test(output) ? "PostgreSQL error"
+  const syntaxToken = errors.match(/syntax error at or near ["']([a-z_]+)["']/i)?.[1]?.toUpperCase();
+  const errorCategory = /\bsyntax error\b/i.test(errors) ? `syntax error${syntaxToken ? ` near ${syntaxToken}` : ""}`
+    : /\bpermission denied\b/i.test(errors) ? "permission denied"
+      : /\bdoes not exist\b/i.test(errors) ? "missing database object"
+        : /\b(?:cannot|could not) roll ?back\b/i.test(errors) ? "rollback error"
+          : /current transaction is aborted/i.test(errors) ? "transaction aborted"
+            : /\b(?:violates .* constraint|duplicate key)\b/i.test(errors) ? "constraint violation"
+              : /\b(?:invalid input syntax|cannot cast|out of range)\b/i.test(errors) ? "invalid input or cast"
+                : /\b(?:canceling statement|statement timeout|query canceled)\b/i.test(errors) ? "query canceled or timed out"
+                  : errorLines.length ? "PostgreSQL error"
                     : null;
   const details = [];
   if (assertionNumbers.length) details.push(`failed assertion number(s): ${assertionNumbers.join(", ")}`);
@@ -372,6 +375,14 @@ function runSecuritySelfTests() {
   assert.match(categorizedFailure, /rollback error/);
   assert.match(categorizedFailure, /SQLSTATE: 25001/);
   assert.doesNotMatch(categorizedFailure, /private|cannot rollback|secret-value/);
+
+  const syntaxFailure = summarizeSqlTestFailure({
+    status: 1,
+    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR: syntax error at or near \"ROLLBACK\"; SQLSTATE: 42601",
+  });
+  assert.match(syntaxFailure, /syntax error near ROLLBACK/);
+  assert.match(syntaxFailure, /SQLSTATE: 42601/);
+  assert.doesNotMatch(syntaxFailure, /private|syntax error at or near/);
 
   const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
   assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
