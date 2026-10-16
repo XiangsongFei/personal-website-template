@@ -234,6 +234,7 @@ function labelFor(domain: VersionHistoryDomain, before: Row | null, after: Row |
 
 function neutralItemType(entry: VersionHistoryEntry): string {
   const known: Record<string, string> = {
+    introduction_paragraph: "introduction_paragraph",
     award_entry: "award", award_list: "awards", experience_entry: "experience_entry", experience_list: "experience",
     skill_group: "skill_group", skill_group_list: "skills", education_entry: "education_entry", education_list: "education",
     project_entry: "project", project_list: "projects", contact_focus_item: "contact_focus", contact_status_item: "contact_status",
@@ -241,6 +242,27 @@ function neutralItemType(entry: VersionHistoryEntry): string {
     website_links_settings: "website_links",
   };
   return known[entry.entityType] ?? "recorded_item";
+}
+
+function presentParagraphChanges(entry: VersionHistoryEntry): HistoryChangePresentation {
+  if (entry.domain !== "introduction" || entry.entityType !== "introduction_paragraph" || entry.operation !== "update"
+    || entry.comparison.kind !== "paragraph_changes") return generic(entry);
+  const items: HistoryItemChange[] = [];
+  for (const paragraph of entry.comparison.paragraphs) {
+    const fields: HistoryFieldChange[] = [];
+    for (const key of ["text_en", "text_zh", "position"] as const) {
+      const change = paragraph.fields[key];
+      if (!change || sameValue(change.before, change.after)) continue;
+      fields.push(field(key === "position" ? "position" : "text", key === "text_en" ? "en" : key === "text_zh" ? "zh" : "shared",
+        change.before, change.after));
+    }
+    if (!fields.length) continue;
+    const state: HistoryItemState = paragraph.state === "updated" && fields.every(change => change.key === "position")
+      ? "reordered" : paragraph.state;
+    items.push({ itemType: "introduction_paragraph", state, label: null, fields, children: [] });
+  }
+  if (!items.length) return generic(entry);
+  return { domain: entry.domain, operation: entry.operation, state: "changes", items };
 }
 
 function itemState(operation: VersionHistoryEntry["operation"]): HistoryItemState {
@@ -251,6 +273,7 @@ function itemState(operation: VersionHistoryEntry["operation"]): HistoryItemStat
 }
 
 function presentV1(entry: VersionHistoryEntry): HistoryChangePresentation {
+  if (entry.comparison.kind === "paragraph_changes") return presentParagraphChanges(entry);
   if (entry.comparison.kind !== "entity_fields" || !Object.keys(entry.comparison.changes).length || entry.domain === "files") return generic(entry);
   const changes = entry.comparison.changes;
   if (Object.values(changes).some(change => !isDict(change) || !exactKeys(change, ["before", "after"])
@@ -261,6 +284,7 @@ function presentV1(entry: VersionHistoryEntry): HistoryChangePresentation {
       fields: [{ key: "photo", locale: "shared", kind: "updated", before: { redacted: true }, after: { redacted: true } }], children: [] }] };
   }
   const allowedByEntity: Record<string, readonly string[]> = {
+    introduction_paragraph: ["text", "position"],
     award_entry: ["name", "year", "position"],
     experience_entry: ["organization", "role", "period", "description", "location", "position"],
     skill_group: ["title", "items", "position"],
@@ -272,6 +296,7 @@ function presentV1(entry: VersionHistoryEntry): HistoryChangePresentation {
     profile_settings: ["graduation_value", "avatar_initials", "footer_name", "copyright"],
   };
   const domainByEntity: Record<string, VersionHistoryDomain> = {
+    introduction_paragraph: "introduction",
     award_entry: "awards", experience_entry: "experience", skill_group: "skills", education_entry: "education",
     project_entry: "projects", contact_focus_item: "contact", contact_status_item: "contact",
     public_link: "website_links", profile_settings: "profile",
@@ -284,17 +309,23 @@ function presentV1(entry: VersionHistoryEntry): HistoryChangePresentation {
   for (const [rawKey, change] of Object.entries(changes).sort(([a], [b]) => a.localeCompare(b))) {
     const key = rawKey;
     const locale: HistoryLocale = "shared";
-    if (key === "position") { reordered = !sameValue(change.before, change.after); continue; }
+    if (key === "position") {
+      reordered = !sameValue(change.before, change.after);
+      if (entry.domain === "introduction" && reordered) fields.push(field("position", "shared", change.before, change.after));
+      continue;
+    }
+    if (entry.domain === "introduction" && sameValue(change.before, change.after)) continue;
     fields.push({ key, locale, kind: itemState(entry.operation), before: { recorded: true, value: change.before }, after: { recorded: true, value: change.after } });
   }
+  if (entry.domain === "introduction" && !fields.length) return generic(entry);
   const rowType = neutralItemType(entry);
   const labelCandidate = fields.find(change => ["name", "title", "organization", "role", "program", "institution"].includes(change.key));
   const candidate = labelCandidate && "recorded" in labelCandidate.after && labelCandidate.after.recorded && typeof labelCandidate.after.value === "string" ? labelCandidate.after.value
     : labelCandidate && "recorded" in labelCandidate.before && labelCandidate.before.recorded && typeof labelCandidate.before.value === "string" ? labelCandidate.before.value : null;
-  const item: HistoryItemChange = { itemType: rowType, state: reordered && fields.length === 0 ? "reordered" : itemState(entry.operation),
+  const item: HistoryItemChange = { itemType: rowType, state: reordered && fields.every(change => change.key === "position") ? "reordered" : itemState(entry.operation),
     label: candidate?.trim() || null, fields, children: [] };
   const items = [item];
-  if (reordered && fields.length > 0) items.push({ itemType: rowType, state: "reordered", label: item.label, fields: [], children: [] });
+  if (reordered && fields.length > 0 && entry.domain !== "introduction") items.push({ itemType: rowType, state: "reordered", label: item.label, fields: [], children: [] });
   return { domain: entry.domain, operation: entry.operation, state: "changes", items };
 }
 

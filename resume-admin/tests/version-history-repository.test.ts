@@ -27,6 +27,70 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Version History repository typed read contract", () => {
+  it("maps ID-free Introduction comparisons and legacy scalar changes", async () => {
+    const paragraph = { state: "updated", fields: { text_en: { before: "Old", after: "New" }, position: { before: 0, after: 1.5 } } };
+    const rpc = vi.fn().mockResolvedValue({ data: [
+      row({ domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+        comparison_kind: "paragraph_changes", comparison: { paragraphs: [paragraph] } }),
+      row({ event_id: id2, domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+        comparison: { changes: { text: { before: "Old", after: "New" }, position: { before: 0, after: 1 } } } }),
+    ], error: null });
+    const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
+    expect(result.entries.map(entry => entry.comparison)).toEqual([
+      { kind: "paragraph_changes", paragraphs: [paragraph] },
+      { kind: "entity_fields", changes: { text: { before: "Old", after: "New" }, position: { before: 0, after: 1 } } },
+    ]);
+  });
+
+  it("accepts empty and differing-ID server projections without dropping rows", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [
+      row({ domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+        comparison_kind: "paragraph_changes", comparison: { paragraphs: [] } }),
+      row({ event_id: id2, domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+        comparison_kind: "paragraph_changes", comparison: { paragraphs: [
+          { state: "removed", fields: { text_en: { before: "Old", after: null } } },
+          { state: "added", fields: { text_en: { before: null, after: "New" } } },
+        ] } }),
+    ], error: null });
+    const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[0]?.comparison).toEqual({ kind: "paragraph_changes", paragraphs: [] });
+    expect(JSON.stringify(result.entries.map(entry => entry.comparison))).not.toContain(id1);
+  });
+
+  it("keeps a valid but unrenderable numeric comparison as a generic row", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [
+      row({ domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+        comparison_kind: "paragraph_changes", comparison: { paragraphs: [
+          { state: "updated", fields: { position: { before: 0, after: Number.POSITIVE_INFINITY } } },
+        ] } }),
+      row({ event_id: id2 }),
+    ], error: null });
+    const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
+    expect(result.entries.map(entry => entry.comparison.kind)).toEqual(["unavailable", "entity_fields"]);
+  });
+
+  it("rejects unsafe paragraph projections and raw IDs", async () => {
+    const intro = { domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
+      comparison_kind: "paragraph_changes" };
+    for (const comparison of [
+      { changes: { text_en: { before: [{ id: id1, value: "Old" }], after: [] } } },
+      { paragraphs: [{ id: id1, state: "updated", fields: { text_en: { before: "Old", after: "New" } } }] },
+      { paragraphs: [{ state: "updated", fields: { secret: { before: "Old", after: "New" } } }] },
+      { paragraphs: [{ state: "updated", fields: { position: { before: "zero", after: 1 } } }] },
+    ]) {
+      const rpc = vi.fn().mockResolvedValue({ data: [row({ ...intro, comparison })], error: null });
+      await expect(repository(rpc).loadVersionHistoryPage!("qa-resume", 25)).rejects.toThrow("Invalid Version History response");
+    }
+  });
+
+  it("keeps unsupported Introduction versions as generic entries", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [row({ domain_key: "introduction", entity_type: "introduction_paragraph",
+      payload_version: 99, comparison_kind: "unavailable", comparison: null })], error: null });
+    await expect(repository(rpc).loadVersionHistoryPage!("qa-resume", 25)).resolves.toMatchObject({
+      entries: [{ domain: "introduction", comparison: { kind: "unavailable" } }],
+    });
+  });
   it("maps a V1 field entry and a V2 aggregate without exposing audit metadata", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [
       row(),

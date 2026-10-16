@@ -287,13 +287,14 @@ export type ActivityLogV13CRejectedEvent = ActivityLogV13CCommon & {
 };
 export type ActivityLogV13CEvent = ActivityLogV13CSuccessEvent | ActivityLogV13CRejectedEvent;
 
-export type VersionHistoryDomain = "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+export type VersionHistoryDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
 export type VersionHistoryOperation = ActivityLogEvent["operation"];
 export type VersionHistoryCursor = { occurredAt: string; eventId: string };
 export type VersionHistoryScalar = string | number | boolean | null;
 export type VersionHistoryJson = VersionHistoryScalar | VersionHistoryJson[] | { [key: string]: VersionHistoryJson };
 export type VersionHistoryComparison =
   | { kind: "entity_fields"; changes: Record<string, { before: VersionHistoryScalar; after: VersionHistoryScalar }> }
+  | { kind: "paragraph_changes"; paragraphs: { state: "added" | "removed" | "updated"; fields: Partial<Record<"text_en" | "text_zh" | "position", { before: string | number | null; after: string | number | null }>> }[] }
   | { kind: "aggregate"; before: VersionHistoryJson; after: VersionHistoryJson }
   | { kind: "unavailable" };
 export type VersionHistoryEntry = {
@@ -710,7 +711,7 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
 
 const VERSION_HISTORY_ROW_KEYS = ["event_id", "occurred_at", "actor_account_label", "actor_role", "domain_key",
   "operation", "payload_version", "entity_type", "entity_id", "comparison_kind", "comparison", "has_more"] as const;
-const VERSION_HISTORY_DOMAINS: readonly VersionHistoryDomain[] = ["awards", "experience", "skills", "education", "projects", "contact", "profile", "website_links", "files"];
+const VERSION_HISTORY_DOMAINS: readonly VersionHistoryDomain[] = ["introduction", "awards", "experience", "skills", "education", "projects", "contact", "profile", "website_links", "files"];
 const VERSION_HISTORY_OPERATIONS: readonly VersionHistoryOperation[] = ["create", "update", "delete", "reorder", "upload", "remove"];
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).sort().join(",") === [...keys].sort().join(",");
@@ -787,6 +788,7 @@ function restorePreviewErrorCode(value: unknown): RestorePreviewErrorCode | null
 
 function versionHistoryEntityMatches(domain: VersionHistoryDomain, entityType: string, version: number): boolean {
   const contracts = {
+    introduction: { v1: ["introduction_paragraph"], v2: [] as string[] },
     awards: { v1: ["award_entry"], v2: ["award_list"] },
     experience: { v1: ["experience_entry"], v2: ["experience_list"] },
     skills: { v1: ["skill_group"], v2: ["skill_group_list"] },
@@ -804,6 +806,39 @@ function versionHistoryEntityMatches(domain: VersionHistoryDomain, entityType: s
     return contracts[domain].v2.includes(entityType);
   }
   return [...contracts[domain].v1, ...contracts[domain].v2].includes(entityType);
+}
+
+function mapParagraphChanges(value: unknown): VersionHistoryComparison {
+  if (!isRecord(value) || !hasExactKeys(value, ["paragraphs"]) || !Array.isArray(value.paragraphs)
+    || value.paragraphs.length > 1200) throw new Error("Invalid Version History response");
+  const paragraphs: Extract<VersionHistoryComparison, { kind: "paragraph_changes" }>["paragraphs"] = [];
+  let unrenderablePosition = false;
+  for (const paragraph of value.paragraphs) {
+    if (!isRecord(paragraph) || !hasExactKeys(paragraph, ["state", "fields"])
+      || (paragraph.state !== "added" && paragraph.state !== "removed" && paragraph.state !== "updated")
+      || !isRecord(paragraph.fields)) {
+      throw new Error("Invalid Version History response");
+    }
+    const rawFields = Object.entries(paragraph.fields);
+    if (!rawFields.length || rawFields.length > 3) throw new Error("Invalid Version History response");
+    const fields: (typeof paragraphs)[number]["fields"] = {};
+    for (const [key, raw] of rawFields) {
+      if (key !== "text_en" && key !== "text_zh" && key !== "position"
+        || !isRecord(raw) || !hasExactKeys(raw, ["before", "after"])) throw new Error("Invalid Version History response");
+      for (const side of ["before", "after"] as const) {
+        const item = raw[side];
+        if (item !== null && (key === "position"
+          ? typeof item !== "number"
+          : typeof item !== "string" || [...item].length > 12000)) throw new Error("Invalid Version History response");
+        if (key === "position" && typeof item === "number" && (!Number.isFinite(item) || Math.abs(item) > Number.MAX_SAFE_INTEGER)) {
+          unrenderablePosition = true;
+        }
+      }
+      fields[key] = { before: raw.before as string | number | null, after: raw.after as string | number | null };
+    }
+    paragraphs.push({ state: paragraph.state as "added" | "removed" | "updated", fields });
+  }
+  return unrenderablePosition ? { kind: "unavailable" } : { kind: "paragraph_changes", paragraphs };
 }
 
 function mapVersionHistoryRows(value: unknown): { entries: VersionHistoryEntry[]; hasMore: boolean } {
@@ -831,6 +866,8 @@ function mapVersionHistoryRows(value: unknown): { entries: VersionHistoryEntry[]
     if (row.comparison_kind === "unavailable") {
       if (row.comparison !== null) throw new Error("Invalid Version History response");
       comparison = { kind: "unavailable" };
+    } else if (row.comparison_kind === "paragraph_changes" && domain === "introduction" && version === 1 && entityType === "introduction_paragraph") {
+      comparison = mapParagraphChanges(row.comparison);
     } else if (row.comparison_kind === "entity_fields" && version === 1 && isRecord(row.comparison)
       && hasExactKeys(row.comparison, ["changes"]) && isRecord(row.comparison.changes)) {
       const changes: Record<string, { before: VersionHistoryScalar; after: VersionHistoryScalar }> = {};
@@ -842,7 +879,8 @@ function mapVersionHistoryRows(value: unknown): { entries: VersionHistoryEntry[]
         changes[field] = { before: rawChange.before, after: rawChange.after };
       }
       if (Object.keys(changes).length === 0) throw new Error("Invalid Version History response");
-      if ((domain === "files" && entityType === "resume_file"
+      if ((domain === "introduction" && Object.keys(changes).some(field => field !== "text" && field !== "position"))
+        || (domain === "files" && entityType === "resume_file"
           && Object.keys(changes).some(field => field !== "locale" && field !== "object_key"))
         || (domain === "profile" && entityType === "profile_image"
           && Object.keys(changes).some(field => field !== "object_key"))) {

@@ -11,6 +11,7 @@ import { ProfileHistoryPhotoPair, UNAVAILABLE_PROFILE_PHOTO_SIDES, isVersionHist
 const PAGE_SIZE = 25;
 
 const domainLabels: Record<VersionHistoryDomain, string> = {
+  introduction: "Introduction",
   awards: "Awards", experience: "Experience", skills: "Skills", education: "Education",
   projects: "Projects", contact: "Contact", profile: "Profile", website_links: "Website & Links", files: "Files",
 };
@@ -20,6 +21,7 @@ const operationLabels: Record<VersionHistoryEntry["operation"], string> = {
 };
 
 const itemTypeLabels: Record<string, string> = {
+  introduction_paragraph: "Paragraph",
   award: "Award entry", awards: "Awards", experience_entry: "Experience entry", experience: "Experience",
   skill_group: "Skill group", skills: "Skills", education_entry: "Education entry", education: "Education",
   project: "Project", projects: "Projects", contact_focus: "Contact focus", contact_status: "Contact status",
@@ -44,6 +46,8 @@ function scalarText(value: string | number | boolean | null, t: (value: string) 
 }
 
 function fieldLabelFor(domain: VersionHistoryDomain, itemType: string, key: string): string {
+  if (domain === "introduction" && key === "text") return "Paragraph text";
+  if (domain === "introduction" && key === "position") return "Position";
   if (key === "value" && itemType === "project_method") return "Method";
   if (key === "name" && domain === "awards") return "Award name";
   if (key === "title" && itemType === "contact_focus") return "Focus";

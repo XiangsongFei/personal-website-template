@@ -101,11 +101,11 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)),
-  7,'successful supported events and safe generic rows are included; Introduction, rejected, and mismatched contracts are excluded'
+  8,'successful supported events and safe generic rows include legacy Introduction, excluding rejected and mismatched contracts'
 );
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100) WHERE domain_key='introduction'),
-  0,'Introduction is explicitly excluded'
+  1,'legacy Introduction is included'
 );
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100) WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a10' AND comparison_kind='entity_fields'
@@ -182,12 +182,14 @@ SELECT extensions.is(
     p3 AS MATERIALIZED (SELECT next_page.* FROM c2 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c2.occurred_at,c2.event_id) next_page),
     c3 AS (SELECT occurred_at,event_id FROM p3 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
     p4 AS MATERIALIZED (SELECT next_page.* FROM c3 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c3.occurred_at,c3.event_id) next_page),
-    all_pages AS (SELECT event_id,occurred_at FROM p1 UNION ALL SELECT event_id,occurred_at FROM p2 UNION ALL SELECT event_id,occurred_at FROM p3 UNION ALL SELECT event_id,occurred_at FROM p4)
+    c4 AS (SELECT occurred_at,event_id FROM p4 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
+    p5 AS MATERIALIZED (SELECT next_page.* FROM c4 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c4.occurred_at,c4.event_id) next_page),
+    all_pages AS (SELECT event_id,occurred_at FROM p1 UNION ALL SELECT event_id,occurred_at FROM p2 UNION ALL SELECT event_id,occurred_at FROM p3 UNION ALL SELECT event_id,occurred_at FROM p4 UNION ALL SELECT event_id,occurred_at FROM p5)
    SELECT pg_catalog.array_agg(event_id::text ORDER BY occurred_at DESC,event_id DESC)
      || CASE WHEN count(*)=count(DISTINCT event_id) THEN ARRAY[]::text[] ELSE ARRAY['duplicate']::text[] END
    FROM all_pages),
   ARRAY['aaaaaaaa-0000-4000-8000-000000000a11','aaaaaaaa-0000-4000-8000-000000000a10','aaaaaaaa-0000-4000-8000-000000000a12',
-    'aaaaaaaa-0000-4000-8000-000000000a19','aaaaaaaa-0000-4000-8000-000000000a13','aaaaaaaa-0000-4000-8000-000000000a14','aaaaaaaa-0000-4000-8000-000000000a15']::text[],
+    'aaaaaaaa-0000-4000-8000-000000000a19','aaaaaaaa-0000-4000-8000-000000000a13','aaaaaaaa-0000-4000-8000-000000000a14','aaaaaaaa-0000-4000-8000-000000000a15','aaaaaaaa-0000-4000-8000-000000000a16']::text[],
   'keyset pages have no duplicates or skipped entries'
 );
 SELECT extensions.throws_ok(
