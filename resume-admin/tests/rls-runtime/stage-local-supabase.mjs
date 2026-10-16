@@ -102,34 +102,6 @@ function readOwnedSqlContainerLogs(context) {
   }
 }
 
-function enableOwnedDatabaseErrorCodes(context, resources) {
-  const databaseId = context.dbContainerId;
-  if (typeof databaseId !== "string" || !resources.containers.includes(databaseId)) {
-    throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
-  }
-  const database = dockerJson(["inspect", databaseId])[0];
-  if (!database || !isOwnedDiagnosticContainer(database, context)
-    || !database.Name?.replace(/^\//, "").startsWith("supabase_db_")) {
-    throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
-  }
-  verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingResources);
-
-  const settings = [
-    "ALTER SYSTEM SET log_error_verbosity = 'verbose'",
-    "ALTER SYSTEM SET log_line_prefix = '%m [%p] %e '",
-  ];
-  for (const setting of settings) {
-    run("docker", ["exec", "--user", "postgres", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", setting], {
-      stdio: "pipe", discardOutput: true,
-      failureMessage: "Could not configure sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
-    });
-  }
-  run("docker", ["exec", "--user", "postgres", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", "SELECT pg_catalog.pg_reload_conf()"], {
-    stdio: "pipe", discardOutput: true,
-    failureMessage: "Could not reload sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
-  });
-}
-
 function redactSecrets(output) {
   return output
     .replace(/("(?:PUBLISHABLE_KEY|SECRET_KEY|JWT_SECRET|ANON_KEY|SERVICE_ROLE_KEY|S3_PROTOCOL_ACCESS_KEY_ID|S3_PROTOCOL_ACCESS_KEY_SECRET)"\s*:\s*")[^"]+("?)/g, "$1[redacted]$2")
@@ -614,20 +586,12 @@ export async function withStagedLocalSupabase(callback) {
     verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     console.log("Supabase published ports are loopback-only.");
     const status = verifyLocalStatus(context);
-    const containerRecords = resources.containers.map((id) => ({ id, container: dockerJson(["inspect", id])[0] }));
-    const databaseRecords = containerRecords.filter(({ container }) =>
-      container?.Name?.replace(/^\//, "").startsWith(`supabase_db_${projectId}`));
-    const authRecords = containerRecords.filter(({ container }) =>
-      container?.Name?.replace(/^\//, "").startsWith(`supabase_auth_${projectId}`));
-    if (databaseRecords.length !== 1 || authRecords.length !== 1) {
-      throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    }
-    const dbContainer = databaseRecords[0].container.Name.replace(/^\//, "");
-    const dbContainerId = databaseRecords[0].id;
-    const authContainer = authRecords[0].container.Name.replace(/^\//, "");
-    const resolved = { ...context, ...status, projectId, dbContainer, dbContainerId, authContainer,
-      preexistingResources: before, preexistingContainerIds: before.containers };
-    enableOwnedDatabaseErrorCodes(resolved, resources);
+    const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
+    const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
+    const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
+    if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
+    const resolved = { ...context, ...status, projectId, dbContainer, authContainer,
+      preexistingContainerIds: before.containers };
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;
