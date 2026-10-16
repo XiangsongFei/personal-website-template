@@ -117,6 +117,20 @@ describe("Version History repository typed read contract", () => {
       .loadVersionHistoryPage!("qa-resume", 25)).rejects.toThrow("Invalid Version History response");
   });
 
+  it("allows the bounded before/after identity union for Introduction ordering", async () => {
+    const positions = (count: number) => Array.from({ length: count }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`, value: index,
+    }));
+    const withPositions = (count: number) => row({ domain_key: "introduction", payload_version: 1,
+      entity_type: "introduction_paragraph", entity_id: "introduction", comparison_kind: "introduction_fields",
+      comparison: { changes: { position: { before: positions(count), after: positions(count) } } },
+    });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [withPositions(400)], error: null }))
+      .loadVersionHistoryPage!("qa-resume", 25)).resolves.toMatchObject({ entries: [{ domain: "introduction" }] });
+    await expect(repository(vi.fn().mockResolvedValue({ data: [withPositions(401)], error: null }))
+      .loadVersionHistoryPage!("qa-resume", 25)).rejects.toThrow("Invalid Version History response");
+  });
+
   it("uses bounded keyset RPC arguments and returns the last-row cursor only when more exists", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [row({ has_more: true })], error: null });
     const cursor: VersionHistoryCursor = { occurredAt: "2026-10-10T10:00:00Z", eventId: id2 };

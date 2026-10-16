@@ -821,8 +821,9 @@ function mapIntroductionChanges(value: unknown): Extract<VersionHistoryCompariso
   const changes: NonNullable<Extract<VersionHistoryComparison, { kind: "introduction_fields" }>["changes"]> = {};
   for (const key of keys as Array<typeof allowed[number]>) {
     const sides = value[key];
+    const maxItems = key === "position" ? 400 : 200;
     if (!isRecord(sides) || !hasExactKeys(sides, ["before", "after"]) || !Array.isArray(sides.before) || !Array.isArray(sides.after)
-      || sides.before.length > 200 || sides.after.length > 200 || (sides.before.length === 0 && sides.after.length === 0)) {
+      || sides.before.length > maxItems || sides.after.length > maxItems || (sides.before.length === 0 && sides.after.length === 0)) {
       throw new Error("Invalid Introduction history changes");
     }
     const parseSide = (items: unknown[]) => {
