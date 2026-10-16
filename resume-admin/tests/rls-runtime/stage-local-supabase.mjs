@@ -112,7 +112,7 @@ function enableOwnedDatabaseErrorCodes(context, resources) {
     || !database.Name?.replace(/^\//, "").startsWith("supabase_db_")) {
     throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
   }
-  verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingContainerIds);
+  verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingResources);
 
   const settings = [
     "ALTER SYSTEM SET log_error_verbosity = 'verbose'",
@@ -626,7 +626,7 @@ export async function withStagedLocalSupabase(callback) {
     const dbContainerId = databaseRecords[0].id;
     const authContainer = authRecords[0].container.Name.replace(/^\//, "");
     const resolved = { ...context, ...status, projectId, dbContainer, dbContainerId, authContainer,
-      preexistingContainerIds: before.containers };
+      preexistingResources: before, preexistingContainerIds: before.containers };
     enableOwnedDatabaseErrorCodes(resolved, resources);
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
