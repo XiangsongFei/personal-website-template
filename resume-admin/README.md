@@ -38,7 +38,7 @@ npm test
 npm run build
 ```
 
-`npm test` runs the Admin frontend, repository, and Worker tests. The pull request workflow also runs its Worker test subset, dependency audit, production build with synthetic CI-only Supabase settings, migration staging consistency checks, and the local Supabase SQL test lab. Follow the safety instructions in [the local RLS runtime lab](tests/rls-runtime/README.md) when running that lab locally; it uses a disposable local Supabase instance and synthetic data.
+`npm test` runs the Admin frontend, repository, and Worker tests. The pull request workflow runs the full `npm test` suite, dependency audit, production build with synthetic CI-only Supabase settings, migration staging consistency checks, and the local Supabase SQL test lab. Follow the safety instructions in [the local RLS runtime lab](tests/rls-runtime/README.md) when running that lab locally; it uses a disposable local Supabase instance and synthetic data.
 
 ## Production data and features
 
