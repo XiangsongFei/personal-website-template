@@ -21,15 +21,28 @@ const excludedMigrations = new Set([
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
 
 function run(command, args, options = {}) {
-  const { spawn = spawnSync, discardOutput = false, failureMessage, ...spawnOptions } = options;
+  const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, ...spawnOptions } = options;
   const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
   if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
   if (result.status !== 0) {
-    if (failureMessage) throw new Error(failureMessage);
+    if (failureMessage) {
+      const diagnostics = sqlDiagnostics ? summarizeSqlFailure(`${result.stdout ?? ""}\n${result.stderr ?? ""}`) : "";
+      throw new Error(`${failureMessage}${diagnostics ? `\n${diagnostics}` : ""}`);
+    }
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
   return discardOutput ? "" : result.stdout ?? "";
+}
+
+function summarizeSqlFailure(output) {
+  const safe = redactSecrets(output)
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted-db-url]")
+    .replace(/\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+\b/g, "[redacted-key]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted-jwt]");
+  return safe.split(/\r?\n/).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim())
+    .filter((line) => /\.test\.sql\b|^not ok\b|^# (?:Failed|Looks like)|\b(?:ERROR|FATAL):\s|^Test Summary Report|^Result: FAIL/i.test(line))
+    .slice(0, 60).map((line) => line.slice(0, 300)).join("\n");
 }
 
 function redactSecrets(output) {
@@ -304,6 +317,7 @@ function runSupabase(context, args, options = {}) {
     stdio: "pipe",
     discardOutput: args[0] !== "status",
     failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
+    sqlDiagnostics: args[0] === "test" && args[1] === "db",
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
   if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
@@ -387,6 +401,12 @@ function runSecuritySelfTests() {
     spawn: () => ({ status: 1, stdout: cliCredentials, stderr: cliCredentials }),
     stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure,
   }), (error) => error.message === safeStartFailure && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
+  assert.throws(() => run("supabase", ["test", "db"], {
+    spawn: () => ({ status: 1, stdout: `tests/version_history_introduction_read.test.sql .. not ok 3 - denied scope\nERROR: ${cliCredentials}`,
+      stderr: "" }),
+    stdio: "pipe", failureMessage: "Supabase test failed; CLI output suppressed.", sqlDiagnostics: true,
+  }), (error) => error.message.includes("version_history_introduction_read.test.sql")
+    && !error.message.includes("generated-db-password") && !error.message.includes("sb_secret_"));
 
   console.log("Staging security self-tests passed (Docker bindings and suppressed Supabase CLI credentials).");
 }
