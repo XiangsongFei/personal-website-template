@@ -102,5 +102,8 @@ jobs:
         with:
           version: 2.119.0
 
+      - name: Verify staging security guards
+        run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+
       - name: Stage isolated local Supabase and run SQL tests
         run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql

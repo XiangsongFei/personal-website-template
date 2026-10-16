@@ -3,8 +3,9 @@
 // verified with this run's unique Compose project label.
 /* global console, process, URL */
 import { randomBytes } from "node:crypto";
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, isIP } from "node:net";
 import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,14 +18,18 @@ const excludedMigrations = new Set([
   "20261031140000_retire_test_profile_signing_probe.sql",
 ]);
 
+const safeStartFailure = "Supabase start failed; CLI output suppressed.";
+
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: "utf8", ...options });
-  if (result.error) throw result.error;
+  const { spawn = spawnSync, discardOutput = false, failureMessage, ...spawnOptions } = options;
+  const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
+  if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
   if (result.status !== 0) {
+    if (failureMessage) throw new Error(failureMessage);
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
-  return result.stdout ?? "";
+  return discardOutput ? "" : result.stdout ?? "";
 }
 
 function redactSecrets(output) {
@@ -98,6 +103,82 @@ function verifyOwnedResource(kind, id, projectId, before) {
     throw new Error(`Ownership could not be verified for ${kind} resource ${id}; leaving it untouched`);
   }
   return resource;
+}
+
+function isLoopbackHostIp(hostIp) {
+  if (typeof hostIp !== "string" || isIP(hostIp) === 0) return false;
+  if (isIP(hostIp) === 4) return hostIp.split(".")[0] === "127";
+  return hostIp.toLowerCase() === "::1";
+}
+
+function validateLoopbackPublishedPorts(container) {
+  const name = container?.Name?.replace(/^\//, "") ?? "unknown container";
+  const requested = container?.HostConfig?.PortBindings;
+  const actual = container?.NetworkSettings?.Ports;
+  if (!container?.HostConfig || (requested !== null && (typeof requested !== "object" || Array.isArray(requested)))
+    || !actual || typeof actual !== "object" || Array.isArray(actual)) {
+    throw new Error(`Docker port metadata is missing or malformed for ${name}; refusing to use the local database`);
+  }
+
+  const requestedMap = requested ?? {};
+  const keys = new Set([...Object.keys(requestedMap), ...Object.keys(actual)]);
+  for (const portKey of keys) {
+    const requestedBindings = requestedMap[portKey];
+    const actualBindings = actual[portKey];
+    if (requestedBindings == null && actualBindings == null) continue;
+    if (!Array.isArray(requestedBindings) || requestedBindings.length === 0
+      || !Array.isArray(actualBindings) || actualBindings.length === 0) {
+      throw new Error(`Docker port metadata is ambiguous for ${name} (${portKey}); refusing to use the local database`);
+    }
+    const normalizeBindings = (bindings, requireHostIp) => bindings.map((binding) => {
+      const hasHostPort = typeof binding?.HostPort === "string"
+        && (binding.HostPort === "" || (/^\d+$/.test(binding.HostPort)
+          && Number(binding.HostPort) >= 1 && Number(binding.HostPort) <= 65535));
+      const hasHostIp = typeof binding?.HostIp === "string";
+      if (!binding || typeof binding !== "object" || !hasHostPort
+        || (requireHostIp && !isLoopbackHostIp(binding.HostIp))
+        || (!requireHostIp && hasHostIp && binding.HostIp !== "" && !isLoopbackHostIp(binding.HostIp))) {
+        throw new Error(`Docker published a non-loopback or unverifiable port for ${name} (${portKey}); refusing to use the local database`);
+      }
+      return `${binding.HostIp?.toLowerCase() ?? ""}:${binding.HostPort}`;
+    }).sort();
+    const requestedNormalized = normalizeBindings(requestedBindings, false);
+    const actualNormalized = normalizeBindings(actualBindings, true);
+    const actualPorts = actualNormalized.map((binding) => binding.split(":").pop()).sort();
+    const requestedPorts = requestedNormalized.map((binding) => binding.split(":").pop()).filter(Boolean);
+    if (requestedPorts.some((port) => !actualPorts.includes(port))) {
+      throw new Error(`Docker port metadata disagrees for ${name} (${portKey}); refusing to use the local database`);
+    }
+  }
+}
+
+function verifyLoopbackNetwork(network, projectId) {
+  if (!network || network.Driver !== "bridge" || network.EnableIPv6 !== false
+    || labelProject(network, "networks") !== projectId
+    || network.Options?.["com.docker.network.bridge.host_binding_ipv4"] !== "127.0.0.1") {
+    throw new Error("Could not prove the staging Docker network is loopback-only; Supabase services were not started");
+  }
+}
+
+function verifyDockerHostBindingPlatform(operatingSystem) {
+  if (typeof operatingSystem !== "string" || !/(?:linux|ubuntu|debian|fedora|centos|alpine)/i.test(operatingSystem)
+    || /docker desktop|windows/i.test(operatingSystem)) {
+    throw new Error("Cannot establish a pre-start loopback port-binding guarantee for this Docker engine; Supabase services were not started");
+  }
+}
+
+function createLoopbackNetwork(projectId) {
+  const networkName = `pr1-supabase-${projectId}`;
+  const createdId = run("docker", [
+    "network", "create", "--driver", "bridge",
+    "--label", `com.docker.compose.project=${projectId}`,
+    "--opt", "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+    networkName,
+  ]).trim();
+  if (!createdId) throw new Error("Docker did not return an ID for the isolated loopback network");
+  const network = dockerJson(["network", "inspect", createdId])[0];
+  verifyLoopbackNetwork(network, projectId);
+  return { id: network.Id ?? createdId, name: network.Name ?? networkName };
 }
 
 function cleanupOwnedResources(resources, projectId, before) {
@@ -218,12 +299,96 @@ function stageProject(stageRoot, projectId, ports) {
 }
 
 function runSupabase(context, args, options = {}) {
-  const output = run("supabase", ["--workdir", context.stagedRoot, ...args], {
+  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
     env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
-    stdio: options.stdio ?? (args[0] === "start" ? "pipe" : "inherit"),
+    stdio: "pipe",
+    discardOutput: args[0] !== "status",
+    failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
-  if (args[0] === "start" && output.trim()) console.log(redactSecrets(output));
+  if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
+  if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
+  if (args[0] === "test" && args[1] === "db") console.log("Staged local SQL tests passed.");
   return output;
+}
+
+function runSecuritySelfTests() {
+  const validContainer = (hostIp) => ({
+    Name: "/supabase_db_pr1-test",
+    HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
+  });
+
+  validateLoopbackPublishedPorts(validContainer("127.0.0.1"));
+  validateLoopbackPublishedPorts(validContainer("127.0.0.2"));
+  validateLoopbackPublishedPorts(validContainer("::1"));
+  validateLoopbackPublishedPorts({
+    Name: "/supabase_kong_pr1-test",
+    HostConfig: { PortBindings: { "8000/tcp": [{ HostIp: "", HostPort: "55421" }] } },
+    NetworkSettings: { Ports: { "8000/tcp": [
+      { HostIp: "127.0.0.1", HostPort: "55421" },
+      { HostIp: "::1", HostPort: "55421" },
+    ] } },
+  });
+  for (const hostIp of ["0.0.0.0", "::", "192.168.1.15", "fe80::1", "not-an-ip"]) {
+    assert.throws(() => validateLoopbackPublishedPorts(validContainer(hostIp)), /non-loopback or unverifiable/);
+  }
+  verifyLoopbackNetwork({
+    Driver: "bridge", EnableIPv6: false,
+    Labels: { "com.docker.compose.project": "pr1-test" },
+    Options: { "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1" },
+  }, "pr1-test");
+  verifyDockerHostBindingPlatform("Ubuntu 24.04.3 LTS");
+  verifyDockerHostBindingPlatform("Linux");
+  for (const operatingSystem of ["Docker Desktop", "Windows Server", "", null]) {
+    assert.throws(() => verifyDockerHostBindingPlatform(operatingSystem), /pre-start loopback port-binding guarantee/);
+  }
+  for (const network of [
+    { Driver: "bridge", EnableIPv6: false, Labels: { "com.docker.compose.project": "pr1-test" }, Options: { "com.docker.network.bridge.host_binding_ipv4": "0.0.0.0" } },
+    { Driver: "bridge", EnableIPv6: true, Labels: { "com.docker.compose.project": "pr1-test" }, Options: { "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1" } },
+    { Driver: "bridge", EnableIPv6: false, Labels: {}, Options: { "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1" } },
+    { Driver: "bridge", EnableIPv6: false, Labels: { "com.docker.compose.project": "pr1-test" }, Options: {} },
+  ]) {
+    assert.throws(() => verifyLoopbackNetwork(network, "pr1-test"), /Could not prove/);
+  }
+  assert.throws(() => validateLoopbackPublishedPorts({
+    Name: "/supabase_db_pr1-test", HostConfig: { PortBindings: {} },
+  }), /metadata is missing or malformed/);
+  validateLoopbackPublishedPorts({
+    Name: "/supabase_api_pr1-test", HostConfig: { PortBindings: null },
+    NetworkSettings: { Ports: { "8080/tcp": null } },
+  });
+  assert.throws(() => validateLoopbackPublishedPorts({
+    Name: "/supabase_db_pr1-test", HostConfig: {}, NetworkSettings: { Ports: {} },
+  }), /metadata is missing or malformed/);
+  assert.throws(() => validateLoopbackPublishedPorts({
+    ...validContainer("127.0.0.1"),
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1" }] } },
+  }), /non-loopback or unverifiable/);
+  assert.throws(() => validateLoopbackPublishedPorts({
+    ...validContainer("127.0.0.1"),
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "55423" }] } },
+  }), /metadata disagrees/);
+
+  const cliCredentials = [
+    "API URL: http://127.0.0.1:55421",
+    "DB URL: postgresql://postgres:generated-db-password@127.0.0.1:55422/postgres",
+    "Publishable: sb_publishable_generated-key",
+    "Secret: sb_secret_generated-key",
+    "JWT secret: generated-jwt-secret",
+    "S3 Access Key: generated-s3-access-key",
+    "S3 Secret Key: generated-s3-secret-key",
+  ].join("\n");
+  const successOutput = run("supabase", ["start"], {
+    spawn: () => ({ status: 0, stdout: cliCredentials, stderr: cliCredentials }),
+    stdio: "pipe", discardOutput: true,
+  });
+  assert.equal(successOutput, "");
+  assert.throws(() => run("supabase", ["start"], {
+    spawn: () => ({ status: 1, stdout: cliCredentials, stderr: cliCredentials }),
+    stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure,
+  }), (error) => error.message === safeStartFailure && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
+
+  console.log("Staging security self-tests passed (Docker bindings and suppressed Supabase CLI credentials).");
 }
 
 function verifyLocalStatus(context) {
@@ -247,6 +412,9 @@ function verifyLocalStatus(context) {
 }
 
 export async function withStagedLocalSupabase(callback) {
+  const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
+    .trim();
+  verifyDockerHostBindingPlatform(dockerOperatingSystem);
   const token = `${Date.now()}-${randomBytes(6).toString("hex")}`;
   const projectId = `pr1-${token}`;
   const stageRoot = mkdtempSync(join(tmpdir(), `pr1-supabase-${token}-`));
@@ -268,11 +436,18 @@ export async function withStagedLocalSupabase(callback) {
   try {
     const preexisting = identifyOwnedResources(projectId, before);
     if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    const loopbackNetwork = createLoopbackNetwork(projectId);
+    resources.networks.push(loopbackNetwork.id);
+    context.dockerNetworkId = loopbackNetwork.id;
+    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
     runSupabase(context, ["start"]);
     started = true;
     Object.assign(resources, identifyOwnedResources(projectId, before));
     writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
+    for (const id of resources.containers) validateLoopbackPublishedPorts(dockerJson(["inspect", id])[0]);
+    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
+    console.log("Supabase published ports are loopback-only.");
     const status = verifyLocalStatus(context);
     const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
     const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
@@ -302,7 +477,14 @@ export async function withStagedLocalSupabase(callback) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const options = new Set(process.argv.slice(2));
-  if (options.has("--cleanup-manifest") && process.argv.length === 4) {
+  if (options.size === 1 && options.has("--security-self-test")) {
+    try {
+      runSecuritySelfTests();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "Staging security self-tests failed.");
+      process.exitCode = 1;
+    }
+  } else if (options.has("--cleanup-manifest") && process.argv.length === 4) {
     try {
       cleanupFromManifest(process.argv[3]);
     } catch (error) {
@@ -314,7 +496,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exitCode = 2;
   } else {
     withStagedLocalSupabase(async (context, supabase) => {
-      console.log(`Running SQL tests in disposable project ${context.projectId} at ${context.dbUrl.replace(/:[^:@/]+@/, ":***@")}`);
+      console.log(`Running SQL tests in disposable project ${context.projectId} on local port ${context.ports.db}.`);
       supabase(["db", "reset", "--local"]);
       supabase(["test", "db", "--local"]);
     }).catch((error) => {

@@ -10,9 +10,15 @@ From the repository root, run:
 node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
 ```
 
-The staging utility copies the project into a newly created temporary directory, assigns a unique Supabase project ID and five free local ports, and validates the migration manifest before starting Docker. It retains migrations in their original order except for `20261031130000_test_profile_signing_probe.sql` and `20261031140000_retire_test_profile_signing_probe.sql`. The source migration files and static consistency tests remain in the repository unchanged. No replacement database state is added. The resulting schema must have no `verify_test_profile_signing_probe_v1` function while retaining the shared Activity Log key provider and normal Profile Save RPC and grant.
+The staging utility copies the project into a newly created temporary directory, assigns a unique Supabase project ID and five free local ports, and validates the migration manifest before starting Docker. It requires a Linux Docker engine, then creates a run-owned bridge network with Docker's `host_binding_ipv4=127.0.0.1` option and verifies that network configuration before starting Supabase on it. Docker Desktop and engines whose platform cannot establish this pre-start binding guarantee are refused before service startup. After startup, the utility inspects each created container's requested and effective published port bindings and rejects missing, inconsistent, wildcard, or non-loopback host addresses before issuing database commands. It retains migrations in their original order except for `20261031130000_test_profile_signing_probe.sql` and `20261031140000_retire_test_profile_signing_probe.sql`. The source migration files and static consistency tests remain in the repository unchanged. No replacement database state is added. The resulting schema must have no `verify_test_profile_signing_probe_v1` function while retaining the shared Activity Log key provider and normal Profile Save RPC and grant.
 
-The utility verifies that Supabase reports the selected loopback API and database ports before issuing `db reset` or SQL tests. Every Docker resource is recorded by exact ID/name and must have the run's unique Compose project label and must not have existed before startup before the utility can stop or remove it. It never uses global stop, reset, prune, or volume cleanup commands. If ownership cannot be proven, cleanup stops and the resources and ownership manifest are left for inspection.
+The utility verifies that Supabase reports the selected loopback API and database ports before issuing `db reset` or SQL tests. It suppresses all `supabase start` output and reports only fixed status text, so generated credentials and connection URLs do not enter Actions logs. Every Docker resource is recorded by exact ID/name and must have the run's unique Compose project label and must not have existed before startup before the utility can stop or remove it. It never uses global stop, reset, prune, or volume cleanup commands. If ownership cannot be proven, cleanup stops and the resources and ownership manifest are left for inspection.
+
+Run the focused, Docker-free safety regression checks with:
+
+```sh
+node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+```
 
 ## Run the opt-in Worker/PostgREST integration test
 
