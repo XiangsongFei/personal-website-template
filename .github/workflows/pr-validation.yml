@@ -116,7 +116,7 @@ jobs:
             "8399ca4c280b05b83dc9385d40dec3fdee03ec4d025f351a5c1ce7e8d0f54875" \
             "resume-admin/migrations/${restore}" | sha256sum --check
           printf '%s  %s\n' \
-            "ed7759c3774f2d51473e2bf5be9997739d452dd25cdfeaf38d744250b8fdb26c" \
+            "d2d57b270175d214b9e4912b2c5b33b637168cc17b8a5fbc69746754367c3e5f" \
             "resume-admin/migrations/${version_history_intro}" | sha256sum --check
 
   admin_local_sql:
