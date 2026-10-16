@@ -103,16 +103,15 @@ function readOwnedSqlContainerLogs(context) {
 }
 
 function enableOwnedDatabaseErrorCodes(context, resources) {
-  const recordedContainerIds = new Set(resources.containers);
-  const databases = listKind("containers").filter((container) => {
-    const name = container?.Name?.replace(/^\//, "");
-    const id = resourceId(container, "containers");
-    return isOwnedDiagnosticContainer(container, context) && recordedContainerIds.has(id)
-      && typeof name === "string" && name.startsWith("supabase_db_");
-  });
-  if (databases.length !== 1) throw new Error("Could not uniquely verify this run's disposable database container; SQL tests were not run");
-  const database = databases[0];
-  const databaseId = resourceId(database, "containers");
+  const databaseId = context.dbContainerId;
+  if (typeof databaseId !== "string" || !resources.containers.includes(databaseId)) {
+    throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
+  }
+  const database = dockerJson(["inspect", databaseId])[0];
+  if (!database || !isOwnedDiagnosticContainer(database, context)
+    || !database.Name?.replace(/^\//, "").startsWith("supabase_db_")) {
+    throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
+  }
   verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingContainerIds);
 
   const settings = [
@@ -615,11 +614,18 @@ export async function withStagedLocalSupabase(callback) {
     verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     console.log("Supabase published ports are loopback-only.");
     const status = verifyLocalStatus(context);
-    const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
-    const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
-    const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
-    if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    const resolved = { ...context, ...status, projectId, dbContainer, authContainer,
+    const containerRecords = resources.containers.map((id) => ({ id, container: dockerJson(["inspect", id])[0] }));
+    const databaseRecords = containerRecords.filter(({ container }) =>
+      container?.Name?.replace(/^\//, "").startsWith(`supabase_db_${projectId}`));
+    const authRecords = containerRecords.filter(({ container }) =>
+      container?.Name?.replace(/^\//, "").startsWith(`supabase_auth_${projectId}`));
+    if (databaseRecords.length !== 1 || authRecords.length !== 1) {
+      throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
+    }
+    const dbContainer = databaseRecords[0].container.Name.replace(/^\//, "");
+    const dbContainerId = databaseRecords[0].id;
+    const authContainer = authRecords[0].container.Name.replace(/^\//, "");
+    const resolved = { ...context, ...status, projectId, dbContainer, dbContainerId, authContainer,
       preexistingContainerIds: before.containers };
     enableOwnedDatabaseErrorCodes(resolved, resources);
     await callback(resolved, (args) => runSupabase(resolved, args));
