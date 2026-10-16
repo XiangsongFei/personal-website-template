@@ -20,9 +20,9 @@ const targetId = "ea111111-1111-4111-8111-111111111111";
 const officialId = "20000000-0000-4000-8000-000000000001";
 const actorId = "10000000-0000-4000-8000-000000000002";
 const ownerId = "10000000-0000-4000-8000-000000000001";
-const dbContainer = "supabase_db_example-cv-admin-rls-local-test";
+const dbContainer = process.env.V11_LOCAL_DB_CONTAINER ?? "";
 const originalFetch = globalThis.fetch;
-const expectedLocalApiOrigin = "http://127.0.0.1:55421";
+const expectedLocalApiOrigin = apiBase ? new URL(apiBase).origin : "";
 const workerUpstreamOrigin = "https://local.supabase.invalid";
 const localUuid = randomUUID;
 let mutateNextRpcPayload: ((payload: Record<string, unknown>) => Record<string, unknown>) | undefined;
@@ -46,9 +46,11 @@ if (enabled) {
     const url = new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url);
     if (url.origin !== workerUpstreamOrigin) throw new Error("Local integration refused a non-fixture Worker upstream");
     if (url.pathname === "/storage/v1/object/resume-files" && (init?.method ?? "GET").toUpperCase() === "DELETE") workerStorageDeleteCalls += 1;
-    url.protocol = "http:";
-    url.hostname = "127.0.0.1";
-    url.port = "55421";
+    const localOrigin = new URL(apiBase!);
+    if (localOrigin.hostname !== "127.0.0.1") throw new Error("Local integration refused a non-loopback API origin");
+    url.protocol = localOrigin.protocol;
+    url.hostname = localOrigin.hostname;
+    url.port = localOrigin.port;
     let forwardedInit = init;
     if (url.pathname === "/rest/v1/rpc/save_resume_introduction_v11" && typeof init?.body === "string" && mutateNextRpcPayload) {
       const mutate = mutateNextRpcPayload;
@@ -129,8 +131,10 @@ if (enabled) {
 
 function assertLocalConfiguration(): void {
   if (!apiBase || new URL(apiBase).origin !== expectedLocalApiOrigin
+    || new URL(apiBase).hostname !== "127.0.0.1"
     || !workerSupabaseUrl || new URL(workerSupabaseUrl).origin !== "https://local.supabase.invalid"
-    || !publishableKey || !userJwt || !ownerJwt) {
+    || !publishableKey || !userJwt || !ownerJwt
+    || !/^supabase_db_pr1-[a-z0-9-]+$/.test(dbContainer)) {
     throw new Error("Local V1.1 integration environment is incomplete or not loopback-only");
   }
 }
@@ -468,7 +472,7 @@ function rpcRows(body: unknown): Array<{ id: string; position: number; translati
 }
 
 async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: () => Promise<T>, rpcName = "save_resume_introduction_v11"): Promise<T> {
-  if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer) throw new Error("Concurrency test refused an unexpected database container");
+  if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer || !/^supabase_db_pr1-[a-z0-9-]+$/.test(dbContainer)) throw new Error("Concurrency test refused an unexpected database container");
   const blocker = spawn("docker", ["exec", "-i", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1"]);
   let output = "";
   blocker.stdout.setEncoding("utf8");
@@ -518,7 +522,7 @@ async function runWithTwoDatabaseSessionsBlocked<T>(target: string, operation: (
 
 type OpenLocalPsqlSession = ReturnType<typeof spawn> & { output: string; exited: Promise<number | null> };
 function openLocalPsqlSession(): OpenLocalPsqlSession {
-  if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer) throw new Error("Open SQL session refused an unexpected database container");
+  if (process.env.V11_LOCAL_DB_CONTAINER !== dbContainer || !/^supabase_db_pr1-[a-z0-9-]+$/.test(dbContainer)) throw new Error("Open SQL session refused an unexpected database container");
   const child = spawn("docker", ["exec", "-i", dbContainer, "psql", "-X", "-U", "postgres", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1"]);
   let output = "";
   child.stdout?.setEncoding("utf8");

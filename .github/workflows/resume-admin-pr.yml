@@ -102,9 +102,8 @@ jobs:
         with:
           version: 2.119.0
 
-      - name: Start disposable test-only Supabase and run SQL tests
-        working-directory: resume-admin/tests/rls-runtime
-        run: |
-          supabase start
-          supabase db reset --local
-          supabase test db --local
+      - name: Verify staging security guards
+        run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+
+      - name: Stage isolated local Supabase and run SQL tests
+        run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
