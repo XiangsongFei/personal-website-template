@@ -103,9 +103,15 @@ function readOwnedSqlContainerLogs(context) {
 }
 
 function enableOwnedDatabaseErrorCodes(context, resources) {
-  const database = resources.containers.map((id) => dockerJson(["inspect", id])[0])
-    .find((container) => container?.Name?.replace(/^\//, "") === context.dbContainer);
-  if (!database) throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
+  const recordedContainerIds = new Set(resources.containers);
+  const databases = listKind("containers").filter((container) => {
+    const name = container?.Name?.replace(/^\//, "");
+    const id = resourceId(container, "containers");
+    return isOwnedDiagnosticContainer(container, context) && recordedContainerIds.has(id)
+      && typeof name === "string" && name.startsWith("supabase_db_");
+  });
+  if (databases.length !== 1) throw new Error("Could not uniquely verify this run's disposable database container; SQL tests were not run");
+  const database = databases[0];
   const databaseId = resourceId(database, "containers");
   verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingContainerIds);
 
