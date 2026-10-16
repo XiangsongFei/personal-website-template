@@ -111,12 +111,69 @@ INSERT INTO cms_private.activity_log_events (
    '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000023","position":2147483648,"text_en":"Out of range","text_zh":"超范围"}]}',
    '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483647}],"after":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483648}]}}',1);
 
+-- Diagnostic-only wrapper: emit allowlisted exception metadata, then re-raise the original error.
+CREATE TEMP TABLE version_history_diagnostic_temp_schema (initialized boolean) ON COMMIT DROP;
+CREATE FUNCTION pg_temp.version_history_reader_count_diagnostic(target_id uuid, requested_limit integer)
+RETURNS integer
+LANGUAGE plpgsql
+SET search_path = ''
+AS $diagnostic$
+DECLARE
+  result_count integer;
+  returned_state text;
+  message_text text;
+  detail_text text;
+  context_text text;
+  error_category text := 'other_sql_error';
+  safe_object text := 'unavailable';
+  object_match text[];
+BEGIN
+  SELECT pg_catalog.count(*)::integer INTO result_count
+    FROM public.read_version_history_v1(target_id, requested_limit);
+  RETURN result_count;
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS
+    returned_state = RETURNED_SQLSTATE,
+    message_text = MESSAGE_TEXT,
+    detail_text = PG_EXCEPTION_DETAIL,
+    context_text = PG_EXCEPTION_CONTEXT;
+
+  IF returned_state = '42P01' THEN
+    error_category := 'missing_relation';
+    object_match := pg_catalog.regexp_match(message_text,
+      '^relation "((public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*)" does not exist$');
+  ELSIF returned_state = '42883' AND message_text LIKE 'function % does not exist' THEN
+    error_category := 'missing_function';
+    object_match := pg_catalog.regexp_match(message_text,
+      '^function ((public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*)\([^)]*\) does not exist$');
+  ELSIF returned_state = '42703' THEN
+    error_category := 'missing_column';
+    object_match := pg_catalog.regexp_match(message_text,
+      '^column "((public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*)" does not exist$');
+  ELSIF returned_state = '3F000' THEN
+    error_category := 'missing_schema';
+  ELSIF returned_state = '42704' THEN
+    error_category := 'missing_object';
+  END IF;
+
+  IF object_match IS NOT NULL THEN
+    safe_object := object_match[1];
+  END IF;
+  RAISE NOTICE 'VH_DIAG sqlstate=% category=% object=% detail_present=% context_reader=%',
+    returned_state, error_category, safe_object, detail_text IS NOT NULL,
+    pg_catalog.strpos(context_text, 'read_version_history_v1') > 0;
+  RAISE;
+END
+$diagnostic$;
+REVOKE ALL ON FUNCTION pg_temp.version_history_reader_count_diagnostic(uuid, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION pg_temp.version_history_reader_count_diagnostic(uuid, integer) TO authenticated;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated","email":"qa@example.test"}',true);
 
 SELECT extensions.is(
-  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)),
+  (SELECT pg_temp.version_history_reader_count_diagnostic('ea111111-1111-4111-8111-111111111111',100)),
   12,'successful supported events and safe generic rows include supported Introduction, rejected, and mismatched contracts are excluded'
 );
 SELECT extensions.is(

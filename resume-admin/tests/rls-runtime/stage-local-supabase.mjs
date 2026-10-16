@@ -79,6 +79,21 @@ function summarizeSqlTestFailure(result, databaseOutput = "") {
   if (sqlLocations.length) details.push(`SQL error location(s): ${sqlLocations.join(", ")}`);
   if (errorCategory) details.push(`error category: ${errorCategory}`);
   if (reportedSqlStates.length) details.push(`SQLSTATE: ${reportedSqlStates.join(", ")}${sqlStates.length ? "" : " (standard code for this PostgreSQL category)"}`);
+  const readerDiagnosticPattern = /\bVH_DIAG sqlstate=([0-9A-Z]{5}) category=(missing_relation|missing_function|missing_column|missing_schema|missing_object|other_sql_error) object=((?:public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*|unavailable) detail_present=(true|false) context_reader=(true|false)\b/g;
+  const expectedDiagnosticStates = {
+    missing_relation: "42P01",
+    missing_function: "42883",
+    missing_column: "42703",
+    missing_schema: "3F000",
+    missing_object: "42704",
+  };
+  const readerDiagnostics = [...output.matchAll(readerDiagnosticPattern)].filter(([, state, category]) =>
+    category === "other_sql_error" ? !Object.values(expectedDiagnosticStates).includes(state)
+      : expectedDiagnosticStates[category] === state);
+  if (readerDiagnostics.length) {
+    const [, state, category, objectName, detailPresent, readerContext] = readerDiagnostics.at(-1);
+    details.push(`reader diagnostic: SQLSTATE ${state}; ${category}; object ${objectName}; detail present ${detailPresent}; reader context ${readerContext}`);
+  }
   return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
 }
 
@@ -431,6 +446,15 @@ function runSecuritySelfTests() {
   assert.match(prefixedSqlState, /error category: missing database object/);
   assert.match(prefixedSqlState, /SQLSTATE: 42P01/);
   assert.doesNotMatch(prefixedSqlState, /private_table|secret_value|STATEMENT/);
+
+  const readerDiagnosticFailure = summarizeSqlTestFailure({ status: 1,
+    stdout: "NOTICE: VH_DIAG sqlstate=42P01 category=missing_relation object=cms_private.activity_log_events detail_present=true context_reader=true credential=hidden" });
+  assert.match(readerDiagnosticFailure, /reader diagnostic: SQLSTATE 42P01; missing_relation; object cms_private\.activity_log_events; detail present true; reader context true/);
+  assert.doesNotMatch(readerDiagnosticFailure, /credential|hidden/);
+  const unsafeReaderDiagnostic = summarizeSqlTestFailure({ status: 1,
+    stdout: "NOTICE: VH_DIAG sqlstate=28P01 category=missing_relation object=unavailable detail_present=false context_reader=true token=secret" });
+  assert.match(unsafeReaderDiagnostic, /no allowlisted diagnostics found/);
+  assert.doesNotMatch(unsafeReaderDiagnostic, /token|secret|28P01/);
 
   const diagnosticContext = {
     projectId: "pr1-123-abcd",
