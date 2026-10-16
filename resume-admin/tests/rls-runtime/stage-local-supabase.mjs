@@ -96,6 +96,26 @@ function readOwnedDatabaseLogs(context) {
   }
 }
 
+function enableOwnedDatabaseErrorVerbosity(context) {
+  try {
+    const inspect = spawnSync("docker", ["inspect", context.dbContainer], { encoding: "utf8" });
+    if (inspect.status !== 0 || inspect.error) return false;
+    const [container] = JSON.parse(inspect.stdout);
+    if (!container || container.Name?.replace(/^\//, "") !== context.dbContainer
+      || labelProject(container, "containers") !== context.projectId) return false;
+    const setVerbosity = spawnSync("docker", ["exec", "--user", "postgres", context.dbContainer,
+      "psql", "-X", "-d", "postgres", "-v", "ON_ERROR_STOP=1",
+      "-c", "ALTER SYSTEM SET log_error_verbosity = 'verbose'"], { encoding: "utf8" });
+    if (setVerbosity.status !== 0 || setVerbosity.error) return false;
+    const reload = spawnSync("docker", ["exec", "--user", "postgres", context.dbContainer,
+      "psql", "-X", "-d", "postgres", "-v", "ON_ERROR_STOP=1",
+      "-c", "SELECT pg_catalog.pg_reload_conf()"], { encoding: "utf8" });
+    return reload.status === 0 && !reload.error;
+  } catch {
+    return false;
+  }
+}
+
 function redactSecrets(output) {
   return output
     .replace(/("(?:PUBLISHABLE_KEY|SECRET_KEY|JWT_SECRET|ANON_KEY|SERVICE_ROLE_KEY|S3_PROTOCOL_ACCESS_KEY_ID|S3_PROTOCOL_ACCESS_KEY_SECRET)"\s*:\s*")[^"]+("?)/g, "$1[redacted]$2")
@@ -612,6 +632,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     withStagedLocalSupabase(async (context, supabase) => {
       console.log(`Running SQL tests in disposable project ${context.projectId} on local port ${context.ports.db}.`);
       supabase(["db", "reset", "--local"]);
+      if (!enableOwnedDatabaseErrorVerbosity(context)) {
+        console.log("Could not enable verbose diagnostics for the owned disposable database; SQL tests will still run.");
+      }
       supabase(["test", "db", "--local"]);
     }).catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
