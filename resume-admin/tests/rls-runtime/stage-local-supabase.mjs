@@ -119,12 +119,12 @@ function enableOwnedDatabaseErrorCodes(context, resources) {
     "ALTER SYSTEM SET log_line_prefix = '%m [%p] %e '",
   ];
   for (const setting of settings) {
-    run("docker", ["exec", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", setting], {
+    run("docker", ["exec", "--user", "postgres", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", setting], {
       stdio: "pipe", discardOutput: true,
       failureMessage: "Could not configure sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
     });
   }
-  run("docker", ["exec", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", "SELECT pg_catalog.pg_reload_conf()"], {
+  run("docker", ["exec", "--user", "postgres", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", "SELECT pg_catalog.pg_reload_conf()"], {
     stdio: "pipe", discardOutput: true,
     failureMessage: "Could not reload sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
   });
