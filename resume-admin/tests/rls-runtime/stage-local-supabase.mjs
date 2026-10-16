@@ -33,8 +33,8 @@ function run(command, args, options = {}) {
   return discardOutput ? "" : result.stdout ?? "";
 }
 
-function summarizeSqlTestFailure(result) {
-  const rawOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+function summarizeSqlTestFailure(result, databaseOutput = "") {
+  const rawOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}\n${databaseOutput}`;
   let output = "";
   let inEscape = false;
   for (const character of rawOutput) {
@@ -55,7 +55,10 @@ function summarizeSqlTestFailure(result) {
   const errors = errorLines.join("\n").toLowerCase();
   const sqlLocations = [...new Map([...output.matchAll(/(?:^|[\\/])([A-Za-z0-9_.-]+\.sql):(\d+):\s*(?:ERROR|FATAL):/gim)]
     .map((match) => [`${match[1]}:${match[2]}`, `${match[1]}:${match[2]}`]))].map(([, location]) => location);
-  const sqlStates = [...new Set([...output.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi)].map((match) => match[1].toUpperCase()))];
+  const sqlStates = [...new Set(errorLines.flatMap((line) => [
+    ...line.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi),
+    ...line.matchAll(/\b(?:ERROR|FATAL):\s*([0-9A-Z]{5}):/gi),
+  ].map((match) => match[1].toUpperCase())))];
   const syntaxToken = errors.match(/syntax error at or near ["']([a-z_]+)["']/i)?.[1]?.toUpperCase();
   const errorCategory = /\bsyntax error\b/i.test(errors) ? `syntax error${syntaxToken ? ` near ${syntaxToken}` : ""}`
     : /\bpermission denied\b/i.test(errors) ? "permission denied"
@@ -67,12 +70,30 @@ function summarizeSqlTestFailure(result) {
                 : /\b(?:canceling statement|statement timeout|query canceled)\b/i.test(errors) ? "query canceled or timed out"
                   : errorLines.length ? "PostgreSQL error"
                     : null;
+  const categorySqlState = errorCategory === "syntax error" || errorCategory?.startsWith("syntax error near ") ? "42601"
+    : errorCategory === "permission denied" ? "42501" : null;
+  const reportedSqlStates = sqlStates.length ? sqlStates : categorySqlState ? [categorySqlState] : [];
   const details = [];
   if (assertionNumbers.length) details.push(`failed assertion number(s): ${assertionNumbers.join(", ")}`);
   if (sqlLocations.length) details.push(`SQL error location(s): ${sqlLocations.join(", ")}`);
   if (errorCategory) details.push(`error category: ${errorCategory}`);
-  if (sqlStates.length) details.push(`SQLSTATE: ${sqlStates.join(", ")}`);
+  if (reportedSqlStates.length) details.push(`SQLSTATE: ${reportedSqlStates.join(", ")}${sqlStates.length ? "" : " (standard code for this PostgreSQL category)"}`);
   return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
+}
+
+function readOwnedDatabaseLogs(context) {
+  try {
+    const inspect = spawnSync("docker", ["inspect", context.dbContainer], { encoding: "utf8" });
+    if (inspect.status !== 0 || inspect.error) return "";
+    const [container] = JSON.parse(inspect.stdout);
+    if (!container || container.Name?.replace(/^\//, "") !== context.dbContainer
+      || labelProject(container, "containers") !== context.projectId) return "";
+    const logs = spawnSync("docker", ["logs", context.dbContainer], { encoding: "utf8" });
+    if (logs.error) return "";
+    return `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+  } catch {
+    return "";
+  }
 }
 
 function redactSecrets(output) {
@@ -348,7 +369,7 @@ function runSupabase(context, args, options = {}) {
     stdio: "pipe",
     discardOutput: args[0] !== "status",
     failureMessage: args[0] === "start" ? safeStartFailure
-      : isSqlTest ? summarizeSqlTestFailure
+      : isSqlTest ? (result) => summarizeSqlTestFailure(result, readOwnedDatabaseLogs(context))
         : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
@@ -383,6 +404,12 @@ function runSecuritySelfTests() {
   assert.match(syntaxFailure, /syntax error near ROLLBACK/);
   assert.match(syntaxFailure, /SQLSTATE: 42601/);
   assert.doesNotMatch(syntaxFailure, /private|syntax error at or near/);
+
+  const databaseLogFailure = summarizeSqlTestFailure({ status: 1, stdout: "" },
+    "2026-10-16 14:00:00 UTC [42] ERROR:  42601: syntax error at or near \"ROLLBACK\"\nSTATEMENT: ROLLBACK; secret-value");
+  assert.match(databaseLogFailure, /syntax error near ROLLBACK/);
+  assert.match(databaseLogFailure, /SQLSTATE: 42601/);
+  assert.doesNotMatch(databaseLogFailure, /STATEMENT|secret-value/);
 
   const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
   assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
