@@ -11,13 +11,19 @@ END
 $owner_guard$;
 
 DO $restore_disabled_guard$
+DECLARE owner_target_count bigint; owner_target_id uuid;
 BEGIN
+  SELECT count(*) INTO owner_target_count FROM public.resume_sites WHERE site_key='example-cv';
+  IF owner_target_count <> 1 THEN
+    RAISE EXCEPTION 'Files Restore capability migration requires exactly one Owner target' USING ERRCODE='42501';
+  END IF;
+  SELECT site.id INTO owner_target_id FROM public.resume_sites site WHERE site.site_key='example-cv';
   IF EXISTS (
     SELECT 1
     FROM cms_private.resume_capabilities capability
     WHERE capability.capability_key='restore' AND capability.enabled IS TRUE
       AND (capability.resume_id IN (
-        '20000000-0000-4000-8000-000000000001'::uuid,
+        owner_target_id,
         'f6000000-0000-4000-8000-000000000001'::uuid
       ) OR EXISTS (
         SELECT 1 FROM public.cms_admins admin
@@ -98,7 +104,15 @@ BEGIN
   IF site_key IS NULL THEN RAISE EXCEPTION 'Files target is not authorized' USING ERRCODE='42501'; END IF;
   SELECT c.enabled INTO restore_enabled FROM cms_private.resume_capabilities c WHERE c.resume_id=target_resume_id AND c.capability_key='restore';
   IF restore_enabled IS DISTINCT FROM true THEN RAISE EXCEPTION 'Files Restore is disabled' USING ERRCODE='42501'; END IF;
+  -- Lock order is resume_sites -> resume_capabilities -> idempotency. No application
+  -- capability writer locks these rows in the reverse order.
   PERFORM 1 FROM public.resume_sites s WHERE s.id=target_resume_id FOR UPDATE;
+  -- Re-read under a row lock after any wait above. A concurrent disable that commits
+  -- while this call waits must be observed before Restore proceeds.
+  restore_enabled := NULL;
+  SELECT c.enabled INTO restore_enabled FROM cms_private.resume_capabilities c
+    WHERE c.resume_id=target_resume_id AND c.capability_key='restore' FOR UPDATE;
+  IF restore_enabled IS DISTINCT FROM true THEN RAISE EXCEPTION 'Files Restore is disabled' USING ERRCODE='42501'; END IF;
   IF cms_private.get_resume_write_mode(target_resume_id,'files')<>'rpc'
     OR NOT COALESCE((SELECT r.enabled FROM cms_private.resume_domain_requirements r WHERE r.resume_id=target_resume_id AND r.domain_key='files' AND r.requirement_key='trusted_network_context_v11'),false)
     OR NOT COALESCE((SELECT c.enabled FROM cms_private.resume_capabilities c WHERE c.resume_id=target_resume_id AND c.capability_key='activity_log'),false) THEN

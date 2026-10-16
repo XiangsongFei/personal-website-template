@@ -6,6 +6,7 @@ const mirror = readFileSync("tests/rls-runtime/supabase/migrations/2026102700000
 const filesWriter = readFileSync("migrations/20261026_activity_log_files_writer.sql", "utf8");
 const capabilityMigration = readFileSync("migrations/20261101000000_files_restore_capability_enforcement.sql", "utf8");
 const capabilityMirror = readFileSync("tests/rls-runtime/supabase/migrations/20261101000000_files_restore_capability_enforcement.sql", "utf8");
+const capabilityCliMigration = readFileSync("supabase/migrations/20261101000000_files_restore_capability_enforcement.sql", "utf8");
 
 describe("V1.3D-7 Files legacy restoration migration", () => {
   it("keeps the runtime mirror exact and only adds a Files-specific restore surface", () => {
@@ -39,16 +40,35 @@ describe("V1.3D-7 Files legacy restoration migration", () => {
 
   it("mirrors the forward migration and denies Restore before source or idempotency access", () => {
     expect(capabilityMirror).toBe(capabilityMigration);
+    expect(capabilityCliMigration).toBe(capabilityMigration);
     expect(capabilityMigration).toContain("capability.enabled IS TRUE");
-    expect(capabilityMigration).toContain("Restore must remain disabled for the known Owner and Test targets");
-    expect(capabilityMigration).toContain("20000000-0000-4000-8000-000000000001");
+    expect(capabilityMigration).toContain("site_key='example-cv'");
+    expect(capabilityMigration).toContain("owner_target_count <> 1");
+    expect(capabilityMigration).not.toContain("20000000-0000-4000-8000-000000000001");
     expect(capabilityMigration).toContain("f6000000-0000-4000-8000-000000000001");
     expect(capabilityMigration).toContain("admin.role='qa'");
+    expect(capabilityMigration).toContain("Files Restore capability migration requires exactly one Owner target");
     expect(capabilityMigration).toMatch(/load_admin_files_restore_source_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?restore_enabled IS DISTINCT FROM true[\s\S]*?activity_log_idempotency/);
     expect(capabilityMigration).toMatch(/restore_resume_files_from_event_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?restore_enabled IS DISTINCT FROM true[\s\S]*?FOR UPDATE[\s\S]*?activity_log_idempotency/);
+    expect(capabilityMigration).toMatch(/PERFORM 1 FROM public\.resume_sites s WHERE s\.id=target_resume_id FOR UPDATE;[\s\S]*?restore_enabled := NULL;[\s\S]*?SELECT c\.enabled INTO restore_enabled FROM cms_private\.resume_capabilities c[\s\S]*?FOR UPDATE;[\s\S]*?IF restore_enabled IS DISTINCT FROM true/);
     expect(capabilityMigration).toMatch(/load_admin_files_restore_capability_v1[\s\S]*?assert_activity_log_target\(target_resume_id\)[\s\S]*?COALESCE\([\s\S]*?capability.enabled[\s\S]*?false/);
     expect(capabilityMigration).toMatch(/REVOKE ALL ON FUNCTION public\.load_admin_files_restore_capability_v1\(uuid\) FROM PUBLIC,anon,authenticated,service_role/);
     expect(capabilityMigration).toMatch(/GRANT EXECUTE ON FUNCTION public\.load_admin_files_restore_capability_v1\(uuid\) TO authenticated/);
     expect(capabilityMigration).not.toMatch(/(?:INSERT|UPDATE|DELETE)\s+INTO\s+cms_private\.resume_capabilities/i);
+  });
+
+  it("serializes capability disablement before any restore-side work", () => {
+    const mutation = capabilityMigration.split("CREATE OR REPLACE FUNCTION public.restore_resume_files_from_event_v1(")[1];
+    expect(mutation).toBeDefined();
+    const earlyCheck = mutation!.indexOf("IF restore_enabled IS DISTINCT FROM true");
+    const targetLock = mutation!.indexOf("FROM public.resume_sites s WHERE s.id=target_resume_id FOR UPDATE");
+    const capabilityLock = mutation!.indexOf("FROM cms_private.resume_capabilities c", targetLock);
+    const secondCheck = mutation!.indexOf("IF restore_enabled IS DISTINCT FROM true", earlyCheck + 1);
+    const idempotencyLock = mutation!.indexOf("activity_log_idempotency WHERE", secondCheck);
+    expect(earlyCheck).toBeGreaterThan(0);
+    expect(targetLock).toBeGreaterThan(earlyCheck);
+    expect(capabilityLock).toBeGreaterThan(targetLock);
+    expect(secondCheck).toBeGreaterThan(capabilityLock);
+    expect(idempotencyLock).toBeGreaterThan(secondCheck);
   });
 });
