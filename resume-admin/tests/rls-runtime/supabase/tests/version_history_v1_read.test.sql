@@ -1,6 +1,6 @@
 -- TEST ONLY: Version History V1 typed read contract against the isolated local RLS lab.
 BEGIN;
-SELECT extensions.plan(35);
+SELECT extensions.plan(34);
 
 SELECT extensions.ok(
   (SELECT p.prosecdef AND p.provolatile = 's' AND p.proconfig @> ARRAY['search_path=""']
@@ -67,7 +67,7 @@ INSERT INTO cms_private.activity_log_events (
    '{"text_en":{"before":[{"id":"ea000000-0000-4000-8000-000000000016","value":"Old English"}],"after":[{"id":"ea000000-0000-4000-8000-000000000016","value":"New English"}]},"text_zh":{"before":[{"id":"ea000000-0000-4000-8000-000000000016","value":"旧中文"}],"after":[{"id":"ea000000-0000-4000-8000-000000000016","value":"新中文"}]}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a21','2026-10-11T05:30:00Z','10000000-0000-4000-8000-000000000002',
    'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
-   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000021","position":0,"text_en":"X","text_zh":"X"},{"id":"ea000000-0000-4000-8000-000000000022","position":1,"text_en":"B","text_zh":"B"},{"id":"ea000000-0000-4000-8000-000000000023","position":2,"text_en":"A","text_zh":"A"},{"id":"ea000000-0000-4000-8000-000000000024","position":3,"text_en":"C","text_zh":"C"}]}',
+   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000021","position":0,"text_en":"X","text_zh":"X"},{"id":"ea000000-0000-4000-8000-000000000022","position":1,"text_en":"B","text_zh":"B"},{"id":"ea000000-0000-4000-8000-000000000023","position":2,"text_en":"A","text_zh":"A"},{"id":"ea000000-0000-4000-8000-000000000024","position":3,"text_en":"C","text_zh":"C"}]}",
    '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000023","value":0},{"id":"ea000000-0000-4000-8000-000000000024","value":2},{"id":"ea000000-0000-4000-8000-000000000021","value":null}],"after":[{"id":"ea000000-0000-4000-8000-000000000021","value":0},{"id":"ea000000-0000-4000-8000-000000000023","value":2},{"id":"ea000000-0000-4000-8000-000000000024","value":3}]}}',1,NULL,NULL,NULL,NULL);
 
 INSERT INTO cms_private.activity_log_system_events (
@@ -111,78 +111,9 @@ INSERT INTO cms_private.activity_log_events (
    '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000023","position":2147483648,"text_en":"Out of range","text_zh":"超范围"}]}',
    '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483647}],"after":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483648}]}}',1);
 
--- TEMPORARY DIAGNOSTIC ONLY. The separate pgTAP assertion reports a safe
--- diagnostic in TAP output; the original reader assertions below remain direct.
-CREATE TEMP TABLE version_history_diagnostic_temp_schema (initialized boolean) ON COMMIT DROP;
-CREATE FUNCTION pg_temp.version_history_reader_diagnostic(target_id uuid, requested_limit integer)
-RETURNS text
-LANGUAGE plpgsql
-SET search_path = ''
-AS $diagnostic$
-DECLARE
-  returned_state text;
-  message_text text;
-  error_category text := 'other_sql_error';
-  safe_state text := 'XXXXX';
-  safe_object text := 'unavailable';
-  object_match text[];
-  error_schema text;
-  error_table text;
-  error_column text;
-BEGIN
-  PERFORM 1 FROM public.read_version_history_v1(target_id, requested_limit);
-  RETURN NULL;
-EXCEPTION WHEN OTHERS THEN
-  GET STACKED DIAGNOSTICS
-    returned_state = RETURNED_SQLSTATE,
-    message_text = MESSAGE_TEXT,
-    error_schema = SCHEMA_NAME,
-    error_table = TABLE_NAME,
-    error_column = COLUMN_NAME;
-
-  IF returned_state ~ '^[0-9A-Z]{5}$' THEN
-    safe_state := returned_state;
-  END IF;
-
-  IF returned_state = '42P01' THEN
-    error_category := 'missing_relation';
-  ELSIF returned_state = '42883' AND message_text LIKE 'function % does not exist' THEN
-    error_category := 'missing_function';
-    object_match := pg_catalog.regexp_match(message_text,
-      '^function ((public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*)\([^)]*\) does not exist$');
-  ELSIF returned_state = '42703' THEN
-    error_category := 'missing_column';
-  ELSIF returned_state = '3F000' THEN
-    error_category := 'missing_schema';
-  ELSIF returned_state = '42704' THEN
-    error_category := 'missing_object';
-  END IF;
-
-  IF error_schema IN ('public', 'cms_private', 'auth', 'extensions', 'pg_catalog')
-    AND error_table ~ '^[A-Za-z_][A-Za-z0-9_$]*$'
-    AND error_column ~ '^[A-Za-z_][A-Za-z0-9_$]*$' THEN
-    safe_object := error_schema || '.' || error_table || '.' || error_column;
-  ELSIF error_schema IN ('public', 'cms_private', 'auth', 'extensions', 'pg_catalog')
-    AND error_table ~ '^[A-Za-z_][A-Za-z0-9_$]*$' THEN
-    safe_object := error_schema || '.' || error_table;
-  ELSIF object_match IS NOT NULL THEN
-    safe_object := object_match[1];
-  END IF;
-  RETURN 'VH_DIAG sqlstate=' || safe_state || ' category=' || error_category || ' object=' || safe_object;
-END
-$diagnostic$;
-REVOKE ALL ON FUNCTION pg_temp.version_history_reader_diagnostic(uuid, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION pg_temp.version_history_reader_diagnostic(uuid, integer) TO authenticated;
-
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated","email":"qa@example.test"}',true);
-
-SELECT extensions.ok(
-  diagnostic IS NULL,
-  COALESCE(diagnostic, 'Version History reader diagnostic completed without error')
-)
-FROM (SELECT pg_temp.version_history_reader_diagnostic('ea111111-1111-4111-8111-111111111111',100) AS diagnostic) AS reader_diagnostic;
 
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)),

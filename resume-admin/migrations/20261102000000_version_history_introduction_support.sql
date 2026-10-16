@@ -225,14 +225,14 @@ BEGIN
         ) AS changed_position ON changed_position.id = snapshot_paragraph.id
       ) AS positions
     ), introduction_position_comparison AS (
-      SELECT event_id, pg_catalog.jsonb_build_object(
+      SELECT position_rows.event_id, pg_catalog.jsonb_build_object(
         'before', pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', paragraph_id, 'value', before_position)
           ORDER BY (before_position IS NULL), COALESCE(before_position, after_position), paragraph_id),
         'after', pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', paragraph_id, 'value', after_position)
           ORDER BY (before_position IS NULL), COALESCE(before_position, after_position), paragraph_id)
       ) AS position_change
-      FROM introduction_position_rows
-      GROUP BY event_id
+      FROM introduction_position_rows AS position_rows
+      GROUP BY position_rows.event_id
     ), bounded_with_comparison AS (
       SELECT
         a.*,

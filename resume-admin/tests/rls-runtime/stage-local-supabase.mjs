@@ -25,96 +25,11 @@ function run(command, args, options = {}) {
   const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
   if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
   if (result.status !== 0) {
-    if (typeof failureMessage === "function") throw new Error(failureMessage(result));
     if (failureMessage) throw new Error(failureMessage);
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
   return discardOutput ? "" : result.stdout ?? "";
-}
-
-function summarizeSqlTestFailure(result, databaseOutput = "") {
-  const rawOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}\n${databaseOutput}`;
-  let output = "";
-  let inEscape = false;
-  for (const character of rawOutput) {
-    const code = character.charCodeAt(0);
-    if (!inEscape && code === 27) {
-      inEscape = true;
-      continue;
-    }
-    if (inEscape) {
-      if (code >= 0x40 && code <= 0x7e) inEscape = false;
-      continue;
-    }
-    output += character;
-  }
-  const exitCode = Number.isInteger(result.status) ? result.status : "unknown";
-  const assertionNumbers = [...new Set([...output.matchAll(/^\s*not ok\s+(\d+)(?:\s|$)/gim)].map((match) => match[1]))];
-  const errorLines = output.split(/\r?\n/).filter((line) => /\b(?:ERROR|FATAL):/i.test(line));
-  const errors = errorLines.join("\n").toLowerCase();
-  const sqlLocations = [...new Map([...output.matchAll(/(?:^|[\\/])([A-Za-z0-9_.-]+\.sql):(\d+):\s*(?:ERROR|FATAL):/gim)]
-    .map((match) => [`${match[1]}:${match[2]}`, `${match[1]}:${match[2]}`]))].map(([, location]) => location);
-  const sqlStates = [...new Set(errorLines.flatMap((line) => [
-    ...line.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi),
-    ...line.matchAll(/\b(?:ERROR|FATAL):\s*([0-9A-Z]{5}):/gi),
-    ...line.matchAll(/\b([0-9A-Z]{5})\s+(?:ERROR|FATAL):/gi),
-  ].map((match) => match[1].toUpperCase())))];
-  const syntaxToken = errors.match(/syntax error at or near ["']([a-z_]+)["']/i)?.[1]?.toUpperCase();
-  const errorCategory = /\bsyntax error\b/i.test(errors) ? `syntax error${syntaxToken ? ` near ${syntaxToken}` : ""}`
-    : /\bpermission denied\b/i.test(errors) ? "permission denied"
-      : /\bdoes not exist\b/i.test(errors) ? "missing database object"
-        : /\b(?:cannot|could not) roll ?back\b/i.test(errors) ? "rollback error"
-          : /current transaction is aborted/i.test(errors) ? "transaction aborted"
-            : /\b(?:violates .* constraint|duplicate key)\b/i.test(errors) ? "constraint violation"
-              : /\b(?:invalid input syntax|cannot cast|out of range)\b/i.test(errors) ? "invalid input or cast"
-                : /\b(?:canceling statement|statement timeout|query canceled)\b/i.test(errors) ? "query canceled or timed out"
-                  : errorLines.length ? "PostgreSQL error"
-                    : null;
-  const categorySqlState = errorCategory === "syntax error" || errorCategory?.startsWith("syntax error near ") ? "42601"
-    : errorCategory === "permission denied" ? "42501" : null;
-  const reportedSqlStates = sqlStates.length ? sqlStates : categorySqlState ? [categorySqlState] : [];
-  const details = [];
-  if (assertionNumbers.length) details.push(`failed assertion number(s): ${assertionNumbers.join(", ")}`);
-  if (sqlLocations.length) details.push(`SQL error location(s): ${sqlLocations.join(", ")}`);
-  if (errorCategory) details.push(`error category: ${errorCategory}`);
-  if (reportedSqlStates.length) details.push(`SQLSTATE: ${reportedSqlStates.join(", ")}${sqlStates.length ? "" : " (standard code for this PostgreSQL category)"}`);
-  const readerDiagnosticPattern = /^\s*not ok\s+\d+\s+-\s+VH_DIAG sqlstate=([0-9A-Z]{5}) category=(missing_relation|missing_function|missing_column|missing_schema|missing_object|other_sql_error) object=((?:public|cms_private|auth|extensions|pg_catalog)\.[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)?|unavailable)\s*$/gim;
-  const expectedDiagnosticStates = {
-    missing_relation: "42P01",
-    missing_function: "42883",
-    missing_column: "42703",
-    missing_schema: "3F000",
-    missing_object: "42704",
-  };
-  const readerDiagnostics = [...output.matchAll(readerDiagnosticPattern)].filter(([, state, category]) =>
-    category === "other_sql_error" ? !Object.values(expectedDiagnosticStates).includes(state)
-      : expectedDiagnosticStates[category] === state);
-  if (readerDiagnostics.length) {
-    const [, state, category, objectName] = readerDiagnostics.at(-1);
-    details.push(`reader diagnostic: SQLSTATE ${state}; ${category}; object ${objectName}`);
-  }
-  return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
-}
-
-function isOwnedDiagnosticContainer(container, context) {
-  const id = resourceId(container, "containers");
-  const name = container?.Name?.replace(/^\//, "");
-  return typeof id === "string" && !context.preexistingContainerIds.has(id)
-    && labelProject(container, "containers") === context.projectId
-    && typeof name === "string" && name.includes(context.projectId);
-}
-
-function readOwnedSqlContainerLogs(context) {
-  try {
-    const ownedContainers = listKind("containers").filter((container) => isOwnedDiagnosticContainer(container, context));
-    return ownedContainers.map((container) => {
-      const logs = spawnSync("docker", ["logs", resourceId(container, "containers")], { encoding: "utf8" });
-      return logs.error ? "" : `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
-    }).join("\n");
-  } catch {
-    return "";
-  }
 }
 
 function redactSecrets(output) {
@@ -384,16 +299,11 @@ function stageProject(stageRoot, projectId, ports) {
 }
 
 function runSupabase(context, args, options = {}) {
-  const isSqlTest = args[0] === "test" && args[1] === "db";
-  const env = { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env };
-  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId,
-    ...(isSqlTest ? ["--debug"] : []), ...args], {
-    env,
+  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
+    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
     stdio: "pipe",
     discardOutput: args[0] !== "status",
-    failureMessage: args[0] === "start" ? safeStartFailure
-      : isSqlTest ? (result) => summarizeSqlTestFailure(result, readOwnedSqlContainerLogs(context))
-        : `Supabase ${args[0]} failed; CLI output suppressed.`,
+    failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
   if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
@@ -402,80 +312,6 @@ function runSupabase(context, args, options = {}) {
 }
 
 function runSecuritySelfTests() {
-  const sqlFailureSummary = summarizeSqlTestFailure({
-    status: 1,
-    stdout: "not ok 14 - a PR-controlled assertion description containing a secret",
-    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:188: ERROR: sensitive SQL and connection data must not appear",
-  });
-  assert.match(sqlFailureSummary, /exit status 1/);
-  assert.match(sqlFailureSummary, /assertion number\(s\): 14/);
-  assert.match(sqlFailureSummary, /version_history_v1_read\.test\.sql:188/);
-  assert.doesNotMatch(sqlFailureSummary, /PR-controlled|sensitive SQL|connection data|private/);
-
-  const categorizedFailure = summarizeSqlTestFailure({
-    status: 1,
-    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR: cannot rollback while a transaction is active; SQLSTATE: 25001; secret-value",
-  });
-  assert.match(categorizedFailure, /rollback error/);
-  assert.match(categorizedFailure, /SQLSTATE: 25001/);
-  assert.doesNotMatch(categorizedFailure, /private|cannot rollback|secret-value/);
-
-  const syntaxFailure = summarizeSqlTestFailure({
-    status: 1,
-    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR: syntax error at or near \"ROLLBACK\"; SQLSTATE: 42601",
-  });
-  assert.match(syntaxFailure, /syntax error near ROLLBACK/);
-  assert.match(syntaxFailure, /SQLSTATE: 42601/);
-  assert.doesNotMatch(syntaxFailure, /private|syntax error at or near/);
-
-  const verboseClientFailure = summarizeSqlTestFailure({ status: 1,
-    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:296: ERROR:  42601: syntax error at or near \"ROLLBACK\"\nSTATEMENT: ROLLBACK; secret-value" });
-  assert.match(verboseClientFailure, /version_history_v1_read\.test\.sql:296/);
-  assert.match(verboseClientFailure, /syntax error near ROLLBACK/);
-  assert.match(verboseClientFailure, /SQLSTATE: 42601/);
-  assert.doesNotMatch(verboseClientFailure, /private|STATEMENT|secret-value/);
-
-  const databaseLogFailure = summarizeSqlTestFailure({ status: 1, stdout: "" },
-    "2026-10-16 14:00:00 UTC [42] ERROR:  42601: syntax error at or near \"ROLLBACK\"\nSTATEMENT: ROLLBACK; secret-value");
-  assert.match(databaseLogFailure, /syntax error near ROLLBACK/);
-  assert.match(databaseLogFailure, /SQLSTATE: 42601/);
-  assert.doesNotMatch(databaseLogFailure, /STATEMENT|secret-value/);
-
-  const prefixedSqlState = summarizeSqlTestFailure({ status: 1, stdout: "" },
-    "2026-10-16 14:00:00 UTC [42] 42P01 ERROR: relation \"private_table\" does not exist\nSTATEMENT: SELECT secret_value");
-  assert.match(prefixedSqlState, /error category: missing database object/);
-  assert.match(prefixedSqlState, /SQLSTATE: 42P01/);
-  assert.doesNotMatch(prefixedSqlState, /private_table|secret_value|STATEMENT/);
-
-  const readerDiagnosticFailure = summarizeSqlTestFailure({ status: 1,
-    stdout: "not ok 15 - VH_DIAG sqlstate=42P01 category=missing_relation object=cms_private.activity_log_events\ncredential=hidden" });
-  assert.match(readerDiagnosticFailure, /reader diagnostic: SQLSTATE 42P01; missing_relation; object cms_private\.activity_log_events/);
-  assert.doesNotMatch(readerDiagnosticFailure, /credential|hidden/);
-  const unsafeReaderDiagnostic = summarizeSqlTestFailure({ status: 1,
-    stdout: "not ok 16 - VH_DIAG sqlstate=28P01 category=missing_relation object=unavailable" });
-  assert.doesNotMatch(unsafeReaderDiagnostic, /reader diagnostic:|28P01/);
-  assert.doesNotMatch(unsafeReaderDiagnostic, /token|secret|28P01/);
-  const untrustedObjectDiagnostic = summarizeSqlTestFailure({ status: 1,
-    stdout: "not ok 17 - VH_DIAG sqlstate=42P01 category=missing_relation object=private.user_content" });
-  assert.doesNotMatch(untrustedObjectDiagnostic, /reader diagnostic:|user_content/);
-
-  const diagnosticContext = {
-    projectId: "pr1-123-abcd",
-    preexistingContainerIds: new Set(["preexisting"]),
-  };
-  const diagnosticContainer = (id, name, project) => ({
-    Id: id,
-    Name: `/${name}`,
-    Config: { Labels: { "com.docker.compose.project": project } },
-  });
-  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("created", "supabase_db_pr1-123-abcd", "pr1-123-abcd"), diagnosticContext), true);
-  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("preexisting", "supabase_db_pr1-123-abcd", "pr1-123-abcd"), diagnosticContext), false);
-  assert.equal(isOwnedDiagnosticContainer(diagnosticContainer("foreign", "supabase_db_other", "other"), diagnosticContext), false);
-
-  const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
-  assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
-  assert.doesNotMatch(opaqueFailureSummary, /credential|hidden/);
-
   const validContainer = (hostIp) => ({
     Name: "/supabase_db_pr1-test",
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
@@ -617,8 +453,7 @@ export async function withStagedLocalSupabase(callback) {
     const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
     const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
     if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    const resolved = { ...context, ...status, projectId, dbContainer, authContainer,
-      preexistingContainerIds: before.containers };
+    const resolved = { ...context, ...status, projectId, dbContainer, authContainer };
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;

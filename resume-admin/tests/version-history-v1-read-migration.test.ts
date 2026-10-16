@@ -66,8 +66,7 @@ describe("Version History V1 read contract", () => {
   });
 
   it("contains local runtime coverage for payload adaptation, privacy, ordering, and isolation", () => {
-    expect(runtimeTest).toContain("extensions.plan(35)");
-    expect(runtimeTest).toContain("VH_DIAG sqlstate=");
+    expect(runtimeTest).toContain("extensions.plan(34)");
     for (const phrase of ["V1 keeps only recorded entity fields", "V2 returns exact aggregate before/after", "legacy Files V1 exposes only locale and object reference", "Profile photo history exposes recorded reference changes only", "Introduction V1 exposes validated bilingual changes and mixed structural order changes", "Introduction ordering comparison includes unchanged paragraph anchors", "fractional Introduction positions are retained only as a safe generic row", "out-of-range Introduction positions are retained only as a safe generic row", "malformed Introduction snapshot is retained only as a safe generic row", "known payload version with a mismatched entity contract is excluded", "unknown payload version returns generic entry", "malformed known payload returns generic entry", "keyset pages have no duplicates or skipped entries", "QA cannot read Official Version History", "disabled Activity Log capability blocks Version History"]) {
       expect(runtimeTest).toContain(phrase);
     }
