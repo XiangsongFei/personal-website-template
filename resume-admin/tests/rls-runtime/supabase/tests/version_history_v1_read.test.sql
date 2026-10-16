@@ -1,6 +1,6 @@
 -- TEST ONLY: Version History V1 typed read contract against the isolated local RLS lab.
 BEGIN;
-SELECT extensions.plan(29);
+SELECT extensions.plan(34);
 
 SELECT extensions.ok(
   (SELECT p.prosecdef AND p.provolatile = 's' AND p.proconfig @> ARRAY['search_path=""']
@@ -62,8 +62,13 @@ INSERT INTO cms_private.activity_log_events (
    '{"locale":"zh","object_key":"qa/resume/managed.pdf","file_name":"private-file-name.pdf","content_type":"application/pdf","size_bytes":99}',
    '{"locale":{"before":"zh","after":"zh"},"object_key":{"before":"old-ref","after":"new-ref"},"file_name":{"before":"old.pdf","after":"private-file-name.pdf"},"content_type":{"before":"application/pdf","after":"application/pdf"},"size_bytes":{"before":88,"after":99}}',1,NULL,NULL,NULL,NULL),
   ('aaaaaaaa-0000-4000-8000-000000000a16','2026-10-11T05:00:00Z','10000000-0000-4000-8000-000000000002',
-   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','intro-1',
-   '{"position":0,"text":"not in Version History V1"}','{"text":{"before":"a","after":"b"}}',1,NULL,NULL,NULL,NULL);
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
+   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000016","position":0,"text_en":"New English","text_zh":"新中文"}]}',
+   '{"text_en":{"before":[{"id":"ea000000-0000-4000-8000-000000000016","value":"Old English"}],"after":[{"id":"ea000000-0000-4000-8000-000000000016","value":"New English"}]},"text_zh":{"before":[{"id":"ea000000-0000-4000-8000-000000000016","value":"旧中文"}],"after":[{"id":"ea000000-0000-4000-8000-000000000016","value":"新中文"}]}}',1,NULL,NULL,NULL,NULL),
+  ('aaaaaaaa-0000-4000-8000-000000000a21','2026-10-11T05:30:00Z','10000000-0000-4000-8000-000000000002',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
+   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000021","position":0,"text_en":"X","text_zh":"X"},{"id":"ea000000-0000-4000-8000-000000000022","position":1,"text_en":"B","text_zh":"B"},{"id":"ea000000-0000-4000-8000-000000000023","position":2,"text_en":"A","text_zh":"A"},{"id":"ea000000-0000-4000-8000-000000000024","position":3,"text_en":"C","text_zh":"C"}]}",
+   '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000023","value":0},{"id":"ea000000-0000-4000-8000-000000000024","value":2},{"id":"ea000000-0000-4000-8000-000000000021","value":null}],"after":[{"id":"ea000000-0000-4000-8000-000000000021","value":0},{"id":"ea000000-0000-4000-8000-000000000023","value":2},{"id":"ea000000-0000-4000-8000-000000000024","value":3}]}}',1,NULL,NULL,NULL,NULL);
 
 INSERT INTO cms_private.activity_log_system_events (
   event_id, occurred_at, resume_id, site_key_snapshot, actor_user_id, actor_email_snapshot,
@@ -93,7 +98,18 @@ INSERT INTO cms_private.activity_log_events (
    '{"future":"must-not-leak"}','{"future":"must-not-leak"}',99),
   ('aaaaaaaa-0000-4000-8000-000000000a18','2026-10-11T06:30:00Z','10000000-0000-4000-8000-000000000002',
    'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','awards','award_list',NULL,
-   '{"awards":[]}','{"awards":{"before":[],"after":[]}}',1);
+   '{"awards":[]}','{"awards":{"before":[],"after":[]}}',1),
+  ('aaaaaaaa-0000-4000-8000-000000000a20','2026-10-11T04:30:00Z','10000000-0000-4000-8000-000000000002',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
+   '{"paragraphs":[{}]}','{"text_en":{"before":[],"after":[]}}',1),
+  ('aaaaaaaa-0000-4000-8000-000000000a22','2026-10-11T04:00:00Z','10000000-0000-4000-8000-000000000002',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
+   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000022","position":1.5,"text_en":"Fractional","text_zh":"小数"}]}',
+   '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000022","value":1}],"after":[{"id":"ea000000-0000-4000-8000-000000000022","value":1.5}]}}',1),
+  ('aaaaaaaa-0000-4000-8000-000000000a23','2026-10-11T03:30:00Z','10000000-0000-4000-8000-000000000002',
+   'qa@example.test','qa','ea111111-1111-4111-8111-111111111111','example-cv-qa-activity-log','update','introduction','introduction_paragraph','introduction',
+   '{"paragraphs":[{"id":"ea000000-0000-4000-8000-000000000023","position":2147483648,"text_en":"Out of range","text_zh":"超范围"}]}',
+   '{"position":{"before":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483647}],"after":[{"id":"ea000000-0000-4000-8000-000000000023","value":2147483648}]}}',1);
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
@@ -101,11 +117,45 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)),
-  7,'successful supported events and safe generic rows are included; Introduction, rejected, and mismatched contracts are excluded'
+  12,'successful supported events and safe generic rows include supported Introduction, rejected, and mismatched contracts are excluded'
 );
 SELECT extensions.is(
-  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100) WHERE domain_key='introduction'),
-  0,'Introduction is explicitly excluded'
+  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE domain_key='introduction' AND comparison_kind='introduction_fields'),
+  2,'Introduction V1 exposes validated bilingual changes and mixed structural order changes'
+);
+SELECT extensions.is(
+  (SELECT comparison->'changes'->'position'->'before'->1->>'id' = 'ea000000-0000-4000-8000-000000000022'
+    AND comparison->'changes'->'position'->'before'->1->>'value' = '1'
+    AND comparison->'changes'->'position'->'after'->1->>'id' = 'ea000000-0000-4000-8000-000000000022'
+    AND comparison->'changes'->'position'->'after'->1->>'value' = '1'
+   FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a21'),
+  true,'Introduction ordering comparison includes unchanged paragraph anchors'
+);
+SELECT extensions.is(
+  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a16' AND comparison_kind='introduction_fields'
+     AND comparison->'changes'->'text_en'->'before'->0->>'value'='Old English'
+     AND comparison->'changes'->'text_en'->'after'->0->>'value'='New English'
+     AND comparison->'changes'->'text_zh'->'before'->0->>'value'='旧中文'
+     AND comparison->'changes'->'text_zh'->'after'->0->>'value'='新中文'),
+  1,'Introduction V1 returns only recorded English and Chinese before/after values'
+);
+SELECT extensions.is(
+  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a20' AND comparison_kind='unavailable' AND comparison IS NULL),
+  1,'malformed Introduction snapshot is retained only as a safe generic row'
+);
+SELECT extensions.is(
+  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a22' AND comparison_kind='unavailable' AND comparison IS NULL),
+  1,'fractional Introduction positions are retained only as a safe generic row'
+);
+SELECT extensions.is(
+  (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100)
+   WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a23' AND comparison_kind='unavailable' AND comparison IS NULL),
+  1,'out-of-range Introduction positions are retained only as a safe generic row'
 );
 SELECT extensions.is(
   (SELECT count(*)::integer FROM public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',100) WHERE event_id='aaaaaaaa-0000-4000-8000-000000000a10' AND comparison_kind='entity_fields'
@@ -181,13 +231,19 @@ SELECT extensions.is(
     c2 AS (SELECT occurred_at,event_id FROM p2 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
     p3 AS MATERIALIZED (SELECT next_page.* FROM c2 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c2.occurred_at,c2.event_id) next_page),
     c3 AS (SELECT occurred_at,event_id FROM p3 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
-    p4 AS MATERIALIZED (SELECT next_page.* FROM c3 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c3.occurred_at,c3.event_id) next_page),
-    all_pages AS (SELECT event_id,occurred_at FROM p1 UNION ALL SELECT event_id,occurred_at FROM p2 UNION ALL SELECT event_id,occurred_at FROM p3 UNION ALL SELECT event_id,occurred_at FROM p4)
+     p4 AS MATERIALIZED (SELECT next_page.* FROM c3 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c3.occurred_at,c3.event_id) next_page),
+     c4 AS (SELECT occurred_at,event_id FROM p4 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
+     p5 AS MATERIALIZED (SELECT next_page.* FROM c4 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c4.occurred_at,c4.event_id) next_page),
+     c5 AS (SELECT occurred_at,event_id FROM p5 ORDER BY occurred_at ASC,event_id ASC LIMIT 1),
+     p6 AS MATERIALIZED (SELECT next_page.* FROM c5 CROSS JOIN LATERAL public.read_version_history_v1('ea111111-1111-4111-8111-111111111111',2,c5.occurred_at,c5.event_id) next_page),
+     all_pages AS (SELECT event_id,occurred_at FROM p1 UNION ALL SELECT event_id,occurred_at FROM p2 UNION ALL SELECT event_id,occurred_at FROM p3 UNION ALL SELECT event_id,occurred_at FROM p4 UNION ALL SELECT event_id,occurred_at FROM p5 UNION ALL SELECT event_id,occurred_at FROM p6)
    SELECT pg_catalog.array_agg(event_id::text ORDER BY occurred_at DESC,event_id DESC)
      || CASE WHEN count(*)=count(DISTINCT event_id) THEN ARRAY[]::text[] ELSE ARRAY['duplicate']::text[] END
    FROM all_pages),
   ARRAY['aaaaaaaa-0000-4000-8000-000000000a11','aaaaaaaa-0000-4000-8000-000000000a10','aaaaaaaa-0000-4000-8000-000000000a12',
-    'aaaaaaaa-0000-4000-8000-000000000a19','aaaaaaaa-0000-4000-8000-000000000a13','aaaaaaaa-0000-4000-8000-000000000a14','aaaaaaaa-0000-4000-8000-000000000a15']::text[],
+    'aaaaaaaa-0000-4000-8000-000000000a19','aaaaaaaa-0000-4000-8000-000000000a13','aaaaaaaa-0000-4000-8000-000000000a14',
+    'aaaaaaaa-0000-4000-8000-000000000a15','aaaaaaaa-0000-4000-8000-000000000a21','aaaaaaaa-0000-4000-8000-000000000a16',
+    'aaaaaaaa-0000-4000-8000-000000000a20','aaaaaaaa-0000-4000-8000-000000000a22','aaaaaaaa-0000-4000-8000-000000000a23']::text[],
   'keyset pages have no duplicates or skipped entries'
 );
 SELECT extensions.throws_ok(
@@ -215,7 +271,7 @@ SELECT extensions.is(
 RESET ROLE;
 SELECT extensions.is(
   (SELECT pg_catalog.count(*)::integer FROM cms_private.activity_log_events WHERE resume_id='ea111111-1111-4111-8111-111111111111'),
-  9,'Version History reads do not mutate successful event rows'
+  13,'Version History reads do not mutate successful event rows'
 );
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000003',true);

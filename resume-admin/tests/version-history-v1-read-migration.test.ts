@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const migration = readFileSync(resolve("migrations/20261029_version_history_v1_read.sql"), "utf8");
 const mirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261029000000_version_history_v1_read.sql"), "utf8");
 const runtimeTest = readFileSync(resolve("tests/rls-runtime/supabase/tests/version_history_v1_read.test.sql"), "utf8");
+const introductionMigration = readFileSync(resolve("migrations/20261102000000_version_history_introduction_support.sql"), "utf8");
 
 describe("Version History V1 read contract", () => {
   it("keeps the additive canonical migration and local runtime mirror byte-identical", () => {
@@ -42,9 +43,31 @@ describe("Version History V1 read contract", () => {
     expect(migration).not.toContain("'introduction'");
   });
 
+  it("adds Introduction through a forward-only least-data reader extension", () => {
+    for (const copy of [
+      "supabase/migrations/20261102000000_version_history_introduction_support.sql",
+      "tests/rls-runtime/supabase/migrations/20261102000000_version_history_introduction_support.sql",
+    ]) expect(readFileSync(resolve(copy), "utf8")).toBe(introductionMigration);
+    expect(introductionMigration).toContain("CREATE OR REPLACE FUNCTION public.read_version_history_v1(");
+    expect(introductionMigration).toContain("FROM cms_private.assert_activity_log_target(target_resume_id)");
+    expect(introductionMigration).toContain("event.site_key_snapshot = authorized_site_key");
+    expect(introductionMigration).toContain("s.section_key = 'introduction' AND s.entity_type = 'introduction_paragraph'");
+    expect(introductionMigration).toContain("THEN 'introduction_fields'");
+    expect(introductionMigration).toContain("introduction_position_rows");
+    expect(introductionMigration).toContain("position_context.position_change");
+    expect(introductionMigration.indexOf("), bounded AS (")).toBeLessThan(introductionMigration.indexOf("), introduction_position_rows AS ("));
+    expect(introductionMigration).toContain("pg_catalog.trunc");
+    expect(introductionMigration).toContain("2147483647");
+    expect(introductionMigration).toContain("pg_catalog.jsonb_build_object('changes', a.changes)");
+    expect(introductionMigration).toMatch(/REVOKE ALL ON FUNCTION public\.read_version_history_v1[\s\S]*?FROM PUBLIC, anon, authenticated, service_role/);
+    expect(introductionMigration).toMatch(/GRANT EXECUTE ON FUNCTION public\.read_version_history_v1[\s\S]*?TO authenticated/);
+    expect(introductionMigration).not.toMatch(/\b(?:INSERT|UPDATE|DELETE)\s+INTO\b/i);
+    expect(introductionMigration).not.toMatch(/restore_enabled|restore capability/i);
+  });
+
   it("contains local runtime coverage for payload adaptation, privacy, ordering, and isolation", () => {
-    expect(runtimeTest).toContain("extensions.plan(29)");
-    for (const phrase of ["V1 keeps only recorded entity fields", "V2 returns exact aggregate before/after", "legacy Files V1 exposes only locale and object reference", "Profile photo history exposes recorded reference changes only", "known payload version with a mismatched entity contract is excluded", "unknown payload version returns generic entry", "malformed known payload returns generic entry", "keyset pages have no duplicates or skipped entries", "QA cannot read Official Version History", "disabled Activity Log capability blocks Version History"]) {
+    expect(runtimeTest).toContain("extensions.plan(34)");
+    for (const phrase of ["V1 keeps only recorded entity fields", "V2 returns exact aggregate before/after", "legacy Files V1 exposes only locale and object reference", "Profile photo history exposes recorded reference changes only", "Introduction V1 exposes validated bilingual changes and mixed structural order changes", "Introduction ordering comparison includes unchanged paragraph anchors", "fractional Introduction positions are retained only as a safe generic row", "out-of-range Introduction positions are retained only as a safe generic row", "malformed Introduction snapshot is retained only as a safe generic row", "known payload version with a mismatched entity contract is excluded", "unknown payload version returns generic entry", "malformed known payload returns generic entry", "keyset pages have no duplicates or skipped entries", "QA cannot read Official Version History", "disabled Activity Log capability blocks Version History"]) {
       expect(runtimeTest).toContain(phrase);
     }
   });
