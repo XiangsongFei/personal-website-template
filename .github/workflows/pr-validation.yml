@@ -1,0 +1,188 @@
+name: PR validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect_changes:
+    name: Classify PR changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      admin: ${{ steps.classify.outputs.admin }}
+      public: ${{ steps.classify.outputs.public }}
+    steps:
+      - name: Check out PR for path classification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test change classification and gate evaluation
+        run: node --test .github/scripts/pr-validation-gate.test.mjs
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/pr-validation-gate.mjs classify
+
+  admin_frontend_worker_audit:
+    name: Admin frontend, Worker, build, and audit
+    needs: detect_changes
+    if: needs.detect_changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: resume-admin
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend and repository tests
+        run: npm test
+
+      - name: Build with synthetic CI-only Supabase inputs
+        env:
+          VITE_SUPABASE_URL: https://ci-placeholder.invalid
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+        run: npm run build
+
+      - name: Audit dependencies
+        run: npm audit
+
+  admin_migration_consistency:
+    name: Verify production migration staging
+    needs: detect_changes
+    if: needs.detect_changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify approved production migration staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          p0="20261031120001_p0_identity_scoped_activity_log.sql"
+          retention="20261031150000_profile_image_history_retention.sql"
+          restore="20261101000000_files_restore_capability_enforcement.sql"
+          cli_dir="resume-admin/supabase/migrations"
+          runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} "
+          test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
+          test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
+          for migration in "${p0}" "${retention}" "${restore}"; do
+            canonical="resume-admin/migrations/${migration}"
+            cmp "${canonical}" "${cli_dir}/${migration}"
+            cmp "${canonical}" "${runtime_dir}/${migration}"
+          done
+          printf '%s  %s\n' \
+            "da5a755e903a10693e7c5ba3924afaf0218aec156f8d86421e3aba2819186950" \
+            "resume-admin/migrations/${p0}" | sha256sum --check
+          printf '%s  %s\n' \
+            "089c08a2da05bb881368faedb4d078a39f26d456d78c0f39381959be567212d3" \
+            "resume-admin/migrations/${retention}" | sha256sum --check
+          printf '%s  %s\n' \
+            "8399ca4c280b05b83dc9385d40dec3fdee03ec4d025f351a5c1ce7e8d0f54875" \
+            "resume-admin/migrations/${restore}" | sha256sum --check
+
+  admin_local_sql:
+    name: Local Supabase SQL tests
+    needs: detect_changes
+    if: needs.detect_changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
+        with:
+          version: 2.119.0
+
+      - name: Verify staging security guards
+        run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+
+      - name: Stage isolated local Supabase and run SQL tests
+        run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
+
+  public_tests_build:
+    name: Public tests and production build
+    needs: detect_changes
+    if: needs.detect_changes.outputs.public == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out PR
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Public tests and production build
+        run: npm test
+
+  required-pr-validation-gate:
+    name: Required PR validation gate
+    needs:
+      - detect_changes
+      - admin_frontend_worker_audit
+      - admin_migration_consistency
+      - admin_local_sql
+      - public_tests_build
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out gate evaluator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require all applicable validations
+        env:
+          DETECTOR_RESULT: ${{ needs.detect_changes.result }}
+          ADMIN_APPLICABLE: ${{ needs.detect_changes.outputs.admin }}
+          PUBLIC_APPLICABLE: ${{ needs.detect_changes.outputs.public }}
+          ADMIN_FRONTEND_RESULT: ${{ needs.admin_frontend_worker_audit.result }}
+          ADMIN_MIGRATION_RESULT: ${{ needs.admin_migration_consistency.result }}
+          ADMIN_LOCAL_SQL_RESULT: ${{ needs.admin_local_sql.result }}
+          PUBLIC_RESULT: ${{ needs.public_tests_build.result }}
+        run: node .github/scripts/pr-validation-gate.mjs gate
