@@ -42,9 +42,6 @@ jobs:
       - name: Run frontend and repository tests
         run: npm test
 
-      - name: Run Worker tests
-        run: npm test -- tests/*-worker.test.ts
-
       - name: Build with synthetic CI-only Supabase inputs
         env:
           VITE_SUPABASE_URL: https://ci-placeholder.invalid
