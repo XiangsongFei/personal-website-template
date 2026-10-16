@@ -25,11 +25,38 @@ function run(command, args, options = {}) {
   const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
   if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
   if (result.status !== 0) {
+    if (typeof failureMessage === "function") throw new Error(failureMessage(result));
     if (failureMessage) throw new Error(failureMessage);
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
   }
   return discardOutput ? "" : result.stdout ?? "";
+}
+
+function summarizeSqlTestFailure(result) {
+  const rawOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  let output = "";
+  let inEscape = false;
+  for (const character of rawOutput) {
+    const code = character.charCodeAt(0);
+    if (!inEscape && code === 27) {
+      inEscape = true;
+      continue;
+    }
+    if (inEscape) {
+      if (code >= 0x40 && code <= 0x7e) inEscape = false;
+      continue;
+    }
+    output += character;
+  }
+  const exitCode = Number.isInteger(result.status) ? result.status : "unknown";
+  const assertionNumbers = [...new Set([...output.matchAll(/^\s*not ok\s+(\d+)(?:\s|$)/gim)].map((match) => match[1]))];
+  const sqlLocations = [...new Map([...output.matchAll(/(?:^|[\\/])([A-Za-z0-9_.-]+\.sql):(\d+):\s*(?:ERROR|FATAL):/gim)]
+    .map((match) => [`${match[1]}:${match[2]}`, `${match[1]}:${match[2]}`]))].map(([, location]) => location);
+  const details = [];
+  if (assertionNumbers.length) details.push(`failed assertion number(s): ${assertionNumbers.join(", ")}`);
+  if (sqlLocations.length) details.push(`SQL error location(s): ${sqlLocations.join(", ")}`);
+  return `Supabase test db failed (exit status ${exitCode})${details.length ? `; ${details.join("; ")}` : "; no allowlisted diagnostics found; output suppressed."}`;
 }
 
 function redactSecrets(output) {
@@ -299,11 +326,14 @@ function stageProject(stageRoot, projectId, ports) {
 }
 
 function runSupabase(context, args, options = {}) {
+  const isSqlTest = args[0] === "test" && args[1] === "db";
   const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
     env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
     stdio: "pipe",
     discardOutput: args[0] !== "status",
-    failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
+    failureMessage: args[0] === "start" ? safeStartFailure
+      : isSqlTest ? summarizeSqlTestFailure
+        : `Supabase ${args[0]} failed; CLI output suppressed.`,
   });
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
   if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
@@ -312,6 +342,20 @@ function runSupabase(context, args, options = {}) {
 }
 
 function runSecuritySelfTests() {
+  const sqlFailureSummary = summarizeSqlTestFailure({
+    status: 1,
+    stdout: "not ok 14 - a PR-controlled assertion description containing a secret",
+    stderr: "psql:/tmp/private/version_history_v1_read.test.sql:188: ERROR: sensitive SQL and connection data must not appear",
+  });
+  assert.match(sqlFailureSummary, /exit status 1/);
+  assert.match(sqlFailureSummary, /assertion number\(s\): 14/);
+  assert.match(sqlFailureSummary, /version_history_v1_read\.test\.sql:188/);
+  assert.doesNotMatch(sqlFailureSummary, /PR-controlled|sensitive SQL|connection data|private/);
+
+  const opaqueFailureSummary = summarizeSqlTestFailure({ status: 1, stdout: "credential=hidden", stderr: "" });
+  assert.match(opaqueFailureSummary, /no allowlisted diagnostics found/);
+  assert.doesNotMatch(opaqueFailureSummary, /credential|hidden/);
+
   const validContainer = (hostIp) => ({
     Name: "/supabase_db_pr1-test",
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
