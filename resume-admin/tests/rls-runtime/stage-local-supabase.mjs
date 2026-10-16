@@ -58,6 +58,7 @@ function summarizeSqlTestFailure(result, databaseOutput = "") {
   const sqlStates = [...new Set(errorLines.flatMap((line) => [
     ...line.matchAll(/\bSQLSTATE\s*[:=]?\s*([0-9A-Z]{5})\b/gi),
     ...line.matchAll(/\b(?:ERROR|FATAL):\s*([0-9A-Z]{5}):/gi),
+    ...line.matchAll(/\b([0-9A-Z]{5})\s+(?:ERROR|FATAL):/gi),
   ].map((match) => match[1].toUpperCase())))];
   const syntaxToken = errors.match(/syntax error at or near ["']([a-z_]+)["']/i)?.[1]?.toUpperCase();
   const errorCategory = /\bsyntax error\b/i.test(errors) ? `syntax error${syntaxToken ? ` near ${syntaxToken}` : ""}`
@@ -99,6 +100,29 @@ function readOwnedSqlContainerLogs(context) {
   } catch {
     return "";
   }
+}
+
+function enableOwnedDatabaseErrorCodes(context, resources) {
+  const database = resources.containers.map((id) => dockerJson(["inspect", id])[0])
+    .find((container) => container?.Name?.replace(/^\//, "") === context.dbContainer);
+  if (!database) throw new Error("Could not verify this run's disposable database container; SQL tests were not run");
+  const databaseId = resourceId(database, "containers");
+  verifyOwnedResource("containers", databaseId, context.projectId, context.preexistingContainerIds);
+
+  const settings = [
+    "ALTER SYSTEM SET log_error_verbosity = 'verbose'",
+    "ALTER SYSTEM SET log_line_prefix = '%m [%p] %e '",
+  ];
+  for (const setting of settings) {
+    run("docker", ["exec", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", setting], {
+      stdio: "pipe", discardOutput: true,
+      failureMessage: "Could not configure sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
+    });
+  }
+  run("docker", ["exec", databaseId, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-c", "SELECT pg_catalog.pg_reload_conf()"], {
+    stdio: "pipe", discardOutput: true,
+    failureMessage: "Could not reload sanitized PostgreSQL error-code diagnostics; SQL tests were not run",
+  });
 }
 
 function redactSecrets(output) {
@@ -425,6 +449,12 @@ function runSecuritySelfTests() {
   assert.match(databaseLogFailure, /SQLSTATE: 42601/);
   assert.doesNotMatch(databaseLogFailure, /STATEMENT|secret-value/);
 
+  const prefixedSqlState = summarizeSqlTestFailure({ status: 1, stdout: "" },
+    "2026-10-16 14:00:00 UTC [42] 42P01 ERROR: relation \"private_table\" does not exist\nSTATEMENT: SELECT secret_value");
+  assert.match(prefixedSqlState, /error category: missing database object/);
+  assert.match(prefixedSqlState, /SQLSTATE: 42P01/);
+  assert.doesNotMatch(prefixedSqlState, /private_table|secret_value|STATEMENT/);
+
   const diagnosticContext = {
     projectId: "pr1-123-abcd",
     preexistingContainerIds: new Set(["preexisting"]),
@@ -585,6 +615,7 @@ export async function withStagedLocalSupabase(callback) {
     if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
     const resolved = { ...context, ...status, projectId, dbContainer, authContainer,
       preexistingContainerIds: before.containers };
+    enableOwnedDatabaseErrorCodes(resolved, resources);
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;
