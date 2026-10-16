@@ -1886,7 +1886,17 @@ function isApiPath(pathname: string): boolean {
 
 export async function handleWorkerRequest(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
-  if (!isApiPath(url.pathname)) return env.ASSETS.fetch(request);
+  if (!isApiPath(url.pathname)) {
+    const response = await env.ASSETS.fetch(request);
+    const isScriptOrStyle = url.pathname.startsWith("/assets/") && /\.(?:js|css)$/i.test(url.pathname);
+    if (isScriptOrStyle && response.headers.get("content-type")?.toLowerCase().startsWith("text/html")) {
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+      });
+    }
+    return response;
+  }
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
   if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {

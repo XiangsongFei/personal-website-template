@@ -57,6 +57,15 @@ describe("V1.3D-7 Files legacy restoration migration", () => {
     expect(capabilityMigration).not.toMatch(/(?:INSERT|UPDATE|DELETE)\s+INTO\s+cms_private\.resume_capabilities/i);
   });
 
+  it("fails closed if Restore is enabled for Owner, Test, or a QA target", () => {
+    const guard = capabilityMigration.split("DO $restore_disabled_guard$")[1]?.split("$restore_disabled_guard$")[0] ?? "";
+    expect(guard).toContain("site_key='example-cv'");
+    expect(guard).toContain("'f6000000-0000-4000-8000-000000000001'::uuid");
+    expect(guard).toContain("admin.role='qa'");
+    expect(guard).toContain("capability.enabled IS TRUE");
+    expect(guard).toContain("Restore must remain disabled for the known Owner and Test targets");
+  });
+
   it("serializes capability disablement before any restore-side work", () => {
     const mutation = capabilityMigration.split("CREATE OR REPLACE FUNCTION public.restore_resume_files_from_event_v1(")[1];
     expect(mutation).toBeDefined();

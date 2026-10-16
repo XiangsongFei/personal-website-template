@@ -7,6 +7,6 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/admin/v1", "/api/admin/v1/*"]
+    "run_worker_first": ["/api/admin/v1", "/api/admin/v1/*", "/assets/*"]
   }
 }
