@@ -70,20 +70,28 @@ describe("Version History repository typed read contract", () => {
     expect(result.entries.map(entry => entry.comparison.kind)).toEqual(["unavailable", "entity_fields"]);
   });
 
-  it("keeps safe legacy Introduction positions and makes unsafe numbers generic without losing adjacent history", async () => {
+  it("keeps safe numeric legacy Introduction values and makes unsafe text or positions generic", async () => {
     const intro = { domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null };
     const rpc = vi.fn().mockResolvedValue({ data: [
-      row({ ...intro, comparison: { changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER } } } }),
+      row({ ...intro, comparison: { changes: {
+        text: { before: 7, after: Number.MAX_SAFE_INTEGER }, position: { before: 0, after: Number.MAX_SAFE_INTEGER },
+      } } }),
       row({ ...intro, event_id: id2, comparison: { changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER + 1 } } } }),
       row({ ...intro, event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
         comparison: { changes: { position: { before: Number.NEGATIVE_INFINITY, after: 1 } } } }),
-      row({ event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4" }),
+      row({ ...intro, event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+        comparison: { changes: { text: { before: 1, after: Number.MAX_SAFE_INTEGER + 1 } } } }),
+      row({ ...intro, event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
+        comparison: { changes: { text: { before: 1, after: Number.POSITIVE_INFINITY } } } }),
+      row({ event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6" }),
     ], error: null });
     const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
-    expect(result.entries).toHaveLength(4);
-    expect(result.entries.map(entry => entry.comparison.kind)).toEqual(["entity_fields", "unavailable", "unavailable", "entity_fields"]);
+    expect(result.entries).toHaveLength(6);
+    expect(result.entries.map(entry => entry.comparison.kind)).toEqual([
+      "entity_fields", "unavailable", "unavailable", "unavailable", "unavailable", "entity_fields",
+    ]);
     expect(result.entries[0]?.comparison).toEqual({ kind: "entity_fields",
-      changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER } } });
+      changes: { text: { before: 7, after: Number.MAX_SAFE_INTEGER }, position: { before: 0, after: Number.MAX_SAFE_INTEGER } } });
     expect(JSON.stringify(result.entries[1]?.comparison)).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
   });
 
