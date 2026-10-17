@@ -72,6 +72,34 @@ describe("Stage 4C auth gate", () => {
     expect(await screen.findByRole("navigation", { name: "CMS sections" })).toBeTruthy();
   });
 
+  it("drops an older administrator authorization result after an account switch", async () => {
+    const identityA: AdminIdentity = { id: "10000000-0000-4000-8000-000000000002", email: "a@example.test", sessionKey: "actor-a-session" };
+    const identityB: AdminIdentity = { id: "10000000-0000-4000-8000-000000000003", email: "b@example.test", sessionKey: "actor-b-session" };
+    const auth = mockClient(identityA, true);
+    const oldAuthorization = deferred<boolean>();
+    const newAuthorization = deferred<boolean>();
+    let currentIdentity: AdminIdentity | null = identityA;
+    vi.mocked(auth.client.getIdentity).mockImplementation(async () => currentIdentity);
+    vi.mocked(auth.client.isResumeAdmin)
+      .mockReturnValueOnce(oldAuthorization.promise)
+      .mockReturnValueOnce(newAuthorization.promise);
+    show(auth.client);
+
+    await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledTimes(1));
+    auth.emit("SIGNED_OUT", null);
+    currentIdentity = identityB;
+    auth.emit("SIGNED_IN", identityB.sessionKey);
+    await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledTimes(2));
+    newAuthorization.resolve(true);
+    expect(await screen.findByText("b@example.test")).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+
+    oldAuthorization.resolve(true);
+    await waitFor(() => expect(screen.getByText("b@example.test")).toBeTruthy());
+    expect(screen.queryByText("a@example.test")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+  });
+
   it("preserves every supported deep route through session and admin checks", async () => {
     const routes = [
       ["/overview", "Overview"], ["/profile", "Profile"], ["/introduction", "Introduction"],

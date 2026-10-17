@@ -2776,15 +2776,14 @@ describe("Batch 6A production repeatable CRUD", () => {
     const setup = makeRepository("skills");
     const target = resumeId;
     const websiteRequestId = "11111111-1111-4111-8111-111111111111";
-    const originalCrypto = globalThis.crypto;
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: originalCrypto.subtle });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const rpc = vi.fn(async (name: string) => {
       if (name === "load_admin_website_links_write_state") return { data: [{ resume_id: target,
         activity_log_enabled: true, website_links_write_mode: "rpc", website_links_trusted_context_required: true }], error: null };
       throw new Error(`Unexpected RPC ${name}`);
     });
     const realWebsiteRepository = createResumeRepository({
-      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) },
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) },
       rpc,
     } as unknown as import("@supabase/supabase-js").SupabaseClient, "https://storage.example.test");
     let resolveFirstRequest!: (response: Response) => void;
@@ -2970,7 +2969,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const rpc = vi.fn(async (name: string) => name === "load_admin_files_storage_state_v1"
       ? { data: [{ resume_id: target, activity_log_enabled: true, files_write_mode: "rpc", files_trusted_context_required: true, storage_protocol: "intent_v1" }], error: null }
       : { data: null, error: { message: "unexpected RPC" } });
-    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
     const realFilesRepository = createResumeRepository(client, "https://storage.example.test");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

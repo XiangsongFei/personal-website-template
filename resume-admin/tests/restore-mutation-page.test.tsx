@@ -35,8 +35,8 @@ const page: Page = { entries: [entry()], hasMore: false, nextCursor: null };
 const restored = { status: "restored" as const, domain: "awards" as const, source_event_id: eventId,
   result_event_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", occurred_at: "2026-10-08T02:10:04Z" };
 
-function renderPage(repository: ResumeRepository, canRestoreDomain?: (domain: RestorePreviewDomain, target: string) => { allowed: boolean; message?: string }, onRestoreApplied?: () => Promise<void>) {
-  return render(<UiLocaleProvider><VersionHistoryPage resumeId={resumeId} repository={repository} canRestoreDomain={canRestoreDomain} onRestoreApplied={onRestoreApplied} /></UiLocaleProvider>);
+function renderPage(repository: ResumeRepository, canRestoreDomain?: (domain: RestorePreviewDomain, target: string) => { allowed: boolean; message?: string }, onRestoreApplied?: () => Promise<void>, restoreEnabled = true) {
+  return render(<UiLocaleProvider><VersionHistoryPage resumeId={resumeId} repository={repository} restoreEnabled={restoreEnabled} canRestoreDomain={canRestoreDomain} onRestoreApplied={onRestoreApplied} /></UiLocaleProvider>);
 }
 function baseRepository(overrides: Partial<ResumeRepository> = {}): ResumeRepository {
   return { loadVersionHistoryPage: vi.fn().mockResolvedValue(page), previewRestore: vi.fn().mockResolvedValue(preview()),
@@ -53,6 +53,25 @@ async function openPreview(dialogName = "Awards") {
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Version History Restore presentation and state machine", () => {
+  it("hides Restore controls and makes no Restore requests when capability is false while keeping history readable", async () => {
+    const repo = baseRepository();
+    renderPage(repo, undefined, undefined, false);
+    expect(await screen.findByRole("heading", { level: 1, name: "Version History" })).toBeTruthy();
+    expect(await screen.findByText("Current award")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Preview what would be restored" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(repo.previewRestore).not.toHaveBeenCalled();
+    expect(repo.restoreDomain).not.toHaveBeenCalled();
+  });
+
+  it("fails closed by default until the authorized Restore capability has loaded", async () => {
+    const repo = baseRepository();
+    render(<UiLocaleProvider><VersionHistoryPage resumeId={resumeId} repository={repo} /></UiLocaleProvider>);
+    expect(await screen.findByText("Current award")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Preview what would be restored" })).toBeNull();
+    expect(repo.previewRestore).not.toHaveBeenCalled();
+  });
+
   it("offers Preview only for supported V2 update events and keeps Profile non-restorable", async () => {
     const unsupported = [entry({ payloadVersion: 1 }), entry({ domain: "files", entityType: "resume_file" }),
       entry({ domain: "profile", entityType: "profile_settings" }), entry({ operation: "create" }),

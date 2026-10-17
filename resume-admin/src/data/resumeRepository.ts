@@ -40,48 +40,48 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadAdminFeatureState?(resumeId: string): Promise<AdminFeatureState>;
   loadAdminAwardsWriteState?(resumeId: string): Promise<AdminAwardsWriteState>;
   saveAwardsWithWorker?(resumeId: string, items: AwardItem[]): Promise<AwardItem[]>;
-  hasPendingAwardsWorkerSave?(resumeId: string): boolean;
+  hasPendingAwardsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingAwardsSave?(resumeId?: string): void;
   loadAdminExperienceWriteState?(resumeId: string): Promise<AdminDomainWriteState<"experience">>;
   saveExperienceWithWorker?(resumeId: string, items: ExperienceItem[]): Promise<ExperienceItem[]>;
-  hasPendingExperienceWorkerSave?(resumeId: string): boolean;
+  hasPendingExperienceWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingExperienceSave?(resumeId?: string): void;
   loadAdminSkillsWriteState?(resumeId: string): Promise<AdminDomainWriteState<"skills">>;
   saveSkillsWithWorker?(resumeId: string, items: SkillItem[]): Promise<SkillItem[]>;
-  hasPendingSkillsWorkerSave?(resumeId: string): boolean;
+  hasPendingSkillsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingSkillsSave?(resumeId?: string): void;
   loadAdminEducationWriteState?(resumeId: string): Promise<AdminEducationWriteState>;
   saveEducationWithWorker?(resumeId: string, items: EducationItem[]): Promise<EducationItem[]>;
-  hasPendingEducationWorkerSave?(resumeId: string): boolean;
+  hasPendingEducationWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingEducationSave?(resumeId?: string): void;
   loadAdminProjectsWriteState?(resumeId: string): Promise<AdminDomainWriteState<"projects">>;
   saveProjectsWithWorker?(resumeId: string, items: ProjectItem[]): Promise<ProjectItem[]>;
-  hasPendingProjectsWorkerSave?(resumeId: string): boolean;
+  hasPendingProjectsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingProjectsSave?(resumeId?: string): void;
   loadAdminContactWriteState?(resumeId: string): Promise<AdminContactWriteState>;
   saveContactWithWorker?(resumeId: string, contact: ContactSection): Promise<ContactSection>;
-  hasPendingContactWorkerSave?(resumeId: string): boolean;
+  hasPendingContactWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingContactSave?(resumeId?: string): void;
   loadAdminProfileWriteState?(resumeId: string): Promise<AdminProfileWriteState>;
   saveProfileWithWorker?(resumeId: string, profile: ProfileSection, baselinePhotoUrl: string | null): Promise<ProfileSection>;
-  hasPendingProfileWorkerSave?(resumeId: string): boolean;
+  hasPendingProfileWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingProfileSave?(resumeId?: string): void;
   loadAdminWebsiteLinksWriteState?(resumeId: string, operation?: FilesSaveOperation): Promise<AdminDomainWriteState<"website_links">>;
   saveWebsiteLinksWithWorker?(resumeId: string, links: LinksSection, operation?: FilesSaveOperation): Promise<LinksSection>;
-  hasPendingWebsiteLinksWorkerSave?(resumeId: string): boolean;
+  hasPendingWebsiteLinksWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   loadAdminFilesWriteState?(resumeId: string, operation?: FilesSaveOperation): Promise<AdminFilesWriteState>;
   loadAdminFilesRestoreCapability?(resumeId: string): Promise<boolean>;
   saveFilesWithWorker?(resumeId: string, files: FilesAggregate, uploadRequestIds?: Partial<Record<Locale, string>>, operation?: FilesSaveOperation): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   uploadResumePdfWithWorker?(resumeId: string, locale: Locale, file: File, operation?: FilesSaveOperation): Promise<{ reference: string; uploadRequestId: string }>;
   cleanupResumePdfCandidatesWithWorker?(resumeId: string, uploadRequestIds: string[], operation?: FilesSaveOperation): Promise<boolean>;
-  clearPendingResumePdfUpload?(resumeId: string, locale: Locale, requestId: string): void;
+  clearPendingResumePdfUpload?(resumeId: string, locale: Locale, requestId: string): Promise<void>;
   restoreFilesFromEvent?(resumeId: string, sourceEventId: string, locale: Locale): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
-  hasPendingFilesWorkerSave?(resumeId: string): boolean;
+  hasPendingFilesWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   retryPendingFilesWithWorker?(resumeId: string, operation?: FilesSaveOperation): Promise<{ files: FilesAggregate; cleanupWarning: boolean }>;
   saveIntroductionAtomically?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
   saveIntroductionWithWorker?(resumeId: string, items: IntroItem[]): Promise<IntroItem[]>;
-  hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[]): boolean;
-  discardPendingIntroductionSave?(resumeId?: string): void;
+  hasPendingIntroductionWorkerSave?(resumeId: string, items: IntroItem[], actorUserId: string | null): boolean;
+  discardPendingIntroductionSave?(resumeId: string | undefined, actorUserId: string | null): void;
   loadActivityLogAuthorizedTargets?(): Promise<ActivityLogAuthorizedTarget[]>;
   loadActivityLogPage?(resumeId: string, pageSize: number, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
   loadActivityLogPageV12?(resumeId: string, pageSize: number, filters: ActivityLogFilters, cursor?: ActivityLogCursor): Promise<ActivityLogEvent[]>;
@@ -114,7 +114,7 @@ export type AdminFeatureState = {
   introductionWriteMode: "direct" | "rpc";
   introductionTrustedContextRequired: boolean;
 };
-export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean };
+export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean; baselineDigest?: string; baselineProof?: string };
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects" | "website_links" | "files"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminFilesWriteState = AdminDomainWriteState<"files"> & { storageProtocol: "legacy" | "intent_v1" };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
@@ -983,41 +983,129 @@ async function readResumePdfFilename(supabase: SupabaseClient, supabaseUrl: stri
 
 /** Site-scoped reads plus the explicitly allowlisted Profile and Education write paths. */
 export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: string): CompleteResumeRepository {
-  let pendingIntroductionRequest: { resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
-  type AwardsRequest = { requestId: string; resumeId: string; fingerprint: string; awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }> };
-  const awardsStorageKey = (resumeId: string) => `admin-awards-rpc-pending-v1:${resumeId}`;
-  const readAwardsPending = (resumeId: string): AwardsRequest | null => {
-    try {
-      const raw = globalThis.sessionStorage?.getItem(awardsStorageKey(resumeId));
-      if (!raw) return null;
-      if (new TextEncoder().encode(raw).byteLength > 8192) throw new Error("oversize");
-      const value = JSON.parse(raw) as AwardsRequest;
-      const validAwards = Array.isArray(value?.awards) && value.awards.length <= 32 && value.awards.every((award, position) => {
-        if (!award || Object.keys(award).sort().join(",") !== "en,id,position,zh" || award.position !== position
-          || !(award.id === null || (typeof award.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(award.id)))) return false;
-        const validTranslation = (translation: unknown) => Boolean(translation && typeof translation === "object"
-          && Object.keys(translation).sort().join(",") === "name,year"
-          && typeof (translation as { name?: unknown }).name === "string" && typeof (translation as { year?: unknown }).year === "string");
-        return validTranslation(award.zh) && validTranslation(award.en);
-      });
-      const serializedAwards = validAwards ? JSON.stringify(value.awards) : "";
-      if (value && value.resumeId === resumeId && typeof value.requestId === "string"
-        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
-        && typeof value.fingerprint === "string" && value.fingerprint === serializedAwards
-        && new TextEncoder().encode(serializedAwards).byteLength <= 4096) return value;
-      throw new Error("invalid");
-    } catch { throw new AwardsWorkerSaveError("A pending Awards request could not be verified safely. Do not save a different payload until it is resolved."); }
+  let pendingIntroductionRequest: { actorUserId: string; resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
+  const introductionFlights = new Map<string, Promise<IntroItem[]>>();
+  type PendingDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "profile" | "contact" | "website_links" | "files";
+  type PendingEnvelope = { actorUserId: string; domain: PendingDomain; payloadDigest: string; payload: unknown; requestId: string; resumeId: string };
+  const pendingStorageKey = (domain: PendingDomain, resumeId: string, actorUserId: string, scope?: string) =>
+    `admin-pending-save-v2:${domain}:${resumeId}:${actorUserId}${scope ? `:${scope}` : ""}`;
+  const legacyPendingStorageKey = (domain: PendingDomain, resumeId: string) => ({
+    introduction: `admin-introduction-rpc-pending-v1:${resumeId}`,
+    awards: `admin-awards-rpc-pending-v1:${resumeId}`,
+    experience: `admin-experience-rpc-pending-v1:${resumeId}`,
+    skills: `admin-skills-rpc-pending-v1:${resumeId}`,
+    education: `admin-education-rpc-pending-v1:${resumeId}`,
+    projects: `admin-projects-rpc-pending-v1:${resumeId}`,
+    profile: `admin-profile-rpc-pending-v1:${resumeId}`,
+    contact: `admin-contact-rpc-pending-v1:${resumeId}`,
+    website_links: `admin-website_links-rpc-pending-v1:${resumeId}`,
+    files: `admin-files-rpc-pending-v1:${resumeId}`,
+  })[domain];
+  const verifiedActorSession = async (operation?: FilesSaveOperation) => {
+    const awaitAuth = <T>(promise: PromiseLike<T> | T, step: string) => operation
+      ? awaitFilesPreflight(promise, operation, step, FILE_AUTH_TIMEOUT_MS) : Promise.resolve(promise);
+    let current;
+    try { current = await awaitAuth(supabase.auth.getSession(), "session check"); } catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request."); }
+    const session = current.data.session; const token = session?.access_token;
+    if (current.error || !session || typeof token !== "string" || !token || typeof session.expires_at !== "number" || session.expires_at <= Date.now() / 1000)
+      throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
+    let verified;
+    try { verified = await awaitAuth(supabase.auth.getUser(token), "account check"); } catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("Your account could not be verified. Sign in again before retrying a pending request."); }
+    if (verified.error || !verified.data.user?.id || verified.data.user.id !== session.user.id)
+      throw new AggregateWorkerSaveError("Your account could not be verified. Sign in again before retrying a pending request.");
+    return { actorUserId: verified.data.user.id, token };
   };
-  const writeAwardsPending = (request: AwardsRequest) => {
-    try {
-      const raw = JSON.stringify(request);
-      if (new TextEncoder().encode(raw).byteLength > 8192) throw new Error("oversize");
-      if (!globalThis.sessionStorage) throw new Error("unavailable");
-      globalThis.sessionStorage.setItem(awardsStorageKey(request.resumeId), raw);
-    } catch { throw new AwardsWorkerSaveError("The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry."); }
+  const pendingDigest = async (payload: unknown): Promise<string> => {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle || typeof globalThis.TextEncoder !== "function") throw new AggregateWorkerSaveError("Secure pending-request verification is unavailable. The save was not sent.");
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    const digest = await subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
   };
-  const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
-  const collectionPendingKey = (domain: "experience" | "skills" | "education" | "projects", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
+  const readPendingEnvelope = async (domain: PendingDomain, resumeId: string, actorUserId: string, maxBytes = 220 * 1024, scope?: string): Promise<PendingEnvelope | null> => {
+    try {
+      const storage = globalThis.sessionStorage;
+      if (!storage) throw new Error("unavailable");
+      // Legacy envelopes have no authenticated actor binding. Retain them untouched and fail closed.
+      if (storage.getItem(legacyPendingStorageKey(domain, resumeId)) !== null) throw new Error("legacy pending");
+      const raw = storage.getItem(pendingStorageKey(domain, resumeId, actorUserId, scope));
+      if (raw === null) return null;
+      if (new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error("oversize");
+      const value = JSON.parse(raw) as Record<string, unknown>;
+      if (Object.keys(value).sort().join(",") !== "actorUserId,domain,payload,payloadDigest,requestId,resumeId"
+        || value.actorUserId !== actorUserId || value.domain !== domain || value.resumeId !== resumeId
+        || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
+        || typeof value.payloadDigest !== "string" || !/^[0-9a-f]{64}$/.test(value.payloadDigest)
+        || await pendingDigest({ actorUserId: value.actorUserId, domain: value.domain, resumeId: value.resumeId,
+          requestId: value.requestId, payload: value.payload }) !== value.payloadDigest) throw new Error("invalid envelope");
+      return value as PendingEnvelope;
+    } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified for this signed-in account. It was retained and no request was sent.`); }
+  };
+  const writePendingEnvelope = async (domain: PendingDomain, actorUserId: string, resumeId: string, requestId: string, payload: unknown, maxBytes = 220 * 1024, scope?: string): Promise<PendingEnvelope> => {
+    const payloadDigest = await pendingDigest({ actorUserId, domain, resumeId, requestId, payload });
+    const envelope: PendingEnvelope = { actorUserId, domain, payloadDigest, payload, requestId, resumeId };
+    try {
+      const raw = JSON.stringify(envelope);
+      if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error("unavailable or oversize");
+      globalThis.sessionStorage.setItem(pendingStorageKey(domain, resumeId, actorUserId, scope), raw);
+    } catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely. The request was not sent.`); }
+    return envelope;
+  };
+  const clearPendingEnvelope = (domain: PendingDomain, resumeId: string, actorUserId: string, scope?: string) => {
+    try { globalThis.sessionStorage?.removeItem(pendingStorageKey(domain, resumeId, actorUserId, scope)); } catch { /* A confirmed idempotent replay remains safe. */ }
+  };
+  const pendingExists = (domain: PendingDomain, resumeId: string, actorUserId: string | null) => {
+    if (!actorUserId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorUserId)) return false;
+    try {
+      const storage = globalThis.sessionStorage;
+      if (!storage) return false;
+      const key = pendingStorageKey(domain, resumeId, actorUserId);
+      if (storage.getItem(key) !== null) return true;
+      if (domain === "files") return (['zh', 'en'] as const).some(locale => storage.getItem(`${key}:upload:${locale}`) !== null);
+      return false;
+    } catch { return false; }
+  };
+  type AwardsPayload = Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>;
+  type AwardsPendingPayload = { awards: AwardsPayload; expectedBaselineDigest: string; baselineProof: string };
+  const awardsBaselineByResumeId = new Map<string, { digest: string; proof: string }>();
+  const awardsBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
+  const validAwardsPayload = (value: unknown): value is AwardsPayload => Array.isArray(value) && value.length <= 32
+    && value.every((item, position) => item && typeof item === "object" && !Array.isArray(item)
+      && Object.keys(item).sort().join(",") === "en,id,position,zh"
+      && (item as Record<string, unknown>).position === position
+      && ((item as Record<string, unknown>).id === null || (typeof (item as Record<string, unknown>).id === "string"
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((item as Record<string, string>).id)))
+      && ["zh", "en"].every(locale => {
+        const translated = (item as Record<string, unknown>)[locale];
+        return Boolean(translated && typeof translated === "object" && !Array.isArray(translated)
+          && Object.keys(translated).sort().join(",") === "name,year"
+          && typeof (translated as Record<string, unknown>).name === "string" && (translated as Record<string, string>).name.length <= 200
+          && typeof (translated as Record<string, unknown>).year === "string" && (translated as Record<string, string>).year.length <= 64);
+      }))
+    && new Set(value.filter(item => item.id !== null).map(item => item.id.toLowerCase())).size === value.filter(item => item.id !== null).length;
+  const pendingAwardsMatches = (value: unknown): value is AwardsPendingPayload => Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join(",") === "awards,baselineProof,expectedBaselineDigest"
+    && validAwardsPayload((value as Record<string, unknown>).awards)
+    && typeof (value as Record<string, unknown>).expectedBaselineDigest === "string" && /^[0-9a-f]{64}$/.test((value as Record<string, string>).expectedBaselineDigest)
+    && typeof (value as Record<string, unknown>).baselineProof === "string" && /^[0-9a-f]{64}$/.test((value as Record<string, string>).baselineProof));
+  const pendingAwardsMatchRefreshed = (pending: AwardsPayload, current: AwardsPayload) => {
+    if (pending.length !== current.length) return false;
+    const refreshedIds = new Set<string>();
+    return pending.every((previous, index) => {
+      const refreshed = current[index];
+      if (!refreshed) return false;
+      if (previous.id === null) {
+        if (refreshed.id !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refreshed.id)) return false;
+      } else if (previous.id !== refreshed.id) return false;
+      if (refreshed.id !== null) {
+        const normalized = refreshed.id.toLowerCase();
+        if (refreshedIds.has(normalized)) return false;
+        refreshedIds.add(normalized);
+      }
+      return previous.position === refreshed.position && previous.zh.name === refreshed.zh.name && previous.zh.year === refreshed.zh.year
+        && previous.en.name === refreshed.en.name && previous.en.year === refreshed.en.year;
+    });
+  };
   const pendingCollectionMatchesRefreshed = (pending: unknown[], current: unknown[]): boolean => {
     if (pending.length !== current.length) return false;
     return pending.every((entry, index) => {
@@ -1036,42 +1124,29 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
   const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false, matchesRefreshedPayload: (pending: unknown[], current: unknown[]) => boolean = () => false) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
-    const storageKey = collectionPendingKey(domain, resumeId);
-    let pending: { requestId: string; resumeId: string; payload: unknown[] } | null = null;
-    try {
-      const raw = globalThis.sessionStorage?.getItem(storageKey);
-      if (raw) {
-        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
-        const value = JSON.parse(raw) as Record<string, unknown>;
-        if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
-          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
-          || !Array.isArray(value.payload) || (!replayPendingPayload && JSON.stringify(value.payload) !== fingerprint)
-          || (replayPendingPayload && (!validatePendingPayload(value.payload) || !matchesRefreshedPayload(value.payload, payload)))) throw new Error("invalid");
-        pending = { requestId: value.requestId, resumeId, payload: value.payload };
-      }
-    } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely. Keep the draft unchanged and retry.`); }
-    if (!pending) {
+    const session = await verifiedActorSession();
+    const existing = await readPendingEnvelope(domain, resumeId, session.actorUserId);
+    let pending: { requestId: string; payload: unknown[] };
+    if (existing) {
+      const storedPayload = existing.payload;
+      if (!Array.isArray(storedPayload) || (!replayPendingPayload && JSON.stringify(storedPayload) !== fingerprint)
+        || (replayPendingPayload && (!validatePendingPayload(storedPayload) || !matchesRefreshedPayload(storedPayload, payload))))
+        throw new AggregateWorkerSaveError(`A pending ${domain} request does not match the current authenticated target and draft. It was retained.`);
+      pending = { requestId: existing.requestId, payload: storedPayload };
+    } else {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable. Refresh the Admin and try again.`);
-      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, payload };
-      try {
-        const raw = JSON.stringify(pending);
-        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
-        globalThis.sessionStorage.setItem(storageKey, raw);
-      } catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely. Keep this page open and retry.`); }
+      pending = { requestId: globalThis.crypto.randomUUID(), payload };
+      await writePendingEnvelope(domain, session.actorUserId, resumeId, pending.requestId, payload);
     }
     try {
-      const { data, error } = await supabase.auth.getSession();
-      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
-      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
-        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
       let response: Response;
       try { response = await fetch(`/api/admin/v1/${domain}/save`, { method: "POST", credentials: "omit",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
         body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, [domain]: pending.payload }), signal: AbortSignal.timeout(30_000) }); }
       catch { throw new AggregateWorkerSaveError(`The ${domain} save result is uncertain. Retry the exact pending request.`); }
       if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 409) {
-          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Keep the failure visible if storage is unavailable. */ }
+          /* Retain a rejected/uncertain envelope for explicit resolution. */
         }
         throw new AggregateWorkerSaveError(response.status === 409
           ? `The ${domain} request ID conflicts with a different payload. Keep the pending draft and contact an administrator.`
@@ -1083,56 +1158,41 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (!Array.isArray(value) || new TextEncoder().encode(JSON.stringify(value)).byteLength > 212992)
         throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
       const canonical = decode(value, pending.payload);
-      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* A replay remains safe with the same request ID. */ }
+      clearPendingEnvelope(domain, resumeId, session.actorUserId);
       return canonical;
     } catch (cause) {
       if (cause instanceof AggregateWorkerSaveError) throw cause;
       throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
     }
   };
-  const profilePendingKey = (resumeId: string) => `admin-profile-rpc-pending-v1:${resumeId}`;
   const saveSignedProfile = async (resumeId: string, rawProfile: ProfileAggregate, baselinePhotoUrl: string | null): Promise<ProfileSection> => {
     const profile = validateProfileAggregate(rawProfile);
     const canonical = canonicalizeProfile(profile);
     if (new TextEncoder().encode(canonical).byteLength > 196608) throw new AggregateWorkerSaveError("Profile content exceeds the allowed request size.");
-    const storageKey = profilePendingKey(resumeId);
-    let pending: { requestId: string; resumeId: string; profile: ProfileAggregate; baselinePhotoUrl: string | null } | null = null;
-    try {
-      const raw = globalThis.sessionStorage?.getItem(storageKey);
-      if (raw) {
-        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
-        const value = JSON.parse(raw) as Record<string, unknown>;
-        if (Object.keys(value).sort().join(",") !== "baselinePhotoUrl,profile,requestId,resumeId" || value.resumeId !== resumeId
-          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
-          || (value.baselinePhotoUrl !== null && typeof value.baselinePhotoUrl !== "string")
-          || canonicalizeProfile(value.profile) !== canonical || value.baselinePhotoUrl !== baselinePhotoUrl) throw new Error("invalid");
-        pending = { requestId: value.requestId, resumeId, profile: validateProfileAggregate(value.profile), baselinePhotoUrl: value.baselinePhotoUrl as string | null };
-      }
-    } catch { throw new AggregateWorkerSaveError("A pending Profile request cannot be verified safely. Keep the draft unchanged and retry."); }
-    if (!pending) {
+    const identity = await verifiedActorSession();
+    const existing = await readPendingEnvelope("profile", resumeId, identity.actorUserId);
+    let pending: { requestId: string; profile: ProfileAggregate; baselinePhotoUrl: string | null };
+    if (existing) {
+      const payload = existing.payload as { profile?: unknown; baselinePhotoUrl?: unknown };
+      if (!payload || canonicalizeProfile(payload.profile) !== canonical || payload.baselinePhotoUrl !== baselinePhotoUrl)
+        throw new AggregateWorkerSaveError("A pending Profile request does not match this account, target, and draft. It was retained.");
+      pending = { requestId: existing.requestId, profile: validateProfileAggregate(payload.profile), baselinePhotoUrl: payload.baselinePhotoUrl as string | null };
+    } else {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError("Secure Profile saving is unavailable. Refresh the Admin and try again.");
-      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, profile, baselinePhotoUrl };
-      try {
-        const raw = JSON.stringify(pending);
-        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
-        globalThis.sessionStorage.setItem(storageKey, raw);
-      } catch { throw new AggregateWorkerSaveError("The exact pending Profile request could not be stored safely. Keep the draft unchanged and retry."); }
+      pending = { requestId: globalThis.crypto.randomUUID(), profile, baselinePhotoUrl };
+      await writePendingEnvelope("profile", identity.actorUserId, resumeId, pending.requestId, { profile, baselinePhotoUrl });
     }
     try {
-      const { data, error } = await supabase.auth.getSession();
-      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
-      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
-        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
       let response: Response;
       try {
         response = await fetch("/api/admin/v1/profile/save", { method: "POST", credentials: "omit",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${identity.token}` },
           body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, baseline_photo_url: pending.baselinePhotoUrl, profile: pending.profile }),
           signal: AbortSignal.timeout(30_000) });
       } catch { throw new AggregateWorkerSaveError("The Profile save result is uncertain. Retry the exact pending request."); }
       if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 409) {
-          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* A rejected request remains visible in the draft. */ }
+          /* Keep the pending envelope; authorization failures must not reassign or discard it. */
         }
         throw new AggregateWorkerSaveError(response.status === 409
           ? "The Profile request ID conflicts with a different payload. Keep the draft and contact an administrator."
@@ -1145,52 +1205,37 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         throw new AggregateWorkerSaveError("The Profile save result could not be confirmed. Retry the exact pending request.");
       const canonicalResult = canonicalizeProfile(raw);
       if (canonicalResult !== canonical) throw new AggregateWorkerSaveError("The Profile save result did not match the submitted aggregate. Retry the exact pending request.");
-      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* Exact replay remains safe after a confirmed response. */ }
+      clearPendingEnvelope("profile", resumeId, identity.actorUserId);
       return profileSectionFromAggregate(raw);
     } catch (cause) {
       if (cause instanceof AggregateWorkerSaveError) throw cause;
       throw new AggregateWorkerSaveError("The Profile save result could not be confirmed. Retry the exact pending request.");
     }
   };
-  const contactPendingKey = (resumeId: string) => `admin-contact-rpc-pending-v1:${resumeId}`;
   const saveSignedContact = async (resumeId: string, payload: Record<string, unknown>): Promise<ContactSection> => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError("Contact content exceeds the allowed request size.");
-    const storageKey = contactPendingKey(resumeId);
-    let pending: { requestId: string; resumeId: string; payload: Record<string, unknown> } | null = null;
-    try {
-      const raw = globalThis.sessionStorage?.getItem(storageKey);
-      if (raw) {
-        if (new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("oversize");
-        const value = JSON.parse(raw) as Record<string, unknown>;
-        if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
-          || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
-          || JSON.stringify(value.payload) !== fingerprint) throw new Error("invalid");
-        pending = { requestId: value.requestId, resumeId, payload: value.payload as Record<string, unknown> };
-      }
-    } catch { throw new AggregateWorkerSaveError("A pending Contact request cannot be verified safely. Keep the draft unchanged and retry."); }
-    if (!pending) {
+    const identity = await verifiedActorSession();
+    const existing = await readPendingEnvelope("contact", resumeId, identity.actorUserId);
+    let pending: { requestId: string; payload: Record<string, unknown> };
+    if (existing) {
+      if (!existing.payload || typeof existing.payload !== "object" || JSON.stringify(existing.payload) !== fingerprint)
+        throw new AggregateWorkerSaveError("A pending Contact request does not match this account, target, and draft. It was retained.");
+      pending = { requestId: existing.requestId, payload: existing.payload as Record<string, unknown> };
+    } else {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError("Secure Contact saving is unavailable. Refresh the Admin and try again.");
-      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, payload };
-      try {
-        const raw = JSON.stringify(pending);
-        if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > 220 * 1024) throw new Error("unavailable");
-        globalThis.sessionStorage.setItem(storageKey, raw);
-      } catch { throw new AggregateWorkerSaveError("The exact pending Contact request could not be stored safely. Keep the draft unchanged and retry."); }
+      pending = { requestId: globalThis.crypto.randomUUID(), payload };
+      await writePendingEnvelope("contact", identity.actorUserId, resumeId, pending.requestId, payload);
     }
     try {
-      const { data, error } = await supabase.auth.getSession();
-      const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
-      if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
-        throw new AggregateWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
       let response: Response;
       try { response = await fetch("/api/admin/v1/contact/save", { method: "POST", credentials: "omit",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${identity.token}` },
         body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, contact: pending.payload }), signal: AbortSignal.timeout(30_000) }); }
       catch { throw new AggregateWorkerSaveError("The Contact save result is uncertain. Retry the exact pending request."); }
       if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 409) {
-          try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* preserve safe failure state */ }
+          /* Keep pending requests; account/authorization failures must not discard them. */
         }
         throw new AggregateWorkerSaveError(response.status === 409
           ? "The Contact request ID conflicts with a different payload. Keep the pending draft and contact an administrator."
@@ -1250,7 +1295,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (zh.contactLabel !== expectedTranslations.zh?.contact_label || zh.availability !== expectedTranslations.zh?.availability
         || en.contactLabel !== expectedTranslations.en?.contact_label || en.availability !== expectedTranslations.en?.availability) throw new Error("translation mismatch");
       const canonical = { translations: { zh, en }, focus, status } satisfies ContactSection;
-      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* same request ID remains safe to replay */ }
+      clearPendingEnvelope("contact", resumeId, identity.actorUserId);
       return canonical;
     } catch (cause) {
       if (cause instanceof AggregateWorkerSaveError) throw cause;
@@ -1263,42 +1308,26 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     if (operation) assertFilesSaveOperation(operation);
     const canonical = domain === "website_links" ? canonicalizeWebsiteLinks(value) : canonicalizeFiles(value);
     if (new TextEncoder().encode(canonical).byteLength > (domain === "website_links" ? 65536 : 16384)) throw new AggregateWorkerSaveError("Website & Links / Files content exceeds the allowed request size.");
-    const storageKey = `admin-${domain}-rpc-pending-v1:${resumeId}`;
-    let pending: { requestId: string; resumeId: string; canonical: string; uploadRequestIds: Partial<Record<Locale, string>> } | null = null;
-    try {
-      const raw = globalThis.sessionStorage?.getItem(storageKey);
-      if (raw) {
-        if (new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("oversize");
-        const stored = JSON.parse(raw) as Record<string, unknown>;
-        const hasUploadIds = Object.keys(stored).sort().join(",") === "canonical,requestId,resumeId,uploadRequestIds";
-        if ((!hasUploadIds && Object.keys(stored).sort().join(",") !== "canonical,requestId,resumeId") || stored.resumeId !== resumeId
-          || stored.canonical !== canonical || typeof stored.requestId !== "string"
-          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stored.requestId)) throw new Error("mismatch");
-        const persistedUploadIds = hasUploadIds ? stored.uploadRequestIds as Partial<Record<Locale, string>> : {};
-        if (!persistedUploadIds || typeof persistedUploadIds !== "object" || Object.entries(persistedUploadIds).some(([locale,id]) =>
-          !(["zh","en"].includes(locale) && typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)))
-          || JSON.stringify(persistedUploadIds) !== JSON.stringify(uploadRequestIds)) throw new Error("upload identities mismatch");
-        pending = { requestId: stored.requestId, resumeId, canonical, uploadRequestIds: persistedUploadIds };
-      }
-    } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely; keep the draft unchanged.`); }
-    if (!pending) {
+    const identity = await verifiedActorSession(operation);
+    const existing = await readPendingEnvelope(domain, resumeId, identity.actorUserId);
+    let pending: { requestId: string; canonical: string; uploadRequestIds: Partial<Record<Locale, string>> };
+    if (existing) {
+      const stored = existing.payload as { canonical?: unknown; uploadRequestIds?: unknown };
+      if (!stored || stored.canonical !== canonical) throw new AggregateWorkerSaveError(`A pending ${domain} request differs from this account, target, or draft. It was retained.`);
+      const persistedUploadIds = (stored.uploadRequestIds ?? {}) as Partial<Record<Locale, string>>;
+      if (!persistedUploadIds || typeof persistedUploadIds !== "object" || Object.entries(persistedUploadIds).some(([locale,id]) =>
+        !( ["zh","en"].includes(locale) && typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)))
+        || JSON.stringify(persistedUploadIds) !== JSON.stringify(uploadRequestIds)) throw new AggregateWorkerSaveError("The pending Files upload identity does not match the selected PDF requests.");
+      pending = { requestId: existing.requestId, canonical, uploadRequestIds: persistedUploadIds };
+    } else {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable.`);
-      pending = { requestId: globalThis.crypto.randomUUID(), resumeId, canonical, uploadRequestIds };
-      try { if (!globalThis.sessionStorage) throw new Error("unavailable"); globalThis.sessionStorage.setItem(storageKey, JSON.stringify({
-        requestId: pending.requestId, resumeId, canonical, ...(domain === "files" && Object.keys(uploadRequestIds).length ? { uploadRequestIds } : {}),
-      })); }
-      catch { throw new AggregateWorkerSaveError(`The exact pending ${domain} request could not be stored safely.`); }
+      pending = { requestId: globalThis.crypto.randomUUID(), canonical, uploadRequestIds };
+      await writePendingEnvelope(domain, identity.actorUserId, resumeId, pending.requestId, {
+        canonical, ...(domain === "files" && Object.keys(uploadRequestIds).length ? { uploadRequestIds } : {}),
+      });
     }
     if (operation) assertFilesSaveOperation(operation);
-    let sessionPromise: ReturnType<typeof supabase.auth.getSession>;
-    try { sessionPromise = supabase.auth.getSession(); }
-    catch { throw new AggregateWorkerSaveError("Your session check failed before the Files request was sent. Retry the unchanged request."); }
-    const { data, error } = operation
-      ? await awaitFilesPreflight(sessionPromise, operation, "session check", FILE_AUTH_TIMEOUT_MS)
-      : await sessionPromise;
-    const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
-    if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000)
-      throw new AggregateWorkerSaveError("Your session could not be verified. Retry the unchanged request.");
+    const token = identity.token;
     let response: Response;
     let responseValue: unknown;
     if (operation) {
@@ -1322,7 +1351,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     }
     if (!response.ok) {
       if (response.status >= 500) throw new AggregateWorkerSaveError(`The ${domain} result is uncertain. Retry the exact pending request.`, true);
-      if (response.status !== 409) { try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* retain safe failure state */ } }
+      /* Retain pending requests for explicit resolution. */
       throw new AggregateWorkerSaveError(response.status === 409 ? `The ${domain} request ID conflicts with a different payload. Keep the draft unchanged.`
         : `${domain} could not be saved. Your draft remains available.`);
     }
@@ -1338,7 +1367,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       const validated = domain === "website_links" ? validateWebsiteLinksAggregate(rawAggregate) : validateFilesAggregate(rawAggregate);
       const returnedCanonical = domain === "website_links" ? canonicalizeWebsiteLinks(validated) : canonicalizeFiles(validated);
       if (returnedCanonical !== canonical) throw new Error("mismatch");
-      try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* exact replay remains safe */ }
+      clearPendingEnvelope(domain, resumeId, identity.actorUserId);
       return { result: validated, cleanupWarning };
     } catch { throw new AggregateWorkerSaveError(`The ${domain} result could not be confirmed. Retry the exact pending request.`, true); }
   };
@@ -1378,9 +1407,13 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
         || (row.awards_write_mode !== "direct" && row.awards_write_mode !== "rpc")
         || typeof row.awards_trusted_context_required !== "boolean"
+        || (row.awards_write_mode === "rpc" && (typeof row.awards_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(row.awards_baseline_digest)
+          || typeof row.awards_baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(row.awards_baseline_proof)
+          || !validAwardsPayload(row.awards_snapshot)))
         || (row.awards_write_mode === "direct" && row.awards_trusted_context_required)) throw new Error("Invalid Awards write state");
       return { resumeId, activityLogEnabled: row.activity_log_enabled, awardsWriteMode: row.awards_write_mode,
-        awardsTrustedContextRequired: row.awards_trusted_context_required };
+        awardsTrustedContextRequired: row.awards_trusted_context_required, baselineDigest: typeof row.awards_baseline_digest === "string" ? row.awards_baseline_digest : undefined,
+        baselineProof: typeof row.awards_baseline_proof === "string" ? row.awards_baseline_proof : undefined };
     },
     async saveAwardsWithWorker(resumeId, items) {
       const persistedItems = items.map((item, position) => {
@@ -1392,28 +1425,35 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           en: { name: item.translations.en.name, year: item.translations.en.year } };
       });
       if (persistedItems.length > 32) throw new AwardsWorkerSaveError("Awards may contain no more than 32 entries.");
-      const fingerprint = JSON.stringify(persistedItems);
-      if (new TextEncoder().encode(fingerprint).byteLength > 4096) throw new AwardsWorkerSaveError("Awards content exceeds the allowed request size.");
-      let request = readAwardsPending(resumeId);
-      if (!request) {
+      const serializedAwards = JSON.stringify(persistedItems);
+      if (new TextEncoder().encode(serializedAwards).byteLength > 4096) throw new AwardsWorkerSaveError("Awards content exceeds the allowed request size.");
+      const session = await verifiedActorSession();
+      const existing = await readPendingEnvelope("awards", resumeId, session.actorUserId, 8192);
+      let pending: { requestId: string; awards: AwardsPayload; expectedBaselineDigest: string; baselineProof: string };
+      if (existing) {
+        const payload = existing.payload;
+        if (!pendingAwardsMatches(payload) || !pendingAwardsMatchRefreshed(payload.awards, persistedItems)) {
+          throw new AwardsWorkerSaveError("The pending Awards request differs from the current draft. It was retained; refresh and resolve it before saving different content.");
+        }
+        pending = { requestId: existing.requestId, awards: payload.awards, expectedBaselineDigest: payload.expectedBaselineDigest, baselineProof: payload.baselineProof };
+      } else {
         if (!globalThis.crypto?.randomUUID) throw new AwardsWorkerSaveError("Secure Awards saving is unavailable. Refresh the Admin and try again.");
-        request = { requestId: globalThis.crypto.randomUUID(), resumeId, fingerprint, awards: persistedItems };
-        writeAwardsPending(request);
+        const originalBaseline = awardsBaselineByResumeId.get(awardsBaselineKey(resumeId, session.actorUserId));
+        if (!originalBaseline) throw new AwardsWorkerSaveError("The original Awards snapshot could not be verified. Reload the editor; no save request was sent.");
+        pending = { requestId: globalThis.crypto.randomUUID(), awards: persistedItems,
+          expectedBaselineDigest: originalBaseline.digest, baselineProof: originalBaseline.proof };
+        await writePendingEnvelope("awards", session.actorUserId, resumeId, pending.requestId, {
+          awards: pending.awards, expectedBaselineDigest: pending.expectedBaselineDigest, baselineProof: pending.baselineProof,
+        }, 8192);
       }
-      // Any stored request is retried verbatim even if a later reload shows a new server baseline.
-      const pending = request;
       try {
-        const { data, error } = await supabase.auth.getSession();
-        const token = data.session?.access_token; const expiresAt = data.session?.expires_at;
-        if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now()/1000)
-          throw new AwardsWorkerSaveError("Your session could not be verified. Sign in again, then retry the unchanged request.");
         let response: Response;
         try { response = await fetch("/api/admin/v1/awards/save", { method: "POST", credentials: "omit",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, awards: pending.awards }), signal: AbortSignal.timeout(20_000) }); }
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
+          body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, awards: pending.awards,
+            expected_baseline_digest: pending.expectedBaselineDigest, baseline_proof: pending.baselineProof }), signal: AbortSignal.timeout(20_000) }); }
         catch { throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request without changing it."); }
         if (!response.ok) {
-          if (response.status >= 400 && response.status < 500 && response.status !== 409) clearAwardsPending(resumeId);
           throw new AwardsWorkerSaveError(response.status === 409
             ? "The Awards request ID conflicts with a different request. Keep the pending draft and contact an administrator."
             : response.status >= 500 ? "The save result is uncertain. Retry the exact pending Awards request."
@@ -1421,10 +1461,15 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         }
         let value: unknown;
         try { value = await response.json(); } catch { throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request."); }
-        if (!Array.isArray(value) || value.length !== pending.awards.length || new TextEncoder().encode(JSON.stringify(value)).byteLength > 8192)
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== "awards,baseline_digest,baseline_proof"
+          || !Array.isArray((value as Record<string, unknown>).awards) || (value as { awards: unknown[] }).awards.length !== pending.awards.length
+          || typeof (value as Record<string, unknown>).baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test((value as Record<string, string>).baseline_digest)
+          || typeof (value as Record<string, unknown>).baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test((value as Record<string, string>).baseline_proof)
+          || new TextEncoder().encode(JSON.stringify(value)).byteLength > 8192)
           throw new AwardsWorkerSaveError("The save result could not be confirmed. Retry the exact pending Awards request.");
+        const responseValue = value as { awards: unknown[]; baseline_digest: string; baseline_proof: string };
         const seen = new Set<string>();
-        const canonical = value.map((raw, position) => {
+        const canonical = responseValue.awards.map((raw, position) => {
           if (!raw || typeof raw !== "object") throw new AwardsWorkerSaveError("The save result could not be confirmed. Retry the exact pending Awards request.");
           const row = raw as Record<string, unknown>; const zh = row.zh as Record<string, unknown> | undefined; const en = row.en as Record<string, unknown> | undefined;
           if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
@@ -1441,14 +1486,15 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           return { id: row.id, position, sourceKey: old?.sourceKey ?? null, translations: {
             zh: { name: zh.name as string, year: zh.year as string }, en: { name: en.name as string, year: en.year as string } } } satisfies AwardItem;
         });
-        clearAwardsPending(resumeId);
+        clearPendingEnvelope("awards", resumeId, session.actorUserId);
+        awardsBaselineByResumeId.set(awardsBaselineKey(resumeId, session.actorUserId), { digest: responseValue.baseline_digest, proof: responseValue.baseline_proof });
         return canonical;
       } catch (error) {
         if (error instanceof AwardsWorkerSaveError) throw error;
         throw new AwardsWorkerSaveError("The save result is uncertain. Retry the exact pending Awards request.");
       }
     },
-    hasPendingAwardsWorkerSave(resumeId) { try { return Boolean(readAwardsPending(resumeId)); } catch { return true; } },
+    hasPendingAwardsWorkerSave(resumeId, actorUserId) { return pendingExists("awards", resumeId, actorUserId); },
     discardPendingAwardsSave() { /* An ambiguous request cannot be discarded safely. */ },
     async loadAdminExperienceWriteState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
@@ -1514,7 +1560,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       }, true, validExperienceRequest, pendingCollectionMatchesRefreshed) as ExperienceItem[];
       return value;
     },
-    hasPendingExperienceWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("experience", resumeId))); } catch { return true; } },
+    hasPendingExperienceWorkerSave(resumeId, actorUserId) { return pendingExists("experience", resumeId, actorUserId); },
     discardPendingExperienceSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async loadAdminSkillsWriteState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
@@ -1556,7 +1602,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         });
       }) as SkillItem[];
     },
-    hasPendingSkillsWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("skills", resumeId))); } catch { return true; } },
+    hasPendingSkillsWorkerSave(resumeId, actorUserId) { return pendingExists("skills", resumeId, actorUserId); },
     discardPendingSkillsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async saveIntroductionAtomically(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
@@ -1583,37 +1629,40 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
         throw new IntroductionWorkerSaveError("Introduction changes could not be saved. Please review the content and retry.");
       }
-      const requestItems = items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text }));
-      const fingerprint = JSON.stringify(requestItems);
+      const currentItems = items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text }));
+      const fingerprint = JSON.stringify(currentItems);
+      const identity = await verifiedActorSession();
+      const flightKey = `${identity.actorUserId}:${resumeId}:${fingerprint}`;
+      const activeFlight = introductionFlights.get(flightKey);
+      if (activeFlight) return activeFlight;
+      const flight = Promise.resolve().then(async () => {
+      const stored = await readPendingEnvelope("introduction", resumeId, identity.actorUserId);
+      if (stored && JSON.stringify(stored.payload) !== fingerprint
+        && !pendingCollectionMatchesRefreshed(stored.payload as unknown[], currentItems))
+        throw new IntroductionWorkerSaveError("A pending Introduction request differs from this account, target, or draft. It was retained.");
+      const requestItems = stored ? stored.payload as Array<{ id: string | null; zh: string; en: string }> : currentItems;
       if (pendingIntroductionRequest?.inFlight) {
-        if (pendingIntroductionRequest.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint) return pendingIntroductionRequest.inFlight;
+        if (pendingIntroductionRequest.actorUserId === identity.actorUserId && pendingIntroductionRequest.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint) return pendingIntroductionRequest.inFlight;
         throw new IntroductionWorkerSaveError("A save is already in progress. Wait for it to finish before changing targets or content.");
       }
-      if (!pendingIntroductionRequest || pendingIntroductionRequest.resumeId !== resumeId || pendingIntroductionRequest.fingerprint !== fingerprint) {
+      if (!pendingIntroductionRequest || pendingIntroductionRequest.actorUserId !== identity.actorUserId || pendingIntroductionRequest.resumeId !== resumeId || pendingIntroductionRequest.fingerprint !== fingerprint) {
         if (!globalThis.crypto?.randomUUID) throw new IntroductionWorkerSaveError("The secure save service is unavailable. Refresh the Admin and try again.");
         let requestId: string;
-        try { requestId = globalThis.crypto.randomUUID(); }
+        try {
+          requestId = stored?.requestId ?? globalThis.crypto.randomUUID();
+          if (!stored) await writePendingEnvelope("introduction", identity.actorUserId, resumeId, requestId, requestItems);
+        }
         catch { throw new IntroductionWorkerSaveError("The secure save service is unavailable. Refresh the Admin and try again."); }
-        pendingIntroductionRequest = { resumeId, fingerprint, requestId };
+        pendingIntroductionRequest = { actorUserId: identity.actorUserId, resumeId, fingerprint, requestId };
       }
       const request = pendingIntroductionRequest;
       const execute = async (): Promise<IntroItem[]> => {
-        let data: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>["data"];
-        let error: Awaited<ReturnType<SupabaseClient["auth"]["getSession"]>>["error"];
-        try { ({ data, error } = await supabase.auth.getSession()); } catch {
-          throw new IntroductionWorkerSaveError("Your session could not be verified. Sign in again before saving.");
-        }
-        const token = data.session?.access_token;
-        const expiresAt = data.session?.expires_at;
-        if (error || typeof token !== "string" || !token || typeof expiresAt !== "number" || expiresAt <= Date.now() / 1000) {
-          throw new IntroductionWorkerSaveError("Your session could not be verified. Sign in again before saving.");
-        }
         let response: Response;
         try {
           response = await fetch("/api/admin/v1/introduction/save", {
             method: "POST",
             credentials: "omit",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${identity.token}` },
             body: JSON.stringify({ request_id: request.requestId, resume_id: resumeId, items: requestItems }),
             signal: AbortSignal.timeout(20_000),
           });
@@ -1648,9 +1697,10 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
             || !zh || Object.keys(zh).join(",") !== "text" || !en || Object.keys(en).join(",") !== "text"
             || typeof zh?.text !== "string" || typeof en?.text !== "string") return true;
           const submitted = requestItems[index];
-          const submittedPersistedId = typeof submitted.id === "string"
-            && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(submitted.id);
-          if ((submittedPersistedId && row.id.toLowerCase() !== submitted.id.toLowerCase())
+          const submittedId = typeof submitted.id === "string" ? submitted.id : null;
+          const submittedPersistedId = submittedId !== null
+            && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(submittedId);
+          if ((submittedPersistedId && row.id.toLowerCase() !== submittedId.toLowerCase())
             || zh.text !== submitted.zh || en.text !== submitted.en) return true;
           seenIds.add(row.id.toLowerCase());
           return false;
@@ -1666,19 +1716,26 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       request.inFlight = inFlight;
       try {
         const canonical = await inFlight;
+        clearPendingEnvelope("introduction", resumeId, identity.actorUserId);
         if (pendingIntroductionRequest === request) pendingIntroductionRequest = null;
         return canonical;
       } finally {
         if (request.inFlight === inFlight) request.inFlight = undefined;
         if (request.discardWhenSettled && pendingIntroductionRequest === request) pendingIntroductionRequest = null;
       }
+      });
+      introductionFlights.set(flightKey, flight);
+      try { return await flight; }
+      finally { if (introductionFlights.get(flightKey) === flight) introductionFlights.delete(flightKey); }
     },
-    hasPendingIntroductionWorkerSave(resumeId, items) {
+    hasPendingIntroductionWorkerSave(resumeId, items, actorUserId) {
       if (!resumeId || !Array.isArray(items)) return false;
       const fingerprint = JSON.stringify(items.map(item => ({ id: item.id, zh: item.translations.zh.text, en: item.translations.en.text })));
-      return pendingIntroductionRequest?.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint;
+      return pendingExists("introduction", resumeId, actorUserId) || (pendingIntroductionRequest?.actorUserId === actorUserId
+        && pendingIntroductionRequest.resumeId === resumeId && pendingIntroductionRequest.fingerprint === fingerprint);
     },
-    discardPendingIntroductionSave(resumeId) {
+    discardPendingIntroductionSave(resumeId, actorUserId) {
+      if (!actorUserId || pendingIntroductionRequest?.actorUserId !== actorUserId) return;
       if (!resumeId || pendingIntroductionRequest?.resumeId === resumeId) {
         if (pendingIntroductionRequest?.inFlight) pendingIntroductionRequest.discardWhenSettled = true;
         else pendingIntroductionRequest = null;
@@ -1991,7 +2048,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         });
       }, true, validEducationRequest, pendingCollectionMatchesRefreshed) as EducationItem[];
     },
-    hasPendingEducationWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("education", resumeId))); } catch { return true; } },
+    hasPendingEducationWorkerSave(resumeId, actorUserId) { return pendingExists("education", resumeId, actorUserId); },
     discardPendingEducationSave() { /* Ambiguous requests are retained for exact replay. */ },
     async loadAdminProjectsWriteState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
@@ -2039,7 +2096,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       };
       return await saveSignedContact(resumeId, payload);
     },
-    hasPendingContactWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(contactPendingKey(resumeId))); } catch { return true; } },
+    hasPendingContactWorkerSave(resumeId, actorUserId) { return pendingExists("contact", resumeId, actorUserId); },
     discardPendingContactSave() { /* Ambiguous requests are retained for exact replay. */ },
     async saveProjectsWithWorker(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Projects content is invalid.");
@@ -2099,7 +2156,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         });
       }) as ProjectItem[];
     },
-    hasPendingProjectsWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("projects", resumeId))); } catch { return true; } },
+    hasPendingProjectsWorkerSave(resumeId, actorUserId) { return pendingExists("projects", resumeId, actorUserId); },
     discardPendingProjectsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async loadExperience(resumeId) {
       const [parents, translations] = await Promise.all([
@@ -2124,6 +2181,21 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return mapSkillRows(parents, translations, resumeId);
     },
     async loadAwards(resumeId) {
+      const { data, error } = await supabase.rpc("load_admin_awards_write_state", { target_resume_id: resumeId });
+      const state = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      if (error || !state || state.resume_id !== resumeId || (state.awards_write_mode !== "direct" && state.awards_write_mode !== "rpc"))
+        throw new Error("Unable to load authorized Awards state");
+      if (state.awards_write_mode === "rpc") {
+        const identity = await verifiedActorSession();
+        const snapshot = state.awards_snapshot; const digest = state.awards_baseline_digest; const proof = state.awards_baseline_proof;
+        if (!validAwardsPayload(snapshot) || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)
+          || typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof)) throw new Error("Invalid authoritative Awards snapshot");
+        awardsBaselineByResumeId.set(awardsBaselineKey(resumeId, identity.actorUserId), { digest, proof });
+        return snapshot.map(row => ({ id: row.id as string, position: row.position, sourceKey: null,
+          translations: { zh: { ...row.zh }, en: { ...row.en } } }));
+      }
+      const baselinePrefix = `${resumeId}:`;
+      for (const key of awardsBaselineByResumeId.keys()) if (key.startsWith(baselinePrefix)) awardsBaselineByResumeId.delete(key);
       const [parents, translations] = await Promise.all([
         readResumeRows(supabase, "resume_award_entries", resumeId),
         readResumeRows(supabase, "resume_award_translations", resumeId),
@@ -2175,9 +2247,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         throw new AggregateWorkerSaveError("Profile content is invalid.");
       return await saveSignedProfile(resumeId, profileAggregateFromSection(profile), baselinePhotoUrl);
     },
-    hasPendingProfileWorkerSave(resumeId) {
-      try { return Boolean(globalThis.sessionStorage?.getItem(profilePendingKey(resumeId))); } catch { return true; }
-    },
+    hasPendingProfileWorkerSave(resumeId, actorUserId) { return pendingExists("profile", resumeId, actorUserId); },
     discardPendingProfileSave() { /* Ambiguous requests are retained for exact replay. */ },
     async loadAdminWebsiteLinksWriteState(resumeId, operation) {
       if (!resumeId) throw new Error("Missing resume ID");
@@ -2209,7 +2279,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       await saveSignedD7("website_links", resumeId, payload, {}, operation);
       return links;
     },
-    hasPendingWebsiteLinksWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-website_links-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
+    hasPendingWebsiteLinksWorkerSave(resumeId, actorUserId) { return pendingExists("website_links", resumeId, actorUserId); },
     async loadAdminFilesWriteState(resumeId, operation) {
       if (!resumeId) throw new Error("Missing resume ID");
       const statePromise = supabase.rpc("load_admin_files_storage_state_v1", { target_resume_id: resumeId });
@@ -2253,32 +2323,25 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files file verification failed before a request was sent. Keep the selected file and retry."); }
       assertFilesSaveOperation(operation);
       const digest = [...new Uint8Array(digestBytes)].map(byte => byte.toString(16).padStart(2,"0")).join("");
-      const key = `admin-files-upload-pending-v1:${resumeId}:${locale}`;
+      const identity = await verifiedActorSession(operation);
+      const legacyUploadKey = `admin-files-upload-pending-v1:${resumeId}:${locale}`;
+      const scopedUpload = `upload:${locale}`;
       let requestId: string;
       try {
-        const raw = globalThis.sessionStorage?.getItem(key);
-        if (raw) {
-          const pending = JSON.parse(raw) as Record<string, unknown>;
-          if (Object.keys(pending).sort().join(",") !== "digest,fileLastModified,fileName,fileSize,locale,requestId,resumeId"
-            || pending.resumeId !== resumeId || pending.locale !== locale || pending.digest !== digest || pending.fileName !== file.name
-            || pending.fileSize !== file.size || pending.fileLastModified !== file.lastModified || typeof pending.requestId !== "string"
-            || !/^[0-9a-f-]{36}$/i.test(pending.requestId)) throw new Error("pending file differs");
-          requestId = pending.requestId;
+        if (globalThis.sessionStorage?.getItem(legacyUploadKey) !== null) throw new Error("legacy pending upload");
+        const payload = { locale, digest, fileName: file.name, fileSize: file.size, fileLastModified: file.lastModified };
+        const existing = await readPendingEnvelope("files", resumeId, identity.actorUserId, 8192, scopedUpload);
+        if (existing) {
+          if (JSON.stringify(existing.payload) !== JSON.stringify(payload)) throw new Error("pending file differs");
+          requestId = existing.requestId;
         } else {
-          if (!globalThis.crypto?.randomUUID || !globalThis.sessionStorage) throw new Error("secure storage unavailable");
+          if (!globalThis.crypto?.randomUUID) throw new Error("secure storage unavailable");
           requestId = globalThis.crypto.randomUUID().toLowerCase();
-          globalThis.sessionStorage.setItem(key, JSON.stringify({ resumeId, locale, requestId, digest, fileName:file.name, fileSize:file.size, fileLastModified:file.lastModified }));
+          await writePendingEnvelope("files", identity.actorUserId, resumeId, requestId, payload, 8192, scopedUpload);
         }
-      } catch { throw new AggregateWorkerSaveError("A pending PDF upload must be retried with the exact same file; keep the selection unchanged.", true); }
+      } catch { throw new AggregateWorkerSaveError("A pending PDF upload must be retried with the same signed-in account, target, and exact file; its record was retained.", true); }
       assertFilesSaveOperation(operation);
-      let session: Awaited<ReturnType<typeof supabase.auth.getSession>>;
-      try {
-        const sessionPromise = supabase.auth.getSession();
-        session = await awaitFilesPreflight(sessionPromise, operation, "session check", FILE_AUTH_TIMEOUT_MS);
-      }
-      catch (error) { if (error instanceof AggregateWorkerSaveError) throw error; throw new AggregateWorkerSaveError("The Files session check failed before a request was sent. Keep the selected file and retry."); }
-      const { data, error } = session; const token = data.session?.access_token;
-      if (error || typeof token !== "string" || !token) throw new AggregateWorkerSaveError("Your session could not be verified; keep the selected PDF unchanged.");
+      const token = identity.token;
       let uploadHeaders: Headers;
       try {
         const encodedFilename = encodeURIComponent(file.name);
@@ -2288,23 +2351,18 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       } catch {
         throw new AggregateWorkerSaveError("PDF upload request could not be constructed; no request was sent. Keep the selected file and retry.");
       }
-      const { response, responseValue, errorCode } = await awaitFilesRequest(async signal => {
+      const { response, responseValue } = await awaitFilesRequest(async signal => {
         const issued = await fetch(`/api/admin/v1/files/upload?locale=${locale}`, { method:"POST", credentials:"omit",
           headers:uploadHeaders, body:bytes, signal });
-        let decoded: unknown; let code: unknown;
+        let decoded: unknown;
         if (issued.ok) {
           try { decoded = await issued.json(); }
           catch { throw new AggregateWorkerSaveError("PDF upload result is uncertain. Retry with the same selected file.", true); }
-        } else {
-          try { const body=await issued.clone().json() as Record<string,unknown>; code=(body.error as Record<string,unknown>|undefined)?.code; }
-          catch { /* the response status still determines the safe failure class */ }
         }
-        return { response: issued, responseValue: decoded, errorCode: code };
+        return { response: issued, responseValue: decoded };
       }, operation, "PDF upload", FILE_UPLOAD_TIMEOUT_MS);
       if (!response.ok) {
-        if (errorCode === "upload_candidate_cleaned") {
-          try { const raw=globalThis.sessionStorage?.getItem(key); if(raw && (JSON.parse(raw) as Record<string,unknown>).requestId===requestId) globalThis.sessionStorage?.removeItem(key); } catch { /* keep unverifiable request identity */ }
-        }
+        /* Keep the identity-bound request record for safe reconciliation. */
         throw new AggregateWorkerSaveError(response.status>=500 ? "PDF upload result is uncertain. Retry with the same selected file."
           : "The selected PDF could not be uploaded; keep the selection and request unchanged.", response.status>=500);
       }
@@ -2314,10 +2372,13 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         || !managedResumePdfObjectPath(supabaseUrl,resumeId,locale,value.reference)) throw new AggregateWorkerSaveError("PDF upload response could not be confirmed.",true);
       return { reference:value.reference, uploadRequestId:requestId };
     },
-    clearPendingResumePdfUpload(resumeId,locale,requestId) {
-      const key=`admin-files-upload-pending-v1:${resumeId}:${locale}`;
-      try { const raw=globalThis.sessionStorage?.getItem(key); if(raw && (JSON.parse(raw) as Record<string,unknown>).requestId===requestId) globalThis.sessionStorage.removeItem(key); }
-      catch { /* keep unverifiable pending identity */ }
+    async clearPendingResumePdfUpload(resumeId, locale, requestId) {
+      try {
+        const identity = await verifiedActorSession();
+        const scope = `upload:${locale}`;
+        const existing = await readPendingEnvelope("files", resumeId, identity.actorUserId, 8192, scope);
+        if (existing?.requestId === requestId) clearPendingEnvelope("files", resumeId, identity.actorUserId, scope);
+      } catch { /* retain an envelope when its authenticated owner cannot be verified */ }
     },
     async cleanupResumePdfCandidatesWithWorker(resumeId,uploadRequestIds,suppliedOperation) {
       if (!resumeId || uploadRequestIds.length>2 || uploadRequestIds.some(id=>!/^[0-9a-f-]{36}$/i.test(id))) return true;
@@ -2394,25 +2455,23 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       } catch { throw new AggregateWorkerSaveError("The Files restore result could not be confirmed. Retry the exact request.", true); }
       return { files, cleanupWarning };
     },
-    hasPendingFilesWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`)); } catch { return true; } },
+    hasPendingFilesWorkerSave(resumeId, actorUserId) { return pendingExists("files", resumeId, actorUserId); },
     async retryPendingFilesWithWorker(resumeId, operation) {
-      let value: unknown;
-      let pending: Record<string, unknown>;
+      const identity = await verifiedActorSession(operation);
+      let canonical: string;
+      let uploadIds: Partial<Record<Locale,string>>;
       try {
-        const raw = globalThis.sessionStorage?.getItem(`admin-files-rpc-pending-v1:${resumeId}`);
-        if (!raw || new TextEncoder().encode(raw).byteLength > 72 * 1024) throw new Error("missing");
-        const stored = JSON.parse(raw) as Record<string, unknown>;
-        const keys=Object.keys(stored).sort().join(",");
-        if ((keys!=="canonical,requestId,resumeId" && keys!=="canonical,requestId,resumeId,uploadRequestIds") || stored.resumeId !== resumeId
-          || typeof stored.canonical !== "string" || typeof stored.requestId!=="string" || !/^[0-9a-f-]{36}$/i.test(stored.requestId)) throw new Error("shape");
-        value = JSON.parse(stored.canonical);
+        const existing = await readPendingEnvelope("files", resumeId, identity.actorUserId);
+        const stored = existing?.payload as { canonical?: unknown; uploadRequestIds?: unknown } | undefined;
+        if (!existing || !stored || typeof stored.canonical !== "string") throw new Error("missing");
+        const value = JSON.parse(stored.canonical);
         if (canonicalizeFiles(value) !== stored.canonical) throw new Error("canonical");
         if (stored.uploadRequestIds !== undefined && (!stored.uploadRequestIds || typeof stored.uploadRequestIds !== "object" || Array.isArray(stored.uploadRequestIds)
           || Object.entries(stored.uploadRequestIds as Record<string,unknown>).some(([locale,id])=>!(["zh","en"].includes(locale)&&typeof id==="string"&&/^[0-9a-f-]{36}$/i.test(id as string))))) throw new Error("upload identity");
-        pending=stored;
+        canonical = stored.canonical;
+        uploadIds = (stored.uploadRequestIds ?? {}) as Partial<Record<Locale,string>>;
       } catch { throw new AggregateWorkerSaveError("A pending Files request cannot be restored safely. Keep the current draft unchanged."); }
-      const uploadIds = (pending.uploadRequestIds && typeof pending.uploadRequestIds === "object" ? pending.uploadRequestIds : {}) as Partial<Record<Locale,string>>;
-      const result=await saveSignedD7("files", resumeId, validateFilesAggregate(value), uploadIds, operation);
+      const result=await saveSignedD7("files", resumeId, validateFilesAggregate(JSON.parse(canonical)), uploadIds, operation);
       return { files:result.result as FilesAggregate, cleanupWarning:result.cleanupWarning };
     },
     async updateProfileSharedDetails(resumeId, shared) {

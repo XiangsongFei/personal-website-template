@@ -30,7 +30,9 @@ describe("V1.3D-2 typed Experience and Skills save routing", () => {
   it("keeps Experience and Skills independently idempotent and fails closed without direct fallback", () => {
     expect(repository).toContain('"experience"');
     expect(repository).toContain('"skills"');
-    expect(repository).toContain('`admin-${domain}-rpc-pending-v1:${resumeId}`');
+    expect(repository).toContain('admin-pending-save-v2:');
+    expect(repository).toContain("getUser(token)");
+    expect(repository).toContain("payloadDigest");
     expect(repository).toContain("Retry the exact pending request.");
     expect(worker).toContain('domain: "introduction" | "awards" | "experience" | "skills"');
     expect(worker).toContain("isV13BIdempotencyConflict(upstream, responseBody)");

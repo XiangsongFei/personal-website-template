@@ -73,7 +73,9 @@ function mockSupabase(rows: ResumeRows, failTable?: string) {
   }));
   const rpc = vi.fn(async (name: string) => name === "get_admin_resume_target"
     ? { data: [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }
-    : { data: true, error: null });
+    : name === "load_admin_awards_write_state"
+      ? { data: [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "direct", awards_trusted_context_required: false }], error: null }
+      : { data: true, error: null });
   return { client: { from, rpc } as unknown as SupabaseClient, calls, mutation };
 }
 
@@ -273,7 +275,7 @@ describe("Stage 4D normalized read and mapping", () => {
     expect(source).not.toMatch(/\.upsert\s*\(/);
     expect(source.match(/\.update\s*\(/g)).toHaveLength(6);
     expect(source.match(/\.insert\s*\(/g)).toHaveLength(4);
-    expect(source.match(/\.delete\s*\(/g)).toHaveLength(4);
+    expect(source.match(/\.delete\s*\(/g)).toHaveLength(6); // Four direct table mutations plus the actor-scoped baseline cache entry.
     expect(source).toContain('.from("resume_profile")');
     expect(source).toContain('.from("resume_profile_translations")');
     expect(source).toContain('.from("resume_education_entries")');

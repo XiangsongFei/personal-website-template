@@ -242,8 +242,8 @@ function draftGuardMessage(message: string | undefined): string {
 
 export type RestoreGuard = (domain: RestorePreviewDomain, resumeId: string) => { allowed: boolean; message?: string };
 
-export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onRestoreApplied }: {
-  resumeId: string | null; repository: ResumeRepository | null; canRestoreDomain?: RestoreGuard;
+export function VersionHistoryPage({ resumeId, repository, restoreEnabled = false, canRestoreDomain, onRestoreApplied }: {
+  resumeId: string | null; repository: ResumeRepository | null; restoreEnabled?: boolean; canRestoreDomain?: RestoreGuard;
   onRestoreApplied?: (domain: RestorePreviewDomain, result: RestoreMutationResult) => Promise<void> | void;
 }) {
   const { t } = useUiLocale();
@@ -297,6 +297,15 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
     return () => { requestGeneration.current += 1; };
   }, [loadFirstPage]);
 
+  useEffect(() => {
+    if (restoreEnabled) return;
+    setRestoreEntry(null);
+    setRestorePreview(null);
+    setRestoreResult(null);
+    setRestorePhase(current => current === "submitting" ? current : "idle");
+    setRestoreMessage("");
+  }, [restoreEnabled, resumeId]);
+
   const loadMore = async () => {
     if (!resumeId || !repository?.loadVersionHistoryPage || !hasMore || !nextPage || loadingMore) return;
     const generation = requestGeneration.current;
@@ -313,7 +322,7 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
   };
 
   const openRestorePreview = async (entry: VersionHistoryEntry, trigger: HTMLButtonElement) => {
-    if (!resumeId || !repository?.previewRestore || !repository.getPendingRestoreAttempt) return;
+    if (!restoreEnabled || !resumeId || !repository?.previewRestore || !repository.getPendingRestoreAttempt) return;
     restoreTrigger.current = trigger;
     setRestoreEntry(entry); setRestorePreview(null); setRestoreResult(null); setRestoreMessage(""); setPendingRestore(null);
     let pending: RestoreMutationRequest | null;
@@ -373,7 +382,7 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
   };
 
   const confirmRestore = async () => {
-    if (!resumeId || !restorePreview || restorePreview.status !== "ready" || !restoreEntry || restorePhase !== "ready"
+    if (!restoreEnabled || !resumeId || !restorePreview || restorePreview.status !== "ready" || !restoreEntry || restorePhase !== "ready"
       || presentRestorePreview(restorePreview, restoreEntry.eventId).state !== "changes") return;
     if (restoreOpLock.current) return;
     if (!repository?.restoreDomain) { setRestorePhase("error"); setRestoreMessage("Restore can’t be started right now. No change was made."); return; }
@@ -389,19 +398,19 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
   };
 
   const retryPendingRestore = async () => {
-    if (!resumeId || !pendingRestore || !restoreEntry || restoreOpLock.current) return;
+    if (!restoreEnabled || !resumeId || !pendingRestore || !restoreEntry || restoreOpLock.current) return;
     const guard = canRestoreDomain?.(restoreEntry.domain as RestorePreviewDomain, resumeId);
     if (guard && !guard.allowed) { setRestoreMessage(draftGuardMessage(guard.message)); return; }
     await settleRestore(pendingRestore, "retry");
   };
 
   const retryPendingStateInspection = async () => {
-    if (!restoreEntry || !restoreTrigger.current) return;
+    if (!restoreEnabled || !restoreEntry || !restoreTrigger.current) return;
     await openRestorePreview(restoreEntry, restoreTrigger.current);
   };
 
   const refreshRestorePreview = async () => {
-    if (!restoreEntry || !resumeId || !repository?.previewRestore) return;
+    if (!restoreEnabled || !restoreEntry || !resumeId || !repository?.previewRestore) return;
     setRestorePhase("loading"); setRestoreMessage("");
     try {
       const preview = await repository.previewRestore({ resumeId, sourceEventId: restoreEntry.eventId });
@@ -461,14 +470,14 @@ export function VersionHistoryPage({ resumeId, repository, canRestoreDomain, onR
                     <span>{t(entry.actorRole === "qa" ? "QA administrator" : "Owner")}</span></p>
                 </div></header>
                 <HistoryChanges entry={entry} resumeId={resumeId} repository={repository} t={t} />
-                {canOfferRestore(entry) && <footer className="version-history-card-footer"><button className="button secondary version-history-restore-preview" type="button"
+                {restoreEnabled && canOfferRestore(entry) && <footer className="version-history-card-footer"><button className="button secondary version-history-restore-preview" type="button"
                   onClick={event => void openRestorePreview(entry, event.currentTarget)}>{t("Preview what would be restored")}</button></footer>}
               </article>
             </li>)}</ol>
             {moreError && <div className="version-history-state" role="alert"><p>{t("Unable to load more Version History entries.")}</p><button className="button secondary" type="button" onClick={() => void loadMore()}>{t("Retry loading more")}</button></div>}
             {hasMore && <button className="button secondary version-history-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? t("Loading…") : t("Load more")}</button>}
           </>}
-    {restoreEntry && <div className="restore-dialog-backdrop"><section className="restore-dialog" role="dialog" aria-modal="true"
+    {restoreEnabled && restoreEntry && <div className="restore-dialog-backdrop"><section className="restore-dialog" role="dialog" aria-modal="true"
       aria-labelledby="restore-dialog-title" aria-describedby="restore-dialog-description" tabIndex={-1} ref={restoreDialog}>
       <header className="restore-dialog-heading"><div><p className="eyebrow">{t("Restore preview")}</p><h2 id="restore-dialog-title">{t(domainLabels[restorePresentation?.domain ?? restoreEntry.domain])}</h2></div>
         <button type="button" className="button secondary restore-dialog-close" aria-label={t("Close restore preview")}
