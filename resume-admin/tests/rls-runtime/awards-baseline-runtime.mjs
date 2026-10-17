@@ -151,8 +151,27 @@ async function main() {
     ];
     const firstOutput = runSql(context, authenticatedSql(callExpression(firstRequestId, firstPayload, initial)));
     const firstResult = JSON.parse(firstOutput.split(/\r?\n/).at(-1));
-    assert.equal(firstResult.awards.length, 2);
-    assert.match(firstResult.awards[1].id, /^[0-9a-f-]{36}$/i);
+    assert.equal(firstResult.awards.length, 3, "the full save must retain both existing Awards and the one added Award");
+    assert.deepEqual(firstResult.awards[0], {
+      id: secondAwardId,
+      position: 0,
+      zh: { name: "第二个合成奖项", year: "2024" },
+      en: { name: "Second Synthetic Award Updated", year: "2024" },
+    }, "the first existing Award must be reordered and retain its exact bilingual values");
+    assert.deepEqual(firstResult.awards[1], {
+      id: awardId,
+      position: 1,
+      zh: { name: "合成奖项（已更新）", year: "2025" },
+      en: { name: "Synthetic Award", year: "2025" },
+    }, "the second existing Award must retain identity while its Chinese value changes");
+    assert.match(firstResult.awards[2].id, /^[0-9a-f-]{36}$/i, "the new Award must receive a server UUID");
+    assert.ok(![awardId, secondAwardId].includes(firstResult.awards[2].id), "the new Award must not reuse an existing ID");
+    assert.deepEqual(firstResult.awards[2], {
+      id: firstResult.awards[2].id,
+      position: 2,
+      zh: { name: "新增合成奖项", year: "2026" },
+      en: { name: "Added Synthetic Award", year: "2026" },
+    }, "the newly created Award must preserve its exact bilingual values and final order");
     assert.deepEqual(Object.keys(firstResult).sort(), ["awards", "baseline_digest", "baseline_proof"]);
     assert.ok(Array.isArray(idempotencyResult(context, firstRequestId)), "idempotency storage must use the database JSON-array contract");
     const storedResult = idempotencyResult(context, firstRequestId);
