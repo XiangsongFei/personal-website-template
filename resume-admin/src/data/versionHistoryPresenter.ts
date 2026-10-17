@@ -254,7 +254,7 @@ function presentParagraphChanges(entry: VersionHistoryEntry): HistoryChangePrese
       const change = paragraph.fields[key];
       if (!change || sameValue(change.before, change.after)) continue;
       fields.push(field(key === "position" ? "position" : "text", key === "text_en" ? "en" : key === "text_zh" ? "zh" : "shared",
-        change.before, change.after));
+        change.before, change.after, paragraph.state !== "added", paragraph.state !== "removed"));
     }
     if (!fields.length) continue;
     const state: HistoryItemState = paragraph.state === "updated" && fields.every(change => change.key === "position")

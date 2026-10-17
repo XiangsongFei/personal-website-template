@@ -26,6 +26,10 @@ describe("presentVersionHistoryChange", () => {
     const result = presentVersionHistoryChange(intro);
     expect(result.items.map(item => item.state)).toEqual(["updated", "added", "removed"]);
     expect(result.items[0]?.fields.map(field => [field.key, field.locale])).toEqual([["text", "en"], ["text", "zh"], ["position", "shared"]]);
+    expect(result.items[1]?.fields.every(change => "recorded" in change.before && !change.before.recorded
+      && "recorded" in change.after && change.after.recorded)).toBe(true);
+    expect(result.items[2]?.fields.every(change => "recorded" in change.before && change.before.recorded
+      && "recorded" in change.after && !change.after.recorded)).toBe(true);
     const reordered = entry({ ...intro, comparison: { kind: "paragraph_changes", paragraphs: [
       { state: "updated", fields: { position: { before: 0, after: 1 } } },
     ] } });

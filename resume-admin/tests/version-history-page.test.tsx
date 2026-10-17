@@ -49,11 +49,15 @@ describe("Version History page human-readable presentation", () => {
       comparison: { kind: "entity_fields", changes: { position: { before: 1, after: 1 } } } });
     const changed = baseEntry({ eventId: uuid(92), domain: "introduction", entityType: "introduction_paragraph", entityId: null,
       comparison: { kind: "paragraph_changes", paragraphs: [{ state: "added", fields: { text_en: { before: null, after: "New paragraph" } } }] } });
-    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([empty, legacy, changed]))));
-    expect(await screen.findAllByRole("heading", { name: /Introduction.*Updated/, level: 2 })).toHaveLength(3);
+    const removed = baseEntry({ eventId: uuid(95), domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "paragraph_changes", paragraphs: [{ state: "removed", fields: { text_en: { before: "Old paragraph", after: null } } }] } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([empty, legacy, changed, removed]))));
+    expect(await screen.findAllByRole("heading", { name: /Introduction.*Updated/, level: 2 })).toHaveLength(4);
     expect(screen.getAllByText("Change details aren’t available.")).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Show more changes" }));
+    for (const button of screen.getAllByRole("button", { name: "Show more changes" })) fireEvent.click(button);
     expect(screen.getByText("New paragraph")).toBeTruthy();
+    expect(screen.getByText("Old paragraph")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Not set");
     expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
   });
   it("renders V1 recorded fields with safe context and no audit-only metadata", async () => {
