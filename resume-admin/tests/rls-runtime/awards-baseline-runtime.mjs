@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { withStagedLocalSupabase } from "./stage-local-supabase.mjs";
+import { assertExpectedSqlFailure } from "./sql-process-result.mjs";
 
 const testResumeId = "ea111111-1111-4111-8111-111111111111";
 const testActorId = "10000000-0000-4000-8000-000000000002";
@@ -23,11 +24,16 @@ function psqlArgs(context) {
   return ["exec", "-i", context.dbContainer, "psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"];
 }
 
-function runSql(context, text, expectedStatus = 0) {
+function runSql(context, text) {
   const result = spawnSync("docker", psqlArgs(context), { input: text, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 });
   if (result.error) throw result.error;
-  if (result.status !== expectedStatus) throw new Error(`Disposable PostgreSQL returned ${result.status}: ${result.stderr || result.stdout}`);
+  if (result.status !== 0) throw new Error(`Disposable PostgreSQL returned ${result.status}: ${result.stderr || result.stdout}`);
   return (result.stdout ?? "").trim();
+}
+
+function runSqlExpectingError(context, text, expectedMessage, label) {
+  const result = spawnSync("docker", psqlArgs(context), { input: text, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 });
+  return assertExpectedSqlFailure(result, expectedMessage, label);
 }
 
 function sqlLiteral(value) {
@@ -196,8 +202,8 @@ async function main() {
     for (const malformed of malformedStoredResponses) {
       runSql(context, `UPDATE cms_private.activity_log_idempotency SET result_payload=${sqlLiteral(JSON.stringify(malformed.value))}::jsonb
         WHERE actor_user_id='${testActorId}' AND resume_id='${testResumeId}' AND domain_key='awards' AND request_id='${firstRequestId}';`);
-      const malformedReplay = runSql(context, authenticatedSql(callExpression(firstRequestId, firstPayload, initial)), 3);
-      assert.match(malformedReplay, /Legacy or incomplete Awards idempotency result cannot be replayed safely/,
+      runSqlExpectingError(context, authenticatedSql(callExpression(firstRequestId, firstPayload, initial)),
+        /Legacy or incomplete Awards idempotency result cannot be replayed safely/,
         `${malformed.label} must be rejected without attempting a new write`);
       assert.equal(eventCount(context), 1, `${malformed.label} must not create another Activity Log event`);
       assert.equal(idempotencyCount(context), 1, `${malformed.label} must not create another idempotency row`);
@@ -229,9 +235,9 @@ async function main() {
     console.log("PASS: deletion and position normalization are recorded as one logical change.");
 
     const proofBaseline = readState(context);
-    const forgedProofAttempt = runSql(context, authenticatedSql(callExpression(forgedProofRequestId, proofBaseline.snapshot,
-      { ...proofBaseline, proof: "0".repeat(64) })), 3);
-    assert.match(forgedProofAttempt, /Invalid signed Awards request/);
+    runSqlExpectingError(context, authenticatedSql(callExpression(forgedProofRequestId, proofBaseline.snapshot,
+      { ...proofBaseline, proof: "0".repeat(64) })), /Invalid signed Awards request/,
+    "client-forged baseline proof must be rejected");
     assert.equal(idempotencyCount(context), 2, "untrusted client replacement of the baseline proof must not reserve a request");
     assert.equal(eventCount(context), 2, "untrusted baseline proof must not write an event");
     assert.deepEqual(readState(context).snapshot, proofBaseline.snapshot, "untrusted baseline proof must not change content");
@@ -243,8 +249,8 @@ async function main() {
     runSql(context, `UPDATE public.resume_award_translations SET name='concurrent synthetic edit'
       WHERE resume_id='${testResumeId}' AND award_entry_id='${awardId}' AND locale='zh';`);
     const eventsBeforeStale = eventCount(context);
-    const staleAttempt = runSql(context, authenticatedSql(callExpression(staleRequestId, stalePayload, staleBaseline)), 3);
-    assert.match(staleAttempt, /Awards baseline changed since the request was created/);
+    runSqlExpectingError(context, authenticatedSql(callExpression(staleRequestId, stalePayload, staleBaseline)),
+      /Awards baseline changed since the request was created/, "stale baseline request must be rejected");
     assert.equal(eventCount(context), eventsBeforeStale, "stale baseline failure must not create an event");
     assert.equal(idempotencyCount(context), 2, "stale baseline failure must roll back without reserving the request ID");
     assert.equal(readState(context).snapshot[0].zh.name, "concurrent synthetic edit", "stale request must not overwrite the concurrent update");
