@@ -363,6 +363,7 @@ SELECT extensions.throws_ok(
   '42501',NULL,'Restore capability false blocks the authorized Owner target mutation RPC');
 SELECT extensions.is(public.test_only_restore_snapshot('20000000-0000-4000-8000-000000000001','awards','ea000000-0000-4000-8000-000000000919'),
   (SELECT snapshot FROM pg_temp.restore_disabled_owner_before),'disabled Owner Restore has zero content, event, link, or idempotency effects');
+RESET ROLE;
 SELECT extensions.ok(NOT public.can_manage_resume('ea111111-1111-4111-8111-111111111111')
   AND public.can_manage_resume('20000000-0000-4000-8000-000000000001')
   AND cms_private.restore_expected_digest('ea111111-1111-4111-8111-111111111111','awards',
