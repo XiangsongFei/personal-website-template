@@ -20,14 +20,82 @@ const excludedMigrations = new Set([
 
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
 
+function classifyStartFailure(output) {
+  const text = String(output).toLowerCase();
+  const categories = [
+    [/address already in use|port is already allocated|bind:.*address/, "port-allocation"],
+    [/no space left on device|disk quota exceeded/, "disk-capacity"],
+    [/cannot allocate memory|out of memory|oomkilled/, "memory-pressure"],
+    [/toomanyrequests|too many requests|rate limit exceeded/, "image-pull-rate-limit"],
+    [/pull access denied|unauthorized|authentication required/, "image-pull-authentication"],
+    [/manifest unknown|no matching manifest|image .* not found/, "image-unavailable"],
+    [/tls handshake timeout|i\/o timeout|context deadline exceeded|connection reset by peer/, "network-timeout"],
+    [/network .* (?:not found|already exists|has active endpoints)|network id .* not found/, "network-provisioning"],
+    [/unhealthy|health check|healthcheck/, "service-health"],
+    [/timed out waiting|startup timed out|failed to start services/, "service-start-timeout"],
+    [/failed to pull|pulling .* failed/, "image-pull"],
+    [/failed to create (?:docker )?container|error response from daemon.*container/, "container-create"],
+    [/failed to create (?:docker )?network|error response from daemon.*network/, "network-provisioning"],
+    [/failed to start .*container|container .*failed to start|failed creating container/, "container-start"],
+  ];
+  return categories.find(([pattern]) => pattern.test(text))?.[1] ?? "unclassified-start-failure";
+}
+
+function containerDiagnostic(container, projectId) {
+  const name = container?.Name?.replace(/^\//, "") ?? "";
+  const prefix = "supabase_";
+  const service = name.startsWith(prefix)
+    ? ["db", "auth", "rest", "realtime", "storage", "imgproxy", "kong", "pg_meta", "studio", "functions", "analytics", "vector", "supavisor"]
+      .find((candidate) => name.startsWith(`${prefix}${candidate}_${projectId}`)) ?? "unknown"
+    : "unknown";
+  const state = container?.State ?? {};
+  const safeStatus = ["created", "restarting", "running", "removing", "paused", "exited", "dead"].includes(state.Status)
+    ? state.Status : "unknown";
+  const health = ["starting", "healthy", "unhealthy"].includes(state.Health?.Status)
+    ? state.Health.Status : "none";
+  const exitCode = Number.isInteger(state.ExitCode) ? state.ExitCode : "none";
+  const detail = state.Error ? classifyStartFailure(state.Error) : "none";
+  return `container service=${service} state=${safeStatus} exit_code=${exitCode} health=${health} oom_killed=${state.OOMKilled === true} detail=${detail}`;
+}
+
+function collectStartupContainerDiagnostics(projectId, before) {
+  try {
+    const owned = identifyOwnedResources(projectId, before).containers;
+    if (owned.length === 0) return "Startup containers: none created or ownership could not be established.";
+    const summaries = owned.slice(0, 20).map((id) => {
+      const container = verifyOwnedResource("containers", id, projectId, before);
+      return containerDiagnostic(container, projectId);
+    });
+    const overflow = owned.length > summaries.length ? `\nAdditional owned containers omitted: ${owned.length - summaries.length}.` : "";
+    return `Startup container diagnostics (${summaries.length}):\n${summaries.join("\n")}${overflow}`;
+  } catch {
+    return "Startup container diagnostics unavailable; ownership was not proven.";
+  }
+}
+
+function startupFailure(error, diagnostics) {
+  const category = error?.startupFailureCategory ?? "unclassified-start-failure";
+  const exitCode = Number.isInteger(error?.startupExitCode) ? error.startupExitCode : "unavailable";
+  return `${safeStartFailure}\nStartup failure category: ${category}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
+}
+
 function run(command, args, options = {}) {
-  const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, ...spawnOptions } = options;
+  const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, startDiagnostics = false, ...spawnOptions } = options;
   const result = spawn(command, args, { encoding: "utf8", ...spawnOptions });
-  if (result.error) throw new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
+  if (result.error) {
+    const error = new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
+    if (startDiagnostics) error.startupFailureCategory = "process-launch-failure";
+    throw error;
+  }
   if (result.status !== 0) {
     if (failureMessage) {
       const diagnostics = sqlDiagnostics ? summarizeSqlFailure(`${result.stdout ?? ""}\n${result.stderr ?? ""}`) : "";
-      throw new Error(`${failureMessage}${diagnostics ? `\n${diagnostics}` : ""}`);
+      const error = new Error(`${failureMessage}${diagnostics ? `\n${diagnostics}` : ""}`);
+      if (startDiagnostics) {
+        error.startupFailureCategory = classifyStartFailure(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+        error.startupExitCode = result.status;
+      }
+      throw error;
     }
     const detail = redactSecrets(`${result.stdout ?? ""}${result.stderr ?? ""}`).trim();
     throw new Error(`${command} ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`);
@@ -312,13 +380,20 @@ function stageProject(stageRoot, projectId, ports) {
 }
 
 function runSupabase(context, args, options = {}) {
-  const output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
-    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
-    stdio: "pipe",
-    discardOutput: args[0] !== "status",
-    failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
-    sqlDiagnostics: args[0] === "test" && args[1] === "db",
-  });
+  let output;
+  try {
+    output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
+      env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
+      stdio: "pipe",
+      discardOutput: args[0] !== "status",
+      failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
+      sqlDiagnostics: args[0] === "test" && args[1] === "db",
+      startDiagnostics: args[0] === "start",
+    });
+  } catch (error) {
+    if (args[0] === "start") throw new Error(startupFailure(error, collectStartupContainerDiagnostics(context.projectId, context.preexistingResources)));
+    throw error;
+  }
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
   if (args[0] === "db" && args[1] === "reset") console.log("Isolated local database reset completed.");
   if (args[0] === "test" && args[1] === "db") console.log("Staged local SQL tests passed.");
@@ -399,8 +474,26 @@ function runSecuritySelfTests() {
   assert.equal(successOutput, "");
   assert.throws(() => run("supabase", ["start"], {
     spawn: () => ({ status: 1, stdout: cliCredentials, stderr: cliCredentials }),
-    stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure,
-  }), (error) => error.message === safeStartFailure && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
+    stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure, startDiagnostics: true,
+  }), (error) => error.message === safeStartFailure
+    && error.startupFailureCategory === "unclassified-start-failure"
+    && error.startupExitCode === 1
+    && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
+  assert.equal(classifyStartFailure("failed to pull image: unauthorized: password=private"), "image-pull-authentication");
+  assert.equal(classifyStartFailure("daemon reported no space left on device"), "disk-capacity");
+  const safeContainerSummary = containerDiagnostic({
+    Name: "/supabase_db_pr1-123-abcd",
+    State: { Status: "exited", ExitCode: 137, OOMKilled: true, Error: "postgresql://postgres:secret@host/db token=private", Health: { Status: "unhealthy" } },
+  }, "pr1-123-abcd");
+  assert.match(safeContainerSummary, /service=db state=exited exit_code=137 health=unhealthy oom_killed=true detail=unclassified-start-failure/);
+  assert.doesNotMatch(safeContainerSummary, /secret|private|postgresql:|host/);
+  const safeStartupFailure = startupFailure(
+    Object.assign(new Error(cliCredentials), { startupFailureCategory: "image-pull-authentication", startupExitCode: 1 }),
+    `Startup container diagnostics (1):\n${safeContainerSummary}`,
+  );
+  assert.match(safeStartupFailure, /Startup failure category: image-pull-authentication/);
+  assert.match(safeStartupFailure, /Supabase CLI exit code: 1/);
+  assert.doesNotMatch(safeStartupFailure, /generated-|sb_secret_|secret|private|postgresql:|host/);
   assert.throws(() => run("supabase", ["test", "db"], {
     spawn: () => ({ status: 1, stdout: `tests/version_history_introduction_read.test.sql .. not ok 3 - denied scope\nERROR: ${cliCredentials}`,
       stderr: "" }),
@@ -448,6 +541,8 @@ export async function withStagedLocalSupabase(callback) {
   }
   const before = snapshot();
   const beforeManifest = Object.fromEntries(Object.entries(before).map(([key, value]) => [key, [...value]]));
+  context.projectId = projectId;
+  context.preexistingResources = before;
   const ownershipPath = join(stageRoot, "ownership.json");
   const resources = { containers: [], volumes: [], networks: [] };
   let started = false;
