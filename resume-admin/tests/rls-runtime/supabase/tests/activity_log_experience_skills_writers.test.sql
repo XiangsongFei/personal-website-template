@@ -34,29 +34,43 @@ AS $function$ BEGIN IF pg_catalog.current_setting('d2.fail_activity_insert',true
   THEN RAISE EXCEPTION 'TEST ONLY forced aggregate event failure'; END IF; RETURN NEW; END $function$;
 CREATE TRIGGER test_only_d2_fail_activity_insert BEFORE INSERT ON cms_private.activity_log_events
 FOR EACH ROW EXECUTE FUNCTION public.test_only_d2_fail_activity_insert();
-CREATE FUNCTION public.test_only_d2_sign_context(target_resume uuid,target_items text,target_actor uuid,target_request uuid,target_domain text)
-RETURNS TABLE(signed_context text,signature_hex text) LANGUAGE sql SECURITY DEFINER SET search_path=''
+CREATE OR REPLACE FUNCTION public.test_only_d2_sign_context(target_resume uuid,target_items text,target_actor uuid,target_request uuid,target_domain text)
+RETURNS TABLE(signed_context text,signature_hex text) LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 AS $function$
-  WITH stamp AS (SELECT pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp()))::bigint AS issued), context AS (
-    SELECT pg_catalog.jsonb_build_object('context_version',1,'key_id','activity_log_v11_hmac_v1',
-      'actor_user_id',target_actor::text,'resume_id',target_resume::text,'domain',target_domain,'operation','update',
-      'request_id',target_request::text,'mutation_digest',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(target_items,'UTF8'),'sha256'),'hex'),
-      'issued_at',stamp.issued,'expires_at',stamp.issued+300,'ip_network',NULL,'country_code',NULL,'region',NULL,'city',NULL)::text AS value FROM stamp
-  ) SELECT context.value,pg_catalog.encode(extensions.hmac(pg_catalog.convert_to(context.value,'UTF8'),
-    pg_catalog.decode('00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff','hex'),'sha256'),'hex') FROM context
-$function$;
-CREATE FUNCTION public.test_only_d2_sign_context_variant(target_resume uuid,target_items text,target_actor uuid,target_request uuid,
-  target_domain text,context_patch jsonb DEFAULT '{}'::jsonb,remove_key text DEFAULT NULL)
-RETURNS TABLE(signed_context text,signature_hex text) LANGUAGE plpgsql SET search_path=''
-AS $function$
-DECLARE ctx jsonb; stamp bigint;
+DECLARE ctx jsonb; stamp bigint; baseline_digest text; baseline_proof text;
 BEGIN
   stamp:=pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp()))::bigint;
   ctx:=pg_catalog.jsonb_build_object('context_version',1,'key_id','activity_log_v11_hmac_v1',
     'actor_user_id',target_actor::text,'resume_id',target_resume::text,'domain',target_domain,'operation','update',
     'request_id',target_request::text,'mutation_digest',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(target_items,'UTF8'),'sha256'),'hex'),
-    'issued_at',stamp,'expires_at',stamp+300,'ip_network',NULL,'country_code',NULL,'region',NULL,'city',NULL)
-    ||COALESCE(context_patch,'{}'::jsonb);
+    'issued_at',stamp,'expires_at',stamp+300,'ip_network',NULL,'country_code',NULL,'region',NULL,'city',NULL);
+  IF target_domain='skills' THEN
+    SELECT skills_baseline_digest,skills_baseline_proof INTO baseline_digest,baseline_proof
+      FROM public.load_admin_skills_write_state(target_resume);
+    ctx:=ctx||pg_catalog.jsonb_build_object('expected_baseline_digest',baseline_digest,'baseline_proof',baseline_proof);
+  END IF;
+  signed_context:=ctx::text;
+  signature_hex:=pg_catalog.encode(extensions.hmac(pg_catalog.convert_to(signed_context,'UTF8'),
+    pg_catalog.decode('00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff','hex'),'sha256'),'hex');
+  RETURN NEXT;
+END
+$function$;
+CREATE OR REPLACE FUNCTION public.test_only_d2_sign_context_variant(target_resume uuid,target_items text,target_actor uuid,target_request uuid,target_domain text,context_patch jsonb DEFAULT '{}'::jsonb,remove_key text DEFAULT NULL)
+RETURNS TABLE(signed_context text,signature_hex text) LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
+AS $function$
+DECLARE ctx jsonb; stamp bigint; baseline_digest text; baseline_proof text;
+BEGIN
+  stamp:=pg_catalog.floor(pg_catalog.date_part('epoch',pg_catalog.clock_timestamp()))::bigint;
+  ctx:=pg_catalog.jsonb_build_object('context_version',1,'key_id','activity_log_v11_hmac_v1',
+    'actor_user_id',target_actor::text,'resume_id',target_resume::text,'domain',target_domain,'operation','update',
+    'request_id',target_request::text,'mutation_digest',pg_catalog.encode(extensions.digest(pg_catalog.convert_to(target_items,'UTF8'),'sha256'),'hex'),
+    'issued_at',stamp,'expires_at',stamp+300,'ip_network',NULL,'country_code',NULL,'region',NULL,'city',NULL);
+  IF target_domain='skills' THEN
+    SELECT skills_baseline_digest,skills_baseline_proof INTO baseline_digest,baseline_proof
+      FROM public.load_admin_skills_write_state(target_resume);
+    ctx:=ctx||pg_catalog.jsonb_build_object('expected_baseline_digest',baseline_digest,'baseline_proof',baseline_proof);
+  END IF;
+  ctx:=ctx||COALESCE(context_patch,'{}'::jsonb);
   IF remove_key IS NOT NULL THEN ctx:=ctx-remove_key; END IF;
   signed_context:=ctx::text;
   signature_hex:=pg_catalog.encode(extensions.hmac(pg_catalog.convert_to(signed_context,'UTF8'),
@@ -379,7 +393,6 @@ BEGIN
   PERFORM public.rls_test_assert(public.test_only_d2_event_count(target_id)=event_start+1
     AND public.test_only_d2_event_shape(target_id,'skills','skill_group_list',first_result),
     'Skills changed save creates one correctly shaped aggregate V2 event');
-  SELECT signed_context,signature_hex INTO context_value,signature_value FROM public.test_only_d2_sign_context(target_id,canonical,actor_id,request_create,'skills');
   replay_result:=public.save_resume_skills_v1(target_id,canonical,context_value,signature_value);
   PERFORM public.rls_test_assert(replay_result=first_result AND public.test_only_d2_event_count(target_id)=event_start+1,
     'Skills exact replay returns authoritative IDs without a duplicate event');

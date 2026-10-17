@@ -16,8 +16,8 @@ const baseEntry = (overrides: Partial<VersionHistoryEntry> = {}): VersionHistory
 });
 const page = (entries: VersionHistoryEntry[], hasMore = false, nextCursor: Page["nextCursor"] = null): Page => ({ entries, hasMore, nextCursor });
 function LocaleButton() { const { setLocale } = useUiLocale(); return <button onClick={() => setLocale("zh")}>中文</button>; }
-function renderPage(repository: ResumeRepository) {
-  return render(<UiLocaleProvider><LocaleButton /><VersionHistoryPage resumeId={resumeId} repository={repository} /></UiLocaleProvider>);
+function renderPage(repository: ResumeRepository, restoreEnabled = false) {
+  return render(<UiLocaleProvider><LocaleButton /><VersionHistoryPage resumeId={resumeId} repository={repository} restoreEnabled={restoreEnabled} /></UiLocaleProvider>);
 }
 const repositoryWith = (loadVersionHistoryPage: NonNullable<ResumeRepository["loadVersionHistoryPage"]>) => ({ loadVersionHistoryPage } as ResumeRepository);
 
@@ -291,7 +291,7 @@ describe("Version History page human-readable presentation", () => {
       comparison: { before: previewCurrent, after: previewTarget }, expectedCurrentDigest: "a".repeat(64) });
     const repository = { loadVersionHistoryPage: vi.fn().mockResolvedValue(page([event])), previewRestore,
       getPendingRestoreAttempt: vi.fn().mockReturnValue(null) } as unknown as ResumeRepository;
-    renderPage(repository);
+    renderPage(repository, true);
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     fireEvent.click(await screen.findByRole("button", { name: "预览恢复内容" }));
     expect(await screen.findByRole("dialog", { name: "荣誉奖项" })).toBeTruthy();

@@ -4,6 +4,8 @@ import { canonicalizeAwards, handleWorkerRequest, type WorkerEnv } from "../src/
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const actorId = "10000000-0000-4000-8000-000000000002";
 const requestId = "b1111111-1111-4111-8111-111111111111";
+const baselineDigest = "1".repeat(64);
+const baselineProof = "2".repeat(64);
 const key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const award = { id: null, position: 0, zh: { name: "奖项", year: "2025" }, en: { name: "Award", year: "2025" } };
 
@@ -20,7 +22,7 @@ function env(overrides: Partial<WorkerEnv> = {}): WorkerEnv {
 function request(body: unknown, path = "/api/admin/v1/awards/save") {
   return new Request(`https://admin.test${path}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt()}` }, body: typeof body === "string" ? body : JSON.stringify(body) });
 }
-function body(overrides: Record<string, unknown> = {}) { return { request_id: requestId, resume_id: resumeId, awards: [award], ...overrides }; }
+function body(overrides: Record<string, unknown> = {}) { return { request_id: requestId, resume_id: resumeId, expected_baseline_digest: baselineDigest, baseline_proof: baselineProof, awards: [award], ...overrides }; }
 
 describe("Activity Log V1.3D Awards Worker", () => {
   it("canonicalizes the frozen field order and proxies only the Awards RPC", async () => {
@@ -28,10 +30,13 @@ describe("Activity Log V1.3D Awards Worker", () => {
     const upstream = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const context = JSON.parse(String(payload.signed_context)) as Record<string, unknown>;
-      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain: "awards", operation: "update", request_id: requestId });
+      expect(context).toMatchObject({ actor_user_id: actorId, resume_id: resumeId, domain: "awards", operation: "update", request_id: requestId, expected_baseline_digest: baselineDigest, baseline_proof: baselineProof });
       expect(payload.target_resume_id).toBe(resumeId);
+      expect(payload.expected_baseline_digest).toBe(baselineDigest);
+      expect(payload.baseline_proof).toBe(baselineProof);
+      expect(context.expected_baseline_digest).toBe(baselineDigest);
       expect(String(_input)).toBe("https://local.test/rest/v1/rpc/save_resume_awards_v1");
-      return Response.json([{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", position: 0 }]);
+      return Response.json({ awards: [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", position: 0, zh: award.zh, en: award.en }], baseline_digest: baselineDigest, baseline_proof: baselineProof });
     });
     vi.stubGlobal("fetch", upstream);
     const response = await handleWorkerRequest(request(body()), env());
@@ -50,6 +55,16 @@ describe("Activity Log V1.3D Awards Worker", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it("requires a valid database-signed baseline digest and proof before signing or forwarding", async () => {
+    const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
+    for (const invalid of [
+      body({ expected_baseline_digest: "g".repeat(64) }),
+      body({ baseline_proof: "f".repeat(63) }),
+    ]) expect((await handleWorkerRequest(request(invalid), env())).status).toBe(422);
+    expect((await handleWorkerRequest(request(body({ baseline_proof: undefined })), env())).status).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it("enforces the canonical UTF-8 byte bound", async () => {
     const oversized = Array.from({ length: 32 }, (_, position) => ({ ...award, position, zh: { name: "奖".repeat(200), year: "2025" }, en: { name: "x".repeat(200), year: "2025" } }));
     const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
@@ -65,6 +80,21 @@ describe("Activity Log V1.3D Awards Worker", () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: "idempotency_conflict" } });
     expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("maps a stale database baseline rejection to a conflict", async () => {
+    const upstream = vi.fn(async () => Response.json({ code: "P13B2" }, { status: 400 }));
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request(body()), env());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "awards_baseline_conflict" } });
+  });
+
+  it("maps the database compare-and-set rejection to a stale-baseline conflict", async () => {
+    const upstream = vi.fn(async () => Response.json({ code: "P13B2" }, { status: 400 })); vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request(body()), env());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "awards_baseline_conflict" } });
   });
 
   it("does not fall back to direct writes for upstream errors", async () => {

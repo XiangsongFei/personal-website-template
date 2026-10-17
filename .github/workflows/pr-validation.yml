@@ -97,14 +97,23 @@ jobs:
           restore="20261101000000_files_restore_capability_enforcement.sql"
           introduction="20261102000000_introduction_version_history_read.sql"
           education_experience="20261103000000_education_experience_test_rpc_routing.sql"
+          awards_baseline_safety="20261109000000_awards_baseline_pending_safety.sql"
+          restore_awards_compatibility="20261110000000_restore_awards_writer_compatibility.sql"
+          awards_idempotency_array="20261111000000_awards_idempotency_result_array.sql"
+          awards_jsonb_validation="20261112000000_awards_jsonb_object_validation.sql"
+          skills_baseline_cas="20261113000000_skills_baseline_cas.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} ${awards_idempotency_array} ${awards_jsonb_validation} ${skills_baseline_cas} "
+          test_awards_skills="20261108000000_awards_skills_test_rpc_routing.sql"
+          test -f "resume-admin/migrations/${test_awards_skills}"
+          test ! -e "${cli_dir}/${test_awards_skills}"
+          test ! -e "${runtime_dir}/${test_awards_skills}"
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}" "${awards_idempotency_array}" "${awards_jsonb_validation}" "${skills_baseline_cas}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
@@ -124,6 +133,21 @@ jobs:
           printf '%s  %s\n' \
             "81f98c70aa89ebc5f2c845b573f4a7bb853a4e65df20c6804038e0679e6a04cb" \
             "resume-admin/migrations/${education_experience}" | sha256sum --check
+          printf '%s  %s\n' \
+            "d0670714fb14f8a8d64a17a6c7d6bf213d58e530d2c2c308e8869e8f22fe62b0" \
+            "resume-admin/migrations/${awards_baseline_safety}" | sha256sum --check
+          printf '%s  %s\n' \
+            "bf278958011c339c2d2deb73f0a7227992d338ce568ed4ffe8bdceaaca2be622" \
+            "resume-admin/migrations/${restore_awards_compatibility}" | sha256sum --check
+          printf '%s  %s\n' \
+            "c7908d79ae37ba1e382cf7fe29f291a01daffd310bc28f267ccf7b11b451f385" \
+            "resume-admin/migrations/${awards_idempotency_array}" | sha256sum --check
+          printf '%s  %s\n' \
+            "c11f7c74c99c4a229bfd41214e2ee4f2452ae1bb79928987089f42ab7a2c7c35" \
+            "resume-admin/migrations/${awards_jsonb_validation}" | sha256sum --check
+          printf '%s  %s\n' \
+            "3a4565de0d7a09ced22f1e65b222797b73199265d1808d330522ebed200b878d" \
+            "resume-admin/migrations/${skills_baseline_cas}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests
@@ -131,6 +155,8 @@ jobs:
     if: needs.detect_changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SUPABASE_USE_SLIM_IMAGES: "true"
     steps:
       - name: Check out PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,6 +176,15 @@ jobs:
 
       - name: Run Owner RPC activation scenarios in disposable local Supabase
         run: node resume-admin/tests/rls-runtime/owner-activation-runtime.mjs
+
+      - name: Run Awards baseline and pending replay scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-baseline-runtime.mjs
+
+      - name: Run Skills baseline CAS concurrency scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/skills-baseline-runtime.mjs
+
+      - name: Run Test Awards and Skills activation scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-skills-test-activation-runtime.mjs
 
   public_tests_build:
     name: Public tests and production build

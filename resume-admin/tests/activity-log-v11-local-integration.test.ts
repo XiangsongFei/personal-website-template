@@ -429,10 +429,11 @@ function makeRequest(items: Array<{ id: string | null; zh: string; en: string }>
   Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
   return request;
 }
-function makeAwardsRequest(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId: string = localUuid(), token = userJwt!, target = targetId): Request {
+type AwardsBaseline = { digest: string; proof: string };
+function makeAwardsRequest(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId: string = localUuid(), token = userJwt!, target = targetId, baseline: AwardsBaseline = { digest: "0".repeat(64), proof: "0".repeat(64) }): Request {
   const request = new Request("https://admin.local.test/api/admin/v1/awards/save", { method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.89" },
-    body: JSON.stringify({ request_id: requestId, resume_id: target, awards }) });
+    body: JSON.stringify({ request_id: requestId, resume_id: target, awards, expected_baseline_digest: baseline.digest, baseline_proof: baseline.proof }) });
   Object.defineProperty(request, "cf", { value: { country: "US", region: "Test Region", city: "Test City" } });
   return request;
 }
@@ -446,10 +447,22 @@ async function invoke(items: Array<{ id: string | null; zh: string; en: string }
     mutateNextRpcPayload = undefined;
   }
 }
-async function invokeAwards(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId?: string, token?: string, target = targetId, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>): Promise<{ response: Response; body: unknown }> {
+const awardsBaselineByRequest = new Map<string, AwardsBaseline>();
+async function readAwardsBaseline(target = targetId, bearer = userJwt!): Promise<AwardsBaseline> {
+  const state = await rest("/rest/v1/rpc/load_admin_awards_write_state", { method: "POST", body: JSON.stringify({ target_resume_id: target }) }, bearer) as Array<Record<string, unknown>>;
+  const digest = state[0]?.awards_baseline_digest; const proof = state[0]?.awards_baseline_proof;
+  if (typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest) || typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof)) throw new Error("The local Awards baseline RPC did not return a valid digest and proof");
+  return { digest, proof };
+}
+async function invokeAwards(awards: Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>, requestId?: string, token?: string, target = targetId, mutateRpcPayload?: (payload: Record<string, unknown>) => Record<string, unknown>, explicitBaseline?: AwardsBaseline): Promise<{ response: Response; body: unknown }> {
+  const stableRequestId = requestId ?? localUuid();
+  const stableToken = token ?? userJwt!;
+  const cacheKey = `${target}:${stableToken}:${stableRequestId}`;
+  const baseline = explicitBaseline ?? awardsBaselineByRequest.get(cacheKey) ?? await readAwardsBaseline(target, stableToken);
+  awardsBaselineByRequest.set(cacheKey, baseline);
   mutateNextAwardsRpcPayload = mutateRpcPayload;
   try {
-    const response = await handleWorkerRequest(makeAwardsRequest(awards, requestId, token, target), workerEnv());
+    const response = await handleWorkerRequest(makeAwardsRequest(awards, stableRequestId, stableToken, target, baseline), workerEnv());
     return { response, body: await response.json() };
   } finally { mutateNextAwardsRpcPayload = undefined; }
 }
@@ -909,8 +922,10 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     const officialBefore = await readAwards(officialId, ownerJwt!);
     const initialState = await rest("/rest/v1/rpc/load_admin_awards_write_state", {
       method: "POST", body: JSON.stringify({ target_resume_id: targetId }),
-    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean }>;
-    expect(initialState).toEqual([{ resume_id: targetId, awards_write_mode: "direct", activity_log_enabled: true, awards_trusted_context_required: false }]);
+    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean; awards_baseline_digest: string; awards_baseline_proof: string }>;
+    expect(initialState).toHaveLength(1);
+    expect(initialState[0]).toMatchObject({ resume_id: targetId, awards_write_mode: "direct", activity_log_enabled: true, awards_trusted_context_required: false });
+    expect(initialState[0]!.awards_baseline_digest).toMatch(/^[0-9a-f]{64}$/);
 
     // This opt-in harness mutates only its isolated local QA fixture. Its launcher
     // resets the local Supabase database after the integration process exits.
@@ -920,8 +935,10 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       ON CONFLICT (resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true`);
     const rpcState = await rest("/rest/v1/rpc/load_admin_awards_write_state", {
       method: "POST", body: JSON.stringify({ target_resume_id: targetId }),
-    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean }>;
-    expect(rpcState).toEqual([{ resume_id: targetId, awards_write_mode: "rpc", activity_log_enabled: true, awards_trusted_context_required: true }]);
+    }) as Array<{ awards_write_mode: string; activity_log_enabled: boolean; awards_trusted_context_required: boolean; awards_baseline_digest: string; awards_baseline_proof: string }>;
+    expect(rpcState).toHaveLength(1);
+    expect(rpcState[0]).toMatchObject({ resume_id: targetId, awards_write_mode: "rpc", activity_log_enabled: true, awards_trusted_context_required: true });
+    expect(rpcState[0]!.awards_baseline_digest).toMatch(/^[0-9a-f]{64}$/);
 
     const baseline = await readAwards();
     expect(baseline).toHaveLength(2);
@@ -954,7 +971,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
 
     const replay = await invokeAwards(mixedSave, requestId);
     expect(replay.response.status).toBe(200);
-    expect(replay.body).toMatchObject(committedOnce);
+    expect(replay.body).toMatchObject({ awards: committedOnce, baseline_digest: expect.stringMatching(/^[0-9a-f]{64}$/), baseline_proof: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 1);
     const conflicting = mixedSave.map((item, index) => index === 0 ? { ...item, en: { ...item.en, name: "different payload" } } : item);
     const conflict = await invokeAwards(conflicting, requestId);
@@ -983,6 +1000,26 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(committedTwice.map(row => row.id)).toEqual([committedOnce[2].id, committedOnce[0].id]);
     expect(await readUnifiedEvents()).toHaveLength(eventsBefore.length + 2);
 
+    // A delayed retry of an already committed request returns its original result without overwriting a later save.
+    const beforeLateReplay = await readAwards();
+    const lateReplayEvents = await readUnifiedEvents();
+    const lateReplay = await invokeAwards(mixedSave, requestId);
+    expect(lateReplay.response.status).toBe(200);
+    expect(lateReplay.body).toEqual(replay.body);
+    expect(await readAwards()).toEqual(beforeLateReplay);
+    expect(await readUnifiedEvents()).toEqual(lateReplayEvents);
+
+    // A request that never committed cannot apply against a changed collection baseline.
+    const staleRequestId = localUuid();
+    const stalePayload = beforeLateReplay.map((item, position) => ({ ...item, position,
+      en: { ...item.en, year: `${item.en.year} stale attempt` } }));
+    const staleEvents = await readUnifiedEvents();
+    const staleAttempt = await invokeAwards(stalePayload, staleRequestId, userJwt!, targetId, undefined, { digest: String(initialState[0]!.awards_baseline_digest), proof: String(initialState[0]!.awards_baseline_proof) });
+    expect(staleAttempt.response.status).toBe(409);
+    expect(staleAttempt.body).toMatchObject({ error: { code: "awards_baseline_conflict" } });
+    expect(await readAwards()).toEqual(beforeLateReplay);
+    expect(await readUnifiedEvents()).toEqual(staleEvents);
+
     const concurrentRequestId = localUuid();
     const concurrentPayload = committedTwice.map((item, position) => ({ ...item, position,
       en: { ...item.en, year: `${item.en.year} concurrent` } }));
@@ -1010,7 +1047,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       localSql("DROP TRIGGER IF EXISTS test_only_fail_awards_audit_insert ON cms_private.activity_log_events; DROP FUNCTION IF EXISTS public.test_only_fail_awards_audit_insert()");
     }
 
-    const crossTarget = await invokeAwards(committedTwice.map(({ id, position, zh, en }) => ({ id, position, zh, en })), localUuid(), userJwt!, officialId);
+    const crossTarget = await invokeAwards(committedTwice.map(({ id, position, zh, en }) => ({ id, position, zh, en })), localUuid(), userJwt!, officialId, undefined, await readAwardsBaseline(officialId, ownerJwt!));
     expect(crossTarget.response.ok).toBe(false);
     expect(await readAwards(officialId, ownerJwt!)).toEqual(officialBefore);
   });
@@ -1027,6 +1064,8 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     { name: "operation binding", mutate: contextMutation(context => { context.operation = "delete"; }) },
     { name: "request_id binding", mutate: contextMutation(context => { context.request_id = "20000000-0000-4000-8000-000000000099"; }) },
     { name: "mutation digest binding", mutate: contextMutation(context => { context.mutation_digest = "f".repeat(64); }) },
+    { name: "baseline digest binding", mutate: contextMutation(context => { context.expected_baseline_digest = "f".repeat(64); }) },
+    { name: "database baseline proof binding", mutate: contextMutation(context => { context.baseline_proof = "f".repeat(64); }) },
     { name: "canonical payload digest binding", mutate: payload => ({ ...payload, canonical_awards: `${String(payload.canonical_awards)} ` }) },
     { name: "issued timestamp future bound", mutate: contextMutation(context => {
       const issued = Math.floor(Date.now() / 1000) + 120; context.issued_at = issued; context.expires_at = issued + 180;
@@ -1304,7 +1343,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     const requestId = localUuid();
     const result = await invokeAwards(payload, requestId);
     expect(result.response.status).toBe(200);
-    expect(Array.isArray(result.body)).toBe(true);
+    expect(result.body).toMatchObject({ awards: expect.any(Array), baseline_digest: expect.stringMatching(/^[0-9a-f]{64}$/), baseline_proof: expect.stringMatching(/^[0-9a-f]{64}$/) });
     const stored = localSql(`SELECT octet_length(result_payload::text) || ':' || (completed_at IS NOT NULL)::text
       FROM cms_private.activity_log_idempotency WHERE actor_user_id='${actorId}'::uuid AND resume_id='${targetId}'::uuid AND domain_key='awards' AND request_id='${requestId}'::uuid`);
     const [resultBytes, completed] = stored.split(":");

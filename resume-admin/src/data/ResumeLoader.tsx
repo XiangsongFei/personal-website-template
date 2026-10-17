@@ -256,7 +256,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     let active = true;
     const nextTargetId = authorizedTarget?.resumeId ?? null;
     if (featureTargetId.current !== nextTargetId) {
-      repository?.discardPendingIntroductionSave?.();
+      repository?.discardPendingIntroductionSave?.(authorizedTarget?.resumeId, identityId);
       featureTargetId.current = nextTargetId;
     }
     if (!repository || !authorizedTarget || !repository.loadAdminFeatureState) {
@@ -271,7 +271,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       if (active) setFeatureStateResult({ status: "error" });
     });
     return () => { active = false; };
-  }, [authReady, repository, authorizedTarget]);
+  }, [authReady, repository, authorizedTarget, identityId]);
 
   // Activity Log does not load a resume snapshot. Its Files restore route is
   // fresh only after the exact target's Files write state and the authorized
@@ -308,7 +308,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
   useEffect(() => {
     let active = true;
     const target = authorizedTarget;
-    if (!isActivityLogRoute) {
+    if (!isActivityLogRoute && !isVersionHistoryRoute) {
       setActivityLogRestoreCapability({ kind: "idle" });
       return () => { active = false; };
     }
@@ -323,7 +323,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       else if (active) setActivityLogRestoreCapability({ kind: "error" });
     }, () => { if (active) setActivityLogRestoreCapability({ kind: "error" }); });
     return () => { active = false; };
-  }, [authReady, identityId, isActivityLogRoute, location.key, repository, sessionKey, authorizedTarget]);
+  }, [authReady, identityId, isActivityLogRoute, isVersionHistoryRoute, location.key, repository, sessionKey, authorizedTarget]);
 
   const markActivityLogPageFresh = useCallback((resumeId: string, fresh: boolean) => {
     if (!isActivityLogRoute || !identityId || !sessionKey || !authorizedTarget || resumeId !== authorizedTarget.resumeId) return;
@@ -518,7 +518,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 
   async function reloadAdditional(key: AdditionalRouteKey): Promise<AdditionalRouteResult> {
     if (!repository || !supportsAdditionalReads(repository, key)) throw new Error("Section reload is unavailable");
-    if (key === "introduction") repository.discardPendingIntroductionSave?.(authorizedTarget?.resumeId);
+    if (key === "introduction") repository.discardPendingIntroductionSave?.(authorizedTarget?.resumeId, identityId);
     const value = await loadAdditionalFromStore(sessionKey, repository, sectionStore, key, true, authorizedTarget);
     setAdditionalStates(current => ({ ...current, [key]: { kind: "loaded", ...value } }));
     setResume(current => current?.resumeId === value.resumeId ? { ...current, sections: { ...current.sections, [key]: value.value } } : current);
@@ -659,7 +659,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     && activityLogPageFreshness.resumeId === authorizedTarget.resumeId && activityLogPageFreshness.siteKey === authorizedTarget.siteKey
     && activityLogPageFreshness.role === authorizedTarget.role && activityLogPageFreshness.identityId === identityId
     && activityLogPageFreshness.sessionKey === sessionKey && activityLogPageFreshness.locationKey === location.key;
-  const currentActivityLogRestoreEnabled = isActivityLogRoute && authorizedTarget && activityLogRestoreCapability.kind === "loaded"
+  const currentRestoreEnabled = (isActivityLogRoute || isVersionHistoryRoute) && authorizedTarget && activityLogRestoreCapability.kind === "loaded"
     && activityLogRestoreCapability.resumeId === authorizedTarget.resumeId && activityLogRestoreCapability.siteKey === authorizedTarget.siteKey
     && activityLogRestoreCapability.role === authorizedTarget.role && activityLogRestoreCapability.identityId === identityId
     && activityLogRestoreCapability.sessionKey === sessionKey && activityLogRestoreCapability.locationKey === location.key
@@ -668,7 +668,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     && currentActivityLogFilesState && currentActivityLogPageFresh);
   const filesRestoreReady = Boolean(activityLogRouteDataFresh && currentActivityLogFilesState?.activityLogEnabled
     && currentActivityLogFilesState.writeMode === "rpc" && currentActivityLogFilesState.trustedContextRequired
-    && currentActivityLogRestoreEnabled);
+    && currentRestoreEnabled);
   const currentRouteDataFresh = isActivityLogRoute ? activityLogRouteDataFresh : isVersionHistoryRoute
     ? Boolean(authReady && identityId && sessionKey && authorizedTarget && activeFeatureState)
     : Boolean(resume) || (location.pathname === "/profile" ? profileState.kind === "loaded"
@@ -741,7 +741,9 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 
   if (isDocumentReload && location.pathname === initialPath && !initialRouteReady && !routeSnapshot) return null;
 
-  return <App identityEmail={identityEmail} onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
+  return <App identityEmail={identityEmail} identityId={identityId} sessionKey={sessionKey}
+    restoreCapabilityScopeKey={`${authorizedTarget?.resumeId ?? "none"}:${authorizedTarget?.siteKey ?? "none"}:${authorizedTarget?.role ?? "none"}`}
+    onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
     productionMode={true} repository={guardedRepository} resume={resume} profileSection={profile} profileResumeId={profileResumeId} interactionLocked={interactionLocked} snapshotDataRevision={snapshotDataRevision}
     overviewData={overview} overviewSiteMetadata={overviewMetadata} overviewLoadState={overviewLoadState}
     overviewRouteFirst={useSectionOverview} onRetryOverview={useSectionOverview ? retryOverview : retryFullSnapshot}
@@ -761,6 +763,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     additionalResumeId={additionalRoute?.resumeId ?? resume?.resumeId ?? authorizedTarget?.resumeId ?? null} onAdditionalChanged={(key, id, value) => patchAdditional(key as AdditionalRouteKey, id, value as AdditionalRouteValue)} onReloadAdditional={async key => (await reloadAdditional(key)).value as (IntroItem | ExperienceItem | SkillItem | AwardItem)[]}
     fullSnapshotState={fullSnapshotState} onRetryFullSnapshot={retryFullSnapshot} onRequestCanonicalPreview={requestCanonicalPreview}
     activityLogEnabled={activeFeatureState?.activityLogEnabled ?? false} activityLogFilesRestoreReady={filesRestoreReady}
+    versionHistoryRestoreEnabled={currentRestoreEnabled}
     onActivityLogRouteFresh={markActivityLogPageFresh}
     onProfileSaved={profileSaved} onProfileTranslationSaved={profileTranslationSaved}
     onSnapshotRebased={markSnapshotBaselineApplied} />;

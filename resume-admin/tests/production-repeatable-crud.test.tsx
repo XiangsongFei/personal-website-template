@@ -92,6 +92,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       awardsWriteMode: options.awardsWriteMode ?? "direct", awardsTrustedContextRequired: options.awardsTrustedContextRequired ?? false })),
     saveAwardsWithWorker: vi.fn(async (_resumeId: string, draft: AwardItem[]) => draft.map((item, index) => ({ ...item,
       id: item.id.startsWith("local-") ? `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, "0")}` : item.id, position: index }))),
+    hasLegacyPendingAwardsSave: vi.fn(() => false),
     loadAdminExperienceWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "experience" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.experienceWriteMode === "rpc", writeMode: options.experienceWriteMode ?? "direct",
       trustedContextRequired: options.experienceTrustedContextRequired ?? false })),
@@ -105,6 +106,8 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       trustedContextRequired: options.skillsTrustedContextRequired ?? false })),
     saveSkillsWithWorker: vi.fn(async (_resumeId: string, draft: SkillItem[]) => structuredClone(draft)),
     hasPendingSkillsWorkerSave: vi.fn(() => false), discardPendingSkillsSave: vi.fn(),
+    hasLegacyPendingSkillsSave: vi.fn(() => false),
+    hasUnverifiedSkillsPendingSave: vi.fn(() => false),
     loadAdminProjectsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "projects" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.projectsWriteMode === "rpc", writeMode: options.projectsWriteMode ?? "direct",
       trustedContextRequired: options.projectsTrustedContextRequired ?? false })),
@@ -696,6 +699,27 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(page.classList.contains("production-save-tail")).toBe(false);
     expect(page.querySelector(".production-save-helper")).toBeNull();
     if (path === "/introduction" || path === "/experience") expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+  });
+
+  it.each([
+    { path: "/awards", section: "awards" as const, key: "hasLegacyPendingAwardsSave", message: /older Awards save request.*identity cannot be verified/i,
+      field: "Chinese Award name", saveLabel: "Save award changes" },
+    { path: "/skills", section: "skills" as const, key: "hasLegacyPendingSkillsSave", message: /older Skills save request.*identity cannot be verified/i,
+      field: "Chinese Name", saveLabel: "Save skill changes" },
+  ])("shows and blocks an unbound legacy Pending on $path with clean and changed drafts", async ({ path, section, key, message, field, saveLabel }) => {
+    const { repository, methods } = makeRepository(section);
+    Object.assign(repository, { [key]: vi.fn(() => true) });
+    open({ path }, repository);
+
+    expect(message.test((await screen.findByRole("alert")).textContent ?? "")).toBe(true);
+    const saveButton = screen.getByRole("button", { name: saveLabel }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.change(await screen.findByLabelText(field), { target: { value: "A changed draft" } });
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.click(saveButton);
+    expect(methods.saveAwardsWithWorker).not.toHaveBeenCalled();
+    expect(methods.saveSkillsWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
   });
 
   it("uses localized Introduction save copy without exposing production-environment wording", async () => {
@@ -2776,15 +2800,14 @@ describe("Batch 6A production repeatable CRUD", () => {
     const setup = makeRepository("skills");
     const target = resumeId;
     const websiteRequestId = "11111111-1111-4111-8111-111111111111";
-    const originalCrypto = globalThis.crypto;
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: originalCrypto.subtle });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const rpc = vi.fn(async (name: string) => {
       if (name === "load_admin_website_links_write_state") return { data: [{ resume_id: target,
         activity_log_enabled: true, website_links_write_mode: "rpc", website_links_trusted_context_required: true }], error: null };
       throw new Error(`Unexpected RPC ${name}`);
     });
     const realWebsiteRepository = createResumeRepository({
-      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) },
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) },
       rpc,
     } as unknown as import("@supabase/supabase-js").SupabaseClient, "https://storage.example.test");
     let resolveFirstRequest!: (response: Response) => void;
@@ -2970,7 +2993,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const rpc = vi.fn(async (name: string) => name === "load_admin_files_storage_state_v1"
       ? { data: [{ resume_id: target, activity_log_enabled: true, files_write_mode: "rpc", files_trusted_context_required: true, storage_protocol: "intent_v1" }], error: null }
       : { data: null, error: { message: "unexpected RPC" } });
-    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
     const realFilesRepository = createResumeRepository(client, "https://storage.example.test");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

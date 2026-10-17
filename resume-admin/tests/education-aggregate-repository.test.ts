@@ -4,6 +4,7 @@ import { createResumeRepository } from "../src/data/resumeRepository";
 import type { EducationItem } from "../src/model";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
+const actorId = "10000000-0000-4000-8000-000000000002";
 const generatedId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const requestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const savedLocale = { title: "Summer", program: "P", period: "2025", grade: "A", course_title: null, course_description: "", custom_category_label: null };
@@ -30,9 +31,9 @@ describe("Education aggregate repository contract", () => {
   });
 
   it("sends a raw-NULL category and exact bilingual NULL/empty values through the Worker, preserving server fields", async () => {
-    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    vi.stubGlobal("crypto", { randomUUID: () => requestId, subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const rpc = vi.fn();
-    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) };
     const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(body).toMatchObject({ request_id: requestId, resume_id: resumeId });
@@ -53,8 +54,8 @@ describe("Education aggregate repository contract", () => {
   });
 
   it("replays a committed Education request after a lost response without duplicating its event", async () => {
-    vi.stubGlobal("crypto", { randomUUID: () => requestId });
-    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    vi.stubGlobal("crypto", { randomUUID: () => requestId, subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) };
     const seenRequests = new Set<string>();
     let committed: Array<Record<string, unknown>> = [];
     let eventCount = 0;
@@ -80,7 +81,7 @@ describe("Education aggregate repository contract", () => {
     const newEntry: EducationItem = { ...education(), id: "local-education-new-entry", sourceKey: null,
       translations: { ...education().translations, zh: { ...education().translations.zh, title: "新建后提交" } } };
     await expect(repoAfterSave.saveEducationWithWorker!(resumeId, [newEntry])).rejects.toThrow("save result is uncertain");
-    expect(repoAfterSave.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
+    expect(repoAfterSave.hasPendingEducationWorkerSave!(resumeId, actorId)).toBe(true);
     expect(eventCount).toBe(1);
 
     // A fresh repository instance models a page refresh; sessionStorage retains the request.
@@ -88,21 +89,21 @@ describe("Education aggregate repository contract", () => {
     const refreshedEntry = { ...newEntry, id: generatedId };
     await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [{ ...refreshedEntry,
       translations: { ...refreshedEntry.translations, en: { ...refreshedEntry.translations.en, title: "更晚的并发修改" } } }]))
-      .rejects.toThrow("pending education request cannot be verified safely");
+      .rejects.toThrow("pending education request does not match the current authenticated target and draft");
     expect(calls).toHaveLength(1);
-    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId, actorId)).toBe(true);
     await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [refreshedEntry])).resolves.toMatchObject([{ id: generatedId }]);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
     expect(calls[0]?.education).toEqual(calls[1]?.education);
     expect((calls[0]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
     expect(eventCount).toBe(1);
-    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId, actorId)).toBe(false);
   });
 
   it("retries the exact pending Education payload while a new entry ID is still null", async () => {
-    vi.stubGlobal("crypto", { randomUUID: () => requestId });
-    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    vi.stubGlobal("crypto", { randomUUID: () => requestId, subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) };
     let eventCount = 0;
     const calls: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -124,6 +125,6 @@ describe("Education aggregate repository contract", () => {
     expect(calls[0]?.education).toEqual(calls[1]?.education);
     expect((calls[1]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
     expect(eventCount).toBe(1);
-    expect(repo.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+    expect(repo.hasPendingEducationWorkerSave!(resumeId, actorId)).toBe(false);
   });
 });
