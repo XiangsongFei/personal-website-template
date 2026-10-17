@@ -866,12 +866,15 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const contentDirty = JSON.stringify(draft) !== JSON.stringify(baseline)
     || baseline.some(item => !draft.some(value => value.id === item.id));
   const pendingAwardsRetry = section === "awards" && (repository.hasPendingAwardsWorkerSave?.(resumeId, identityId) ?? false);
+  const pendingLegacyAwards = section === "awards" && (repository.hasLegacyPendingAwardsSave?.(resumeId) ?? false);
   const pendingExperienceRetry = section === "experience" && (repository.hasPendingExperienceWorkerSave?.(resumeId, identityId) ?? false);
   const pendingSkillsRetry = section === "skills" && (repository.hasPendingSkillsWorkerSave?.(resumeId, identityId) ?? false);
+  const pendingLegacySkills = section === "skills" && (repository.hasLegacyPendingSkillsSave?.(resumeId) ?? false);
+  const pendingSkillsWithoutBaseline = section === "skills" && (repository.hasUnverifiedSkillsPendingSave?.(resumeId, identityId) ?? false);
   const pendingProjectsRetry = section === "projects" && (repository.hasPendingProjectsWorkerSave?.(resumeId, identityId) ?? false);
   const pendingAggregateRetry = pendingExperienceRetry || pendingSkillsRetry || pendingProjectsRetry;
   const dirty = contentDirty || Boolean(sectionText?.dirty) || pendingAwardsRetry || pendingAggregateRetry;
-  const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked);
+  const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked) || pendingLegacyAwards || pendingLegacySkills || pendingSkillsWithoutBaseline;
   const hasRecovery = Object.keys(editor.partialCreates).length > 0 || pendingAggregateRetry;
 
   useEffect(() => {
@@ -1227,6 +1230,9 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   return <section className="page-section editor-workspace-route" aria-busy={editor.saving}>
     <EditorContentScroll>
       {!useActionHeading && <div className="page-heading" data-editor-anchor={`heading:${section}`}><p className="eyebrow">{t("Resume content")}</p><h1>{t(title)}</h1><p>{t(description)}</p></div>}
+      {pendingLegacyAwards && <p className="save-notice production-save-helper" role="alert" aria-live="assertive">{t("An older Awards save request is still stored in this browser, but its administrator identity cannot be verified. The request was not replayed, assigned to this account, converted, or deleted. Do not retry or resubmit Awards until an authorized administrator compares the current Awards data with Activity Log around the earlier save attempt. Keep this browser session and contact an administrator for a manual review.")}</p>}
+      {pendingLegacySkills && <p className="save-notice production-save-helper" role="alert" aria-live="assertive">{t("An older Skills save request is still stored in this browser, but its administrator identity cannot be verified. The request was not replayed, assigned to this account, converted, or deleted. Do not retry or resubmit Skills until an authorized administrator compares the current Skills data with Activity Log around the earlier save attempt. Keep this browser session and contact an administrator for a manual review.")}</p>}
+      {pendingSkillsWithoutBaseline && !pendingLegacySkills && <p className="save-notice production-save-helper" role="alert" aria-live="assertive">{t("This Skills request was saved by an older version that did not store a verifiable database baseline. It remains bound to its original account, but cannot be safely replayed under the current concurrency protection. The request was retained and not sent. Ask an administrator to compare current Skills data with Activity Log before taking further action.")}</p>}
       {section === "introduction" || (section === "awards" && pendingAwardsRetry) || pendingAggregateRetry
         ? <fieldset disabled={editor.saving || pendingAwardsRetry || pendingAggregateRetry} aria-disabled={editor.saving || pendingAwardsRetry || pendingAggregateRetry} style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>{repeatableList}</fieldset>
         : repeatableList}

@@ -41,14 +41,17 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   loadAdminAwardsWriteState?(resumeId: string): Promise<AdminAwardsWriteState>;
   saveAwardsWithWorker?(resumeId: string, items: AwardItem[]): Promise<AwardItem[]>;
   hasPendingAwardsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
+  hasLegacyPendingAwardsSave?(resumeId: string): boolean;
   discardPendingAwardsSave?(resumeId?: string): void;
   loadAdminExperienceWriteState?(resumeId: string): Promise<AdminDomainWriteState<"experience">>;
   saveExperienceWithWorker?(resumeId: string, items: ExperienceItem[]): Promise<ExperienceItem[]>;
   hasPendingExperienceWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingExperienceSave?(resumeId?: string): void;
-  loadAdminSkillsWriteState?(resumeId: string): Promise<AdminDomainWriteState<"skills">>;
+  loadAdminSkillsWriteState?(resumeId: string): Promise<AdminSkillsWriteState>;
   saveSkillsWithWorker?(resumeId: string, items: SkillItem[]): Promise<SkillItem[]>;
   hasPendingSkillsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
+  hasLegacyPendingSkillsSave?(resumeId: string): boolean;
+  hasUnverifiedSkillsPendingSave?(resumeId: string, actorUserId: string | null): boolean;
   discardPendingSkillsSave?(resumeId?: string): void;
   loadAdminEducationWriteState?(resumeId: string): Promise<AdminEducationWriteState>;
   saveEducationWithWorker?(resumeId: string, items: EducationItem[]): Promise<EducationItem[]>;
@@ -116,6 +119,7 @@ export type AdminFeatureState = {
 };
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean; baselineDigest?: string; baselineProof?: string };
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects" | "website_links" | "files"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
+export type AdminSkillsWriteState = AdminDomainWriteState<"skills"> & { baselineDigest?: string; baselineProof?: string };
 export type AdminFilesWriteState = AdminDomainWriteState<"files"> & { storageProtocol: "legacy" | "intent_v1" };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
@@ -389,7 +393,7 @@ export function createWriteReadinessRepository(repository: ResumeRepository, can
       const value = Reflect.get(target, property, receiver) as unknown;
       if (typeof value !== "function") return value;
       const name = String(property);
-      if (/^(load|read|hasPending|discardPending)/.test(name)) return value.bind(target);
+      if (/^(load|read|hasPending|hasLegacyPending|hasUnverifiedSkillsPending|discardPending)/.test(name)) return value.bind(target);
       return (...args: unknown[]) => {
         if (!canWrite()) return Promise.reject(new Error("Admin writes are unavailable until fresh route data is confirmed"));
         return value.apply(target, args);
@@ -986,7 +990,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
   let pendingIntroductionRequest: { actorUserId: string; resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
   const introductionFlights = new Map<string, Promise<IntroItem[]>>();
   type PendingDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "profile" | "contact" | "website_links" | "files";
-  type PendingEnvelope = { actorUserId: string; domain: PendingDomain; payloadDigest: string; payload: unknown; requestId: string; resumeId: string };
+  type PendingEnvelope = { actorUserId: string; domain: PendingDomain; payloadDigest: string; payload: unknown; requestId: string; resumeId: string; requestMetadata?: Record<string, string> };
   const pendingStorageKey = (domain: PendingDomain, resumeId: string, actorUserId: string, scope?: string) =>
     `admin-pending-save-v2:${domain}:${resumeId}:${actorUserId}${scope ? `:${scope}` : ""}`;
   const legacyPendingStorageKey = (domain: PendingDomain, resumeId: string) => ({
@@ -1032,18 +1036,22 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (raw === null) return null;
       if (new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error("oversize");
       const value = JSON.parse(raw) as Record<string, unknown>;
-      if (Object.keys(value).sort().join(",") !== "actorUserId,domain,payload,payloadDigest,requestId,resumeId"
+      const envelopeKeys = Object.keys(value).sort().join(",");
+      if ((envelopeKeys !== "actorUserId,domain,payload,payloadDigest,requestId,resumeId"
+          && envelopeKeys !== "actorUserId,domain,payload,payloadDigest,requestId,requestMetadata,resumeId")
         || value.actorUserId !== actorUserId || value.domain !== domain || value.resumeId !== resumeId
         || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
         || typeof value.payloadDigest !== "string" || !/^[0-9a-f]{64}$/.test(value.payloadDigest)
+        || (value.requestMetadata !== undefined && (!value.requestMetadata || typeof value.requestMetadata !== "object" || Array.isArray(value.requestMetadata)
+          || Object.values(value.requestMetadata).some(item => typeof item !== "string")))
         || await pendingDigest({ actorUserId: value.actorUserId, domain: value.domain, resumeId: value.resumeId,
-          requestId: value.requestId, payload: value.payload }) !== value.payloadDigest) throw new Error("invalid envelope");
+          requestId: value.requestId, payload: value.payload, ...(value.requestMetadata === undefined ? {} : { requestMetadata: value.requestMetadata }) }) !== value.payloadDigest) throw new Error("invalid envelope");
       return value as PendingEnvelope;
     } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified for this signed-in account. It was retained and no request was sent.`); }
   };
-  const writePendingEnvelope = async (domain: PendingDomain, actorUserId: string, resumeId: string, requestId: string, payload: unknown, maxBytes = 220 * 1024, scope?: string): Promise<PendingEnvelope> => {
-    const payloadDigest = await pendingDigest({ actorUserId, domain, resumeId, requestId, payload });
-    const envelope: PendingEnvelope = { actorUserId, domain, payloadDigest, payload, requestId, resumeId };
+  const writePendingEnvelope = async (domain: PendingDomain, actorUserId: string, resumeId: string, requestId: string, payload: unknown, maxBytes = 220 * 1024, scope?: string, requestMetadata?: Record<string, string>): Promise<PendingEnvelope> => {
+    const payloadDigest = await pendingDigest({ actorUserId, domain, resumeId, requestId, payload, ...(requestMetadata ? { requestMetadata } : {}) });
+    const envelope: PendingEnvelope = { actorUserId, domain, payloadDigest, payload, requestId, resumeId, ...(requestMetadata ? { requestMetadata } : {}) };
     try {
       const raw = JSON.stringify(envelope);
       if (!globalThis.sessionStorage || new TextEncoder().encode(raw).byteLength > maxBytes) throw new Error("unavailable or oversize");
@@ -1065,10 +1073,29 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return false;
     } catch { return false; }
   };
+  const hasLegacyPending = (domain: "awards" | "skills", resumeId: string) => {
+    try { const storage = globalThis.sessionStorage; return storage ? storage.getItem(legacyPendingStorageKey(domain, resumeId)) !== null : false; }
+    catch { return true; }
+  };
+  const hasUnverifiedSkillsPending = (resumeId: string, actorUserId: string | null) => {
+    if (!actorUserId) return false;
+    try {
+      const raw = globalThis.sessionStorage?.getItem(pendingStorageKey("skills", resumeId, actorUserId));
+      if (raw === null || raw === undefined) return false;
+      const envelope = JSON.parse(raw) as Record<string, unknown>;
+      const metadata = envelope.requestMetadata;
+      return !metadata || typeof metadata !== "object" || Array.isArray(metadata)
+        || Object.keys(metadata).sort().join(",") !== "baselineProof,expectedBaselineDigest"
+        || typeof (metadata as Record<string, unknown>).expectedBaselineDigest !== "string"
+        || typeof (metadata as Record<string, unknown>).baselineProof !== "string";
+    } catch { return true; }
+  };
   type AwardsPayload = Array<{ id: string | null; position: number; zh: { name: string; year: string }; en: { name: string; year: string } }>;
   type AwardsPendingPayload = { awards: AwardsPayload; expectedBaselineDigest: string; baselineProof: string };
   const awardsBaselineByResumeId = new Map<string, { digest: string; proof: string }>();
+  const skillsBaselineByResumeId = new Map<string, { digest: string; proof: string }>();
   const awardsBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
+  const skillsBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
   const validAwardsPayload = (value: unknown): value is AwardsPayload => Array.isArray(value) && value.length <= 32
     && value.every((item, position) => item && typeof item === "object" && !Array.isArray(item)
       && Object.keys(item).sort().join(",") === "en,id,position,zh"
@@ -1121,30 +1148,45 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return JSON.stringify({ ...original, id: currentEntry.id }) === JSON.stringify(currentEntry);
     });
   };
-  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false, matchesRefreshedPayload: (pending: unknown[], current: unknown[]) => boolean = () => false) => {
+  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false, matchesRefreshedPayload: (pending: unknown[], current: unknown[]) => boolean = () => false, pendingOptions?: { createMetadata?: (actorUserId: string) => Record<string, string>; validateMetadata?: (value: unknown) => value is Record<string, string>; bodyFields?: (value: Record<string, string>) => Record<string, string>; onConfirmed?: (actorUserId: string) => Promise<void> }) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
     const session = await verifiedActorSession();
     const existing = await readPendingEnvelope(domain, resumeId, session.actorUserId);
-    let pending: { requestId: string; payload: unknown[] };
+    let pending: { requestId: string; payload: unknown[]; metadata?: Record<string, string> };
     if (existing) {
       const storedPayload = existing.payload;
       if (!Array.isArray(storedPayload) || (!replayPendingPayload && JSON.stringify(storedPayload) !== fingerprint)
         || (replayPendingPayload && (!validatePendingPayload(storedPayload) || !matchesRefreshedPayload(storedPayload, payload))))
         throw new AggregateWorkerSaveError(`A pending ${domain} request does not match the current authenticated target and draft. It was retained.`);
-      pending = { requestId: existing.requestId, payload: storedPayload };
+      if (pendingOptions && !pendingOptions.validateMetadata?.(existing.requestMetadata)) {
+        throw new AggregateWorkerSaveError("This pending Skills request predates baseline protection. Its original database baseline cannot be verified, so it was retained and not sent. Refresh the current Skills data and ask an administrator to compare the Activity Log before creating a new request.");
+      }
+      pending = { requestId: existing.requestId, payload: storedPayload, ...(existing.requestMetadata ? { metadata: existing.requestMetadata } : {}) };
     } else {
       if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError(`Secure ${domain} saving is unavailable. Refresh the Admin and try again.`);
-      pending = { requestId: globalThis.crypto.randomUUID(), payload };
-      await writePendingEnvelope(domain, session.actorUserId, resumeId, pending.requestId, payload);
+      const metadata = pendingOptions?.createMetadata?.(session.actorUserId);
+      if (pendingOptions && (!metadata || !pendingOptions.validateMetadata?.(metadata))) throw new AggregateWorkerSaveError(`Secure ${domain} baseline verification is unavailable. Reload the editor before saving.`);
+      pending = { requestId: globalThis.crypto.randomUUID(), payload, ...(metadata ? { metadata } : {}) };
+      await writePendingEnvelope(domain, session.actorUserId, resumeId, pending.requestId, payload, 220 * 1024, undefined, metadata);
     }
     try {
       let response: Response;
       try { response = await fetch(`/api/admin/v1/${domain}/save`, { method: "POST", credentials: "omit",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
-        body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, [domain]: pending.payload }), signal: AbortSignal.timeout(30_000) }); }
+        body: JSON.stringify({ request_id: pending.requestId, resume_id: resumeId, [domain]: pending.payload,
+          ...(pending.metadata && pendingOptions?.bodyFields ? pendingOptions.bodyFields(pending.metadata) : {}) }), signal: AbortSignal.timeout(30_000) }); }
       catch { throw new AggregateWorkerSaveError(`The ${domain} save result is uncertain. Retry the exact pending request.`); }
       if (!response.ok) {
+        if (domain === "skills" && response.status === 409) {
+          const failure = await response.clone().json().catch(() => null) as unknown;
+          if (failure && typeof failure === "object" && !Array.isArray(failure)
+            && (failure as Record<string, unknown>).error && typeof (failure as Record<string, unknown>).error === "object"
+            && ((failure as { error: Record<string, unknown> }).error).code === "skills_baseline_conflict") {
+            clearPendingEnvelope(domain, resumeId, session.actorUserId);
+            throw new AggregateWorkerSaveError("Skills changed after this request began. The stale request was not applied. Refresh Skills, compare the current data with Activity Log, and review the draft before saving it as a new request.");
+          }
+        }
         if (response.status >= 400 && response.status < 500 && response.status !== 409) {
           /* Retain a rejected/uncertain envelope for explicit resolution. */
         }
@@ -1158,6 +1200,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (!Array.isArray(value) || new TextEncoder().encode(JSON.stringify(value)).byteLength > 212992)
         throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
       const canonical = decode(value, pending.payload);
+      await pendingOptions?.onConfirmed?.(session.actorUserId);
       clearPendingEnvelope(domain, resumeId, session.actorUserId);
       return canonical;
     } catch (cause) {
@@ -1495,6 +1538,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       }
     },
     hasPendingAwardsWorkerSave(resumeId, actorUserId) { return pendingExists("awards", resumeId, actorUserId); },
+    hasLegacyPendingAwardsSave(resumeId) { return hasLegacyPending("awards", resumeId); },
     discardPendingAwardsSave() { /* An ambiguous request cannot be discarded safely. */ },
     async loadAdminExperienceWriteState(resumeId) {
       if (!resumeId) throw new Error("Missing resume ID");
@@ -1570,9 +1614,13 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
         || (row.skills_write_mode !== "direct" && row.skills_write_mode !== "rpc")
         || typeof row.skills_trusted_context_required !== "boolean"
+        || (row.skills_write_mode === "rpc" && (typeof row.skills_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(row.skills_baseline_digest)
+          || typeof row.skills_baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(row.skills_baseline_proof)))
         || (row.skills_write_mode === "direct" && row.skills_trusted_context_required)) throw new Error("Invalid Skills write state");
       return { resumeId, domain: "skills" as const, activityLogEnabled: row.activity_log_enabled,
-        writeMode: row.skills_write_mode, trustedContextRequired: row.skills_trusted_context_required };
+        writeMode: row.skills_write_mode, trustedContextRequired: row.skills_trusted_context_required,
+        baselineDigest: typeof row.skills_baseline_digest === "string" ? row.skills_baseline_digest : undefined,
+        baselineProof: typeof row.skills_baseline_proof === "string" ? row.skills_baseline_proof : undefined };
     },
     async saveSkillsWithWorker(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Skills content is invalid.");
@@ -1582,8 +1630,33 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           zh: { title: item.translations.zh.title, items: item.translations.zh.items },
           en: { title: item.translations.en.title, items: item.translations.en.items } };
       });
-      return await saveSignedCollection("skills", resumeId, payload, raw => {
-        if (raw.length !== payload.length) throw new Error("length");
+      const validSkillsRequest = (value: unknown[]): boolean => {
+        if (value.length > 16) return false;
+        const seenIds = new Set<string>();
+        return value.every((entry, position) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+          const row = entry as Record<string, unknown>;
+          const validId = row.id === null || (typeof row.id === "string"
+            && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id));
+          const validLocale = (locale: unknown) => Boolean(locale && typeof locale === "object" && !Array.isArray(locale)
+            && Object.keys(locale).sort().join(",") === "items,title"
+            && typeof (locale as Record<string, unknown>).title === "string"
+            && typeof (locale as Record<string, unknown>).items === "string");
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || !validId || row.position !== position
+            || !validLocale(row.zh) || !validLocale(row.en)) return false;
+          if (typeof row.id === "string") {
+            const normalizedId = row.id.toLowerCase();
+            if (seenIds.has(normalizedId)) return false;
+            seenIds.add(normalizedId);
+          }
+          return true;
+        });
+      };
+      const matchesRefreshedSkills = (pending: unknown[], current: unknown[]) =>
+        validSkillsRequest(current) && pendingCollectionMatchesRefreshed(pending, current);
+      if (!validSkillsRequest(payload)) throw new AggregateWorkerSaveError("Skills content is invalid.");
+      const saved = await saveSignedCollection("skills", resumeId, payload, (raw, requestPayload = payload) => {
+        if (!validSkillsRequest(requestPayload) || raw.length !== requestPayload.length) throw new Error("length or request shape");
         const seen = new Set<string>();
         return raw.map((entry, position) => {
           if (!entry || typeof entry !== "object") throw new Error("entry");
@@ -1593,16 +1666,44 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
             || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
             || seen.has(row.id) || row.position !== position || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
-          const requested = payload[position];
+          const requested = requestPayload[position] as typeof payload[number];
           if ((requested.id && requested.id !== row.id) || requested.zh.title !== zh.title || requested.zh.items !== zh.items
             || requested.en.title !== en.title || requested.en.items !== en.items) throw new Error("mismatch");
           seen.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
           return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
             translations: { zh: zh as SkillItem["translations"]["zh"], en: en as SkillItem["translations"]["en"] } } satisfies SkillItem;
         });
+      }, true, validSkillsRequest, matchesRefreshedSkills, {
+        createMetadata: actorUserId => {
+          const baseline = skillsBaselineByResumeId.get(skillsBaselineKey(resumeId, actorUserId));
+          if (!baseline) throw new AggregateWorkerSaveError("The original Skills snapshot could not be verified. Reload the editor; no save request was sent.");
+          return { expectedBaselineDigest: baseline.digest, baselineProof: baseline.proof };
+        },
+        validateMetadata: (value): value is Record<string, string> => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+          const metadata = value as Record<string, unknown>;
+          return Object.keys(metadata).sort().join(",") === "baselineProof,expectedBaselineDigest"
+            && typeof metadata.expectedBaselineDigest === "string" && /^[0-9a-f]{64}$/.test(metadata.expectedBaselineDigest)
+            && typeof metadata.baselineProof === "string" && /^[0-9a-f]{64}$/.test(metadata.baselineProof);
+        },
+        bodyFields: metadata => ({ expected_baseline_digest: metadata.expectedBaselineDigest!, baseline_proof: metadata.baselineProof! }),
+        onConfirmed: async actorUserId => {
+          const identity = await verifiedActorSession();
+          if (identity.actorUserId !== actorUserId) throw new AggregateWorkerSaveError("Skills were saved, but the active account changed before baseline refresh. Reload Skills before the next save.");
+          const { data, error } = await supabase.rpc("load_admin_skills_write_state", { target_resume_id: resumeId });
+          const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+          if (error || !row || row.resume_id !== resumeId || typeof row.skills_baseline_digest !== "string"
+            || !/^[0-9a-f]{64}$/.test(row.skills_baseline_digest) || typeof row.skills_baseline_proof !== "string"
+            || !/^[0-9a-f]{64}$/.test(row.skills_baseline_proof))
+            throw new AggregateWorkerSaveError("Skills were saved, but the next-save baseline could not be refreshed. Retry the retained request to confirm it safely.");
+          skillsBaselineByResumeId.set(skillsBaselineKey(resumeId, actorUserId), { digest: row.skills_baseline_digest, proof: row.skills_baseline_proof });
+        },
       }) as SkillItem[];
+      return saved;
     },
     hasPendingSkillsWorkerSave(resumeId, actorUserId) { return pendingExists("skills", resumeId, actorUserId); },
+    hasLegacyPendingSkillsSave(resumeId) { return hasLegacyPending("skills", resumeId); },
+    hasUnverifiedSkillsPendingSave(resumeId, actorUserId) { return hasUnverifiedSkillsPending(resumeId, actorUserId); },
     discardPendingSkillsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
     async saveIntroductionAtomically(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.some(item => !item || !item.id || typeof item.translations?.zh?.text !== "string" || typeof item.translations?.en?.text !== "string")) {
@@ -2174,6 +2275,40 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       return mapProjectRows(parents, translations, methods, resumeId);
     },
     async loadSkills(resumeId) {
+      const stateResult = await supabase.rpc("load_admin_skills_write_state", { target_resume_id: resumeId });
+      const state = Array.isArray(stateResult.data) && stateResult.data.length === 1
+        ? stateResult.data[0] as Record<string, unknown> : null;
+      if (stateResult.error || !state || state.resume_id !== resumeId
+        || (state.skills_write_mode !== "direct" && state.skills_write_mode !== "rpc"))
+        throw new Error("Unable to load authorized Skills state");
+      if (state.skills_write_mode === "rpc") {
+        const identity = await verifiedActorSession();
+        const snapshot = state.skills_snapshot;
+        const digest = state.skills_baseline_digest;
+        const proof = state.skills_baseline_proof;
+        if (!Array.isArray(snapshot) || snapshot.length > 16 || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)
+          || typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof)
+          || snapshot.some((row, position) => !row || typeof row !== "object" || Array.isArray(row)
+            || (row as Record<string, unknown>).position !== position
+            || typeof (row as Record<string, unknown>).id !== "string"
+            || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test((row as Record<string, string>).id)
+            || !((row as Record<string, unknown>).zh && typeof (row as Record<string, unknown>).zh === "object")
+            || !((row as Record<string, unknown>).en && typeof (row as Record<string, unknown>).en === "object")))
+          throw new Error("Invalid authoritative Skills snapshot");
+        skillsBaselineByResumeId.set(skillsBaselineKey(resumeId, identity.actorUserId), { digest, proof });
+        return snapshot.map(raw => {
+          const row = raw as Record<string, unknown>;
+          const zh = row.zh as Record<string, unknown>; const en = row.en as Record<string, unknown>;
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh"
+            || Object.keys(zh).sort().join(",") !== "items,title" || Object.keys(en).sort().join(",") !== "items,title"
+            || typeof zh.title !== "string" || typeof zh.items !== "string" || typeof en.title !== "string" || typeof en.items !== "string")
+            throw new Error("Invalid authoritative Skills snapshot");
+          return { id: row.id as string, position: row.position as number, sourceKey: null,
+            translations: { zh: { title: zh.title, items: zh.items }, en: { title: en.title, items: en.items } } } satisfies SkillItem;
+        });
+      }
+      const baselinePrefix = `${resumeId}:`;
+      for (const key of skillsBaselineByResumeId.keys()) if (key.startsWith(baselinePrefix)) skillsBaselineByResumeId.delete(key);
       const [parents, translations] = await Promise.all([
         readResumeRows(supabase, "resume_skill_groups", resumeId),
         readResumeRows(supabase, "resume_skill_group_translations", resumeId),

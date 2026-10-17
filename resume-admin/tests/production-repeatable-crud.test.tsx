@@ -92,6 +92,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       awardsWriteMode: options.awardsWriteMode ?? "direct", awardsTrustedContextRequired: options.awardsTrustedContextRequired ?? false })),
     saveAwardsWithWorker: vi.fn(async (_resumeId: string, draft: AwardItem[]) => draft.map((item, index) => ({ ...item,
       id: item.id.startsWith("local-") ? `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, "0")}` : item.id, position: index }))),
+    hasLegacyPendingAwardsSave: vi.fn(() => false),
     loadAdminExperienceWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "experience" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.experienceWriteMode === "rpc", writeMode: options.experienceWriteMode ?? "direct",
       trustedContextRequired: options.experienceTrustedContextRequired ?? false })),
@@ -105,6 +106,8 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       trustedContextRequired: options.skillsTrustedContextRequired ?? false })),
     saveSkillsWithWorker: vi.fn(async (_resumeId: string, draft: SkillItem[]) => structuredClone(draft)),
     hasPendingSkillsWorkerSave: vi.fn(() => false), discardPendingSkillsSave: vi.fn(),
+    hasLegacyPendingSkillsSave: vi.fn(() => false),
+    hasUnverifiedSkillsPendingSave: vi.fn(() => false),
     loadAdminProjectsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "projects" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.projectsWriteMode === "rpc", writeMode: options.projectsWriteMode ?? "direct",
       trustedContextRequired: options.projectsTrustedContextRequired ?? false })),
@@ -696,6 +699,27 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(page.classList.contains("production-save-tail")).toBe(false);
     expect(page.querySelector(".production-save-helper")).toBeNull();
     if (path === "/introduction" || path === "/experience") expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+  });
+
+  it.each([
+    { path: "/awards", section: "awards" as const, key: "hasLegacyPendingAwardsSave", message: /older Awards save request.*identity cannot be verified/i,
+      field: "Chinese Award name", saveLabel: "Save award changes" },
+    { path: "/skills", section: "skills" as const, key: "hasLegacyPendingSkillsSave", message: /older Skills save request.*identity cannot be verified/i,
+      field: "Chinese Name", saveLabel: "Save skill changes" },
+  ])("shows and blocks an unbound legacy Pending on $path with clean and changed drafts", async ({ path, section, key, message, field, saveLabel }) => {
+    const { repository, methods } = makeRepository(section);
+    Object.assign(repository, { [key]: vi.fn(() => true) });
+    open({ path }, repository);
+
+    expect(message.test((await screen.findByRole("alert")).textContent ?? "")).toBe(true);
+    const saveButton = screen.getByRole("button", { name: saveLabel }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.change(await screen.findByLabelText(field), { target: { value: "A changed draft" } });
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.click(saveButton);
+    expect(methods.saveAwardsWithWorker).not.toHaveBeenCalled();
+    expect(methods.saveSkillsWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
   });
 
   it("uses localized Introduction save copy without exposing production-environment wording", async () => {

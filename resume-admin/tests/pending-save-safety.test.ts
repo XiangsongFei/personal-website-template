@@ -15,8 +15,10 @@ const skillDraft = [{ id: "local-1-1", position: 0, sourceKey: null,
 afterEach(() => { try { globalThis.sessionStorage?.clear(); } catch { /* A hostile storage test may replace the API. */ } vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 function client(actor: () => string = () => actorA, targetId = resumeId) {
-  return { rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: targetId, activity_log_enabled: true,
-    awards_write_mode: "rpc", awards_trusted_context_required: true, awards_snapshot: [], awards_baseline_digest: baseline, awards_baseline_proof: "2".repeat(64) }], error: null }),
+  return { rpc: vi.fn(async (name: string) => ({ data: [{ resume_id: targetId, activity_log_enabled: true,
+    ...(name === "load_admin_skills_write_state" ? { skills_write_mode: "rpc", skills_trusted_context_required: true,
+      skills_snapshot: [], skills_baseline_digest: baseline, skills_baseline_proof: "2".repeat(64) }
+      : { awards_write_mode: "rpc", awards_trusted_context_required: true, awards_snapshot: [], awards_baseline_digest: baseline, awards_baseline_proof: "2".repeat(64) }) }], error: null })),
     from: vi.fn(), auth: {
       getSession: vi.fn(async () => ({ data: { session: { access_token: `token-${actor()}`, expires_at: Date.now() / 1000 + 3600, user: { id: actor() } } }, error: null })),
       getUser: vi.fn(async () => ({ data: { user: { id: actor() } }, error: null })),
@@ -99,16 +101,30 @@ describe("identity-bound pending save envelope", () => {
     await otherTargetRepo.loadAwards!(secondResumeId);
     await expect(otherTargetRepo.saveAwardsWithWorker!(secondResumeId, awardDraft)).rejects.toThrow("uncertain");
     expect(requests[1]!.request_id).not.toBe(awardsRequest);
+    await repo.loadSkills!(resumeId);
     await expect(repo.saveSkillsWithWorker!(resumeId, skillDraft)).rejects.toThrow("uncertain");
     expect(requests[2]!.request_id).not.toBe(awardsRequest);
     expect(globalThis.sessionStorage.getItem(`admin-pending-save-v2:awards:${resumeId}:${actorA}`)).not.toBeNull();
 
     const legacyKey = `admin-skills-rpc-pending-v1:${resumeId}`;
     globalThis.sessionStorage.setItem(legacyKey, JSON.stringify({ requestId: "b1111111-1111-4111-8111-111111111111", payload: skillDraft }));
+    expect(repo.hasLegacyPendingSkillsSave!(resumeId)).toBe(true);
     const sent = requests.length;
     await expect(repo.saveSkillsWithWorker!(resumeId, skillDraft)).rejects.toThrow("retained");
     expect(globalThis.sessionStorage.getItem(legacyKey)).not.toBeNull();
     expect(requests).toHaveLength(sent);
+  });
+
+  it("detects an account-bound Skills pending request from before baseline CAS without exposing it to another actor", () => {
+    const repo = createResumeRepository(client() as unknown as SupabaseClient);
+    const key = `admin-pending-save-v2:skills:${resumeId}:${actorA}`;
+    globalThis.sessionStorage.setItem(key, JSON.stringify({ actorUserId: actorA, domain: "skills", payloadDigest: "0".repeat(64),
+      payload: skillDraft, requestId: "b1111111-1111-4111-8111-111111111111", resumeId }));
+    expect(repo.hasPendingSkillsWorkerSave!(resumeId, actorA)).toBe(true);
+    expect(repo.hasUnverifiedSkillsPendingSave!(resumeId, actorA)).toBe(true);
+    expect(repo.hasPendingSkillsWorkerSave!(resumeId, actorB)).toBe(false);
+    expect(repo.hasUnverifiedSkillsPendingSave!(resumeId, actorB)).toBe(false);
+    expect(globalThis.sessionStorage.getItem(key)).not.toBeNull();
   });
 
   it("shows only the active actor's pending state across supported domains", () => {

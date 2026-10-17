@@ -668,6 +668,10 @@ function isAwardsBaselineConflict(response: Response, body: unknown): boolean {
   return response.status === 400 && isPlainObject(body) && body.code === "P13B2";
 }
 
+function isSkillsBaselineConflict(response: Response, body: unknown): boolean {
+  return response.status === 400 && isPlainObject(body) && body.code === "P13B2";
+}
+
 async function reportV13BFailure(input: {
   env: WorkerEnv;
   supabase: { baseUrl: string; publishableKey: string };
@@ -963,11 +967,17 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
   catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
   const collectionKey = domain;
-  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== [collectionKey, "request_id", "resume_id"].sort().join(","))
+  const expectedRequestKeys = domain === "skills"
+    ? [collectionKey, "baseline_proof", "expected_baseline_digest", "request_id", "resume_id"]
+    : [collectionKey, "request_id", "resume_id"];
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== expectedRequestKeys.sort().join(","))
     throw apiError(400, "invalid_request", `Request must contain only request_id, resume_id, and ${collectionKey}.`);
   if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
     || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
     throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  if (domain === "skills" && (typeof parsed.expected_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_baseline_digest)
+    || typeof parsed.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(parsed.baseline_proof)))
+    throw apiError(422, "invalid_skills_baseline", "Skills baseline digest and database proof must be valid.");
   const items = domain === "experience" ? validateExperience(parsed[collectionKey]) : validateSkills(parsed[collectionKey]);
   const canonical = domain === "experience" ? canonicalizeExperience(items as ExperienceItem[]) : canonicalizeSkills(items as SkillsItem[]);
   if (UTF8.encode(canonical).byteLength > 196608)
@@ -977,7 +987,9 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain, operation: "update", request_id: parsed.request_id.toLowerCase(),
-    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+    mutation_digest: await sha256Hex(canonical),
+    ...(domain === "skills" ? { expected_baseline_digest: parsed.expected_baseline_digest as string, baseline_proof: parsed.baseline_proof as string } : {}),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
   const signed = await signContext(context, key);
   if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
   let upstream: Response;
@@ -997,6 +1009,8 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   if (!upstream.ok) {
     if (isV13BIdempotencyConflict(upstream, responseBody))
       throw apiError(409, "idempotency_conflict", `The ${domain} retry conflicts with a different request. Refresh before trying again.`);
+    if (domain === "skills" && isSkillsBaselineConflict(upstream, responseBody))
+      throw apiError(409, "skills_baseline_conflict", "Skills changed after this request began. Refresh the current data; the old request was not applied.");
     throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save ${domain} (HTTP ${upstream.status}).`);
   }
   if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)

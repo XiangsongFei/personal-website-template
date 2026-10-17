@@ -397,12 +397,14 @@ describe("Experience and Skills repository signed write routing", () => {
     ["experience", "load_admin_experience_write_state", "experience_write_mode", "experience_trusted_context_required"],
     ["skills", "load_admin_skills_write_state", "skills_write_mode", "skills_trusted_context_required"],
   ] as const)("loads target-scoped %s state and rejects mismatched target data", async (domain, rpcName, modeKey, requirementKey) => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true,
+      ...(domain === "skills" ? { skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) } : {}) }], error: null });
     const repo = repository(rpc);
     const load = domain === "experience" ? repo.loadAdminExperienceWriteState! : repo.loadAdminSkillsWriteState!;
     await expect(load(resumeId)).resolves.toMatchObject({ resumeId, domain, activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
     expect(rpc).toHaveBeenCalledWith(rpcName, { target_resume_id: resumeId });
-    const invalid = vi.fn().mockResolvedValue({ data: [{ resume_id: "other-target", activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    const invalid = vi.fn().mockResolvedValue({ data: [{ resume_id: "other-target", activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true,
+      ...(domain === "skills" ? { skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) } : {}) }], error: null });
     await expect((domain === "experience" ? repository(invalid).loadAdminExperienceWriteState! : repository(invalid).loadAdminSkillsWriteState!)(resumeId)).rejects.toThrow("Invalid");
   });
 
@@ -418,7 +420,9 @@ describe("Experience and Skills repository signed write routing", () => {
       ? [{ id, position: 0, en: { location: "", description: "Work", period: "2025", title: "Role", organization: "Org" },
           zh: { location: null, description: "描述", period: "2025", title: "职位", organization: "机构" } }]
       : [{ id, position: 0, en: { items: "English", title: "Languages" }, zh: { items: "中文", title: "语言" } }];
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth };
+    const supabase = { rpc: vi.fn(async () => ({ data: [{ resume_id: resumeId, activity_log_enabled: true,
+      skills_write_mode: "rpc", skills_trusted_context_required: true, skills_snapshot: [],
+      skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) }], error: null })), from: vi.fn(), auth };
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
@@ -426,6 +430,7 @@ describe("Experience and Skills repository signed write routing", () => {
     }));
     const repo = createResumeRepository(supabase as unknown as SupabaseClient);
     const save = domain === "experience" ? repo.saveExperienceWithWorker! : repo.saveSkillsWithWorker!;
+    if (domain === "skills") await repo.loadSkills!(resumeId);
     const result = await save(resumeId, draft as never[]);
     expect(result).toMatchObject([{ id, position: 0 }]);
     expect(calls).toHaveLength(1);

@@ -91,7 +91,9 @@ describe("Phase 5A route-first section loading", () => {
     }) })), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }));
     const rpc = vi.fn(async (name: string) => ({ data: name === "load_admin_awards_write_state"
       ? [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "direct", awards_trusted_context_required: false }]
-      : [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }));
+      : name === "load_admin_skills_write_state"
+        ? [{ resume_id: resumeId, activity_log_enabled: true, skills_write_mode: "direct", skills_trusted_context_required: false, skills_snapshot: [], skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) }]
+        : [{ resume_id: resumeId, site_key: "example-cv", role: "owner" }], error: null }));
     const repo = createResumeRepository({ from, rpc } as unknown as SupabaseClient);
     const fullLoad = vi.spyOn(repo, "load");
     show(repo, spec.path);
