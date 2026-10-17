@@ -3060,17 +3060,18 @@ function WorkspaceSystemState({ eyebrow, title, description, busy = false, actio
 
 function NotFound() { const { t } = useUiLocale(); return <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} action={<Link to="/overview">{t("Return to Overview")}</Link>} />; }
 
-export function App({ identityEmail, identityId = null, onSignOut, signOutPending, signOutError, resume = null, repository = null,
-  productionMode = resume !== null, profileSection = null, profileResumeId = null,
+export function App({ identityEmail, identityId = null, sessionKey = "", onSignOut, signOutPending, signOutError, resume = null, repository = null,
+  productionMode = resume !== null, restoreCapabilityScopeKey = "none", profileSection = null, profileResumeId = null,
   overviewData = null, overviewSiteMetadata = null, overviewLoadState = "loading", overviewRouteFirst = false, onRetryOverview = null,
   educationSection = null, educationResumeId = null, educationLoadState = "loading", onRetryEducation = null,
   onEducationChanged = null, onReloadEducation = null, onEducationDeleted = null,
   additionalSections = {}, additionalRouteKey = null, additionalRouteFirst = false, additionalRouteLoadState = "loading", onRetryAdditionalRoute = null, additionalResumeId = null, onAdditionalChanged = null, onReloadAdditional = null,
   siteTextTranslations = null, siteTextResumeId = null, onSiteTextChanged = null,
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
-  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false, activityLogFilesRestoreReady = false, onActivityLogRouteFresh = null }: {
+  onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false, activityLogFilesRestoreReady = false, versionHistoryRestoreEnabled = false, onActivityLogRouteFresh = null }: {
   identityEmail: string | null;
   identityId?: string | null;
+  sessionKey?: string;
   onSignOut: () => void;
   signOutPending: boolean;
   signOutError: string;
@@ -3081,6 +3082,7 @@ export function App({ identityEmail, identityId = null, onSignOut, signOutPendin
   overviewRouteFirst?: boolean;
   onRetryOverview?: (() => void) | null;
   productionMode?: boolean;
+  restoreCapabilityScopeKey?: string;
   profileSection?: ProfileSection | null;
   profileResumeId?: string | null;
   profileLoadState?: "loading" | "error";
@@ -3114,6 +3116,7 @@ export function App({ identityEmail, identityId = null, onSignOut, signOutPendin
   onSnapshotRebased?: () => void;
   activityLogEnabled?: boolean;
   activityLogFilesRestoreReady?: boolean;
+  versionHistoryRestoreEnabled?: boolean;
   onActivityLogRouteFresh?: ((resumeId: string, fresh: boolean) => void) | null;
 }) {
   const { t } = useUiLocale();
@@ -3920,7 +3923,8 @@ export function App({ identityEmail, identityId = null, onSignOut, signOutPendin
             filesRestoreReady={activityLogFilesRestoreReady} onRouteDataFresh={onActivityLogRouteFresh ?? undefined} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/version-history" element={activityLogEnabled
-          ? <VersionHistoryPage resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository}
+          ? <VersionHistoryPage key={`${identityId ?? "anonymous"}:${sessionKey}:${restoreCapabilityScopeKey}`}
+            resumeId={additionalResumeId ?? resume?.resumeId ?? null} repository={repository} restoreEnabled={versionHistoryRestoreEnabled}
             canRestoreDomain={canRestoreDomain} onRestoreApplied={domain => reconcileRestoredDomain(domain, additionalResumeId ?? resume?.resumeId ?? "")} />
           : <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} />} />
         <Route path="/" element={<Overview />} /><Route path="/overview" element={<Overview />} />

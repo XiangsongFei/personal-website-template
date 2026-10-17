@@ -243,7 +243,7 @@ GRANT EXECUTE ON FUNCTION public.test_only_restore_source(uuid,text,boolean),pub
   public.test_only_restore_event_count(uuid,text),public.test_only_restore_link_count(uuid),
   public.test_only_restore_ledger_count(uuid,uuid),public.test_only_restore_counts(uuid,text),public.test_only_restore_snapshot(uuid,text,uuid) TO authenticated;
 
-SELECT extensions.plan(49);
+SELECT extensions.plan(53);
 SELECT extensions.ok(to_regprocedure('public.preview_restore_v1(uuid,uuid)') IS NOT NULL
   AND to_regprocedure('public.restore_domain_v1(uuid,uuid,text,uuid,text,text)') IS NOT NULL,
   'Restore V1 preview and mutation RPCs are installed');
@@ -285,6 +285,16 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 SELECT extensions.throws_ok(
   $$SELECT public.preview_restore_v1('ea111111-1111-4111-8111-111111111111',(SELECT event_id FROM pg_temp.restore_test_sources WHERE domain_key='awards' ORDER BY created_seq LIMIT 1))$$,
   '42501',NULL,'missing Restore capability fails closed');
+CREATE TEMP TABLE restore_disabled_test_before AS
+  SELECT public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000920') AS snapshot;
+GRANT SELECT ON pg_temp.restore_disabled_test_before TO authenticated;
+SELECT extensions.throws_ok(
+  $$SELECT public.restore_domain_v1('ea111111-1111-4111-8111-111111111111',
+    (SELECT event_id FROM pg_temp.restore_test_sources WHERE domain_key='awards' ORDER BY created_seq LIMIT 1),
+    repeat('a',64),'ea000000-0000-4000-8000-000000000920','','')$$,
+  '42501',NULL,'Restore capability false blocks the direct mutation RPC');
+SELECT extensions.is(public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000920'),
+  (SELECT snapshot FROM pg_temp.restore_disabled_test_before),'disabled Test Restore has zero content, event, link, or idempotency effects');
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000003',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000003","role":"authenticated"}',true);
 SELECT extensions.throws_ok(
@@ -311,8 +321,7 @@ INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirem
 VALUES('20000000-0000-4000-8000-000000000001','awards','trusted_network_context_v11',true)
 ON CONFLICT(resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true;
 INSERT INTO cms_private.resume_capabilities(resume_id,capability_key,enabled)
-VALUES('20000000-0000-4000-8000-000000000001','activity_log',true),
-  ('20000000-0000-4000-8000-000000000001','restore',true)
+VALUES('20000000-0000-4000-8000-000000000001','activity_log',true)
 ON CONFLICT(resume_id,capability_key) DO UPDATE SET enabled=true;
 
 UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='ea111111-1111-4111-8111-111111111111'
@@ -341,6 +350,19 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 RESET ROLE;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}',true);
+SET LOCAL ROLE authenticated;
+CREATE TEMP TABLE restore_disabled_owner_source AS
+  SELECT public.test_only_restore_source('20000000-0000-4000-8000-000000000001','awards',true) AS event_id;
+GRANT SELECT ON pg_temp.restore_disabled_owner_source TO authenticated;
+CREATE TEMP TABLE restore_disabled_owner_before AS
+  SELECT public.test_only_restore_snapshot('20000000-0000-4000-8000-000000000001','awards','ea000000-0000-4000-8000-000000000919') AS snapshot;
+GRANT SELECT ON pg_temp.restore_disabled_owner_before TO authenticated;
+SELECT extensions.throws_ok(
+  $$SELECT public.restore_domain_v1('20000000-0000-4000-8000-000000000001',(SELECT event_id FROM pg_temp.restore_disabled_owner_source),
+    repeat('a',64),'ea000000-0000-4000-8000-000000000919','','')$$,
+  '42501',NULL,'Restore capability false blocks the authorized Owner target mutation RPC');
+SELECT extensions.is(public.test_only_restore_snapshot('20000000-0000-4000-8000-000000000001','awards','ea000000-0000-4000-8000-000000000919'),
+  (SELECT snapshot FROM pg_temp.restore_disabled_owner_before),'disabled Owner Restore has zero content, event, link, or idempotency effects');
 SELECT extensions.ok(NOT public.can_manage_resume('ea111111-1111-4111-8111-111111111111')
   AND public.can_manage_resume('20000000-0000-4000-8000-000000000001')
   AND cms_private.restore_expected_digest('ea111111-1111-4111-8111-111111111111','awards',

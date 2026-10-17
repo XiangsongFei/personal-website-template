@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const migration = readFileSync(resolve("migrations/20261030_activity_log_restore_v1.sql"), "utf8");
 const mirror = readFileSync(resolve("tests/rls-runtime/supabase/migrations/20261030000000_activity_log_restore_v1.sql"), "utf8");
 const runtimeTest = readFileSync(resolve("tests/rls-runtime/supabase/tests/activity_log_restore_v1.test.sql"), "utf8");
+const awardsCompatibility = readFileSync(resolve("migrations/20261110000000_restore_awards_writer_compatibility.sql"), "utf8");
 const domainWriters = [
   "20261013_activity_log_awards_writer.sql",
   "20261015_activity_log_experience_writer.sql",
@@ -99,9 +100,22 @@ describe("Restore V1 additive backend contract", () => {
   });
 
   it("contains isolated runtime proof for domain writes, replay, no-op, privacy, and target isolation", () => {
-    expect(runtimeTest).toContain("extensions.plan(49)");
+    expect(runtimeTest).toContain("extensions.plan(53)");
     for (const phrase of ["Owner can manage only its target while target digests remain distinct", "a QA preview digest cannot cross targets", "Owner Test-target denial has zero content, event, link, or ledger effects", "Project method ID belonging to another project parent is rejected", "Project method ID belonging to another locale is rejected", "existing Project V2 validator rejects duplicate method identity in historical structure", "Awards V2 BEFORE state restores successfully", "Projects and nested method IDs restore successfully", "each supported restore creates exactly one V2 event and one source link", "all domains preserve the exact historical aggregate, locale values, and order", "Awards and Projects preserve existing source-key provenance", "exact request retry returns the cached Restore result", "same request ID with a different expected digest is rejected", "no_change does not create a source link", "QA admin cannot preview or mutate Official target", "anonymous callers cannot execute the preview RPC", "missing Restore capability fails closed", "missing historical entity identity is rejected", "cross-target historical identity collision is rejected", "unknown future payload version fails closed", "stale digest conflict has zero content, event, link, or ledger effects", "post-writer failure rolls back content, V2 event, linkage, and idempotency", "private source linkage trigger rejects a cross-target link"]) {
       expect(runtimeTest).toContain(phrase);
     }
+    expect(runtimeTest).toContain("disabled Test Restore has zero content, event, link, or idempotency effects");
+    expect(runtimeTest).toContain("disabled Owner Restore has zero content, event, link, or idempotency effects");
+  });
+
+  it("adapts Awards Restore to the CAS writer without changing the historical migration", () => {
+    expect(awardsCompatibility).toContain("CREATE OR REPLACE FUNCTION public.restore_domain_v1");
+    expect(awardsCompatibility).toContain("load_admin_awards_write_state");
+    expect(awardsCompatibility).toContain("awards_baseline_digest");
+    expect(awardsCompatibility).toContain("awards_baseline_proof");
+    expect(awardsCompatibility).toContain("save_resume_awards_v1(target_resume_id,body_text,baseline_digest_value,baseline_proof_value,internal_text,internal_signature)");
+    expect(awardsCompatibility).not.toMatch(/save_resume_awards_v1\(target_resume_id,body_text,internal_text,internal_signature\)/);
+    expect(awardsCompatibility).toContain("capability_key='restore'");
+    expect(awardsCompatibility).toContain("FOR UPDATE");
   });
 });

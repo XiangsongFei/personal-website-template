@@ -21,7 +21,7 @@ function renderApp(repository: ResumeRepository) {
   const resume = { resumeId, siteKey: "example-cv-qa", isPublished: false, updatedAt: null, sections: fixtureSections };
   return render(<UiLocaleProvider><MemoryRouter initialEntries={["/contact"]}><RouteButtons /><App identityEmail="qa@example.test"
     onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} repository={repository} additionalResumeId={resumeId}
-    activityLogEnabled /></MemoryRouter></UiLocaleProvider>);
+    activityLogEnabled versionHistoryRestoreEnabled /></MemoryRouter></UiLocaleProvider>);
 }
 function mockRepository(domain: "awards" | "contact", overrides: Partial<ResumeRepository> = {}): ResumeRepository {
   const currentState = domain === "awards" ? [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0,
