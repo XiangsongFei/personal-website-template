@@ -184,6 +184,29 @@ async function main() {
     const committedState = readState(context);
     assert.deepEqual(committedState.snapshot, firstResult.awards);
 
+    const malformedStoredResponses = [
+      { label: "empty response object", value: [{}] },
+      { label: "non-object response", value: ["not an object"] },
+      { label: "missing required response fields", value: [{ awards: firstResult.awards, baseline_digest: firstResult.baseline_digest }] },
+      { label: "incorrect response field type", value: [{ ...firstResult, awards: { unexpected: true } }] },
+      { label: "empty Award object", value: [{ ...firstResult, awards: [{}] }] },
+      { label: "incorrect bilingual object type", value: [{ ...firstResult, awards: firstResult.awards.map((award, index) =>
+        index === 0 ? { ...award, zh: "not an object" } : award) }] },
+    ];
+    for (const malformed of malformedStoredResponses) {
+      runSql(context, `UPDATE cms_private.activity_log_idempotency SET result_payload=${sqlLiteral(JSON.stringify(malformed.value))}::jsonb
+        WHERE actor_user_id='${testActorId}' AND resume_id='${testResumeId}' AND domain_key='awards' AND request_id='${firstRequestId}';`);
+      const malformedReplay = runSql(context, authenticatedSql(callExpression(firstRequestId, firstPayload, initial)), 3);
+      assert.match(malformedReplay, /Legacy or incomplete Awards idempotency result cannot be replayed safely/,
+        `${malformed.label} must be rejected without attempting a new write`);
+      assert.equal(eventCount(context), 1, `${malformed.label} must not create another Activity Log event`);
+      assert.equal(idempotencyCount(context), 1, `${malformed.label} must not create another idempotency row`);
+      assert.deepEqual(readState(context).snapshot, committedState.snapshot, `${malformed.label} must not change Awards content`);
+      runSql(context, `UPDATE cms_private.activity_log_idempotency SET result_payload=${sqlLiteral(JSON.stringify(storedResult))}::jsonb
+        WHERE actor_user_id='${testActorId}' AND resume_id='${testResumeId}' AND domain_key='awards' AND request_id='${firstRequestId}';`);
+    }
+    console.log("PASS: empty, non-object, incomplete, and mistyped stored response envelopes fail closed.");
+
     const replayOutput = runSql(context, authenticatedSql(callExpression(firstRequestId, firstPayload, initial)));
     const replay = JSON.parse(replayOutput.split(/\r?\n/).at(-1));
     assert.deepEqual(replay, firstResult, "exact retry must return the original committed result");
