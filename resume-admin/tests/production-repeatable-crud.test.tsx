@@ -32,7 +32,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; failExperienceRpc?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -95,7 +95,10 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     loadAdminExperienceWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "experience" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.experienceWriteMode === "rpc", writeMode: options.experienceWriteMode ?? "direct",
       trustedContextRequired: options.experienceTrustedContextRequired ?? false })),
-    saveExperienceWithWorker: vi.fn(async (_resumeId: string, draft: ExperienceItem[]) => structuredClone(draft)),
+    saveExperienceWithWorker: vi.fn(async (_resumeId: string, draft: ExperienceItem[]) => {
+      if (options.failExperienceRpc) throw new Error("Experience RPC save failed");
+      return structuredClone(draft);
+    }),
     hasPendingExperienceWorkerSave: vi.fn(() => false), discardPendingExperienceSave: vi.fn(),
     loadAdminSkillsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "skills" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.skillsWriteMode === "rpc", writeMode: options.skillsWriteMode ?? "direct",
@@ -1728,6 +1731,48 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(repo.methods.saveProjectsWithWorker).toHaveBeenCalledOnce();
     expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
     expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
+  });
+
+  it("routes Experience RPC mode through the typed Worker writer and leaves a no-op unsubmitted", async () => {
+    const repo = makeRepository("experience", { experienceWriteMode: "rpc", experienceTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/experience" }, repo.repository);
+    await screen.findByLabelText("Chinese Organization");
+    const saveButton = screen.getByRole("button", { name: "Save experience changes" }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    expect(repo.methods.saveExperienceWithWorker).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Chinese Organization"), { target: { value: "Transactional organization" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(repo.methods.loadAdminExperienceWriteState).toHaveBeenCalledWith(resumeId);
+    expect(repo.methods.saveExperienceWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
+  });
+
+  it("keeps Experience RPC failures retryable and never falls back to direct writes", async () => {
+    const repo = makeRepository("experience", { experienceWriteMode: "rpc", experienceTrustedContextRequired: true,
+      activityLogEnabled: true, failExperienceRpc: true });
+    open({ path: "/experience" }, repo.repository);
+    const field = await screen.findByLabelText("Chinese Organization") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "Uncommitted organization" } });
+    save();
+    await screen.findByRole("alert");
+    expect(repo.methods.saveExperienceWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
+    expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Chinese Organization") as HTMLInputElement).value).toBe("Uncommitted organization");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("preserves Owner direct-mode Experience routing", async () => {
+    const repo = makeRepository("experience");
+    open({ path: "/experience" }, repo.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Organization"), { target: { value: "Owner direct edit" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(repo.methods.saveExperienceWithWorker).not.toHaveBeenCalled();
+    expect(repo.methods.updateEditableTranslation).toHaveBeenCalled();
   });
 
   it("reports a separate locale-content success when the Projects aggregate RPC fails", async () => {

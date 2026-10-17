@@ -96,9 +96,10 @@ jobs:
           retention="20261031150000_profile_image_history_retention.sql"
           restore="20261101000000_files_restore_capability_enforcement.sql"
           introduction="20261102000000_introduction_version_history_read.sql"
+          education_experience="20261103000000_education_experience_test_rpc_routing.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           for migration in "${p0}" "${retention}" "${restore}" "${introduction}"; do
@@ -106,6 +107,7 @@ jobs:
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
           done
+          cmp "resume-admin/migrations/${education_experience}" "${cli_dir}/${education_experience}"
           printf '%s  %s\n' \
             "da5a755e903a10693e7c5ba3924afaf0218aec156f8d86421e3aba2819186950" \
             "resume-admin/migrations/${p0}" | sha256sum --check
@@ -118,6 +120,9 @@ jobs:
           printf '%s  %s\n' \
             "5bf3e2b6b024162064b5eeddaea81b3220fab13e3fe0ee03664616387f5ae5f4" \
             "resume-admin/migrations/${introduction}" | sha256sum --check
+          printf '%s  %s\n' \
+            "25748d11bef5e0aebebea7423e9820e7b19832e18999974360115dc117eb07b3" \
+            "resume-admin/migrations/${education_experience}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests
