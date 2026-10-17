@@ -1536,8 +1536,33 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           zh: { title: item.translations.zh.title, items: item.translations.zh.items },
           en: { title: item.translations.en.title, items: item.translations.en.items } };
       });
-      return await saveSignedCollection("skills", resumeId, payload, raw => {
-        if (raw.length !== payload.length) throw new Error("length");
+      const validSkillsRequest = (value: unknown[]): boolean => {
+        if (value.length > 16) return false;
+        const seenIds = new Set<string>();
+        return value.every((entry, position) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+          const row = entry as Record<string, unknown>;
+          const validId = row.id === null || (typeof row.id === "string"
+            && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id));
+          const validLocale = (locale: unknown) => Boolean(locale && typeof locale === "object" && !Array.isArray(locale)
+            && Object.keys(locale).sort().join(",") === "items,title"
+            && typeof (locale as Record<string, unknown>).title === "string"
+            && typeof (locale as Record<string, unknown>).items === "string");
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || !validId || row.position !== position
+            || !validLocale(row.zh) || !validLocale(row.en)) return false;
+          if (typeof row.id === "string") {
+            const normalizedId = row.id.toLowerCase();
+            if (seenIds.has(normalizedId)) return false;
+            seenIds.add(normalizedId);
+          }
+          return true;
+        });
+      };
+      const matchesRefreshedSkills = (pending: unknown[], current: unknown[]) =>
+        validSkillsRequest(current) && pendingCollectionMatchesRefreshed(pending, current);
+      if (!validSkillsRequest(payload)) throw new AggregateWorkerSaveError("Skills content is invalid.");
+      return await saveSignedCollection("skills", resumeId, payload, (raw, requestPayload = payload) => {
+        if (!validSkillsRequest(requestPayload) || raw.length !== requestPayload.length) throw new Error("length or request shape");
         const seen = new Set<string>();
         return raw.map((entry, position) => {
           if (!entry || typeof entry !== "object") throw new Error("entry");
@@ -1547,14 +1572,14 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
             || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
             || seen.has(row.id) || row.position !== position || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
-          const requested = payload[position];
+          const requested = requestPayload[position] as typeof payload[number];
           if ((requested.id && requested.id !== row.id) || requested.zh.title !== zh.title || requested.zh.items !== zh.items
             || requested.en.title !== en.title || requested.en.items !== en.items) throw new Error("mismatch");
           seen.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
           return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
             translations: { zh: zh as SkillItem["translations"]["zh"], en: en as SkillItem["translations"]["en"] } } satisfies SkillItem;
         });
-      }) as SkillItem[];
+      }, true, validSkillsRequest, matchesRefreshedSkills) as SkillItem[];
     },
     hasPendingSkillsWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("skills", resumeId))); } catch { return true; } },
     discardPendingSkillsSave() { /* Ambiguous idempotent requests are retained for exact replay. */ },
