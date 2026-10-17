@@ -184,20 +184,20 @@ BEGIN
               SELECT items.id, items.field_key,
                 COALESCE((pg_catalog.jsonb_agg(items.value) FILTER (WHERE items.side = 'before'))->0, 'null'::jsonb) AS before_value,
                 COALESCE((pg_catalog.jsonb_agg(items.value) FILTER (WHERE items.side = 'after'))->0, 'null'::jsonb) AS after_value,
-                pg_catalog.bool_or(items.side = 'before') AS has_before,
-                pg_catalog.bool_or(items.side = 'after') AS has_after,
                 pg_catalog.min(items.ordinality) AS first_ordinality
               FROM items
               GROUP BY items.id, items.field_key
             ), paragraphs AS (
               SELECT pairs.id,
-                CASE WHEN pg_catalog.bool_or(pairs.has_before) AND pg_catalog.bool_or(pairs.has_after) THEN 'updated'
-                  WHEN pg_catalog.bool_or(pairs.has_after) THEN 'added' ELSE 'removed' END AS state,
+                CASE WHEN pg_catalog.bool_or(pairs.before_value <> 'null'::jsonb)
+                    AND pg_catalog.bool_or(pairs.after_value <> 'null'::jsonb) THEN 'updated'
+                  WHEN pg_catalog.bool_or(pairs.after_value <> 'null'::jsonb) THEN 'added' ELSE 'removed' END AS state,
                 pg_catalog.jsonb_object_agg(pairs.field_key,
                   pg_catalog.jsonb_build_object('before', pairs.before_value, 'after', pairs.after_value)) AS fields,
                 pg_catalog.min(pairs.first_ordinality) AS first_ordinality
               FROM pairs
               GROUP BY pairs.id
+              HAVING pg_catalog.bool_or(pairs.before_value <> 'null'::jsonb OR pairs.after_value <> 'null'::jsonb)
             )
             SELECT pg_catalog.jsonb_build_object('paragraphs',
               COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('state', paragraphs.state, 'fields', paragraphs.fields)

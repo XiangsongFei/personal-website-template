@@ -70,6 +70,23 @@ describe("Version History repository typed read contract", () => {
     expect(result.entries.map(entry => entry.comparison.kind)).toEqual(["unavailable", "entity_fields"]);
   });
 
+  it("keeps safe legacy Introduction positions and makes unsafe numbers generic without losing adjacent history", async () => {
+    const intro = { domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null };
+    const rpc = vi.fn().mockResolvedValue({ data: [
+      row({ ...intro, comparison: { changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER } } } }),
+      row({ ...intro, event_id: id2, comparison: { changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER + 1 } } } }),
+      row({ ...intro, event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3",
+        comparison: { changes: { position: { before: Number.NEGATIVE_INFINITY, after: 1 } } } }),
+      row({ event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4" }),
+    ], error: null });
+    const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
+    expect(result.entries).toHaveLength(4);
+    expect(result.entries.map(entry => entry.comparison.kind)).toEqual(["entity_fields", "unavailable", "unavailable", "entity_fields"]);
+    expect(result.entries[0]?.comparison).toEqual({ kind: "entity_fields",
+      changes: { position: { before: 0, after: Number.MAX_SAFE_INTEGER } } });
+    expect(JSON.stringify(result.entries[1]?.comparison)).not.toContain(String(Number.MAX_SAFE_INTEGER + 1));
+  });
+
   it("rejects unsafe paragraph projections and raw IDs", async () => {
     const intro = { domain_key: "introduction", entity_type: "introduction_paragraph", entity_id: null,
       comparison_kind: "paragraph_changes" };

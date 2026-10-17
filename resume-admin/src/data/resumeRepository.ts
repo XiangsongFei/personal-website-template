@@ -886,7 +886,10 @@ function mapVersionHistoryRows(value: unknown): { entries: VersionHistoryEntry[]
           && Object.keys(changes).some(field => field !== "object_key"))) {
         throw new Error("Invalid Version History response");
       }
-      comparison = { kind: "entity_fields", changes };
+      const legacyPosition = domain === "introduction" ? changes.position : undefined;
+      const unsafeLegacyPosition = legacyPosition && [legacyPosition.before, legacyPosition.after].some(value =>
+        typeof value === "number" && (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER));
+      comparison = unsafeLegacyPosition ? { kind: "unavailable" } : { kind: "entity_fields", changes };
     } else if (row.comparison_kind === "aggregate" && version === 2 && isRecord(row.comparison)
       && hasExactKeys(row.comparison, ["before", "after"])
       && isVersionHistoryJson(row.comparison.before) && isVersionHistoryJson(row.comparison.after)
