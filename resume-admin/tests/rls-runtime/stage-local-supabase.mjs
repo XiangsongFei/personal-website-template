@@ -73,6 +73,20 @@ function startupImageDiagnostic(output) {
     if (image) return formatStartupImageDiagnostic(image);
   }
 
+  // Supabase CLI 2.119.0 aggregates pull failures as:
+  // "failed to pull docker image from all registries: <candidate> attempt N: <stderr>; ...".
+  // Parse only candidate markers in that known envelope; never inspect or emit their stderr.
+  const aggregate = /\bfailed to pull docker image from all registries:\s*/i.exec(text);
+  if (aggregate) {
+    const attempts = /([^\s;,]+)\s+attempt\s+\d+\s*:/gi;
+    attempts.lastIndex = aggregate.index + aggregate[0].length;
+    let attempt;
+    while ((attempt = attempts.exec(text)) !== null) {
+      const image = parseSafeImageReference(attempt[1]);
+      if (image) return formatStartupImageDiagnostic(image);
+    }
+  }
+
   // Docker commonly reports registry requests as a quoted /v2/<repo>/manifests/<tag>
   // URL. Parse it, then emit only validated registry/image components.
   for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
@@ -565,6 +579,24 @@ function runSecuritySelfTests() {
     "Startup image: registry=docker.io image=library/kong:2.8.1 service=kong");
   assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0": unauthorized'),
     "Startup image: registry=ghcr.io image=supabase/cli/auth:v2.197.0 service=auth");
+  const aggregatePullFailure = "failed to pull docker image from all registries: public.ecr.aws/supabase/postgres:15.8.1 attempt 0: unauthorized: token=first-secret; docker.io/supabase/postgres:15.8.1 attempt 0: password=second-secret";
+  assert.equal(startupImageDiagnostic(aggregatePullFailure),
+    "Startup image: registry=public.ecr.aws image=supabase/postgres:15.8.1 service=db");
+  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: docker.io/supabase/postgres:15.8.1 attempt 0: denied; public.ecr.aws/supabase/postgres:15.8.1 attempt 1: unauthorized"),
+    "Startup image: registry=docker.io image=supabase/postgres:15.8.1 service=db");
+  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: public.ecr.aws/untrusted/private:tag attempt 0: unauthorized"), "");
+  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: private.registry.invalid/supabase/postgres:tag attempt 0: unauthorized"), "");
+  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: https://user:secret@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret attempt 0: unauthorized"), "");
+  const safeAggregateFailure = startupFailure(
+    Object.assign(new Error(aggregatePullFailure), {
+      startupFailureCategory: "image-pull-authentication",
+      startupImageDiagnostic: startupImageDiagnostic(aggregatePullFailure),
+      startupExitCode: 1,
+    }),
+    "Startup containers: none created or ownership could not be established.",
+  );
+  assert.match(safeAggregateFailure, /registry=public\.ecr\.aws image=supabase\/postgres:15\.8\.1 service=db/);
+  assert.doesNotMatch(safeAggregateFailure, /first-secret|second-secret|password|token=/);
   assert.equal(startupImageDiagnostic("pull access denied for private.registry.invalid/team/image:tag, unauthorized"), "");
   assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/untrusted/private-package/manifests/secret-tag": unauthorized'), "");
   assert.equal(startupImageDiagnostic('Head "https://user:token@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret": unauthorized'), "");
