@@ -97,8 +97,12 @@ jobs:
           restore="20261101000000_files_restore_capability_enforcement.sql"
           introduction="20261102000000_introduction_version_history_read.sql"
           education_experience="20261103000000_education_experience_test_rpc_routing.sql"
+          test_awards_skills="20261108000000_awards_skills_test_rpc_routing.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
+          test -f "resume-admin/migrations/${test_awards_skills}"
+          test ! -e "${cli_dir}/${test_awards_skills}"
+          test ! -e "${runtime_dir}/${test_awards_skills}"
           test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
@@ -150,6 +154,9 @@ jobs:
 
       - name: Run Owner RPC activation scenarios in disposable local Supabase
         run: node resume-admin/tests/rls-runtime/owner-activation-runtime.mjs
+
+      - name: Run Test Awards and Skills activation scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-skills-test-activation-runtime.mjs
 
   public_tests_build:
     name: Public tests and production build
