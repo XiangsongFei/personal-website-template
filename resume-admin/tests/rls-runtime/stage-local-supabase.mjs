@@ -20,6 +20,83 @@ const excludedMigrations = new Set([
 
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
 
+const safeImageServices = new Map([
+  ["library/kong", "kong"], ["supabase/postgres", "db"], ["supabase/gotrue", "auth"],
+  ["supabase/realtime", "realtime"], ["supabase/storage-api", "storage"],
+  ["postgrest/postgrest", "rest"], ["supabase/postgres-meta", "pg_meta"],
+  ["darthsim/imgproxy", "imgproxy"], ["supabase/edge-runtime", "functions"],
+  ["timberio/vector", "vector"], ["supabase/supavisor", "supavisor"],
+  ["supabase/studio", "studio"], ["axllent/mailpit", "mailpit"], ["supabase/logflare", "analytics"],
+  ["supabase/cli/postgres", "db"], ["supabase/cli/auth", "auth"],
+  ["supabase/cli/realtime", "realtime"], ["supabase/cli/storage", "storage"],
+  ["supabase/cli/postgrest", "rest"], ["supabase/cli/pgmeta", "pg_meta"],
+  ["supabase/cli/imgproxy", "imgproxy"], ["supabase/cli/edge-runtime", "functions"],
+  ["supabase/cli/vector", "vector"], ["supabase/cli/pooler", "supavisor"],
+  ["supabase/cli/studio", "studio"], ["supabase/cli/mailpit", "mailpit"],
+  ["supabase/cli/analytics", "analytics"],
+]);
+const safeImageRegistries = new Set(["docker.io", "index.docker.io", "registry-1.docker.io", "ghcr.io", "public.ecr.aws"]);
+
+function parseSafeImageReference(value, explicitRegistry) {
+  const reference = String(value ?? "").trim();
+  if (!reference || reference.length > 512 || /[\s@?#\\]/.test(reference)) return null;
+  const safeRegistryPrefix = /^(docker\.io|index\.docker\.io|registry-1\.docker\.io|ghcr\.io|public\.ecr\.aws)\/(.+)$/i.exec(reference);
+  let registry = safeRegistryPrefix?.[1].toLowerCase() ?? explicitRegistry?.toLowerCase();
+  const repositoryAndTag = safeRegistryPrefix?.[2] ?? reference;
+  const match = /^(?<repository>[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+)(?::(?<tag>[a-z0-9_][a-z0-9_.-]{0,127}))?$/i.exec(repositoryAndTag);
+  if (!match || (registry && !safeImageRegistries.has(registry))) return null;
+  const repository = match.groups.repository.toLowerCase();
+  const service = safeImageServices.get(repository);
+  if (!registry) {
+    // Docker's unqualified reference defaults to Docker Hub; only infer that for
+    // exact, known Supabase CLI image repositories.
+    if (!service) return null;
+    registry = "docker.io";
+  }
+  if (["index.docker.io", "registry-1.docker.io"].includes(registry)) registry = "docker.io";
+  if (!service) return null;
+  const image = `${repository}${match.groups.tag ? `:${match.groups.tag}` : ""}`;
+  return { registry, image, service };
+}
+
+function startupImageDiagnostic(output) {
+  const text = String(output);
+  const references = [
+    /\bpull access denied for\s+["']?([^\s"',;]+)["']?/i,
+    /\bfailed to pull(?: image)?\s+["']?([^\s"',;]+)["']?/i,
+    /\bfailed to resolve reference\s+["']([^"']+)["']/i,
+  ];
+  for (const pattern of references) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const image = parseSafeImageReference(match[1]);
+    if (image) return formatStartupImageDiagnostic(image);
+  }
+
+  // Docker commonly reports registry requests as a quoted /v2/<repo>/manifests/<tag>
+  // URL. Parse it, then emit only validated registry/image components.
+  for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+    try {
+      const url = new URL(match[0]);
+      if (url.username || url.password || url.search || url.hash || !safeImageRegistries.has(url.hostname.toLowerCase())) continue;
+      const endpoint = /^\/v2\/(.+)\/(?:manifests|blobs)\/([^/]+)$/.exec(url.pathname);
+      if (!endpoint) continue;
+      const reference = `${endpoint[1]}:${endpoint[2]}`;
+      const image = parseSafeImageReference(reference, url.hostname);
+      if (image) return formatStartupImageDiagnostic(image);
+    } catch {
+      // Invalid or credential-bearing URLs are intentionally omitted.
+    }
+  }
+  return "";
+}
+
+function formatStartupImageDiagnostic(image) {
+  const fields = [`registry=${image.registry}`, `image=${image.image}`];
+  if (image.service) fields.push(`service=${image.service}`);
+  return `Startup image: ${fields.join(" ")}`;
+}
+
 function classifyStartFailure(output) {
   const text = String(output).toLowerCase();
   const categories = [
@@ -76,7 +153,8 @@ function collectStartupContainerDiagnostics(projectId, before) {
 function startupFailure(error, diagnostics) {
   const category = error?.startupFailureCategory ?? "unclassified-start-failure";
   const exitCode = Number.isInteger(error?.startupExitCode) ? error.startupExitCode : "unavailable";
-  return `${safeStartFailure}\nStartup failure category: ${category}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
+  const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
+  return `${safeStartFailure}\nStartup failure category: ${category}${image}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
 }
 
 function run(command, args, options = {}) {
@@ -92,7 +170,9 @@ function run(command, args, options = {}) {
       const diagnostics = sqlDiagnostics ? summarizeSqlFailure(`${result.stdout ?? ""}\n${result.stderr ?? ""}`) : "";
       const error = new Error(`${failureMessage}${diagnostics ? `\n${diagnostics}` : ""}`);
       if (startDiagnostics) {
-        error.startupFailureCategory = classifyStartFailure(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+        const startOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+        error.startupFailureCategory = classifyStartFailure(startOutput);
+        error.startupImageDiagnostic = startupImageDiagnostic(startOutput);
         error.startupExitCode = result.status;
       }
       throw error;
@@ -481,6 +561,21 @@ function runSecuritySelfTests() {
     && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
   assert.equal(classifyStartFailure("failed to pull image: unauthorized: password=private"), "image-pull-authentication");
   assert.equal(classifyStartFailure("daemon reported no space left on device"), "disk-capacity");
+  assert.equal(startupImageDiagnostic("pull access denied for library/kong:2.8.1, repository does not exist or may require 'docker login'"),
+    "Startup image: registry=docker.io image=library/kong:2.8.1 service=kong");
+  assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0": unauthorized'),
+    "Startup image: registry=ghcr.io image=supabase/cli/auth:v2.197.0 service=auth");
+  assert.equal(startupImageDiagnostic("pull access denied for private.registry.invalid/team/image:tag, unauthorized"), "");
+  assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/untrusted/private-package/manifests/secret-tag": unauthorized'), "");
+  assert.equal(startupImageDiagnostic('Head "https://user:token@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret": unauthorized'), "");
+  const safeImageFailure = startupFailure(
+    Object.assign(new Error("raw token=secret"), {
+      startupFailureCategory: "image-pull-authentication", startupImageDiagnostic: startupImageDiagnostic("pull access denied for library/kong:2.8.1, unauthorized"), startupExitCode: 1,
+    }),
+    "Startup containers: none created or ownership could not be established.",
+  );
+  assert.match(safeImageFailure, /registry=docker\.io image=library\/kong:2\.8\.1 service=kong/);
+  assert.doesNotMatch(safeImageFailure, /token=secret|password|docker login/);
   const safeContainerSummary = containerDiagnostic({
     Name: "/supabase_db_pr1-123-abcd",
     State: { Status: "exited", ExitCode: 137, OOMKilled: true, Error: "postgresql://postgres:secret@host/db token=private", Health: { Status: "unhealthy" } },

@@ -367,7 +367,9 @@ describe("startup request coalescing", () => {
 
     admin.resolve({ data: true, error: null });
     await screen.findByRole("navigation", { name: "CMS sections" });
-    expect(app.repository.loadSiteMetadata).toHaveBeenCalledOnce();
-    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(app.repository.loadSiteMetadata).toHaveBeenCalledOnce();
+      expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+    });
   });
 });
