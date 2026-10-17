@@ -117,7 +117,7 @@ describe("startup request coalescing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await screen.findByRole("navigation", { name: "CMS sections" });
     expect(verify.mock.calls.length).toBeGreaterThanOrEqual(2); // initial signed-out read and sign-in verification
-    expect(app.repository.loadProfile).toHaveBeenCalledOnce();
+    await waitFor(() => expect(app.repository.loadProfile).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
@@ -175,16 +175,18 @@ describe("startup request coalescing", () => {
     act(() => app.emit("SIGNED_IN", adminB.sessionKey));
     await screen.findByText("b@example.test");
     expect(app.client.isResumeAdmin).toHaveBeenCalledTimes(2);
-    expect(app.repository.loadProfile).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(app.repository.loadProfile).toHaveBeenCalledTimes(2));
   });
 
   it("clears the editor on sign-out and fails closed when the session is invalid", async () => {
     const app = harness();
     app.render();
     await screen.findByRole("navigation", { name: "CMS sections" });
+    await waitFor(() => expect(app.repository.loadProfile).toHaveBeenCalledOnce());
     act(() => app.emit("SIGNED_OUT", null));
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(screen.queryByText("Demo User")).toBeNull();
     expect(app.repository.loadProfile).toHaveBeenCalledOnce();
 
     const invalid = harness(null);
