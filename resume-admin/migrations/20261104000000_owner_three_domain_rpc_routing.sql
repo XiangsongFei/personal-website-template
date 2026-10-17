@@ -3,7 +3,6 @@
 -- No resume content is changed. The official Test target must remain unchanged.
 BEGIN;
 
--- Acquire site locks before content-table locks to match the RPC lock order.
 DO $owner_three_domain_guard$
 DECLARE
   owner_id uuid;
@@ -32,16 +31,28 @@ BEGIN
     OR test_id <> 'f6000000-0000-4000-8000-000000000001'::uuid THEN
     RAISE EXCEPTION 'Unexpected Owner/Test resume identity';
   END IF;
-  -- Lock the target site rows before locking content tables.
-  PERFORM 1 FROM public.resume_sites
-    WHERE id IN (owner_id,test_id)
-    ORDER BY id FOR UPDATE;
 
-  -- Drain concurrent content writes before validating existing data.
+  -- Drain direct and RPC content writes before validation. Taking these first
+  -- avoids a cycle with direct INSERTs, which take a content-table write lock
+  -- before their foreign-key check locks resume_sites.
   LOCK TABLE public.resume_education_entries, public.resume_education_translations,
     public.resume_experience_entries, public.resume_experience_translations,
     public.resume_intro_paragraphs, public.resume_intro_paragraph_translations
     IN SHARE MODE;
+
+  -- The writers lock resume_sites before their content tables. NOWAIT makes
+  -- the reverse-order probe fail and roll back if an RPC currently holds either
+  -- target row while waiting to write through the table locks above.
+  PERFORM 1 FROM public.resume_sites
+    WHERE id IN (owner_id,test_id)
+    ORDER BY id FOR UPDATE NOWAIT;
+  IF (SELECT count(*) FROM public.resume_sites WHERE site_key='example-cv' AND is_published IS TRUE) <> 1
+    OR (SELECT count(*) FROM public.resume_sites WHERE site_key='example-cv-qa-activity-log' AND is_published IS FALSE) <> 1
+    OR NOT EXISTS (SELECT 1 FROM public.resume_sites WHERE id=owner_id AND site_key='example-cv' AND is_published IS TRUE)
+    OR NOT EXISTS (SELECT 1 FROM public.resume_sites WHERE id=test_id AND site_key='example-cv-qa-activity-log' AND is_published IS FALSE) THEN
+    RAISE EXCEPTION 'Owner/Test identity changed while acquiring activation locks';
+  END IF;
+
   IF NOT COALESCE((SELECT enabled FROM cms_private.resume_capabilities
       WHERE resume_id=owner_id AND capability_key='activity_log'),false)
     OR NOT COALESCE((SELECT enabled FROM cms_private.resume_capabilities
@@ -88,13 +99,25 @@ BEGIN
     LEFT JOIN public.resume_intro_paragraph_translations en ON en.resume_id=p.resume_id AND en.paragraph_id=p.id AND en.locale='en'
     WHERE p.resume_id=owner_id;
   IF record_count>200 OR zh_count<>record_count OR en_count<>record_count
-    OR COALESCE(max_pos,-1) > ((2147483647 - record_count - 1001)/2) THEN
+    OR COALESCE(max_pos,-1) > ((2147483647 - 200 - 1001)/2) THEN
     RAISE EXCEPTION 'Owner Introduction collection is incompatible with RPC';
   END IF;
   IF EXISTS (SELECT 1 FROM public.resume_intro_paragraphs p
     JOIN public.resume_intro_paragraph_translations tr ON tr.resume_id=p.resume_id AND tr.paragraph_id=p.id
     WHERE p.resume_id=owner_id AND tr.locale IN ('zh','en') AND (tr.text IS NULL OR length(tr.text)>12000)) THEN
     RAISE EXCEPTION 'Owner Introduction translation exceeds RPC limits';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'id',p.id::text,'position',p.position,'text_zh',COALESCE(zh.text,''),'text_en',COALESCE(en.text,''))
+      ORDER BY p.position,p.id),'[]'::jsonb)
+    INTO before_value
+    FROM public.resume_intro_paragraphs p
+    JOIN public.resume_intro_paragraph_translations zh ON zh.resume_id=p.resume_id AND zh.paragraph_id=p.id AND zh.locale='zh'
+    JOIN public.resume_intro_paragraph_translations en ON en.resume_id=p.resume_id AND en.paragraph_id=p.id AND en.locale='en'
+    WHERE p.resume_id=owner_id;
+  IF NOT cms_private.activity_event_payload_is_allowed('introduction_paragraph',
+      jsonb_build_object('paragraphs',before_value),'{}'::jsonb) THEN
+    RAISE EXCEPTION 'Owner Introduction snapshot is outside the Activity Log contract';
   END IF;
 
   -- Education: same snapshot and activity payload validation as the Test migration.
