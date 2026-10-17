@@ -99,14 +99,15 @@ jobs:
           education_experience="20261103000000_education_experience_test_rpc_routing.sql"
           awards_baseline_safety="20261109000000_awards_baseline_pending_safety.sql"
           restore_awards_compatibility="20261110000000_restore_awards_writer_compatibility.sql"
+          awards_idempotency_array="20261111000000_awards_idempotency_result_array.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} ${awards_idempotency_array} "
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}" "${awards_idempotency_array}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
@@ -132,6 +133,9 @@ jobs:
           printf '%s  %s\n' \
             "bf278958011c339c2d2deb73f0a7227992d338ce568ed4ffe8bdceaaca2be622" \
             "resume-admin/migrations/${restore_awards_compatibility}" | sha256sum --check
+          printf '%s  %s\n' \
+            "c7908d79ae37ba1e382cf7fe29f291a01daffd310bc28f267ccf7b11b451f385" \
+            "resume-admin/migrations/${awards_idempotency_array}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests

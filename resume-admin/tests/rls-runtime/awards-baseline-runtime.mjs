@@ -1,7 +1,7 @@
 // TEST ONLY: exercises the Awards baseline/idempotency transaction contract
 // in the disposable local Supabase project created by stage-local-supabase.
 // It accepts no remote URL or Supabase credentials and uses synthetic QA IDs.
-/* global console, process */
+/* global console, process, TextEncoder */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -125,6 +125,12 @@ function idempotencyCount(context) {
     WHERE resume_id='${testResumeId}' AND domain_key='awards';`));
 }
 
+function idempotencyResult(context, requestId) {
+  const raw = runSql(context, `SELECT result_payload::text FROM cms_private.activity_log_idempotency
+    WHERE actor_user_id='${testActorId}' AND resume_id='${testResumeId}' AND domain_key='awards' AND request_id='${requestId}';`);
+  return JSON.parse(raw);
+}
+
 async function main() {
   await withStagedLocalSupabase(async (context, supabase) => {
     console.log(`Starting Awards transaction checks in disposable project ${context.projectId}.`);
@@ -147,6 +153,14 @@ async function main() {
     const firstResult = JSON.parse(firstOutput.split(/\r?\n/).at(-1));
     assert.equal(firstResult.awards.length, 2);
     assert.match(firstResult.awards[1].id, /^[0-9a-f-]{36}$/i);
+    assert.deepEqual(Object.keys(firstResult).sort(), ["awards", "baseline_digest", "baseline_proof"]);
+    assert.ok(Array.isArray(idempotencyResult(context, firstRequestId)), "idempotency storage must use the database JSON-array contract");
+    const storedResult = idempotencyResult(context, firstRequestId);
+    assert.equal(storedResult.length, 1, "Awards idempotency result must contain exactly one response envelope");
+    assert.deepEqual(storedResult[0], firstResult, "stored array element must preserve the public top-level response object");
+    assert.ok(new TextEncoder().encode(JSON.stringify(firstResult)).byteLength <= 8192, "public response must stay within its byte limit");
+    assert.ok(new TextEncoder().encode(JSON.stringify(storedResult)).byteLength <= 8192, "stored response array must stay within the Writer byte limit");
+    assert.ok(new TextEncoder().encode(JSON.stringify(storedResult)).byteLength <= 393216, "stored response array must satisfy the database bound");
     assert.equal(eventCount(context), 1, "one logical change must emit exactly one Activity Log event");
     const committedState = readState(context);
     assert.deepEqual(committedState.snapshot, firstResult.awards);

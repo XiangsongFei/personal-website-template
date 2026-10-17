@@ -176,7 +176,7 @@ CREATE FUNCTION public.test_only_restore_domain(target_resume uuid,target_domain
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 AS $f$
 DECLARE source_id uuid; expected_value jsonb; before_event_count bigint; after_event_count bigint;
-  before_link_count bigint; after_link_count bigint; before_source_keys jsonb; after_source_keys jsonb; response jsonb;
+  before_link_count bigint; after_link_count bigint; before_source_keys jsonb; after_source_keys jsonb; response jsonb; ledger_value jsonb;
 BEGIN
   source_id:=public.test_only_restore_source(target_resume,target_domain,make_change);
   SELECT historical_state INTO expected_value FROM pg_temp.restore_test_sources WHERE event_id=source_id;
@@ -190,6 +190,8 @@ BEGIN
       INTO before_source_keys FROM public.resume_project_entries WHERE resume_id=target_resume;
   END IF;
   response:=public.test_only_restore_call(target_resume,source_id,target_request);
+  SELECT i.result_payload INTO ledger_value FROM cms_private.activity_log_idempotency i
+    WHERE i.resume_id=target_resume AND i.domain_key=target_domain AND i.request_id=target_request;
   SELECT count(*) INTO after_event_count FROM cms_private.activity_log_events WHERE resume_id=target_resume AND section_key=target_domain;
   SELECT count(*) INTO after_link_count FROM cms_private.activity_log_restore_links WHERE resume_id=target_resume;
   IF target_domain='awards' THEN
@@ -201,6 +203,10 @@ BEGIN
   END IF;
   response:=response || jsonb_build_object('test_event_delta',after_event_count-before_event_count,
     'test_link_delta',after_link_count-before_link_count,
+    'test_idempotency_result_is_singleton_array',CASE WHEN pg_catalog.jsonb_typeof(ledger_value)='array'
+      THEN pg_catalog.jsonb_array_length(ledger_value)=1 AND pg_catalog.jsonb_typeof(ledger_value->0)='object'
+        AND ledger_value->0->>'status'='restored' AND ledger_value->0->>'domain'=target_domain
+      ELSE false END,
     'test_aggregate_matches_source',public.test_only_restore_current(target_resume,target_domain)=expected_value,
     'test_source_key_preserved',CASE WHEN target_domain IN('awards','projects') THEN before_source_keys IS NOT DISTINCT FROM after_source_keys ELSE NULL END);
   INSERT INTO pg_temp.restore_test_results(request_id,result_value) VALUES(target_request,response);
@@ -243,7 +249,7 @@ GRANT EXECUTE ON FUNCTION public.test_only_restore_source(uuid,text,boolean),pub
   public.test_only_restore_event_count(uuid,text),public.test_only_restore_link_count(uuid),
   public.test_only_restore_ledger_count(uuid,uuid),public.test_only_restore_counts(uuid,text),public.test_only_restore_snapshot(uuid,text,uuid) TO authenticated;
 
-SELECT extensions.plan(53);
+SELECT extensions.plan(55);
 SELECT extensions.ok(to_regprocedure('public.preview_restore_v1(uuid,uuid)') IS NOT NULL
   AND to_regprocedure('public.restore_domain_v1(uuid,uuid,text,uuid,text,text)') IS NOT NULL,
   'Restore V1 preview and mutation RPCs are installed');
@@ -442,6 +448,9 @@ SELECT extensions.is(public.test_only_restore_domain('ea111111-1111-4111-8111-11
 SELECT extensions.ok((SELECT bool_and(result_value->>'test_event_delta'='1' AND result_value->>'test_link_delta'='1')
   FROM pg_temp.restore_test_results WHERE request_id BETWEEN 'ea000000-0000-4000-8000-000000000901'::uuid AND 'ea000000-0000-4000-8000-000000000907'::uuid),
   'each supported restore creates exactly one V2 event and one source link');
+SELECT extensions.ok((SELECT bool_and(result_value->>'test_idempotency_result_is_singleton_array'='true')
+  FROM pg_temp.restore_test_results WHERE request_id BETWEEN 'ea000000-0000-4000-8000-000000000901'::uuid AND 'ea000000-0000-4000-8000-000000000907'::uuid),
+  'each Restore response is stored as one object inside the shared JSON-array idempotency contract');
 SELECT extensions.ok((SELECT bool_and(result_value->>'test_aggregate_matches_source'='true')
   FROM pg_temp.restore_test_results WHERE request_id BETWEEN 'ea000000-0000-4000-8000-000000000901'::uuid AND 'ea000000-0000-4000-8000-000000000907'::uuid),
   'all domains preserve the exact historical aggregate, locale values, and order');
@@ -458,9 +467,14 @@ SELECT extensions.is((SELECT sum(public.test_only_restore_ledger_count('ea111111
 -- Restore-of-Restore, exact replay, and mismatched request binding.
 SELECT extensions.is(public.test_only_restore_domain('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000908')->>'status','restored',
   'Restore-generated V2 update is eligible for Restore-of-Restore');
+CREATE TEMP TABLE restore_replay_before AS
+  SELECT public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000901') AS snapshot;
+GRANT SELECT ON pg_temp.restore_replay_before TO authenticated;
 SELECT extensions.is(public.test_only_restore_state('ea111111-1111-4111-8111-111111111111',
   (SELECT source_event_id FROM pg_temp.restore_test_requests WHERE request_id='ea000000-0000-4000-8000-000000000901'),
   'ea000000-0000-4000-8000-000000000901'), '00000', 'exact request retry returns the cached Restore result');
+SELECT extensions.is(public.test_only_restore_snapshot('ea111111-1111-4111-8111-111111111111','awards','ea000000-0000-4000-8000-000000000901'),
+  (SELECT snapshot FROM pg_temp.restore_replay_before), 'exact Restore replay adds no event, Restore link, or idempotency row');
 SELECT extensions.isnt(public.test_only_restore_state('ea111111-1111-4111-8111-111111111111',
   (SELECT source_event_id FROM pg_temp.restore_test_requests WHERE request_id='ea000000-0000-4000-8000-000000000901'),
   'ea000000-0000-4000-8000-000000000901',repeat('a',64)), '00000', 'same request ID with a different expected digest is rejected');
