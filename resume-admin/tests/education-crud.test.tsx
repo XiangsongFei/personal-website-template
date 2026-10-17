@@ -268,6 +268,40 @@ describe("Stage 4G Education production CRUD", () => {
     expect(repo.insertEducationEntry).not.toHaveBeenCalled();
   });
 
+  it("offers an exact Education retry after refresh and resumes editing once it resolves", async () => {
+    let pending = true;
+    const saveEducationWithWorker = vi.fn(async (_id: string, items: EducationItem[]) => {
+      pending = false;
+      return structuredClone(items);
+    });
+    const repo = makeRepository({
+      loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
+        educationWriteMode: "rpc" as const, educationTrustedContextRequired: true })),
+      saveEducationWithWorker,
+      hasPendingEducationWorkerSave: vi.fn(() => pending),
+    });
+
+    // The fresh data is what the page receives after the successful commit; only
+    // the ambiguous request in sessionStorage still requires an exact replay.
+    openEducation(repo, "/education", snapshot());
+    const retry = await screen.findByRole("button", { name: "Retry exact Education save" });
+    expect((retry as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByLabelText("Chinese Title").matches(":disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Add Education" }).matches(":disabled")).toBe(true);
+
+    fireEvent.click(retry);
+    await screen.findByText("Education changes saved to production.");
+    expect(saveEducationWithWorker).toHaveBeenCalledOnce();
+    const title = screen.getByLabelText("Chinese Title") as HTMLInputElement;
+    expect(title.disabled).toBe(false);
+    const save = screen.getByRole("button", { name: "Save Education changes" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(title, { target: { value: "后续正常编辑" } });
+    fireEvent.click(save);
+    await waitFor(() => expect(saveEducationWithWorker).toHaveBeenCalledTimes(2));
+  });
+
   it("states that the Education title saved separately when the collection RPC fails and keeps the collection draft retryable", async () => {
     const saveEducationWithWorker = vi.fn(async () => { throw new Error("Education RPC unavailable. Your draft remains available."); });
     const updateSiteText = vi.fn(async () => {});

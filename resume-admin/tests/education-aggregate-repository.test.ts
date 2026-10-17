@@ -51,4 +51,45 @@ describe("Education aggregate repository contract", () => {
       translations: { en: { courseTitle: null, courseDescription: "" } } });
     expect(rpc).not.toHaveBeenCalled();
   });
+
+  it("replays a committed Education request after a lost response without duplicating its event", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    const seenRequests = new Set<string>();
+    let committed: unknown[] = [];
+    let eventCount = 0;
+    const calls: Array<Record<string, unknown>> = [];
+    let loseFirstResponse = true;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push(body);
+      const request = body.request_id as string;
+      if (!seenRequests.has(request)) {
+        seenRequests.add(request);
+        committed = body.education as unknown[];
+        eventCount++;
+      }
+      if (loseFirstResponse) {
+        loseFirstResponse = false;
+        throw new Error("response lost after commit");
+      }
+      return Response.json(committed);
+    }));
+
+    const repoAfterSave = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    const updated = [{ ...education(), translations: { ...education().translations,
+      zh: { ...education().translations.zh, title: "已提交" } } }];
+    await expect(repoAfterSave.saveEducationWithWorker!(resumeId, updated)).rejects.toThrow("save result is uncertain");
+    expect(repoAfterSave.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
+    expect(eventCount).toBe(1);
+
+    // A fresh repository instance models a page refresh; sessionStorage retains the request.
+    const repoAfterRefresh = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, updated)).resolves.toMatchObject([{ id: generatedId }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
+    expect(calls[0]?.education).toEqual(calls[1]?.education);
+    expect(eventCount).toBe(1);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+  });
 });
