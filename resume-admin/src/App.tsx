@@ -2010,6 +2010,10 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
       const writeState = await repository.loadAdminEducationWriteState!(resumeId);
+      if (pendingEducationRetry && !(writeState.resumeId === resumeId && writeState.educationWriteMode === "rpc"
+        && writeState.activityLogEnabled && writeState.educationTrustedContextRequired)) {
+        throw new AggregateWorkerSaveError("Education save configuration changed while an exact request was pending. Refresh the Admin before retrying.");
+      }
       if (writeState.educationWriteMode === "rpc") {
         if (!writeState.activityLogEnabled || !writeState.educationTrustedContextRequired) {
           throw new AggregateWorkerSaveError("Education RPC mode is not fully configured. Your draft remains available.");

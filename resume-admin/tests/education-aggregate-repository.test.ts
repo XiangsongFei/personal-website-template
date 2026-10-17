@@ -56,7 +56,7 @@ describe("Education aggregate repository contract", () => {
     vi.stubGlobal("crypto", { randomUUID: () => requestId });
     const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
     const seenRequests = new Set<string>();
-    let committed: unknown[] = [];
+    let committed: Array<Record<string, unknown>> = [];
     let eventCount = 0;
     const calls: Array<Record<string, unknown>> = [];
     let loseFirstResponse = true;
@@ -66,7 +66,7 @@ describe("Education aggregate repository contract", () => {
       const request = body.request_id as string;
       if (!seenRequests.has(request)) {
         seenRequests.add(request);
-        committed = body.education as unknown[];
+        committed = (body.education as Array<Record<string, unknown>>).map(entry => ({ ...entry, id: entry.id ?? generatedId }));
         eventCount++;
       }
       if (loseFirstResponse) {
@@ -77,18 +77,20 @@ describe("Education aggregate repository contract", () => {
     }));
 
     const repoAfterSave = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
-    const updated = [{ ...education(), translations: { ...education().translations,
-      zh: { ...education().translations.zh, title: "已提交" } } }];
-    await expect(repoAfterSave.saveEducationWithWorker!(resumeId, updated)).rejects.toThrow("save result is uncertain");
+    const newEntry: EducationItem = { ...education(), id: "local-education-new-entry", sourceKey: null,
+      translations: { ...education().translations, zh: { ...education().translations.zh, title: "新建后提交" } } };
+    await expect(repoAfterSave.saveEducationWithWorker!(resumeId, [newEntry])).rejects.toThrow("save result is uncertain");
     expect(repoAfterSave.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
     expect(eventCount).toBe(1);
 
     // A fresh repository instance models a page refresh; sessionStorage retains the request.
     const repoAfterRefresh = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
-    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, updated)).resolves.toMatchObject([{ id: generatedId }]);
+    const refreshedEntry = { ...newEntry, id: generatedId };
+    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [refreshedEntry])).resolves.toMatchObject([{ id: generatedId }]);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
     expect(calls[0]?.education).toEqual(calls[1]?.education);
+    expect((calls[0]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
     expect(eventCount).toBe(1);
     expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
   });

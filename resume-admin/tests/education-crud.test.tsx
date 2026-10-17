@@ -302,6 +302,21 @@ describe("Stage 4G Education production CRUD", () => {
     await waitFor(() => expect(saveEducationWithWorker).toHaveBeenCalledTimes(2));
   });
 
+  it("refuses direct writes when an exact Education RPC retry is pending", async () => {
+    const saveEducationWithWorker = vi.fn(async (_id: string, items: EducationItem[]) => structuredClone(items));
+    const repo = makeRepository({
+      loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
+        educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
+      hasPendingEducationWorkerSave: vi.fn(() => true), saveEducationWithWorker,
+    });
+    openEducation(repo, "/education", snapshot());
+    fireEvent.click(await screen.findByRole("button", { name: "Retry exact Education save" }));
+    await screen.findByText("Education save configuration changed while an exact request was pending. Refresh the Admin before retrying.");
+    expect(saveEducationWithWorker).not.toHaveBeenCalled();
+    expect(repo.updateEducationTranslation).not.toHaveBeenCalled();
+    expect(repo.insertEducationEntry).not.toHaveBeenCalled();
+  });
+
   it("states that the Education title saved separately when the collection RPC fails and keeps the collection draft retryable", async () => {
     const saveEducationWithWorker = vi.fn(async () => { throw new Error("Education RPC unavailable. Your draft remains available."); });
     const updateSiteText = vi.fn(async () => {});
