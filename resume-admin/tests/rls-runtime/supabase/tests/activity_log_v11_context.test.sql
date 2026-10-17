@@ -90,8 +90,15 @@ BEGIN
     'historical-style events remain valid with all V1.1 context columns NULL'
   );
   PERFORM public.rls_test_assert(
-    NOT EXISTS (SELECT 1 FROM cms_private.resume_domain_requirements),
-    'V1.1 requirements are absent and therefore off for QA and Official'
+    (SELECT count(*) = 2 FROM cms_private.resume_domain_requirements
+      WHERE resume_id = 'ea111111-1111-4111-8111-111111111111'
+        AND domain_key IN ('education', 'experience')
+        AND requirement_key = 'trusted_network_context_v11' AND enabled)
+      AND NOT EXISTS (SELECT 1 FROM cms_private.resume_domain_requirements
+        WHERE resume_id <> 'ea111111-1111-4111-8111-111111111111'
+          OR domain_key NOT IN ('education', 'experience')
+          OR requirement_key <> 'trusted_network_context_v11' OR NOT enabled),
+    'V1.1 requirements are enabled only for Test Education and Experience'
   );
   PERFORM public.rls_test_assert(
     NOT has_schema_privilege('authenticated', 'cms_private', 'USAGE')
