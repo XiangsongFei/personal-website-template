@@ -322,6 +322,7 @@ function initialEducationEditorState(items: EducationItem[]): EducationEditorSta
 }
 
 const EditorContext = createContext<{
+  identityId: string | null;
   sections: EditorSections; resume: LoadedResume | null; overviewData: OverviewResumeData | null; overviewSiteMetadata: ResumeSiteMetadata | null;
   overviewLoadState: "loading" | "error"; onRetryOverview: (() => void) | null; drafts: Map<string, unknown>;
   productionMode: boolean; fullSnapshotState: "idle" | "loading" | "error"; profileResumeId: string | null; profileLoadState: "loading" | "error"; onRetryProfile: (() => void) | null;
@@ -374,7 +375,7 @@ const EditorContext = createContext<{
   reconcileRestoredDomain: (domain: RestorePreviewDomain, resumeId: string) => Promise<void>;
   snapshotDataRevision: number;
   onSnapshotRebased: () => void;
-}>({ sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, siteTextTranslations: null, siteTextResumeId: null, onSiteTextChanged: null, sectionTextDrafts: {}, setSectionTextDrafts: () => {}, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
+}>({ identityId: null, sections: fixtureSections, resume: null, overviewData: null, overviewSiteMetadata: null, overviewLoadState: "loading", onRetryOverview: null, drafts: new Map(), productionMode: false, fullSnapshotState: "idle", profileResumeId: null, profileLoadState: "loading", onRetryProfile: null, educationSection: null, educationResumeId: null, educationLoadState: "loading", onRetryEducation: null, onEducationChanged: null, onReloadEducation: null, onEducationDeleted: null, additionalSections: {}, additionalRouteLoadState: "loading", additionalResumeId: null, onAdditionalChanged: null, siteTextTranslations: null, siteTextResumeId: null, onSiteTextChanged: null, sectionTextDrafts: {}, setSectionTextDrafts: () => {}, onReloadAdditional: null, repository: null, onProfileSaved: null, onProfileTranslationSaved: null,
   pdfFiles: {}, setPdfFiles: () => {}, pdfErrors: {}, setPdfErrors: () => {},
   profileEditor: null, setProfileEditor: () => {}, educationEditor: null, setEducationEditor: () => {}, previewDrafts: {}, canonicalPreview: null, onRequestCanonicalPreview: () => {}, previewModes: { profile: "editor", introduction: "editor", education: "editor", experience: "editor", projects: "editor", skills: "editor", awards: "editor", contact: "editor", links: "editor" }, previewFocusRequests: { profile: 0, introduction: 0, education: 0, experience: 0, projects: 0, skills: 0, awards: 0, contact: 0, links: 0 }, onPreviewModeChange: () => {}, onPreviewDraftChanged: () => {}, previewLocale: null, setPreviewLocale: () => {}, profileRequests: { shared: false, translations: { zh: false, en: false } }, preservePreviewScroll: false, interactionLocked: false, beginRestoreDomainWrite: () => () => {}, canRestoreDomain: () => ({ allowed: false, message: "Restore safety could not be verified." }), reconcileRestoredDomain: async () => { throw new Error("Restore reconciliation is unavailable."); }, snapshotDataRevision: 0, onSnapshotRebased: () => {}, profilePhotoDraft: null, setProfilePhotoDraft: () => {}, profilePhotoError: "", setProfilePhotoError: () => {}, onProfilePhotoUrlChanged: () => {}, bilingualReviews: {}, onBilingualFieldEdit: () => {}, onBilingualReviewConfirm: () => {}, onBilingualCancel: () => {}, onBilingualSave: () => {} });
 
@@ -846,7 +847,7 @@ type ProductionRepeatableProps = {
 function ProductionRepeatableSection({ section, resumeId, items, repository, drafts, onChanged, onReload,
   title, description, create, label, render, headerIdentity, hideLabelWhenExpanded = false, sectionText }: ProductionRepeatableProps) {
   const { t, locale } = useUiLocale();
-  const { onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave, beginRestoreDomainWrite } = useContext(EditorContext);
+  const { identityId, onPreviewDraftChanged, onBilingualCancel: contextOnCancel, onBilingualSave: contextOnSave, beginRestoreDomainWrite } = useContext(EditorContext);
   const stored = drafts.get(section) as ProductionListState | undefined;
   const [editor, setEditor] = useState<ProductionListState>(() => stored?.marker === "production-list" ? clone(stored) : {
     marker: "production-list", baseline: clone(items), draft: clone(items),
@@ -864,10 +865,10 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   const draft = editor.draft as EditableSectionItem[];
   const contentDirty = JSON.stringify(draft) !== JSON.stringify(baseline)
     || baseline.some(item => !draft.some(value => value.id === item.id));
-  const pendingAwardsRetry = section === "awards" && (repository.hasPendingAwardsWorkerSave?.(resumeId) ?? false);
-  const pendingExperienceRetry = section === "experience" && (repository.hasPendingExperienceWorkerSave?.(resumeId) ?? false);
-  const pendingSkillsRetry = section === "skills" && (repository.hasPendingSkillsWorkerSave?.(resumeId) ?? false);
-  const pendingProjectsRetry = section === "projects" && (repository.hasPendingProjectsWorkerSave?.(resumeId) ?? false);
+  const pendingAwardsRetry = section === "awards" && (repository.hasPendingAwardsWorkerSave?.(resumeId, identityId) ?? false);
+  const pendingExperienceRetry = section === "experience" && (repository.hasPendingExperienceWorkerSave?.(resumeId, identityId) ?? false);
+  const pendingSkillsRetry = section === "skills" && (repository.hasPendingSkillsWorkerSave?.(resumeId, identityId) ?? false);
+  const pendingProjectsRetry = section === "projects" && (repository.hasPendingProjectsWorkerSave?.(resumeId, identityId) ?? false);
   const pendingAggregateRetry = pendingExperienceRetry || pendingSkillsRetry || pendingProjectsRetry;
   const dirty = contentDirty || Boolean(sectionText?.dirty) || pendingAwardsRetry || pendingAggregateRetry;
   const hasBlocked = Object.values(editor.partialCreates).some(value => value.blocked);
@@ -880,7 +881,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
 
   const patchDraft = (next: EditableSectionItem[]) => {
     if (section === "introduction" && saving.current) return;
-    if (section === "introduction" && JSON.stringify(next) !== JSON.stringify(editor.draft)) repository.discardPendingIntroductionSave?.(resumeId);
+    if (section === "introduction" && JSON.stringify(next) !== JSON.stringify(editor.draft)) repository.discardPendingIntroductionSave?.(resumeId, identityId);
     stateUpdate(current => ({ ...current, draft: clone(next), notice: "", error: false }));
   };
   const saveChanges = async () => {
@@ -911,7 +912,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
       if (section === "introduction") {
         try { introductionFeatureState = await repository.loadAdminFeatureState!(resumeId); }
         catch { throw new Error("Introduction save routing could not be verified. Refresh the Admin before trying again."); }
-        pendingWorkerRetry = repository.hasPendingIntroductionWorkerSave?.(resumeId, working.draft as IntroItem[]) ?? false;
+        pendingWorkerRetry = repository.hasPendingIntroductionWorkerSave?.(resumeId, working.draft as IntroItem[], identityId) ?? false;
         if (introductionFeatureState.resumeId !== resumeId
           || (introductionFeatureState.introductionWriteMode === "direct" && introductionFeatureState.introductionTrustedContextRequired)) {
           throw new Error("Introduction save routing is unavailable or outdated. Refresh the Admin before trying again.");
@@ -1211,7 +1212,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
   };
   const cancel = () => {
     if (hasRecovery || editor.saving) return;
-    if (section === "introduction") repository.discardPendingIntroductionSave?.(resumeId);
+    if (section === "introduction") repository.discardPendingIntroductionSave?.(resumeId, identityId);
     contextOnCancel?.(collectChangedBilingualFieldKeys(section, draft, baseline));
     sectionText?.cancel();
     stateUpdate(current => ({ ...current, draft: clone(current.baseline), notice: section === "introduction" ? "Introduction changes reverted." : "", error: false }));
@@ -1659,7 +1660,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       let writeState;
       try { writeState = await repository.loadAdminProfileWriteState(resumeId); }
       catch { throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again."); }
-      const pendingRpcRetry = repository.hasPendingProfileWorkerSave?.(resumeId) ?? false;
+      const pendingRpcRetry = repository.hasPendingProfileWorkerSave?.(resumeId, context.identityId) ?? false;
       if (writeState.resumeId !== resumeId || (writeState.profileWriteMode === "direct" && writeState.profileTrustedContextRequired)
         || (pendingRpcRetry && !(writeState.profileWriteMode === "rpc" && writeState.profileTrustedContextRequired && writeState.activityLogEnabled))) {
         throw new Error("Profile save routing is unavailable or outdated. Refresh the Admin before trying again.");
@@ -1723,7 +1724,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
 
   function cancelProfileChanges() {
     if (saving || saveInFlight) return;
-    if (repository?.hasPendingProfileWorkerSave?.(resumeId)) {
+    if (repository?.hasPendingProfileWorkerSave?.(resumeId, context.identityId)) {
       setProfileStatus({ message: "A Profile save result is still pending. Retry the unchanged request before cancelling.", error: true });
       return;
     }
@@ -1994,7 +1995,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const baselineById = new Map(editor.baseline.map(item => [item.id, item]));
   const contentDirty = editor.draft.some(item => !baselineById.has(item.id) || JSON.stringify(item) !== JSON.stringify(baselineById.get(item.id)))
     || editor.baseline.some(item => !editor.draft.some(draft => draft.id === item.id));
-  const pendingEducationRetry = repository?.hasPendingEducationWorkerSave?.(resumeId) ?? false;
+  const pendingEducationRetry = repository?.hasPendingEducationWorkerSave?.(resumeId, context.identityId) ?? false;
   const dirty = contentDirty || sectionText.dirty || pendingEducationRetry;
   const patchDraft = (id: string, change: (item: EducationItem) => EducationItem) => setEditor(current => current ? {
     ...current, draft: current.draft.map(item => item.id === id ? change(item) : item), notice: "", error: false,
@@ -2526,12 +2527,12 @@ function Awards() {
 const contactCreateRecovery = new Map<string, { entryId?: string; confirmed: Locale[]; blocked?: boolean }>();
 function recoveryKey(kind: "focus" | "status", resumeId: string, draftId: string) { return `${kind}:${resumeId}:${draftId}`; }
 
-async function saveContactProduction(repository: ResumeRepository, resumeId: string, next: ContactSection, baseline: ContactSection): Promise<ContactSection> {
+async function saveContactProduction(repository: ResumeRepository, resumeId: string, actorUserId: string | null, next: ContactSection, baseline: ContactSection): Promise<ContactSection> {
   if (!repository.loadAdminContactWriteState || !repository.saveContactWithWorker) throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again.");
   let writeState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminContactWriteState"]>>>;
   try { writeState = await repository.loadAdminContactWriteState(resumeId); }
   catch { throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again."); }
-  const pendingRpcRetry = repository.hasPendingContactWorkerSave?.(resumeId) ?? false;
+  const pendingRpcRetry = repository.hasPendingContactWorkerSave?.(resumeId, actorUserId) ?? false;
   if (writeState.resumeId !== resumeId || (writeState.contactWriteMode === "direct" && writeState.contactTrustedContextRequired)
     || (pendingRpcRetry && !(writeState.contactWriteMode === "rpc" && writeState.contactTrustedContextRequired && writeState.activityLogEnabled))) {
     throw new Error("Contact save routing is unavailable or outdated. Refresh the Admin before trying again.");
@@ -2656,7 +2657,7 @@ function cleanupNeedsWarning(result: unknown): boolean {
   return result !== "deleted" && result !== "already-absent" && result !== "not-managed" && result !== "still-referenced";
 }
 
-async function saveLinksProduction(repository: ResumeRepository, resumeId: string, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}, operation?: FilesSaveOperation): Promise<LinksSection | ProductionSaveNotice<LinksSection>> {
+async function saveLinksProduction(repository: ResumeRepository, resumeId: string, actorUserId: string | null, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}, operation?: FilesSaveOperation): Promise<LinksSection | ProductionSaveNotice<LinksSection>> {
   const saveOperation = operation ?? createFilesSaveOperation();
   if (!repository.updatePublicLinks || !repository.updateSiteText || !repository.updateNavigationLabel) throw new Error("Website & Links / Files production writes are unavailable.");
   if (next.navigation.length !== 5 || baseline.navigation.length !== 5) throw new Error("Navigation structure is fixed; only the five existing labels may be edited.");
@@ -2728,7 +2729,7 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     if (fileState.writeMode === "rpc" && Object.values(directPending).some(Boolean)) return partialNotice("A prior direct Files request needs reconciliation before RPC-mode saving.");
     const oldRefs = { zh: baseline.translations.zh.portfolioHref, en: baseline.translations.en.portfolioHref };
     let saved: FilesAggregate;
-    if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId)) {
+    if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId, actorUserId)) {
       if (!repository.retryPendingFilesWithWorker) throw new Error("A pending Files request requires exact retry support.");
       const retryResult = await repository.retryPendingFilesWithWorker(resumeId, saveOperation);
       saved = retryResult.files;
@@ -2785,7 +2786,7 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
           if (cleanup === "deleted" || cleanup === "already-absent") repository.clearPendingLegacyResumePdfUpload?.(resumeId, locale, refs[locale]);
         } catch { candidateCleanupWarning = true; }
         if (!uncertain && saveOperation.isActive() && useStorageIntent && !candidateCleanupWarning) for (const locale of selectedLocales) {
-          const id=uploadRequestIds[locale]; if(id) repository.clearPendingResumePdfUpload?.(resumeId,locale,id);
+          const id=uploadRequestIds[locale]; if(id) await repository.clearPendingResumePdfUpload?.(resumeId,locale,id);
         }
         const rejection = "Files save was rejected; old authoritative references were retained and your selections remain available.";
         if (!uncertain && !cleanupAttempted && !saveOperation.isActive()) return partialNotice("The Files save timed out before its request was sent. Authoritative references remain unchanged; the exact pending request and selected PDFs are retained for reconciliation.");
@@ -2794,7 +2795,7 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
       confirmed.translations.zh.portfolioHref = saved.translations.zh.portfolio_href;
       confirmed.translations.en.portfolioHref = saved.translations.en.portfolio_href;
       for (const locale of selectedLocales) confirmed.resumePdfFilenames = { zh: confirmed.resumePdfFilenames?.zh ?? "", en: confirmed.resumePdfFilenames?.en ?? "", [locale]: pdfFiles[locale]!.name };
-      if (useStorageIntent) for (const locale of selectedLocales) { const id=uploadRequestIds[locale]; if(id) repository.clearPendingResumePdfUpload?.(resumeId,locale,id); }
+      if (useStorageIntent) for (const locale of selectedLocales) { const id=uploadRequestIds[locale]; if(id) await repository.clearPendingResumePdfUpload?.(resumeId,locale,id); }
       else for (const locale of selectedLocales)
         repository.clearPendingLegacyResumePdfUpload?.(resumeId, locale, saved.translations[locale].portfolio_href);
       if (cleanupWarning) return partialNotice("Files references were saved, but superseded Storage cleanup needs attention.", selectedLocales, false);
@@ -2933,7 +2934,7 @@ function Contact() {
   const { sections } = context;
   const { t, locale } = useUiLocale();
   return <div className="contact-editor-scope"><SectionForm<ContactSection> section="contact" title="Contact" description="" quietCancelNotice
-    initial={sections.contact} productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveContactProduction(context.repository!, context.additionalResumeId!, draft, baseline) : undefined}>
+    initial={sections.contact} productionSave={context.repository && context.additionalResumeId ? (draft, baseline) => saveContactProduction(context.repository!, context.additionalResumeId!, context.identityId, draft, baseline) : undefined}>
     {(contact, onChange, confirmed) => <>
       <div className="panel" data-editor-anchor="contact:labels"><h2>{t("Contact text")}</h2><BilingualFields showLocaleHeaders hideReadOnlyHint pairedSingleLineFields={["contactLabel"]} idPrefix="contact" section="contact" itemId="contact" confirmed={confirmed.translations} value={contact.translations}
         onChange={translations => onChange({ ...contact, translations })}
@@ -2997,7 +2998,7 @@ function Links() {
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
     lockEditingWhileSaving
     productionDirty={Boolean(pdfFiles.zh || pdfFiles.en || (typeof linksResumeId === "string" && hasDirectPdfPending(linksResumeId)))} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts} onProductionPartialSaved={clearSavedPdfDrafts}
-    productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline, operation) => saveLinksProduction(context.repository!, linksResumeId, draft, baseline, pdfFiles, operation) : undefined}>
+    productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline, operation) => saveLinksProduction(context.repository!, linksResumeId, context.identityId, draft, baseline, pdfFiles, operation) : undefined}>
     {(links, onChange, confirmed) => <>
       <section className="links-section" data-editor-anchor="links:public-links"><h2>{t("Public links")}</h2>
         <div className="links-object-group" data-editor-anchor="links:email"><h3>{t("Email")}</h3><SharedFields inline idPrefix="links-email" value={links.shared}
@@ -3059,7 +3060,7 @@ function WorkspaceSystemState({ eyebrow, title, description, busy = false, actio
 
 function NotFound() { const { t } = useUiLocale(); return <WorkspaceSystemState title={t("Section not found")} description={t("Choose a CMS section from the navigation.")} action={<Link to="/overview">{t("Return to Overview")}</Link>} />; }
 
-export function App({ identityEmail, onSignOut, signOutPending, signOutError, resume = null, repository = null,
+export function App({ identityEmail, identityId = null, onSignOut, signOutPending, signOutError, resume = null, repository = null,
   productionMode = resume !== null, profileSection = null, profileResumeId = null,
   overviewData = null, overviewSiteMetadata = null, overviewLoadState = "loading", overviewRouteFirst = false, onRetryOverview = null,
   educationSection = null, educationResumeId = null, educationLoadState = "loading", onRetryEducation = null,
@@ -3069,6 +3070,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
   profileLoadState = "loading", onRetryProfile = null, fullSnapshotState = "idle", onRetryFullSnapshot = null,
   onProfileSaved = null, onProfileTranslationSaved = null, onRequestCanonicalPreview = () => {}, interactionLocked = false, snapshotDataRevision = 0, onSnapshotRebased = () => {}, activityLogEnabled = false, activityLogFilesRestoreReady = false, onActivityLogRouteFresh = null }: {
   identityEmail: string | null;
+  identityId?: string | null;
   onSignOut: () => void;
   signOutPending: boolean;
   signOutError: string;
@@ -3168,7 +3170,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       return { allowed: false, message: "Restore safety could not be verified for the current target. Refresh the Admin and try again." };
     if ((restoreDomainWrites.current.get(`${targetResumeId}:${section}`) ?? 0) > 0)
       return { allowed: false, message: "This domain is currently being saved. Wait for the save to finish before restoring." };
-    const pendingChecks: Partial<Record<RestorePreviewDomain, ((id: string) => boolean) | undefined>> = {
+    const pendingChecks: Partial<Record<RestorePreviewDomain, ((id: string, actorUserId: string | null) => boolean) | undefined>> = {
       awards: repository.hasPendingAwardsWorkerSave, experience: repository.hasPendingExperienceWorkerSave,
       skills: repository.hasPendingSkillsWorkerSave, education: repository.hasPendingEducationWorkerSave,
       projects: repository.hasPendingProjectsWorkerSave, contact: repository.hasPendingContactWorkerSave,
@@ -3177,7 +3179,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     const pendingCheck = pendingChecks[domain];
     if (!pendingCheck) return { allowed: false, message: "Restore safety could not be verified because pending saves cannot be checked." };
     try {
-      if (pendingCheck(targetResumeId)) return { allowed: false, message: "This domain has an unresolved save. Resolve that save before restoring." };
+      if (pendingCheck(targetResumeId, identityId)) return { allowed: false, message: "This domain has an unresolved save. Resolve that save before restoring." };
     } catch { return { allowed: false, message: "Restore safety could not be verified because pending saves cannot be checked." }; }
 
     const canonicalSections = resume?.resumeId === targetResumeId ? resume.sections : null;
@@ -3220,7 +3222,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
       textState.draft[locale][key as SectionTextKey] !== textState.baseline[locale][key as SectionTextKey])))
       return { allowed: false, message: "Save or discard this domain's unsaved section text before restoring." };
     return { allowed: true };
-  }, [productionMode, repository, resume, additionalResumeId, educationResumeId, educationSection, additionalSections, educationEditor, previewDrafts, sectionTextDrafts]);
+  }, [productionMode, repository, resume, additionalResumeId, educationResumeId, educationSection, additionalSections, educationEditor, previewDrafts, sectionTextDrafts, identityId]);
 
   const reconcileRestoredDomain = useCallback(async (domain: RestorePreviewDomain, targetResumeId: string) => {
     if (!repository || !targetResumeId || (resume?.resumeId !== targetResumeId && additionalResumeId !== targetResumeId && educationResumeId !== targetResumeId))
@@ -3852,7 +3854,7 @@ export function App({ identityEmail, onSignOut, signOutPending, signOutError, re
     };
   }, [location.pathname, navigationType, routeDataReady, canonicalPreviewReady, fullSnapshotState, isDocumentReload, previewSection, isPreviewRoute, wideDesktop, editorOnlyDesktop]);
 
-  return <EditorContext.Provider value={{ sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
+  return <EditorContext.Provider value={{ identityId, sections, resume, overviewData, overviewSiteMetadata, overviewLoadState, onRetryOverview, drafts: drafts.current,
     productionMode, fullSnapshotState, profileResumeId: profileResumeId ?? resume?.resumeId ?? null, profileLoadState, onRetryProfile,
     educationSection, educationResumeId: educationResumeId ?? resume?.resumeId ?? null, educationLoadState, onRetryEducation, onEducationChanged, onReloadEducation, onEducationDeleted,
     additionalSections, additionalRouteLoadState, additionalResumeId, onAdditionalChanged, siteTextTranslations, siteTextResumeId, onSiteTextChanged, sectionTextDrafts, setSectionTextDrafts, onReloadAdditional,

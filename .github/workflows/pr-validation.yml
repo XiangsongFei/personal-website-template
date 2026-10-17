@@ -97,14 +97,15 @@ jobs:
           restore="20261101000000_files_restore_capability_enforcement.sql"
           introduction="20261102000000_introduction_version_history_read.sql"
           education_experience="20261103000000_education_experience_test_rpc_routing.sql"
+          awards_baseline_safety="20261109000000_awards_baseline_pending_safety.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} "
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
@@ -124,6 +125,9 @@ jobs:
           printf '%s  %s\n' \
             "81f98c70aa89ebc5f2c845b573f4a7bb853a4e65df20c6804038e0679e6a04cb" \
             "resume-admin/migrations/${education_experience}" | sha256sum --check
+          printf '%s  %s\n' \
+            "d0670714fb14f8a8d64a17a6c7d6bf213d58e530d2c2c308e8869e8f22fe62b0" \
+            "resume-admin/migrations/${awards_baseline_safety}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests
@@ -150,6 +154,9 @@ jobs:
 
       - name: Run Owner RPC activation scenarios in disposable local Supabase
         run: node resume-admin/tests/rls-runtime/owner-activation-runtime.mjs
+
+      - name: Run Awards baseline and pending replay scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-baseline-runtime.mjs
 
   public_tests_build:
     name: Public tests and production build

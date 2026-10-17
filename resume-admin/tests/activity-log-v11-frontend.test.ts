@@ -4,6 +4,7 @@ import { createResumeRepository, createWriteReadinessRepository } from "../src/d
 import type { IntroItem } from "../src/model";
 
 const target = "ea111111-1111-4111-8111-111111111111";
+const actorId = "10000000-0000-4000-8000-000000000002";
 const item: IntroItem = { id: "local-1-2", position: 0, translations: { zh: { text: "中文" }, en: { text: "English" } } };
 const featureRow = { activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: true };
 const persisted = [{ id: "11111111-1111-4111-8111-111111111111", position: 0, translations: { zh: { text: "中文" }, en: { text: "English" } } }];
@@ -18,20 +19,21 @@ const persistedItems: IntroItem[] = persistedRows.map(row => ({ id: row.id, posi
 function makeRepository(options: { featureData?: unknown; featureError?: Error | null; token?: string | null } = {}) {
   const rpc = vi.fn().mockResolvedValue({ data: options.featureData ?? [featureRow], error: options.featureError ?? null });
   const from = vi.fn();
-  const getSession = vi.fn().mockResolvedValue({ data: { session: options.token === null ? null : { access_token: options.token ?? "current-access-token", expires_at: Math.floor(Date.now() / 1000) + 3600 } }, error: null });
-  const repo = createResumeRepository({ rpc, from, auth: { getSession } } as unknown as SupabaseClient);
-  return { repo, rpc, from, getSession };
+  const getSession = vi.fn().mockResolvedValue({ data: { session: options.token === null ? null : { access_token: options.token ?? "current-access-token", expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: actorId } } }, error: null });
+  const getUser = vi.fn().mockResolvedValue({ data: { user: { id: actorId } }, error: null });
+  const repo = createResumeRepository({ rpc, from, auth: { getSession, getUser } } as unknown as SupabaseClient);
+  return { repo, rpc, from, getSession, getUser };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { window.sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Activity Log V1.1 frontend feature state and Introduction routing", () => {
   it("keeps local retry-state inspection and discard available through the write-readiness guard", () => {
     const source = { hasPendingIntroductionWorkerSave: vi.fn().mockReturnValue(true), discardPendingIntroductionSave: vi.fn() };
     const guarded = createWriteReadinessRepository(source as never, () => false);
-    expect(guarded.hasPendingIntroductionWorkerSave!(target, [item])).toBe(true);
-    expect(guarded.discardPendingIntroductionSave!(target)).toBeUndefined();
-    expect(source.discardPendingIntroductionSave).toHaveBeenCalledWith(target);
+    expect(guarded.hasPendingIntroductionWorkerSave!(target, [item], actorId)).toBe(true);
+    expect(guarded.discardPendingIntroductionSave!(target, actorId)).toBeUndefined();
+    expect(source.discardPendingIntroductionSave).toHaveBeenCalledWith(target, actorId);
   });
 
   it("loads the exact V1.1 feature-state RPC shape and binds it to the requested target", async () => {
@@ -61,7 +63,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
 
   it("forwards only the current session token and exact Worker request contract, then adopts canonical IDs", async () => {
     const { repo, getSession } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("22222222-2222-4222-8222-222222222222").mockReturnValueOnce("33333333-3333-4333-8333-333333333333") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("22222222-2222-4222-8222-222222222222").mockReturnValueOnce("33333333-3333-4333-8333-333333333333"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify([{ ...persisted[0], translations: { zh: { text: "updated" }, en: { text: "English" } } }]), { status: 200 }));
@@ -88,7 +90,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
 
   it("accepts an exact persisted-ID canonical response", async () => {
     const { repo } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("12121212-1212-4212-8212-121212121212") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("12121212-1212-4212-8212-121212121212"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(persisted), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(repo.saveIntroductionWithWorker!(target, [persistedItem])).resolves.toEqual([persistedItem]);
@@ -96,7 +98,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
 
   it("accepts null and local IDs becoming persisted UUIDs with matching text", async () => {
     const { repo } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("13131313-1313-4313-8313-131313131313").mockReturnValueOnce("14141414-1414-4414-8414-141414141414") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("13131313-1313-4313-8313-131313131313").mockReturnValueOnce("14141414-1414-4414-8414-141414141414"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }));
@@ -117,7 +119,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
     ["duplicate returned ID", [persistedRows[0], { ...persistedRows[1], id: persistedRows[0].id }]],
   ])("rejects %s and retries unchanged with the same request identity", async (_name, invalidRows) => {
     const { repo, rpc, from } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("15151515-1515-4515-8515-151515151515") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("15151515-1515-4515-8515-151515151515"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(invalidRows), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(persistedRows), { status: 200 }));
@@ -147,7 +149,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
   it("fails closed when current-session token retrieval itself fails", async () => {
     const { repo, getSession, rpc, from } = makeRepository();
     getSession.mockRejectedValue(new Error("private auth detail"));
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
     await expect(repo.saveIntroductionWithWorker!(target, [item])).rejects.toThrow("Your session could not be verified");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -157,7 +159,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
 
   it.each([401, 409, 413, 422, 500, 502, 503, 504, 400])("never falls back after Worker HTTP %i", async status => {
     const { repo, rpc, from } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("33333333-3333-4333-8333-333333333333") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("33333333-3333-4333-8333-333333333333"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status })); vi.stubGlobal("fetch", fetchMock);
     await expect(repo.saveIntroductionWithWorker!(target, [item])).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -168,7 +170,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
   it("reuses the same request ID after an ambiguous network failure and changed content gets a new ID", async () => {
     const { repo } = makeRepository();
     const ids = ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"];
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => ids.shift()!) });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => ids.shift()!), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("connection dropped"))
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }))
@@ -185,7 +187,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
   it("clears the request ID after success and uses one mutation for concurrent duplicate submissions", async () => {
     const { repo } = makeRepository();
     const ids = ["66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777"];
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => ids.shift()!) });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => ids.shift()!), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     let finish!: (response: Response) => void;
     const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
@@ -202,7 +204,7 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
 
   it("does not reuse pending request identity across targets", async () => {
     const { repo } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("88888888-8888-4888-8888-888888888888").mockReturnValueOnce("99999999-9999-4999-8999-999999999999") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("88888888-8888-4888-8888-888888888888").mockReturnValueOnce("99999999-9999-4999-8999-999999999999"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("lost response"))
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -213,23 +215,27 @@ describe("Activity Log V1.1 frontend feature state and Introduction routing", ()
     expect(sent.map(body => body.request_id)).toEqual(["88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999"]);
   });
 
-  it("clears an ambiguous pending request when the draft is explicitly discarded", async () => {
+  it("retains an ambiguous pending request after draft discard until exact replay is confirmed", async () => {
     const { repo } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("cccccccc-cccc-4ccc-8ccc-cccccccccccc").mockReturnValueOnce("dddddddd-dddd-4ddd-8ddd-dddddddddddd") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValueOnce("cccccccc-cccc-4ccc-8ccc-cccccccccccc").mockReturnValueOnce("dddddddd-dddd-4ddd-8ddd-dddddddddddd"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("response lost"))
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     await expect(repo.saveIntroductionWithWorker!(target, [item])).rejects.toThrow();
-    repo.discardPendingIntroductionSave!(target);
+    const actorB = "10000000-0000-4000-8000-000000000003";
+    repo.discardPendingIntroductionSave!(target, actorB);
+    expect(repo.hasPendingIntroductionWorkerSave!(target, [item], actorId)).toBe(true);
+    expect(repo.hasPendingIntroductionWorkerSave!(target, [item], actorB)).toBe(false);
+    repo.discardPendingIntroductionSave!(target, actorId);
     await repo.saveIntroductionWithWorker!(target, [item]);
     expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).request_id)).toEqual([
-      "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
     ]);
   });
 
   it("keeps malformed success responses uncertain and never falls back", async () => {
     const { repo, rpc, from } = makeRepository();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn().mockReturnValue("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify([{ id: "bad", position: "zero", translations: { zh: { text: "x" }, en: { text: "y" } } }]), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(persisted), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

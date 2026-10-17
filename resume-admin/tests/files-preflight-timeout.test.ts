@@ -5,6 +5,7 @@ import { createFilesSaveOperation, createResumeRepository, type ResumeRepository
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
 const uploadRequestId = "11111111-1111-4111-8111-111111111111";
+const actorId = "10000000-0000-4000-8000-000000000002";
 const files: FilesAggregate = { translations: { zh: { portfolio_href: "https://legacy.test/zh.pdf" }, en: { portfolio_href: "https://legacy.test/en.pdf" } } };
 const managedReference = `https://storage.example.test/storage/v1/object/public/resume-files/${resumeId}/zh/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf`;
 
@@ -15,8 +16,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function makeRepository(getSession = vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null }), fetchImpl = vi.fn(async () => Response.json({ reference: managedReference, upload_request_id: uploadRequestId })) as unknown as typeof fetch, rpc = vi.fn()) {
-  const client = { auth: { getSession }, rpc } as unknown as SupabaseClient;
+function makeRepository(getSession = vi.fn().mockResolvedValue({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null }), fetchImpl = vi.fn(async () => Response.json({ reference: managedReference, upload_request_id: uploadRequestId })) as unknown as typeof fetch, rpc = vi.fn()) {
+  const client = { auth: { getSession, getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) }, rpc } as unknown as SupabaseClient;
   vi.stubGlobal("fetch", fetchImpl);
   return { repository: createResumeRepository(client, "https://storage.example.test") as ResumeRepository, getSession, fetchImpl };
 }
@@ -64,21 +65,21 @@ describe("D-8 bounded pre-request Files operations", () => {
 
   it("bounds upload session acquisition and fences a late session before upload", async () => {
     vi.useFakeTimers();
-    const session = deferred<{ data: { session: { access_token: string; expires_at: number } }; error: null }>();
+    const session = deferred<{ data: { session: { access_token: string; expires_at: number; user: { id: string } } }; error: null }>();
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => uploadRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const { repository, fetchImpl } = makeRepository(vi.fn(() => session.promise));
     const operation = createFilesSaveOperation();
     const request = repository.uploadResumePdfWithWorker!(resumeId, "zh", makeFile(), operation);
     await advanceToTimeout(request, 10_000, "session check timed out before a request was sent");
-    expect(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${resumeId}:zh`)).toContain(uploadRequestId);
-    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000 } }, error: null });
+    expect(window.sessionStorage.getItem(`admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`)).toBeNull();
+    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null });
     await Promise.resolve(); await Promise.resolve();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("bounds pending Files-save session acquisition and fences a late session before save", async () => {
     vi.useFakeTimers();
-    const session = deferred<{ data: { session: { access_token: string; expires_at: number } }; error: null }>();
+    const session = deferred<{ data: { session: { access_token: string; expires_at: number; user: { id: string } } }; error: null }>();
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const { repository } = makeRepository(vi.fn(() => session.promise), fetchImpl);
     window.sessionStorage.setItem(`admin-files-rpc-pending-v1:${resumeId}`, JSON.stringify({
@@ -87,9 +88,10 @@ describe("D-8 bounded pre-request Files operations", () => {
     const operation = createFilesSaveOperation();
     const request = repository.retryPendingFilesWithWorker!(resumeId, operation);
     await advanceToTimeout(request, 10_000, "session check timed out before a request was sent");
-    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000 } }, error: null });
+    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null });
     await Promise.resolve(); await Promise.resolve();
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${resumeId}`)).not.toBeNull();
   });
 
   it("bounds the Files write-state RPC and ignores a late resolution", async () => {
@@ -108,7 +110,7 @@ describe("D-8 bounded pre-request Files operations", () => {
 
   it("bounds candidate cleanup session acquisition and fences late session resolution", async () => {
     vi.useFakeTimers();
-    const session = deferred<{ data: { session: { access_token: string; expires_at: number } }; error: null }>();
+    const session = deferred<{ data: { session: { access_token: string; expires_at: number; user: { id: string } } }; error: null }>();
     const { repository, fetchImpl } = makeRepository(vi.fn(() => session.promise));
     const operation = createFilesSaveOperation();
     const cleanup = repository.cleanupResumePdfCandidatesWithWorker!(resumeId, [uploadRequestId], operation);
@@ -116,19 +118,19 @@ describe("D-8 bounded pre-request Files operations", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     await result;
     expect(operation.isActive()).toBe(false);
-    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000 } }, error: null });
+    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null });
     await Promise.resolve(); await Promise.resolve();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("does not issue cleanup when unmounted while cleanup session acquisition is pending", async () => {
-    const session = deferred<{ data: { session: { access_token: string; expires_at: number } }; error: null }>();
+    const session = deferred<{ data: { session: { access_token: string; expires_at: number; user: { id: string } } }; error: null }>();
     const { repository, fetchImpl } = makeRepository(vi.fn(() => session.promise));
     const oldOperation = createFilesSaveOperation();
     const newerOperation = createFilesSaveOperation();
     const cleanup = repository.cleanupResumePdfCandidatesWithWorker!(resumeId, [uploadRequestId], oldOperation);
     oldOperation.abandon();
-    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000 } }, error: null });
+    session.resolve({ data: { session: { access_token: "late-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null });
     await expect(cleanup).resolves.toBe(true);
     expect(newerOperation.isActive()).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -140,23 +142,23 @@ describe("D-8 bounded pre-request Files operations", () => {
       const data = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       return new Uint8Array(32).fill(data[0] ?? 0).buffer;
     }) } });
-    const hanging = deferred<{ data: { session: { access_token: string; expires_at: number } }; error: null }>();
+    const hanging = deferred<{ data: { session: { access_token: string; expires_at: number; user: { id: string } } }; error: null }>();
     const fetchImpl = vi.fn(async () => Response.json({ reference: managedReference, upload_request_id: uploadRequestId })) as unknown as typeof fetch;
-    const { repository, getSession } = makeRepository(vi.fn().mockImplementationOnce(() => hanging.promise).mockResolvedValue({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null }), fetchImpl);
+    const { repository, getSession } = makeRepository(vi.fn().mockImplementationOnce(() => hanging.promise).mockResolvedValue({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null }), fetchImpl);
     const file = makeFile();
     const first = repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation());
     await advanceToTimeout(first, 10_000, "session check timed out");
-    const stored = JSON.parse(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${resumeId}:zh`)!) as { requestId: string };
-    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation())).resolves.toMatchObject({ uploadRequestId: stored.requestId });
+    expect(window.sessionStorage.getItem(`admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`)).toBeNull();
+    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation())).resolves.toMatchObject({ uploadRequestId });
     expect(getSession).toHaveBeenCalledTimes(2);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const uploadHeaders = new Headers((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.headers);
-    expect(uploadHeaders.get("X-Upload-Request-ID")).toBe(stored.requestId);
+    expect(uploadHeaders.get("X-Upload-Request-ID")).toBe(uploadRequestId);
     expect(uploadHeaders.get("X-Original-Filename-UTF8-Percent-Encoded")).toBe(encodeURIComponent(file.name));
     expect(uploadHeaders.has("X-Original-Filename")).toBe(false);
 
     const changed = makeFile(async () => new Uint8Array([9, 2, 3]).buffer);
-    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", changed, createFilesSaveOperation())).rejects.toThrow(/exact same file/i);
+    await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", changed, createFilesSaveOperation())).rejects.toThrow(/same signed-in account.*exact file/i);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -166,7 +168,7 @@ describe("D-8 bounded pre-request Files operations", () => {
     const NativeHeaders = globalThis.Headers;
     vi.stubGlobal("Headers", class { constructor() { throw new TypeError("synthetic header construction failure"); } });
     const file = makeFile();
-    const key = `admin-files-upload-pending-v1:${resumeId}:zh`;
+    const key = `admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`;
     await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", file, createFilesSaveOperation()))
       .rejects.toMatchObject({ uncertain: false, message: expect.stringContaining("no request was sent") });
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -186,7 +188,7 @@ describe("D-8 bounded pre-request Files operations", () => {
     await expect(repository.uploadResumePdfWithWorker!(resumeId, "zh", makeFile(), createFilesSaveOperation()))
       .rejects.toMatchObject({ uncertain: true });
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(JSON.parse(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${resumeId}:zh`)!).requestId).toBe(uploadRequestId);
+    expect(JSON.parse(window.sessionStorage.getItem(`admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`)!).requestId).toBe(uploadRequestId);
   });
 
   it("aborts an actually timed-out upload and preserves its exact upload identity", async () => {
@@ -203,12 +205,12 @@ describe("D-8 bounded pre-request Files operations", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await assertion;
     expect(issuedSignal?.aborted).toBe(true);
-    expect(window.sessionStorage.getItem(`admin-files-upload-pending-v1:${resumeId}:zh`)).toContain(uploadRequestId);
+    expect(window.sessionStorage.getItem(`admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`)).toContain(uploadRequestId);
   });
 
   it("aborts an actually timed-out Files save and preserves its exact request identity", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => uploadRequestId) });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => uploadRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     let issuedSignal: AbortSignal | undefined;
     const saveFetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       issuedSignal = init?.signal as AbortSignal;
@@ -221,12 +223,12 @@ describe("D-8 bounded pre-request Files operations", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await assertion;
     expect(issuedSignal?.aborted).toBe(true);
-    expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${resumeId}`)).toContain(uploadRequestId);
+    expect(window.sessionStorage.getItem(`admin-pending-save-v2:files:${resumeId}:${actorId}`)).toContain(uploadRequestId);
   });
 
   it("aborts an actually timed-out candidate cleanup and retains upload identity for reconciliation", async () => {
     vi.useFakeTimers();
-    const key = `admin-files-upload-pending-v1:${resumeId}:zh`;
+    const key = `admin-pending-save-v2:files:${resumeId}:${actorId}:upload:zh`;
     window.sessionStorage.setItem(key, JSON.stringify({ requestId: uploadRequestId }));
     let issuedSignal: AbortSignal | undefined;
     const cleanupFetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -249,8 +251,8 @@ describe("D-8 bounded pre-request Files operations", () => {
     window.sessionStorage.setItem(`admin-files-rpc-pending-v1:${resumeId}`, JSON.stringify({
       requestId: uploadRequestId, resumeId, canonical: canonicalizeFiles(files), uploadRequestIds: { zh: "22222222-2222-4222-8222-222222222222" },
     }));
-    await expect(repository.retryPendingFilesWithWorker!(resumeId)).rejects.toMatchObject({ uncertain: true });
-    expect(fetchImpl).toHaveBeenCalledOnce();
+    await expect(repository.retryPendingFilesWithWorker!(resumeId)).rejects.toThrow("cannot be restored safely");
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(`admin-files-rpc-pending-v1:${resumeId}`)).toContain(uploadRequestId);
   });
 });

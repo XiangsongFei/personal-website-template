@@ -256,7 +256,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
     let active = true;
     const nextTargetId = authorizedTarget?.resumeId ?? null;
     if (featureTargetId.current !== nextTargetId) {
-      repository?.discardPendingIntroductionSave?.();
+      repository?.discardPendingIntroductionSave?.(authorizedTarget?.resumeId, identityId);
       featureTargetId.current = nextTargetId;
     }
     if (!repository || !authorizedTarget || !repository.loadAdminFeatureState) {
@@ -271,7 +271,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
       if (active) setFeatureStateResult({ status: "error" });
     });
     return () => { active = false; };
-  }, [authReady, repository, authorizedTarget]);
+  }, [authReady, repository, authorizedTarget, identityId]);
 
   // Activity Log does not load a resume snapshot. Its Files restore route is
   // fresh only after the exact target's Files write state and the authorized
@@ -518,7 +518,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 
   async function reloadAdditional(key: AdditionalRouteKey): Promise<AdditionalRouteResult> {
     if (!repository || !supportsAdditionalReads(repository, key)) throw new Error("Section reload is unavailable");
-    if (key === "introduction") repository.discardPendingIntroductionSave?.(authorizedTarget?.resumeId);
+    if (key === "introduction") repository.discardPendingIntroductionSave?.(authorizedTarget?.resumeId, identityId);
     const value = await loadAdditionalFromStore(sessionKey, repository, sectionStore, key, true, authorizedTarget);
     setAdditionalStates(current => ({ ...current, [key]: { kind: "loaded", ...value } }));
     setResume(current => current?.resumeId === value.resumeId ? { ...current, sections: { ...current.sections, [key]: value.value } } : current);
@@ -741,7 +741,7 @@ export function ResumeLoader({ repository, sessionKey, identityEmail, identityId
 
   if (isDocumentReload && location.pathname === initialPath && !initialRouteReady && !routeSnapshot) return null;
 
-  return <App identityEmail={identityEmail} onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
+  return <App identityEmail={identityEmail} identityId={identityId} onSignOut={onSignOut} signOutPending={signOutPending} signOutError={signOutError}
     productionMode={true} repository={guardedRepository} resume={resume} profileSection={profile} profileResumeId={profileResumeId} interactionLocked={interactionLocked} snapshotDataRevision={snapshotDataRevision}
     overviewData={overview} overviewSiteMetadata={overviewMetadata} overviewLoadState={overviewLoadState}
     overviewRouteFirst={useSectionOverview} onRetryOverview={useSectionOverview ? retryOverview : retryFullSnapshot}
