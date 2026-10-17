@@ -46,19 +46,24 @@ SELECT set_config('request.jwt.claims',${sqlLiteral(JSON.stringify({ sub: testAc
 ${query}`;
 }
 
-function startSession(context, text, keepOpen = false) {
+function startSession(context, text, keepOpen = false, label = "PostgreSQL session") {
   const child = spawn("docker", psqlArgs(context), { stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
   const closed = new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ code, stdout, stderr }));
+    child.once("error", (error) => reject(new Error(`${label} failed to start: ${error.message}`)));
+    child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
   if (keepOpen) child.stdin.write(text);
   else child.stdin.end(text);
   return { child, closed, get stdout() { return stdout; }, get stderr() { return stderr; } };
+}
+
+function exitedProcessDetails(label, result) {
+  const kind = /(?:^|\n)(?:ERROR|FATAL):/m.test(result.stderr) ? "SQL execution failed" : "process exited early";
+  return `${label} ${kind}; exit code=${result.code}; signal=${result.signal ?? "none"}; stdout=${JSON.stringify(result.stdout)}; stderr=${JSON.stringify(result.stderr)}`;
 }
 
 const fixtureSql = `
@@ -270,12 +275,19 @@ SELECT id FROM public.resume_sites WHERE id='${testResumeId}' FOR UPDATE;
 UPDATE public.resume_award_translations SET name='lock-holder synthetic edit'
  WHERE resume_id='${testResumeId}' AND award_entry_id='${awardId}' AND locale='en';
 SELECT 'AWARDS_ROW_LOCK_READY';
-`);
+`, true, "Awards lock-holder session");
     const deadline = Date.now() + 5000;
     while (!holder.stdout.includes("AWARDS_ROW_LOCK_READY")) {
-      if (Date.now() > deadline) { holder.child.kill("SIGKILL"); throw new Error(`Timed out acquiring disposable target row lock: ${holder.stderr}`); }
+      if (Date.now() > deadline) {
+        holder.child.kill("SIGKILL");
+        const closed = await holder.closed;
+        throw new Error(`Timed out acquiring disposable target row lock; ${exitedProcessDetails("Lock-holder", closed)}`);
+      }
       const closed = await Promise.race([holder.closed.then((value) => value), delay(20).then(() => null)]);
-      if (closed) throw new Error(`Lock holder exited before acquiring the test lock: ${closed.stderr}`);
+      if (closed && !closed.stdout.includes("AWARDS_ROW_LOCK_READY")) {
+        throw new Error(exitedProcessDetails("Lock-holder before acquiring target row lock", closed));
+      }
+      if (closed) throw new Error(exitedProcessDetails("Lock-holder after reporting lock readiness", closed));
     }
     const writer = startSession(context, authenticatedSql(callExpression(concurrentRequestId, concurrencyPayload, concurrencyBaseline)));
     try {
