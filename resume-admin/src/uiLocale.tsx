@@ -235,6 +235,7 @@ Object.assign(dictionary, {
   Created: "已创建", Updated: "已修改", Deleted: "已删除", Reordered: "顺序已调整", Uploaded: "已上传", Removed: "已删除",
   Awards: "荣誉奖项", Experience: "工作经历", Skills: "技能", Education: "教育经历", Projects: "项目经历",
   Profile: "个人资料", "Website & Links": "网站与链接", Files: "文件", "Experience entry": "工作经历条目",
+  "Paragraph": "段落", "Paragraph text": "段落内容", "Position": "位置",
   "Skill group": "技能分组", "Education entry": "教育经历条目", "Contact focus": "联系重点",
   "Contact status": "联系状态", "Profile details": "个人资料详情", "Profile photo reference": "个人照片引用",
   "Public link": "公开链接", "Resume file reference": "简历文件引用", "Resume files": "简历文件",

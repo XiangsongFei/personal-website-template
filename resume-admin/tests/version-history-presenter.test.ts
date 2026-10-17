@@ -16,6 +16,43 @@ const aggregate = (before: VersionHistoryJson, after: VersionHistoryJson, overri
   entry({ ...overrides, comparison: { kind: "aggregate", before, after } });
 
 describe("presentVersionHistoryChange", () => {
+  it("presents bilingual Introduction paragraphs, additions, removals, and numeric position changes", () => {
+    const intro = entry({ domain: "introduction", entityType: "introduction_paragraph", payloadVersion: 1,
+      comparison: { kind: "paragraph_changes", paragraphs: [
+        { state: "updated", fields: { text_en: { before: "Old", after: "New" }, text_zh: { before: "旧", after: "新" }, position: { before: -1, after: 1.5 } } },
+        { state: "added", fields: { text_en: { before: null, after: "Added" }, text_zh: { before: null, after: "新增" } } },
+        { state: "removed", fields: { text_en: { before: "Removed", after: null } } },
+      ] } });
+    const result = presentVersionHistoryChange(intro);
+    expect(result.items.map(item => item.state)).toEqual(["updated", "added", "removed"]);
+    expect(result.items[0]?.fields.map(field => [field.key, field.locale])).toEqual([["text", "en"], ["text", "zh"], ["position", "shared"]]);
+    expect(result.items[1]?.fields.every(change => "recorded" in change.before && !change.before.recorded
+      && "recorded" in change.after && change.after.recorded)).toBe(true);
+    expect(result.items[2]?.fields.every(change => "recorded" in change.before && change.before.recorded
+      && "recorded" in change.after && !change.after.recorded)).toBe(true);
+    const reordered = entry({ ...intro, comparison: { kind: "paragraph_changes", paragraphs: [
+      { state: "updated", fields: { position: { before: 0, after: 1 } } },
+    ] } });
+    expect(presentVersionHistoryChange(reordered).items[0]?.state).toBe("reordered");
+  });
+
+  it("uses generic entries for empty and unchanged Introduction history", () => {
+    const intro = entry({ domain: "introduction", entityType: "introduction_paragraph", payloadVersion: 1,
+      comparison: { kind: "paragraph_changes", paragraphs: [] } });
+    expect(presentVersionHistoryChange(intro).state).toBe("generic");
+    expect(presentVersionHistoryChange(entry({ ...intro, comparison: { kind: "paragraph_changes", paragraphs: [
+      { state: "updated", fields: { text_en: { before: "Same", after: "Same" } } },
+    ] } })).state).toBe("generic");
+    const legacy = entry({ ...intro, comparison: { kind: "entity_fields", changes: { position: { before: 1, after: 1 } } } });
+    expect(presentVersionHistoryChange(legacy).state).toBe("generic");
+    expect(presentVersionHistoryChange(entry({ ...legacy, comparison: { kind: "unavailable" } })).state).toBe("generic");
+  });
+
+  it("presents legacy scalar Introduction changes", () => {
+    const legacy = entry({ domain: "introduction", entityType: "introduction_paragraph", payloadVersion: 1,
+      comparison: { kind: "entity_fields", changes: { text: { before: "Old", after: "New" }, position: { before: 0, after: 1 } } } });
+    expect(presentVersionHistoryChange(legacy).items[0]?.fields.map(field => field.key)).toEqual(["position", "text"]);
+  });
   it("summarizes an Awards field update with locale and omits unchanged values", () => {
     const result = presentVersionHistoryChange(aggregate(
       [award(idA, 0, "QA Synthetic Award 2 [EN ADV]", "QA 虚构奖项 2")],

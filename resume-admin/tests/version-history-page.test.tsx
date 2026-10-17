@@ -24,6 +24,42 @@ const repositoryWith = (loadVersionHistoryPage: NonNullable<ResumeRepository["lo
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Version History page human-readable presentation", () => {
+  it("shows Introduction text and position in both languages without IDs or Restore controls", async () => {
+    const paragraphId = uuid(31);
+    const intro = baseEntry({ domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "paragraph_changes", paragraphs: [{ state: "updated", fields: {
+        text_en: { before: "Old English", after: "New English" },
+        text_zh: { before: "旧中文", after: "新中文" },
+        position: { before: 0, after: 1 },
+      } }] } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([intro]))));
+    expect(await screen.findByRole("heading", { name: /Introduction.*Updated/, level: 2 })).toBeTruthy();
+    expect(screen.getByText("Paragraph")).toBeTruthy();
+    expect(screen.getAllByText("Paragraph text")).toHaveLength(2);
+    expect(screen.getByText("Old English")).toBeTruthy();
+    expect(screen.getByText("新中文")).toBeTruthy();
+    expect(screen.getByText("Position")).toBeTruthy();
+    expect(document.body.textContent).not.toContain(paragraphId);
+    expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
+  });
+  it("shows a generic Introduction entry beside a valid change without a blank card", async () => {
+    const empty = baseEntry({ domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "paragraph_changes", paragraphs: [] } });
+    const legacy = baseEntry({ eventId: uuid(91), domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "entity_fields", changes: { position: { before: 1, after: 1 } } } });
+    const changed = baseEntry({ eventId: uuid(92), domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "paragraph_changes", paragraphs: [{ state: "added", fields: { text_en: { before: null, after: "New paragraph" } } }] } });
+    const removed = baseEntry({ eventId: uuid(95), domain: "introduction", entityType: "introduction_paragraph", entityId: null,
+      comparison: { kind: "paragraph_changes", paragraphs: [{ state: "removed", fields: { text_en: { before: "Old paragraph", after: null } } }] } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([empty, legacy, changed, removed]))));
+    expect(await screen.findAllByRole("heading", { name: /Introduction.*Updated/, level: 2 })).toHaveLength(4);
+    expect(screen.getAllByText("Change details aren’t available.")).toHaveLength(2);
+    for (const button of screen.getAllByRole("button", { name: "Show more changes" })) fireEvent.click(button);
+    expect(screen.getByText("New paragraph")).toBeTruthy();
+    expect(screen.getByText("Old paragraph")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Not set");
+    expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
+  });
   it("renders V1 recorded fields with safe context and no audit-only metadata", async () => {
     const entry = { ...baseEntry(), actor_user_id: "private-user-id", ip_network: "192.0.2.0/24", request_id: "private-request",
       entity_snapshot: { secret: "must-not-render" } } as VersionHistoryEntry;
