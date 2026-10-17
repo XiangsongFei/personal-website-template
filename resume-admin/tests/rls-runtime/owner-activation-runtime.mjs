@@ -44,21 +44,24 @@ INSERT INTO public.resume_intro_paragraphs(id,resume_id,position,source_key) VAL
  ('a2000000-0000-4000-8000-000000000001','${testId}',0,'synthetic-test-intro');
 INSERT INTO public.resume_intro_paragraph_translations(paragraph_id,resume_id,locale,text)
 SELECT p.id,p.resume_id,locale.locale,CASE WHEN p.resume_id='${ownerId}'::uuid THEN 'Synthetic Owner' ELSE 'Synthetic Test' END
-FROM public.resume_intro_paragraphs AS p CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale);
+FROM public.resume_intro_paragraphs AS p CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale)
+WHERE p.resume_id IN ('${ownerId}','${testId}');
 
 INSERT INTO public.resume_education_entries(id,resume_id,position,entry_type,education_category) VALUES
  ('b1000000-0000-4000-8000-000000000001','${ownerId}',0,'standard','undergraduate'),
  ('b2000000-0000-4000-8000-000000000001','${testId}',0,'standard','undergraduate');
 INSERT INTO public.resume_education_translations(education_entry_id,resume_id,locale,title,program,period,grade)
 SELECT e.id,e.resume_id,locale.locale,'Synthetic school','Synthetic program','2020-2024','A'
-FROM public.resume_education_entries AS e CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale);
+FROM public.resume_education_entries AS e CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale)
+WHERE e.resume_id IN ('${ownerId}','${testId}');
 
 INSERT INTO public.resume_experience_entries(id,resume_id,position) VALUES
  ('c1000000-0000-4000-8000-000000000001','${ownerId}',0),
  ('c2000000-0000-4000-8000-000000000001','${testId}',0);
 INSERT INTO public.resume_experience_translations(experience_entry_id,resume_id,locale,organization,title,period,description,location)
 SELECT e.id,e.resume_id,locale.locale,'Synthetic organization','Synthetic role','2024','Synthetic description','Remote'
-FROM public.resume_experience_entries AS e CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale);
+FROM public.resume_experience_entries AS e CROSS JOIN (VALUES ('zh'),('en')) AS locale(locale)
+WHERE e.resume_id IN ('${ownerId}','${testId}');
 COMMIT;
 `;
 
