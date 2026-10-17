@@ -148,6 +148,9 @@ jobs:
       - name: Stage isolated local Supabase and run SQL tests
         run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
 
+      - name: Run Owner RPC activation scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/owner-activation-runtime.mjs
+
   public_tests_build:
     name: Public tests and production build
     needs: detect_changes
