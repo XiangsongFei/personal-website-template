@@ -155,6 +155,8 @@ jobs:
     if: needs.detect_changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SUPABASE_USE_SLIM_IMAGES: "true"
     steps:
       - name: Check out PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
