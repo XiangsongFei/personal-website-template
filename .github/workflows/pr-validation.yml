@@ -122,7 +122,7 @@ jobs:
             "5bf3e2b6b024162064b5eeddaea81b3220fab13e3fe0ee03664616387f5ae5f4" \
             "resume-admin/migrations/${introduction}" | sha256sum --check
           printf '%s  %s\n' \
-            "25748d11bef5e0aebebea7423e9820e7b19832e18999974360115dc117eb07b3" \
+            "61c18c109542fca576615e67ce2855b75f0ee1b22bc3ca8a67eff3ddca37e1e9" \
             "resume-admin/migrations/${education_experience}" | sha256sum --check
 
   admin_local_sql:

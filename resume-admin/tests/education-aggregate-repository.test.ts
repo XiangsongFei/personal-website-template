@@ -86,6 +86,11 @@ describe("Education aggregate repository contract", () => {
     // A fresh repository instance models a page refresh; sessionStorage retains the request.
     const repoAfterRefresh = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
     const refreshedEntry = { ...newEntry, id: generatedId };
+    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [{ ...refreshedEntry,
+      translations: { ...refreshedEntry.translations, en: { ...refreshedEntry.translations.en, title: "更晚的并发修改" } } }]))
+      .rejects.toThrow("pending education request cannot be verified safely");
+    expect(calls).toHaveLength(1);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
     await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [refreshedEntry])).resolves.toMatchObject([{ id: generatedId }]);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.request_id).toBe(calls[1]?.request_id);

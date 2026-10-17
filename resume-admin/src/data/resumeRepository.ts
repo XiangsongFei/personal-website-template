@@ -1018,7 +1018,21 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
   };
   const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
   const collectionPendingKey = (domain: "experience" | "skills" | "education" | "projects", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
-  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false) => {
+  const pendingCollectionMatchesRefreshed = (pending: unknown[], current: unknown[]): boolean => {
+    if (pending.length !== current.length) return false;
+    return pending.every((entry, index) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+      const original = entry as Record<string, unknown>;
+      const refreshed = current[index];
+      if (!refreshed || typeof refreshed !== "object" || Array.isArray(refreshed)) return false;
+      const currentEntry = refreshed as Record<string, unknown>;
+      if (original.id === null) {
+        if (typeof currentEntry.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentEntry.id)) return false;
+      } else if (original.id !== currentEntry.id) return false;
+      return JSON.stringify({ ...original, id: currentEntry.id }) === JSON.stringify(currentEntry);
+    });
+  };
+  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false, matchesRefreshedPayload: (pending: unknown[], current: unknown[]) => boolean = () => false) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
     const storageKey = collectionPendingKey(domain, resumeId);
@@ -1031,7 +1045,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
           || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
           || !Array.isArray(value.payload) || (!replayPendingPayload && JSON.stringify(value.payload) !== fingerprint)
-          || (replayPendingPayload && !validatePendingPayload(value.payload))) throw new Error("invalid");
+          || (replayPendingPayload && (!validatePendingPayload(value.payload) || !matchesRefreshedPayload(value.payload, payload)))) throw new Error("invalid");
         pending = { requestId: value.requestId, resumeId, payload: value.payload };
       }
     } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely. Keep the draft unchanged and retry.`); }
@@ -1496,7 +1510,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
             translations: { zh: zh as ExperienceItem["translations"]["zh"], en: en as ExperienceItem["translations"]["en"] } } satisfies ExperienceItem;
         });
-      }, true, validExperienceRequest) as ExperienceItem[];
+      }, true, validExperienceRequest, pendingCollectionMatchesRefreshed) as ExperienceItem[];
       return value;
     },
     hasPendingExperienceWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("experience", resumeId))); } catch { return true; } },
@@ -1974,7 +1988,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
             en: { title: en!.title as string, program: en!.program as string, period: en!.period as string, grade: en!.grade as string,
               courseTitle: en!.course_title as string | null, courseDescription: en!.course_description as string | null, customCategoryLabel: en!.custom_category_label as string | null } } } satisfies EducationItem;
         });
-      }, true, validEducationRequest) as EducationItem[];
+      }, true, validEducationRequest, pendingCollectionMatchesRefreshed) as EducationItem[];
     },
     hasPendingEducationWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("education", resumeId))); } catch { return true; } },
     discardPendingEducationSave() { /* Ambiguous requests are retained for exact replay. */ },

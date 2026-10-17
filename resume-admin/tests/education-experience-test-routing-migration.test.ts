@@ -22,6 +22,17 @@ describe("Education and Experience Test-only RPC routing migration", () => {
     expect(migration).toContain("ON CONFLICT (resume_id, domain_key, requirement_key)");
   });
 
+  it("validates both existing Test collections against the aggregate writer preconditions before changing modes", () => {
+    expect(migration).toContain("Test Education collection is incomplete or exceeds the RPC limit");
+    expect(migration).toContain("Test Education collection is outside the supported RPC contract");
+    expect(migration).toContain("Test Experience collection is incomplete or exceeds the RPC limit");
+    expect(migration).toContain("Test Experience collection is outside the supported RPC contract");
+    expect(migration).toContain("activity_event_payload_v2_education_is_allowed");
+    expect(migration).toContain("activity_event_payload_v2_experience_is_allowed");
+    expect(migration.indexOf("Test Experience collection is outside the supported RPC contract"))
+      .toBeLessThan(migration.indexOf("UPDATE cms_private.resume_write_modes"));
+  });
+
   it("changes no content, event history, reader, permissions, or Restore behavior and mirrors the deployment migration", () => {
     expect(mirror).toBe(migration);
     expect(migration).not.toMatch(/(?:INSERT|UPDATE|DELETE)\s+INTO\s+public\.resume_(?!write_modes|domain_requirements)/i);

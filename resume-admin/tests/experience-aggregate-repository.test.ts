@@ -40,7 +40,12 @@ describe("Experience aggregate retry contract", () => {
         en: { organization: "Org", title: "New role", period: "2025", description: "Description", location: null } } };
     await expect(makeRepo().saveExperienceWithWorker!(resumeId, [entry])).rejects.toThrow("save result is uncertain");
     expect(eventCount).toBe(1);
-    await expect(makeRepo().saveExperienceWithWorker!(resumeId, [{ ...entry, id: generatedId, sourceKey: "persisted-source" }]))
+    const refreshed = { ...entry, id: generatedId, sourceKey: "persisted-source" };
+    await expect(makeRepo().saveExperienceWithWorker!(resumeId, [{ ...refreshed,
+      translations: { ...refreshed.translations, en: { ...refreshed.translations.en, title: "Later concurrent edit" } } }]))
+      .rejects.toThrow("pending experience request cannot be verified safely");
+    expect(calls).toHaveLength(1);
+    await expect(makeRepo().saveExperienceWithWorker!(resumeId, [refreshed]))
       .resolves.toMatchObject([{ id: generatedId, sourceKey: "persisted-source" }]);
     expect(calls).toHaveLength(2);
     expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
