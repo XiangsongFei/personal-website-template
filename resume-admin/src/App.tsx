@@ -1994,7 +1994,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
   const baselineById = new Map(editor.baseline.map(item => [item.id, item]));
   const contentDirty = editor.draft.some(item => !baselineById.has(item.id) || JSON.stringify(item) !== JSON.stringify(baselineById.get(item.id)))
     || editor.baseline.some(item => !editor.draft.some(draft => draft.id === item.id));
-  const dirty = contentDirty || sectionText.dirty;
+  const pendingEducationRetry = repository?.hasPendingEducationWorkerSave?.(resumeId) ?? false;
+  const dirty = contentDirty || sectionText.dirty || pendingEducationRetry;
   const patchDraft = (id: string, change: (item: EducationItem) => EducationItem) => setEditor(current => current ? {
     ...current, draft: current.draft.map(item => item.id === id ? change(item) : item), notice: "", error: false,
   } : current);
@@ -2009,6 +2010,10 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
       const writeState = await repository.loadAdminEducationWriteState!(resumeId);
+      if (pendingEducationRetry && !(writeState.resumeId === resumeId && writeState.educationWriteMode === "rpc"
+        && writeState.activityLogEnabled && writeState.educationTrustedContextRequired)) {
+        throw new AggregateWorkerSaveError("Education save configuration changed while an exact request was pending. Refresh the Admin before retrying.");
+      }
       if (writeState.educationWriteMode === "rpc") {
         if (!writeState.activityLogEnabled || !writeState.educationTrustedContextRequired) {
           throw new AggregateWorkerSaveError("Education RPC mode is not fully configured. Your draft remains available.");
@@ -2227,6 +2232,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     setEditor(current => current ? { ...current, draft: renumber(next), notice: "", error: false } : current);
   };
   const cancel = () => {
+    if (pendingEducationRetry) return;
     context.onBilingualCancel(collectChangedBilingualFieldKeys("education", editor.draft, editor.baseline));
     sectionText.cancel();
     const retainedIds = new Set([...editor.baseline, ...editor.draft.filter(item => Boolean(editor.partialCreates[item.id]))].map(item => item.id));
@@ -2243,7 +2249,8 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
 
   return <section className="page-section education-editor-scope editor-workspace-route">
     <EditorContentScroll>
-    <PageHeadingWithAction title="Education" description="" editorAnchor="heading:education" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving}>{t("Add Education")}</button>} />
+    <fieldset disabled={editor.saving || pendingEducationRetry} aria-disabled={editor.saving || pendingEducationRetry} style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}>
+    <PageHeadingWithAction title="Education" description="" editorAnchor="heading:education" action={<button type="button" className="button secondary" onClick={addEntry} disabled={editor.saving || pendingEducationRetry}>{t("Add Education")}</button>} />
     {sectionText.rendered && <div className="education-section-title-fields">{sectionText.rendered}</div>}
     <div className="repeatable-group" aria-label={t("Education")}>
       {editor.draft.length === 0 && <p className="empty-note">{t("No items yet. Add one to start this section.")}</p>}
@@ -2281,12 +2288,13 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
         </article>;
       })}</div>
     </div>
+    </fieldset>
     </EditorContentScroll>
     <EditorActionFooter>
       {(editor.notice || !methodsReady) && !canInlineFooterFeedback(editor.notice, editor.error) && <p className="save-notice production-save-helper" role={editor.error ? "alert" : "status"} aria-live="polite">{t(editor.notice || "Education production writes are unavailable in this editor instance.")}</p>}
       <div className="save-bar"><EditorFooterState dirty={dirty} message={editor.notice} error={editor.error} />
-        <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving}>{t("Cancel changes")}</button>
-          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : t("Save Education changes")}</button></div>
+        <div className="save-actions"><button type="button" className="button secondary" onClick={cancel} disabled={!dirty || editor.saving || pendingEducationRetry}>{t("Cancel changes")}</button>
+          <button type="button" className="button primary" onClick={() => void saveChanges()} disabled={!dirty || editor.saving || !methodsReady || Object.values(editor.partialCreates).some(value => value.blocked)}>{editor.saving ? t("Saving…") : pendingEducationRetry ? t("Retry exact Education save") : t("Save Education changes")}</button></div>
       </div>
     </EditorActionFooter>
   </section>;

@@ -95,6 +95,7 @@ Object.assign(dictionary, {
 
 Object.assign(dictionary, {
   "Retry exact Experience save": "重试完全相同的工作经历保存",
+  "Retry exact Education save": "重试完全相同的教育经历保存",
   "Retry exact Skills save": "重试完全相同的技能保存",
   "Experience changes saved.": "工作经历修改已保存。",
   "Skill changes saved.": "技能修改已保存。",

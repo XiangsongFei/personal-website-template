@@ -6,10 +6,10 @@ DO $modes$
 DECLARE denied boolean;
 BEGIN
   PERFORM public.rls_test_assert(
-    (SELECT count(*) = 20 AND count(*) FILTER (WHERE write_mode='rpc') = 1
-       AND count(*) FILTER (WHERE write_mode='direct') = 19
+    (SELECT count(*) = 20 AND count(*) FILTER (WHERE write_mode='rpc') = 3
+       AND count(*) FILTER (WHERE write_mode='direct') = 17
      FROM cms_private.resume_write_modes),
-    'Phase 1 changes only the QA Introduction write mode'
+    'Test Introduction, Education, and Experience use RPC; other write modes remain direct'
   );
   PERFORM public.rls_test_assert(
     cms_private.get_resume_write_mode('ea111111-1111-4111-8111-111111111111','introduction')='rpc'

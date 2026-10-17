@@ -1018,7 +1018,22 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
   };
   const clearAwardsPending = (resumeId: string) => { try { globalThis.sessionStorage?.removeItem(awardsStorageKey(resumeId)); } catch { /* Retain a safe failure state when storage is unavailable. */ } };
   const collectionPendingKey = (domain: "experience" | "skills" | "education" | "projects", resumeId: string) => `admin-${domain}-rpc-pending-v1:${resumeId}`;
-  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[]) => unknown[]) => {
+  const pendingCollectionMatchesRefreshed = (pending: unknown[], current: unknown[]): boolean => {
+    if (pending.length !== current.length) return false;
+    return pending.every((entry, index) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+      const original = entry as Record<string, unknown>;
+      const refreshed = current[index];
+      if (!refreshed || typeof refreshed !== "object" || Array.isArray(refreshed)) return false;
+      const currentEntry = refreshed as Record<string, unknown>;
+      if (original.id === null) {
+        if (currentEntry.id !== null && (typeof currentEntry.id !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentEntry.id))) return false;
+      } else if (original.id !== currentEntry.id) return false;
+      return JSON.stringify({ ...original, id: currentEntry.id }) === JSON.stringify(currentEntry);
+    });
+  };
+  const saveSignedCollection = async (domain: "experience" | "skills" | "education" | "projects", resumeId: string, payload: unknown[], decode: (value: unknown[], requestPayload?: unknown[]) => unknown[], replayPendingPayload = false, validatePendingPayload: (value: unknown[]) => boolean = () => false, matchesRefreshedPayload: (pending: unknown[], current: unknown[]) => boolean = () => false) => {
     const fingerprint = JSON.stringify(payload);
     if (new TextEncoder().encode(fingerprint).byteLength > 196608) throw new AggregateWorkerSaveError(`${domain} content exceeds the allowed request size.`);
     const storageKey = collectionPendingKey(domain, resumeId);
@@ -1030,7 +1045,8 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         const value = JSON.parse(raw) as Record<string, unknown>;
         if (Object.keys(value).sort().join(",") !== "payload,requestId,resumeId" || value.resumeId !== resumeId
           || typeof value.requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.requestId)
-          || !Array.isArray(value.payload) || JSON.stringify(value.payload) !== fingerprint) throw new Error("invalid");
+          || !Array.isArray(value.payload) || (!replayPendingPayload && JSON.stringify(value.payload) !== fingerprint)
+          || (replayPendingPayload && (!validatePendingPayload(value.payload) || !matchesRefreshedPayload(value.payload, payload)))) throw new Error("invalid");
         pending = { requestId: value.requestId, resumeId, payload: value.payload };
       }
     } catch { throw new AggregateWorkerSaveError(`A pending ${domain} request cannot be verified safely. Keep the draft unchanged and retry.`); }
@@ -1066,7 +1082,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       try { value = await response.json(); } catch { throw new AggregateWorkerSaveError(`The ${domain} save result is uncertain. Retry the exact pending request.`); }
       if (!Array.isArray(value) || new TextEncoder().encode(JSON.stringify(value)).byteLength > 212992)
         throw new AggregateWorkerSaveError(`The ${domain} save result could not be confirmed. Retry the exact pending request.`);
-      const canonical = decode(value);
+      const canonical = decode(value, pending.payload);
       try { globalThis.sessionStorage?.removeItem(storageKey); } catch { /* A replay remains safe with the same request ID. */ }
       return canonical;
     } catch (cause) {
@@ -1455,8 +1471,28 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         return { id: item.id.startsWith("local-") ? null : item.id.toLowerCase(), position,
           zh: locale(item.translations.zh), en: locale(item.translations.en) };
       });
-      const value = await saveSignedCollection("experience", resumeId, payload, raw => {
-        if (raw.length !== payload.length) throw new Error("length");
+      const validExperienceRequest = (value: unknown[]): boolean => {
+        if (value.length > 16) return false;
+        const seenIds = new Set<string>();
+        return value.every((entry, position) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+          const row = entry as Record<string, unknown>;
+          const validId = row.id === null || (typeof row.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id));
+          const validLocale = (locale: unknown) => Boolean(locale && typeof locale === "object" && !Array.isArray(locale)
+            && Object.keys(locale).sort().join(",") === "description,location,organization,period,title"
+            && ["organization", "title", "period", "description"].every(key => typeof (locale as Record<string, unknown>)[key] === "string")
+            && ((locale as Record<string, unknown>).location === null || typeof (locale as Record<string, unknown>).location === "string"));
+          if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || !validId || row.position !== position
+            || !validLocale(row.zh) || !validLocale(row.en)) return false;
+          if (typeof row.id === "string") {
+            if (seenIds.has(row.id.toLowerCase())) return false;
+            seenIds.add(row.id.toLowerCase());
+          }
+          return true;
+        });
+      };
+      const value = await saveSignedCollection("experience", resumeId, payload, (raw, requestPayload = payload) => {
+        if (!validExperienceRequest(requestPayload) || raw.length !== requestPayload.length) throw new Error("length");
         const seen = new Set<string>();
         return raw.map((entry, position) => {
           if (!entry || typeof entry !== "object") throw new Error("entry");
@@ -1468,14 +1504,14 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           if (Object.keys(row).sort().join(",") !== "en,id,position,zh" || typeof row.id !== "string"
             || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
             || seen.has(row.id) || row.position !== position || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
-          const requested = payload[position];
+          const requested = requestPayload[position] as typeof payload[number];
           if ((requested.id && requested.id !== row.id) || ["organization", "title", "period", "description", "location"].some(field => requested.zh[field as keyof typeof requested.zh] !== zh[field])
             || ["organization", "title", "period", "description", "location"].some(field => requested.en[field as keyof typeof requested.en] !== en[field])) throw new Error("mismatch");
           seen.add(row.id); const source = items.find(item => item.id.toLowerCase() === row.id);
           return { id: row.id, position, sourceKey: source?.sourceKey ?? null,
             translations: { zh: zh as ExperienceItem["translations"]["zh"], en: en as ExperienceItem["translations"]["en"] } } satisfies ExperienceItem;
         });
-      }) as ExperienceItem[];
+      }, true, validExperienceRequest, pendingCollectionMatchesRefreshed) as ExperienceItem[];
       return value;
     },
     hasPendingExperienceWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("experience", resumeId))); } catch { return true; } },
@@ -1895,8 +1931,30 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
           entry_type: item.entryType, education_category: category,
           zh: locale(item.translations.zh), en: locale(item.translations.en) };
       });
-      return await saveSignedCollection("education", resumeId, payload, raw => {
-        if (raw.length !== payload.length) throw new Error("length");
+      const validEducationRequest = (value: unknown[]): boolean => {
+        if (value.length > 16) return false;
+        const seenIds = new Set<string>();
+        return value.every((entry, position) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+        const row = entry as Record<string, unknown>;
+        const validId = row.id === null || (typeof row.id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id));
+        const validLocale = (locale: unknown) => Boolean(locale && typeof locale === "object" && !Array.isArray(locale)
+          && Object.keys(locale).sort().join(",") === "course_description,course_title,custom_category_label,grade,period,program,title"
+          && ["title", "program", "period", "grade"].every(key => typeof (locale as Record<string, unknown>)[key] === "string")
+          && ["course_title", "course_description", "custom_category_label"].every(key => (locale as Record<string, unknown>)[key] === null || typeof (locale as Record<string, unknown>)[key] === "string"));
+        if (Object.keys(row).sort().join(",") !== "education_category,en,entry_type,id,position,zh" || !validId
+          || row.position !== position || (row.entry_type !== "standard" && row.entry_type !== "summerSchool")
+          || !(row.education_category === null || isEducationCategory(row.education_category))
+          || !validLocale(row.zh) || !validLocale(row.en)) return false;
+        if (typeof row.id === "string") {
+          if (seenIds.has(row.id.toLowerCase())) return false;
+          seenIds.add(row.id.toLowerCase());
+        }
+        return true;
+      });
+      };
+      return await saveSignedCollection("education", resumeId, payload, (raw, requestPayload = payload) => {
+        if (!validEducationRequest(requestPayload) || raw.length !== requestPayload.length) throw new Error("length");
         const seen = new Set<string>();
         return raw.map((entry, position) => {
           if (!entry || typeof entry !== "object") throw new Error("entry");
@@ -1911,7 +1969,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
             || typeof row.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.id)
             || seen.has(row.id) || row.position !== position || (row.entry_type !== "standard" && row.entry_type !== "summerSchool")
             || !(category === null || isEducationCategory(category)) || !validLocale(zh) || !validLocale(en)) throw new Error("shape");
-          const requested = payload[position] as Record<string, unknown>;
+          const requested = requestPayload[position] as Record<string, unknown>;
           const sameLocale = (expected: unknown, actual: Record<string, unknown> | undefined) => {
             if (!expected || typeof expected !== "object" || !actual) return false;
             const left = expected as Record<string, unknown>;
@@ -1931,7 +1989,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
             en: { title: en!.title as string, program: en!.program as string, period: en!.period as string, grade: en!.grade as string,
               courseTitle: en!.course_title as string | null, courseDescription: en!.course_description as string | null, customCategoryLabel: en!.custom_category_label as string | null } } } satisfies EducationItem;
         });
-      }) as EducationItem[];
+      }, true, validEducationRequest, pendingCollectionMatchesRefreshed) as EducationItem[];
     },
     hasPendingEducationWorkerSave(resumeId) { try { return Boolean(globalThis.sessionStorage?.getItem(collectionPendingKey("education", resumeId))); } catch { return true; } },
     discardPendingEducationSave() { /* Ambiguous requests are retained for exact replay. */ },

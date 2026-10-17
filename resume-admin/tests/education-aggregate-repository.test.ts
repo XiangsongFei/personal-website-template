@@ -51,4 +51,79 @@ describe("Education aggregate repository contract", () => {
       translations: { en: { courseTitle: null, courseDescription: "" } } });
     expect(rpc).not.toHaveBeenCalled();
   });
+
+  it("replays a committed Education request after a lost response without duplicating its event", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    const seenRequests = new Set<string>();
+    let committed: Array<Record<string, unknown>> = [];
+    let eventCount = 0;
+    const calls: Array<Record<string, unknown>> = [];
+    let loseFirstResponse = true;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push(body);
+      const request = body.request_id as string;
+      if (!seenRequests.has(request)) {
+        seenRequests.add(request);
+        committed = (body.education as Array<Record<string, unknown>>).map(entry => ({ ...entry, id: entry.id ?? generatedId }));
+        eventCount++;
+      }
+      if (loseFirstResponse) {
+        loseFirstResponse = false;
+        throw new Error("response lost after commit");
+      }
+      return Response.json(committed);
+    }));
+
+    const repoAfterSave = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    const newEntry: EducationItem = { ...education(), id: "local-education-new-entry", sourceKey: null,
+      translations: { ...education().translations, zh: { ...education().translations.zh, title: "新建后提交" } } };
+    await expect(repoAfterSave.saveEducationWithWorker!(resumeId, [newEntry])).rejects.toThrow("save result is uncertain");
+    expect(repoAfterSave.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
+    expect(eventCount).toBe(1);
+
+    // A fresh repository instance models a page refresh; sessionStorage retains the request.
+    const repoAfterRefresh = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    const refreshedEntry = { ...newEntry, id: generatedId };
+    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [{ ...refreshedEntry,
+      translations: { ...refreshedEntry.translations, en: { ...refreshedEntry.translations.en, title: "更晚的并发修改" } } }]))
+      .rejects.toThrow("pending education request cannot be verified safely");
+    expect(calls).toHaveLength(1);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(true);
+    await expect(repoAfterRefresh.saveEducationWithWorker!(resumeId, [refreshedEntry])).resolves.toMatchObject([{ id: generatedId }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
+    expect(calls[0]?.education).toEqual(calls[1]?.education);
+    expect((calls[0]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
+    expect(eventCount).toBe(1);
+    expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+  });
+
+  it("retries the exact pending Education payload while a new entry ID is still null", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    let eventCount = 0;
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push(body);
+      if (calls.length === 1) {
+        eventCount++;
+        throw new Error("response lost after commit");
+      }
+      return Response.json((body.education as Array<Record<string, unknown>>).map(entry => ({ ...entry, id: generatedId })));
+    }));
+
+    const entry: EducationItem = { ...education(), id: "local-education-new-entry", sourceKey: null };
+    const repo = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    await expect(repo.saveEducationWithWorker!(resumeId, [entry])).rejects.toThrow("save result is uncertain");
+    await expect(repo.saveEducationWithWorker!(resumeId, [entry])).resolves.toMatchObject([{ id: generatedId }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
+    expect(calls[0]?.education).toEqual(calls[1]?.education);
+    expect((calls[1]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
+    expect(eventCount).toBe(1);
+    expect(repo.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+  });
 });
