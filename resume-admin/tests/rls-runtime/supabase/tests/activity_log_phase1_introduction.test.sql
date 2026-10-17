@@ -165,8 +165,8 @@ BEGIN
   PERFORM public.rls_test_assert((SELECT enabled FROM cms_private.resume_capabilities WHERE resume_id=qa AND capability_key='activity_log'), 'QA Activity Log capability is enabled');
   PERFORM public.rls_test_assert((SELECT count(*)=0 FROM cms_private.resume_capabilities WHERE resume_id=official AND enabled), 'official Activity Log remains disabled');
   PERFORM public.rls_test_assert(cms_private.get_resume_write_mode(qa,'introduction')='rpc', 'QA Introduction is RPC');
-  PERFORM public.rls_test_assert((SELECT count(*)=1 FROM cms_private.resume_write_modes WHERE resume_id=qa AND write_mode='rpc' AND domain_key='introduction'), 'only QA Introduction is RPC');
-  PERFORM public.rls_test_assert((SELECT count(*)=9 FROM cms_private.resume_write_modes WHERE resume_id=qa AND write_mode='direct'), 'other QA domains remain direct');
+  PERFORM public.rls_test_assert((SELECT count(*)=1 FROM cms_private.resume_write_modes WHERE resume_id=qa AND write_mode='rpc' AND domain_key='introduction'), 'QA Introduction remains RPC');
+  PERFORM public.rls_test_assert((SELECT count(*)=7 FROM cms_private.resume_write_modes WHERE resume_id=qa AND write_mode='direct'), 'other QA domains remain direct');
   PERFORM public.rls_test_assert(cms_private.get_resume_write_mode(official,'introduction')='direct', 'official Introduction remains direct');
   PERFORM public.rls_test_assert(NOT has_function_privilege('anon','public.save_resume_introduction(uuid,jsonb)','EXECUTE'), 'anon cannot execute save RPC');
   PERFORM public.rls_test_assert(has_function_privilege('authenticated','public.save_resume_introduction(uuid,jsonb)','EXECUTE'), 'authenticated can execute intended save RPC');

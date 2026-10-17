@@ -192,13 +192,15 @@ SELECT extensions.ok((SELECT array_agg(a.attname ORDER BY a.attname)=ARRAY['expe
     JOIN pg_catalog.pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
     WHERE c.conrelid='public.resume_skill_group_translations'::regclass AND c.contype='p'),
   'runtime fixture translation primary keys match the production conflict targets');
-SELECT extensions.ok((SELECT write_mode='direct' FROM cms_private.resume_write_modes
+SELECT extensions.ok((SELECT write_mode='rpc' FROM cms_private.resume_write_modes
     WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='experience')
   AND (SELECT write_mode='direct' FROM cms_private.resume_write_modes
     WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='skills')
+  AND EXISTS(SELECT 1 FROM cms_private.resume_domain_requirements WHERE resume_id='ea111111-1111-4111-8111-111111111111'
+    AND domain_key='experience' AND requirement_key='trusted_network_context_v11' AND enabled)
   AND NOT EXISTS(SELECT 1 FROM cms_private.resume_domain_requirements WHERE resume_id='ea111111-1111-4111-8111-111111111111'
-    AND domain_key IN ('experience','skills') AND requirement_key='trusted_network_context_v11'),
-  'writer installation leaves both QA domains in direct mode without trusted-context activation');
+    AND domain_key='skills' AND requirement_key='trusted_network_context_v11'),
+  'Test Experience is RPC with trusted context while Skills remains direct');
 
 SELECT extensions.ok(cms_private.activity_event_payload_v2_is_allowed('awards','award_list',NULL,'update',
     '{"awards":[]}'::jsonb,'{"awards":{"before":[],"after":[]}}'::jsonb),
@@ -229,22 +231,23 @@ SELECT extensions.ok(NOT cms_private.activity_event_payload_v2_is_allowed('exper
     '{"experience":[]}'::jsonb,'{"experience":{"before":[],"after":[]}}'::jsonb),
   'cross-domain V2 entity/section combinations fail closed');
 
--- Direct-mode compatibility: authenticated QA can still create, update, and delete
--- rows through the legacy collection tables before either domain is activated.
+-- Skills remains in direct mode; Test Experience direct DML is denied after routing.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',true);
 SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000002","role":"authenticated","email":"qa@example.test"}',true);
-SELECT extensions.ok((SELECT experience_write_mode='direct' FROM public.load_admin_experience_write_state('ea111111-1111-4111-8111-111111111111'))
+SELECT extensions.ok((SELECT experience_write_mode='rpc' AND experience_trusted_context_required FROM public.load_admin_experience_write_state('ea111111-1111-4111-8111-111111111111'))
   AND (SELECT skills_write_mode='direct' FROM public.load_admin_skills_write_state('ea111111-1111-4111-8111-111111111111')),
-  'QA scoped state readers report direct mode before activation');
-INSERT INTO public.resume_experience_entries(id,resume_id,source_key,position)
-VALUES('ea000000-0000-4000-8000-000000000101','ea111111-1111-4111-8111-111111111111','d2-direct-experience',1000);
-INSERT INTO public.resume_experience_translations(experience_entry_id,resume_id,locale,organization,title,period,description,location)
-VALUES('ea000000-0000-4000-8000-000000000101','ea111111-1111-4111-8111-111111111111','zh','组织','职位','2025','说明',NULL),
- ('ea000000-0000-4000-8000-000000000101','ea111111-1111-4111-8111-111111111111','en','Org','Role','2025','Description','');
-UPDATE public.resume_experience_entries SET position=1001 WHERE id='ea000000-0000-4000-8000-000000000101';
-UPDATE public.resume_experience_translations SET title='职位更新' WHERE experience_entry_id='ea000000-0000-4000-8000-000000000101' AND locale='zh';
-DELETE FROM public.resume_experience_entries WHERE id='ea000000-0000-4000-8000-000000000101';
+  'QA scoped state readers report Experience RPC and Skills direct mode');
+DO $experience_direct_denied$
+DECLARE denied boolean:=false;
+BEGIN
+  BEGIN
+    INSERT INTO public.resume_experience_entries(resume_id,position)
+      VALUES('ea111111-1111-4111-8111-111111111111',1000);
+  EXCEPTION WHEN insufficient_privilege THEN denied:=true; END;
+  IF NOT denied THEN RAISE EXCEPTION 'Test Experience RPC mode allowed direct INSERT'; END IF;
+END
+$experience_direct_denied$;
 INSERT INTO public.resume_skill_groups(id,resume_id,source_key,position)
 VALUES('ea000000-0000-4000-8000-000000000102','ea111111-1111-4111-8111-111111111111','d2-direct-skills',1000);
 INSERT INTO public.resume_skill_group_translations(skill_group_id,resume_id,locale,title,items)
@@ -255,13 +258,12 @@ UPDATE public.resume_skill_group_translations SET title='语言能力' WHERE ski
 DELETE FROM public.resume_skill_groups WHERE id='ea000000-0000-4000-8000-000000000102';
 SELECT extensions.ok(NOT EXISTS(SELECT 1 FROM public.resume_experience_entries WHERE id='ea000000-0000-4000-8000-000000000101')
   AND NOT EXISTS(SELECT 1 FROM public.resume_skill_groups WHERE id='ea000000-0000-4000-8000-000000000102'),
-  'legacy direct-mode create/update/delete remains authorized for both collections');
+  'Skills direct-mode CRUD remains authorized and Experience direct INSERT is denied');
 
 RESET ROLE;
-UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key IN ('experience','skills');
+UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='skills';
 INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
-VALUES('ea111111-1111-4111-8111-111111111111','experience','trusted_network_context_v11',true),
- ('ea111111-1111-4111-8111-111111111111','skills','trusted_network_context_v11',true);
+VALUES('ea111111-1111-4111-8111-111111111111','skills','trusted_network_context_v11',true);
 SET LOCAL ROLE authenticated;
 SELECT extensions.ok((SELECT experience_write_mode='rpc' AND experience_trusted_context_required
     FROM public.load_admin_experience_write_state('ea111111-1111-4111-8111-111111111111'))

@@ -129,11 +129,11 @@ SELECT extensions.ok((SELECT array_agg(a.attname ORDER BY a.attname)=ARRAY['educ
   JOIN pg_catalog.pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
   WHERE c.conrelid='public.resume_education_translations'::regclass AND c.contype='p'),
   'runtime Education translation primary key matches the production ON CONFLICT target');
-SELECT extensions.ok((SELECT write_mode='direct' FROM cms_private.resume_write_modes
+SELECT extensions.ok((SELECT write_mode='rpc' FROM cms_private.resume_write_modes
   WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='education')
-  AND NOT EXISTS(SELECT 1 FROM cms_private.resume_domain_requirements WHERE resume_id='ea111111-1111-4111-8111-111111111111'
-    AND domain_key='education' AND requirement_key='trusted_network_context_v11'),
-  'migration installation leaves Education in direct mode without gate activation');
+  AND EXISTS(SELECT 1 FROM cms_private.resume_domain_requirements WHERE resume_id='ea111111-1111-4111-8111-111111111111'
+    AND domain_key='education' AND requirement_key='trusted_network_context_v11' AND enabled),
+  'Test Education routing migration enables RPC mode and trusted context');
 SELECT extensions.ok(cms_private.activity_event_payload_v2_is_allowed('education','education_list',NULL,'update',
   '{"education":[]}'::jsonb,'{"education":{"before":[],"after":[]}}'::jsonb)
   AND NOT cms_private.activity_event_payload_v2_is_allowed('education','education_list',NULL,'create',
@@ -144,8 +144,7 @@ SELECT extensions.ok(NOT has_table_privilege('authenticated','cms_private.activi
   AND NOT has_table_privilege('anon','cms_private.activity_log_events','SELECT'),
   'Education writer does not grant direct access to private Activity Log rows');
 
--- Exercise the actual authenticated parent/translation policies while the target is in direct mode.
--- Seed one synthetic Official row so wrong-target UPDATE/DELETE assertions exercise RLS against existing rows.
+-- Seed one synthetic Owner row so wrong-target UPDATE/DELETE assertions exercise RLS against existing rows.
 INSERT INTO public.resume_education_entries(id,resume_id,source_key,position,entry_type,education_category)
   VALUES('d3000000-0000-4000-8000-000000000090','20000000-0000-4000-8000-000000000001',NULL,0,'standard',NULL);
 INSERT INTO public.resume_education_translations(education_entry_id,resume_id,locale,title,program,period,grade)
@@ -154,23 +153,21 @@ SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-00000000
 SET LOCAL ROLE authenticated;
 DO $direct_rls$
 DECLARE qa constant uuid:='ea111111-1111-4111-8111-111111111111'; official constant uuid:='20000000-0000-4000-8000-000000000001';
-  created constant uuid:='d3000000-0000-4000-8000-000000000099'; affected bigint; rejected boolean:=false;
+  affected bigint; rejected boolean:=false;
 BEGIN
-  INSERT INTO public.resume_education_entries(id,resume_id,source_key,position,entry_type,education_category)
-    VALUES(created,qa,NULL,90,'standard',NULL);
-  INSERT INTO public.resume_education_translations(education_entry_id,resume_id,locale,title,program,period,grade)
-    VALUES(created,qa,'zh','测试','项目','时间','成绩'),(created,qa,'en','Test','Program','Period','Grade');
-  UPDATE public.resume_education_entries SET position=91 WHERE id=created AND resume_id=qa;
-  GET DIAGNOSTICS affected=ROW_COUNT; IF affected<>1 THEN RAISE EXCEPTION 'authorized direct parent UPDATE was denied'; END IF;
-  UPDATE public.resume_education_translations SET title='更新' WHERE education_entry_id=created AND resume_id=qa AND locale='zh';
-  GET DIAGNOSTICS affected=ROW_COUNT; IF affected<>1 THEN RAISE EXCEPTION 'authorized direct translation UPDATE was denied'; END IF;
-  DELETE FROM public.resume_education_translations WHERE education_entry_id=created AND resume_id=qa;
-  GET DIAGNOSTICS affected=ROW_COUNT; IF affected<>2 THEN RAISE EXCEPTION 'authorized direct translation DELETE was denied'; END IF;
-  DELETE FROM public.resume_education_entries WHERE id=created AND resume_id=qa;
-  GET DIAGNOSTICS affected=ROW_COUNT; IF affected<>1 THEN RAISE EXCEPTION 'authorized direct parent DELETE was denied'; END IF;
+  BEGIN INSERT INTO public.resume_education_entries(resume_id,position,entry_type) VALUES(qa,900,'standard');
+  EXCEPTION WHEN insufficient_privilege THEN rejected:=true; END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Test RPC mode allowed a direct Education parent INSERT'; END IF;
+  rejected:=false;
+  BEGIN INSERT INTO public.resume_education_translations(education_entry_id,resume_id,locale,title,program,period,grade)
+    VALUES('ea000000-0000-4000-8000-000000000008',qa,'zh','x','x','x','x');
+  EXCEPTION WHEN insufficient_privilege THEN rejected:=true; END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Test RPC mode allowed a direct Education translation INSERT'; END IF;
+  rejected:=false;
   BEGIN INSERT INTO public.resume_education_entries(resume_id,position,entry_type) VALUES(official,900,'standard');
   EXCEPTION WHEN insufficient_privilege THEN rejected:=true; END;
   IF NOT rejected THEN RAISE EXCEPTION 'wrong-target direct parent INSERT was not denied'; END IF;
+  rejected:=false;
   rejected:=false;
   BEGIN INSERT INTO public.resume_education_translations(education_entry_id,resume_id,locale,title,program,period,grade)
     VALUES('d3000000-0000-4000-8000-000000000090',official,'zh','x','x','x','x');
@@ -187,13 +184,8 @@ BEGIN
 END
 $direct_rls$;
 RESET ROLE;
-SELECT extensions.ok(true,'authenticated Education direct mode permits QA CRUD and denies wrong-target writes on both tables');
+SELECT extensions.ok(true,'Test Education direct writes are denied and wrong-target writes cannot affect Owner rows');
 
--- Test-only activation is transaction-local and is rolled back at the end.
-UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND domain_key='education';
-INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
-VALUES('ea111111-1111-4111-8111-111111111111','education','trusted_network_context_v11',true)
-ON CONFLICT(resume_id,domain_key,requirement_key) DO UPDATE SET enabled=true;
 UPDATE public.resume_education_entries SET education_category=NULL
 WHERE resume_id='ea111111-1111-4111-8111-111111111111' AND id='ea000000-0000-4000-8000-000000000009';
 SET LOCAL ROLE authenticated;

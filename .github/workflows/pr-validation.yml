@@ -101,13 +101,14 @@ jobs:
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
           test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
+          test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
+          test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
           done
-          cmp "resume-admin/migrations/${education_experience}" "${cli_dir}/${education_experience}"
           printf '%s  %s\n' \
             "da5a755e903a10693e7c5ba3924afaf0218aec156f8d86421e3aba2819186950" \
             "resume-admin/migrations/${p0}" | sha256sum --check

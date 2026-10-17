@@ -269,7 +269,7 @@ DO $gate_isolation$
 BEGIN
   PERFORM public.rls_test_assert(NOT EXISTS (SELECT 1 FROM cms_private.resume_domain_requirements
     WHERE resume_id='20000000-0000-4000-8000-000000000001'), 'QA gate activation leaves Official requirements absent');
-  PERFORM public.rls_test_assert(cms_private.get_resume_write_mode('ea111111-1111-4111-8111-111111111111','education')='direct'
+  PERFORM public.rls_test_assert(cms_private.get_resume_write_mode('ea111111-1111-4111-8111-111111111111','projects')='direct'
     AND cms_private.get_resume_write_mode('ea111111-1111-4111-8111-111111111111','profile')='direct',
     'QA Introduction gate does not change other QA domains');
 END
