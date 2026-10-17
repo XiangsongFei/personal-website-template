@@ -1027,7 +1027,8 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
       if (!refreshed || typeof refreshed !== "object" || Array.isArray(refreshed)) return false;
       const currentEntry = refreshed as Record<string, unknown>;
       if (original.id === null) {
-        if (typeof currentEntry.id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentEntry.id)) return false;
+        if (currentEntry.id !== null && (typeof currentEntry.id !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentEntry.id))) return false;
       } else if (original.id !== currentEntry.id) return false;
       return JSON.stringify({ ...original, id: currentEntry.id }) === JSON.stringify(currentEntry);
     });

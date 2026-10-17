@@ -3,6 +3,12 @@
 -- owner approval; this migration is not executed as part of this change.
 BEGIN;
 
+-- Drain in-flight direct writes and block new DML while the Test collections
+-- are validated and their write modes are switched in this transaction.
+LOCK TABLE public.resume_education_entries, public.resume_education_translations,
+  public.resume_experience_entries, public.resume_experience_translations
+  IN SHARE MODE;
+
 DO $test_target_guard$
 DECLARE
   test_resume_id uuid;

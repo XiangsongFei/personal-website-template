@@ -33,6 +33,19 @@ describe("Education and Experience Test-only RPC routing migration", () => {
       .toBeLessThan(migration.indexOf("UPDATE cms_private.resume_write_modes"));
   });
 
+  it("holds DML-blocking locks on only the four validated collections through mode activation", () => {
+    const lock = "LOCK TABLE public.resume_education_entries, public.resume_education_translations,\n"
+      + "  public.resume_experience_entries, public.resume_experience_translations\n  IN SHARE MODE;";
+    const lockIndex = migration.indexOf(lock);
+    expect(lockIndex).toBeGreaterThan(migration.indexOf("BEGIN;"));
+    expect(lockIndex).toBeLessThan(migration.indexOf("DO $test_target_guard$"));
+    expect(lockIndex).toBeLessThan(migration.indexOf("FROM public.resume_education_entries"));
+    expect(lockIndex).toBeLessThan(migration.indexOf("FROM public.resume_experience_entries"));
+    expect(lockIndex).toBeLessThan(migration.indexOf("UPDATE cms_private.resume_write_modes"));
+    expect(migration.match(/LOCK TABLE/g)).toHaveLength(1);
+    expect(migration).not.toContain("resume_profile");
+  });
+
   it("changes no content, event history, reader, permissions, or Restore behavior and mirrors the deployment migration", () => {
     expect(mirror).toBe(migration);
     expect(migration).not.toMatch(/(?:INSERT|UPDATE|DELETE)\s+INTO\s+public\.resume_(?!write_modes|domain_requirements)/i);

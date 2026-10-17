@@ -99,4 +99,31 @@ describe("Education aggregate repository contract", () => {
     expect(eventCount).toBe(1);
     expect(repoAfterRefresh.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
   });
+
+  it("retries the exact pending Education payload while a new entry ID is still null", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    let eventCount = 0;
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push(body);
+      if (calls.length === 1) {
+        eventCount++;
+        throw new Error("response lost after commit");
+      }
+      return Response.json((body.education as Array<Record<string, unknown>>).map(entry => ({ ...entry, id: generatedId })));
+    }));
+
+    const entry: EducationItem = { ...education(), id: "local-education-new-entry", sourceKey: null };
+    const repo = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    await expect(repo.saveEducationWithWorker!(resumeId, [entry])).rejects.toThrow("save result is uncertain");
+    await expect(repo.saveEducationWithWorker!(resumeId, [entry])).resolves.toMatchObject([{ id: generatedId }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
+    expect(calls[0]?.education).toEqual(calls[1]?.education);
+    expect((calls[1]?.education as Array<Record<string, unknown>>)[0]?.id).toBeNull();
+    expect(eventCount).toBe(1);
+    expect(repo.hasPendingEducationWorkerSave!(resumeId)).toBe(false);
+  });
 });

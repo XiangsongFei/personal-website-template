@@ -53,4 +53,33 @@ describe("Experience aggregate retry contract", () => {
     expect((calls[0]?.experience as Array<Record<string, unknown>>)[0]?.id).toBeNull();
     expect(eventCount).toBe(1);
   });
+
+  it("retries the exact pending Experience payload while a new entry ID is still null", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => requestId });
+    const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "synthetic-user-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+    let eventCount = 0;
+    const calls: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push(body);
+      if (calls.length === 1) {
+        eventCount++;
+        throw new Error("response lost after commit");
+      }
+      return Response.json((body.experience as Array<Record<string, unknown>>).map(entry => ({ ...entry, id: generatedId })));
+    }));
+
+    const entry: ExperienceItem = { id: "local-experience-new-entry", position: 0, sourceKey: null,
+      translations: { zh: { organization: "机构", title: "新职位", period: "2025", description: "描述", location: null },
+        en: { organization: "Org", title: "New role", period: "2025", description: "Description", location: null } } };
+    const repo = createResumeRepository({ rpc: vi.fn(), auth } as unknown as SupabaseClient);
+    await expect(repo.saveExperienceWithWorker!(resumeId, [entry])).rejects.toThrow("save result is uncertain");
+    await expect(repo.saveExperienceWithWorker!(resumeId, [entry])).resolves.toMatchObject([{ id: generatedId }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.request_id).toBe(calls[1]?.request_id);
+    expect(calls[0]?.experience).toEqual(calls[1]?.experience);
+    expect((calls[1]?.experience as Array<Record<string, unknown>>)[0]?.id).toBeNull();
+    expect(eventCount).toBe(1);
+    expect(repo.hasPendingExperienceWorkerSave!(resumeId)).toBe(false);
+  });
 });
