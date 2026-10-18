@@ -552,6 +552,19 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(baseline.translations.zh.education_label).toBe("教育背景");
   });
 
+  it.each([
+    ["Activity Log is disabled", { activityLogEnabled: false, sectionTitlesTrustedContextRequired: true }],
+    ["trusted context is not required", { activityLogEnabled: true, sectionTitlesTrustedContextRequired: false }],
+  ] as const)("does not fall back to direct title writes when RPC mode is unsafe because %s", async (_reason, state) => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", ...state });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("Unsaved changes");
+    expect(methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
   it("keeps relocated section text draft in Preview and restores it on Cancel", async () => {
     window.sessionStorage.setItem("example-cv-cms:ui:preview-mode:education", "preview");
     const { repository } = makeRepository("skills");
