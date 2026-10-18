@@ -65,6 +65,16 @@ function parseSafeImageReference(value, explicitRegistry) {
 
 function startupImageDiagnostic(output) {
   const text = String(output);
+  let rejectedCandidate = false;
+  const diagnostic = (image) => ({
+    status: "validated",
+    line: formatStartupImageDiagnostic(image),
+  });
+  const rejected = (candidate) => {
+    const image = parseSafeImageReference(candidate);
+    if (!image) rejectedCandidate = true;
+    return image;
+  };
   const references = [
     /\bpull access denied for\s+["']?([^\s"',;]+)["']?/i,
     /\bfailed to pull(?: image)?\s+["']?([^\s"',;]+)["']?/i,
@@ -73,8 +83,8 @@ function startupImageDiagnostic(output) {
   for (const pattern of references) {
     const match = pattern.exec(text);
     if (!match) continue;
-    const image = parseSafeImageReference(match[1]);
-    if (image) return formatStartupImageDiagnostic(image);
+    const image = rejected(match[1]);
+    if (image) return diagnostic(image);
   }
 
   // Supabase CLI 2.119.0 aggregates pull failures as:
@@ -85,10 +95,13 @@ function startupImageDiagnostic(output) {
     const attempts = /([^\s;,]+)\s+attempt\s+\d+\s*:/gi;
     attempts.lastIndex = aggregate.index + aggregate[0].length;
     let attempt;
+    let foundAttempt = false;
     while ((attempt = attempts.exec(text)) !== null) {
-      const image = parseSafeImageReference(attempt[1]);
-      if (image) return formatStartupImageDiagnostic(image);
+      foundAttempt = true;
+      const image = rejected(attempt[1]);
+      if (image) return diagnostic(image);
     }
+    if (!foundAttempt) return { status: "format-mismatch", line: "" };
   }
 
   // Docker commonly reports registry requests as a quoted /v2/<repo>/manifests/<tag>
@@ -96,17 +109,22 @@ function startupImageDiagnostic(output) {
   for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
     try {
       const url = new URL(match[0]);
-      if (url.username || url.password || url.search || url.hash || !safeImageRegistries.has(url.hostname.toLowerCase())) continue;
       const endpoint = /^\/v2\/(.+)\/(?:manifests|blobs)\/([^/]+)$/.exec(url.pathname);
       if (!endpoint) continue;
       const reference = `${endpoint[1]}:${endpoint[2]}`;
+      if (url.username || url.password || url.search || url.hash || !safeImageRegistries.has(url.hostname.toLowerCase())) {
+        rejectedCandidate = true;
+        continue;
+      }
       const image = parseSafeImageReference(reference, url.hostname);
-      if (image) return formatStartupImageDiagnostic(image);
+      if (image) return diagnostic(image);
+      rejectedCandidate = true;
     } catch {
       // Invalid or credential-bearing URLs are intentionally omitted.
     }
   }
-  return "";
+  if (rejectedCandidate) return { status: "allowlist-rejected", line: "" };
+  return { status: "not-found", line: "" };
 }
 
 function formatStartupImageDiagnostic(image) {
@@ -171,8 +189,9 @@ function collectStartupContainerDiagnostics(projectId, before) {
 function startupFailure(error, diagnostics) {
   const category = error?.startupFailureCategory ?? "unclassified-start-failure";
   const exitCode = Number.isInteger(error?.startupExitCode) ? error.startupExitCode : "unavailable";
+  const imageStatus = error?.startupImageDiagnosticStatus ?? "not-found";
   const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
-  return `${safeStartFailure}\nStartup failure category: ${category}${image}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
+  return `${safeStartFailure}\nStartup failure category: ${category}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
 }
 
 function run(command, args, options = {}) {
@@ -190,7 +209,9 @@ function run(command, args, options = {}) {
       if (startDiagnostics) {
         const startOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
         error.startupFailureCategory = classifyStartFailure(startOutput);
-        error.startupImageDiagnostic = startupImageDiagnostic(startOutput);
+        const imageDiagnostic = startupImageDiagnostic(startOutput);
+        error.startupImageDiagnosticStatus = imageDiagnostic.status;
+        error.startupImageDiagnostic = imageDiagnostic.line;
         error.startupExitCode = result.status;
       }
       throw error;
@@ -576,40 +597,72 @@ function runSecuritySelfTests() {
   }), (error) => error.message === safeStartFailure
     && error.startupFailureCategory === "unclassified-start-failure"
     && error.startupExitCode === 1
+    && error.startupImageDiagnosticStatus === "not-found"
     && !error.message.includes("generated-") && !error.message.includes("sb_secret_"));
   assert.equal(classifyStartFailure("failed to pull image: unauthorized: password=private"), "image-pull-authentication");
   assert.equal(classifyStartFailure("daemon reported no space left on device"), "disk-capacity");
-  assert.equal(startupImageDiagnostic("pull access denied for library/kong:2.8.1, repository does not exist or may require 'docker login'"),
-    "Startup image: registry=docker.io image=library/kong:2.8.1 service=kong");
-  assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0": unauthorized'),
-    "Startup image: registry=ghcr.io image=supabase/cli/auth:v2.197.0 service=auth");
+  assert.deepEqual(startupImageDiagnostic("pull access denied for library/kong:2.8.1, repository does not exist or may require 'docker login'"), {
+    status: "validated", line: "Startup image: registry=docker.io image=library/kong:2.8.1 service=kong",
+  });
+  assert.deepEqual(startupImageDiagnostic('Head "https://ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0": unauthorized'), {
+    status: "validated", line: "Startup image: registry=ghcr.io image=supabase/cli/auth:v2.197.0 service=auth",
+  });
   const validDigest = "a".repeat(64);
   const aggregatePullFailure = `failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${validDigest} attempt 0: unauthorized: token=first-secret; docker.io/supabase/postgres:15.8.1 attempt 1: password=second-secret`;
-  assert.equal(startupImageDiagnostic(aggregatePullFailure),
-    "Startup image: registry=ghcr.io image=supabase/cli/postgres:15.8.1 service=db");
-  assert.equal(startupImageDiagnostic(`failed to pull docker image from all registries: docker.io/supabase/postgres:15.8.1 attempt 0: denied; ghcr.io/supabase/cli/postgres:15.8.1@sha256:${validDigest} attempt 1: unauthorized`),
-    "Startup image: registry=docker.io image=supabase/postgres:15.8.1 service=db");
-  assert.equal(startupImageDiagnostic(`failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${"a".repeat(63)} attempt 0: unauthorized`), "");
-  assert.equal(startupImageDiagnostic(`failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${"g".repeat(64)} attempt 0: unauthorized`), "");
-  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: public.ecr.aws/untrusted/private:tag@sha256:" + validDigest + " attempt 0: unauthorized"), "");
-  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: private.registry.invalid/supabase/postgres:tag@sha256:" + validDigest + " attempt 0: unauthorized"), "");
-  assert.equal(startupImageDiagnostic("failed to pull docker image from all registries: https://user:secret@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret attempt 0: unauthorized"), "");
+  assert.deepEqual(startupImageDiagnostic(aggregatePullFailure), {
+    status: "validated", line: "Startup image: registry=ghcr.io image=supabase/cli/postgres:15.8.1 service=db",
+  });
+  assert.deepEqual(startupImageDiagnostic(`failed to pull docker image from all registries: docker.io/supabase/postgres:15.8.1 attempt 0: denied; ghcr.io/supabase/cli/postgres:15.8.1@sha256:${validDigest} attempt 1: unauthorized`), {
+    status: "validated", line: "Startup image: registry=docker.io image=supabase/postgres:15.8.1 service=db",
+  });
+  assert.deepEqual(startupImageDiagnostic("authentication required"), { status: "not-found", line: "" });
+  assert.deepEqual(startupImageDiagnostic("failed to pull docker image from all registries: malformed candidate"), { status: "format-mismatch", line: "" });
+  assert.deepEqual(startupImageDiagnostic(`failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${"a".repeat(63)} attempt 0: unauthorized`), { status: "allowlist-rejected", line: "" });
+  assert.deepEqual(startupImageDiagnostic(`failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${"g".repeat(64)} attempt 0: unauthorized`), { status: "allowlist-rejected", line: "" });
+  assert.deepEqual(startupImageDiagnostic("failed to pull docker image from all registries: public.ecr.aws/untrusted/private:tag@sha256:" + validDigest + " attempt 0: unauthorized"), { status: "allowlist-rejected", line: "" });
+  assert.deepEqual(startupImageDiagnostic("failed to pull docker image from all registries: private.registry.invalid/supabase/postgres:tag@sha256:" + validDigest + " attempt 0: unauthorized"), { status: "allowlist-rejected", line: "" });
+  const credentialCandidate = startupImageDiagnostic("failed to pull docker image from all registries: https://user:secret@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret attempt 0: unauthorized");
+  assert.deepEqual(credentialCandidate, { status: "allowlist-rejected", line: "" });
+  const unsafeOutput = startupFailure({
+    startupFailureCategory: "image-pull-authentication",
+    startupImageDiagnosticStatus: credentialCandidate.status,
+    startupImageDiagnostic: credentialCandidate.line,
+    startupExitCode: 1,
+  }, "Startup containers: none created or ownership could not be established.");
+  assert.doesNotMatch(unsafeOutput, /secret|token=|user:|ghcr\.io|supabase\/cli\/auth/);
   const safeAggregateFailure = startupFailure(
     Object.assign(new Error(aggregatePullFailure), {
       startupFailureCategory: "image-pull-authentication",
-      startupImageDiagnostic: startupImageDiagnostic(aggregatePullFailure),
+      startupImageDiagnosticStatus: startupImageDiagnostic(aggregatePullFailure).status,
+      startupImageDiagnostic: startupImageDiagnostic(aggregatePullFailure).line,
       startupExitCode: 1,
     }),
     "Startup containers: none created or ownership could not be established.",
   );
   assert.match(safeAggregateFailure, /registry=ghcr\.io image=supabase\/cli\/postgres:15\.8\.1 service=db/);
   assert.doesNotMatch(safeAggregateFailure, /first-secret|second-secret|password|token=/);
-  assert.equal(startupImageDiagnostic("pull access denied for private.registry.invalid/team/image:tag, unauthorized"), "");
-  assert.equal(startupImageDiagnostic('Head "https://ghcr.io/v2/untrusted/private-package/manifests/secret-tag": unauthorized'), "");
-  assert.equal(startupImageDiagnostic('Head "https://user:token@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret": unauthorized'), "");
+  assert.deepEqual(startupImageDiagnostic("pull access denied for private.registry.invalid/team/image:tag, unauthorized"), { status: "allowlist-rejected", line: "" });
+  assert.deepEqual(startupImageDiagnostic('Head "https://ghcr.io/v2/untrusted/private-package/manifests/secret-tag": unauthorized'), { status: "allowlist-rejected", line: "" });
+  assert.deepEqual(startupImageDiagnostic('Head "https://user:token@ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0?token=secret": unauthorized'), { status: "allowlist-rejected", line: "" });
+  const rejectedImageFailure = startupFailure(Object.assign(new Error("raw private.registry.invalid/team/image:tag"), {
+    startupFailureCategory: "image-pull-authentication", startupImageDiagnosticStatus: "allowlist-rejected",
+    startupExitCode: 1,
+  }), "Startup containers: none created or ownership could not be established.");
+  assert.match(rejectedImageFailure, /Startup image diagnostic status: allowlist-rejected/);
+  assert.doesNotMatch(rejectedImageFailure, /private\.registry|team\/image|raw/);
+  assert.throws(() => run("supabase", ["start"], {
+    spawn: () => ({ status: 1, stdout: "failed to pull docker image from all registries: private.registry.invalid/team/image:tag attempt 0: unauthorized token=secret", stderr: "" }),
+    stdio: "pipe", failureMessage: safeStartFailure, startDiagnostics: true,
+  }), (error) => {
+    const safe = startupFailure(error, "Startup containers: none created or ownership could not be established.");
+    return error.startupImageDiagnosticStatus === "allowlist-rejected"
+      && safe.includes("Startup image diagnostic status: allowlist-rejected")
+      && !/private\.registry|team\/image|token=secret|unauthorized/.test(safe);
+  });
   const safeImageFailure = startupFailure(
     Object.assign(new Error("raw token=secret"), {
-      startupFailureCategory: "image-pull-authentication", startupImageDiagnostic: startupImageDiagnostic("pull access denied for library/kong:2.8.1, unauthorized"), startupExitCode: 1,
+      startupFailureCategory: "image-pull-authentication", startupImageDiagnosticStatus: startupImageDiagnostic("pull access denied for library/kong:2.8.1, unauthorized").status,
+      startupImageDiagnostic: startupImageDiagnostic("pull access denied for library/kong:2.8.1, unauthorized").line, startupExitCode: 1,
     }),
     "Startup containers: none created or ownership could not be established.",
   );
@@ -626,6 +679,7 @@ function runSecuritySelfTests() {
     `Startup container diagnostics (1):\n${safeContainerSummary}`,
   );
   assert.match(safeStartupFailure, /Startup failure category: image-pull-authentication/);
+  assert.match(safeStartupFailure, /Startup image diagnostic status: not-found/);
   assert.match(safeStartupFailure, /Supabase CLI exit code: 1/);
   assert.doesNotMatch(safeStartupFailure, /generated-|sb_secret_|secret|private|postgresql:|host/);
   assert.throws(() => run("supabase", ["test", "db"], {
