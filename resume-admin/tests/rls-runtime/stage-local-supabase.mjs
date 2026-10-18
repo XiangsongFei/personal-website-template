@@ -4,12 +4,12 @@
 /* global console, process, URL */
 import { randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer, isIP } from "node:net";
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { accessSync, chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants as osConstants, tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
 const sourceProject = resolve(utilityDir, "supabase");
@@ -36,6 +36,7 @@ const safeImageServices = new Map([
   ["supabase/cli/analytics", "analytics"],
 ]);
 const safeImageRegistries = new Set(["docker.io", "index.docker.io", "registry-1.docker.io", "ghcr.io", "public.ecr.aws"]);
+const safeTerminationSignals = new Set(Object.keys(osConstants.signals));
 
 function parseSafeImageReference(value, explicitRegistry) {
   const reference = String(value ?? "").trim();
@@ -59,7 +60,8 @@ function parseSafeImageReference(value, explicitRegistry) {
   }
   if (["index.docker.io", "registry-1.docker.io"].includes(registry)) registry = "docker.io";
   if (!service) return null;
-  const image = `${repository}${match.groups.tag ? `:${match.groups.tag}` : ""}`;
+  // Tags and digests are deliberately omitted from all diagnostics.
+  const image = repository;
   return { registry, image, service };
 }
 
@@ -218,12 +220,230 @@ function collectStartupContainerDiagnostics(projectId, before) {
   }
 }
 
-function startupFailure(error, diagnostics) {
+function startupFailure(error, diagnostics, pullDiagnostics = "") {
   const category = error?.startupFailureCategory ?? "unclassified-start-failure";
   const exitCode = Number.isInteger(error?.startupExitCode) ? error.startupExitCode : "unavailable";
   const imageStatus = error?.startupImageDiagnosticStatus ?? "not-found";
   const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
-  return `${safeStartFailure}\nStartup failure category: ${category}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}\n${diagnostics}`;
+  const pulls = pullDiagnostics ? `\n${pullDiagnostics}` : "";
+  return `${safeStartFailure}\nStartup failure category: ${category}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
+}
+
+const pullFailureCategories = new Set([
+  "success", "image-pull-rate-limit", "image-pull-authentication", "image-unavailable",
+  "network-timeout", "unclassified-pull-failure", "docker-cli-launch-failure",
+]);
+
+function classifyDockerPullFailure(output, exitCode) {
+  if (exitCode === 0) return "success";
+  const text = String(output).toLowerCase();
+  if (/toomanyrequests|too many requests|rate limit exceeded|429\s+too many requests/.test(text)) return "image-pull-rate-limit";
+  if (/pull access denied|unauthorized|authentication required|requested access to the resource is denied/.test(text)) return "image-pull-authentication";
+  if (/manifest unknown|no matching manifest|not found|name unknown/.test(text)) return "image-unavailable";
+  if (/tls handshake timeout|i\/o timeout|context deadline exceeded|connection reset by peer|network is unreachable/.test(text)) return "network-timeout";
+  return "unclassified-pull-failure";
+}
+
+function readPullObserverRecords(diagnosticsPath) {
+  if (!existsSync(diagnosticsPath)) return [];
+  let records;
+  try { records = JSON.parse(readFileSync(diagnosticsPath, "utf8")); } catch { return null; }
+  if (!Array.isArray(records)) return null;
+  const validated = [];
+  for (const record of records) {
+    if (!record || !Number.isSafeInteger(record.order) || record.order !== validated.length + 1
+      || !Number.isSafeInteger(record.attempt) || record.attempt < 1
+      || !["validated", "allowlist-rejected", "format-mismatch"].includes(record.candidateStatus)
+      || !((record.exitCode === null && record.category === null && record.signal === null)
+        || (Number.isInteger(record.exitCode) && record.exitCode >= 0 && record.exitCode <= 255
+          && record.signal === null && pullFailureCategories.has(record.category))
+        || (record.exitCode === null && safeTerminationSignals.has(record.signal)
+          && pullFailureCategories.has(record.category)))) return null;
+    if (record.candidateStatus === "validated") {
+      const expectedKeys = ["attempt", "candidateStatus", "category", "exitCode", "image", "order", "registry", "service", "signal"];
+      if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)
+        || !expectedKeys.every((key) => Object.hasOwn(record, key))) return null;
+      const safe = parseSafeImageReference(`${record.registry}/${record.image}`);
+      if (!safe || safe.registry !== record.registry || safe.image !== record.image || safe.service !== record.service) return null;
+      const expectedAttempt = validated.filter((previous) => previous.candidateStatus === "validated"
+        && previous.registry === safe.registry && previous.image === safe.image).length + 1;
+      if (record.attempt !== expectedAttempt) return null;
+      validated.push({ order: record.order, attempt: record.attempt, candidateStatus: record.candidateStatus,
+        registry: safe.registry, image: safe.image, service: safe.service, exitCode: record.exitCode, category: record.category, signal: record.signal });
+    } else {
+      const expectedKeys = ["attempt", "candidateStatus", "category", "exitCode", "order", "signal"];
+      if (record.attempt !== 1 || JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)) return null;
+      validated.push({ order: record.order, attempt: record.attempt, candidateStatus: record.candidateStatus,
+        exitCode: record.exitCode, category: record.category, signal: record.signal });
+    }
+  }
+  return validated;
+}
+
+function formatPullObserverDiagnostics(diagnosticsPath) {
+  let records;
+  try { records = readPullObserverRecords(diagnosticsPath); } catch { records = null; }
+  if (records === null) return "Startup pull observer: diagnostics unavailable; unverified fields omitted.";
+  if (records.length === 0) return "Startup pull observer: no pull attempts observed.";
+  const lines = records.slice(0, 30).map((record) => {
+    const imageFields = record.candidateStatus === "validated"
+      ? ` registry=${record.registry} image=${record.image} service=${record.service}` : ` candidate=${record.candidateStatus}`;
+    const exitCode = record.exitCode === null ? "unavailable" : record.exitCode;
+    const category = record.category ?? "unclassified-pull-failure";
+    const signal = record.signal ? ` signal=${record.signal}` : "";
+    return `Startup image pull: order=${record.order} attempt=${record.attempt}${imageFields} exit_code=${exitCode}${signal} detail=${category}`;
+  });
+  if (records.length > lines.length) lines.push(`Startup image pull: additional attempts omitted=${records.length - lines.length}.`);
+  return `Startup pull observer: observed ${records.length} pull attempt(s).\n${lines.join("\n")}`;
+}
+
+function updatePullObserverState(statePath, update) {
+  const lockPath = `${statePath}.lock`;
+  const deadline = Date.now() + 5000;
+  let locked = false;
+  while (!locked && Date.now() < deadline) {
+    try {
+      mkdirSync(lockPath, { mode: 0o700 });
+      locked = true;
+    } catch (error) {
+      if (error?.code !== "EEXIST") return null;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  if (!locked) return null;
+  try {
+    const records = readPullObserverRecords(statePath);
+    if (records === null) return null;
+    const result = update(records);
+    const temporaryPath = `${statePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    writeFileSync(temporaryPath, JSON.stringify(records), { mode: 0o600 });
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, statePath);
+    return result;
+  } catch {
+    return null;
+  } finally {
+    try { rmSync(lockPath, { recursive: true, force: true }); } catch {
+      // A diagnostic lock cleanup failure must not alter the observed command result.
+    }
+  }
+}
+
+function reservePullObserverAttempt(statePath, candidateStatus, image) {
+  return updatePullObserverState(statePath, (records) => {
+    const order = records.length + 1;
+    const attempt = image
+      ? records.filter((record) => record.candidateStatus === "validated"
+        && record.registry === image.registry && record.image === image.image).length + 1
+      : 1;
+    const reservation = {
+      order, attempt, candidateStatus, exitCode: null, category: null, signal: null,
+      ...(candidateStatus === "validated" ? { registry: image.registry, image: image.image, service: image.service } : {}),
+    };
+    records.push(reservation);
+    return { order, attempt };
+  });
+}
+
+function completePullObserverAttempt(statePath, order, exitCode, category, signal) {
+  updatePullObserverState(statePath, (records) => {
+    const record = records.find((entry) => entry.order === order);
+    if (record) Object.assign(record, { exitCode, category, signal });
+  });
+}
+
+function preserveChildTermination(code, signal) {
+  if (signal && safeTerminationSignals.has(signal)) {
+    try {
+      process.kill(process.pid, signal);
+      return;
+    } catch {
+      const signalNumber = osConstants.signals[signal];
+      process.exitCode = Number.isInteger(signalNumber) ? 128 + signalNumber : 1;
+      return;
+    }
+  }
+  process.exitCode = Number.isInteger(code) ? code : 1;
+}
+
+export async function dockerPullObserverMain(args, config) {
+  if (!Array.isArray(args) || typeof config?.realDockerPath !== "string") {
+    process.exitCode = 127;
+    return;
+  }
+  const isPull = args[0] === "pull";
+  const candidateArgument = args.length === 2 ? args[1] : null;
+  const image = !isPull || candidateArgument === null ? null : parseSafeImageReference(candidateArgument);
+  const candidateStatus = candidateArgument === null ? "format-mismatch" : (image ? "validated" : "allowlist-rejected");
+  const reservation = isPull ? reservePullObserverAttempt(config.diagnosticsPath, candidateStatus, image) : null;
+  const child = spawn(config.realDockerPath, args, isPull
+    ? { stdio: ["inherit", "pipe", "pipe"] }
+    : { stdio: "inherit" });
+  if (!isPull) {
+    let launchFailed = false;
+    child.once("error", () => { launchFailed = true; });
+    child.once("close", (code, signal) => preserveChildTermination(launchFailed ? 127 : code, signal));
+    return;
+  }
+
+  let captured = "";
+  let launchFailed = false;
+  const captureLimit = 64 * 1024;
+  const capture = (chunk) => {
+    if (captured.length < captureLimit) captured += chunk.toString("utf8").slice(0, captureLimit - captured.length);
+  };
+  child.stdout?.on("data", (chunk) => { process.stdout.write(chunk); capture(chunk); });
+  child.stderr?.on("data", (chunk) => { process.stderr.write(chunk); capture(chunk); });
+  child.once("error", () => { launchFailed = true; });
+  const termination = await new Promise((resolveExit) => {
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
+  const signal = safeTerminationSignals.has(termination.signal) ? termination.signal : null;
+  const exitCode = launchFailed ? 127 : (Number.isInteger(termination.code) ? termination.code : null);
+  const category = launchFailed ? "docker-cli-launch-failure" : classifyDockerPullFailure(captured, exitCode);
+  if (reservation) completePullObserverAttempt(config.diagnosticsPath, reservation.order, exitCode, category, signal);
+  preserveChildTermination(exitCode, signal);
+}
+
+function findExecutable(name, pathValue) {
+  for (const directory of String(pathValue ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      const resolved = realpathSync(candidate);
+      accessSync(resolved, fsConstants.X_OK);
+      return resolved;
+    } catch {
+      // Continue only through the caller's existing PATH entries.
+    }
+  }
+  return null;
+}
+
+function writeDockerPullObserver(directory, diagnosticsPath, realDockerPath) {
+  const shimPath = join(directory, "docker");
+  const moduleUrl = pathToFileURL(fileURLToPath(import.meta.url)).href;
+  const config = { realDockerPath, diagnosticsPath };
+  const source = `#!/usr/bin/env node\nvoid import(${JSON.stringify(moduleUrl)}).then(({ dockerPullObserverMain }) => dockerPullObserverMain(process.argv.slice(2), ${JSON.stringify(config)})).catch(() => { process.exitCode = 127; });\n`;
+  writeFileSync(shimPath, source, { mode: 0o700 });
+  chmodSync(shimPath, 0o700);
+  return shimPath;
+}
+
+function installDockerPullObserver(context) {
+  const realDockerPath = findExecutable("docker", process.env.PATH);
+  if (!realDockerPath) throw new Error("Docker pull observer unavailable; refusing to start without diagnostic coverage");
+  const directory = mkdtempSync(join(context.stagedRoot, "docker-pull-observer-"));
+  chmodSync(directory, 0o700);
+  const diagnosticsPath = join(directory, "pull-attempts.json");
+  writeFileSync(diagnosticsPath, "[]", { mode: 0o600 });
+  chmodSync(diagnosticsPath, 0o600);
+  writeDockerPullObserver(directory, diagnosticsPath, realDockerPath);
+  return { path: `${directory}${delimiter}${process.env.PATH ?? ""}`, diagnosticsPath };
+}
+
+function removeTemporaryStage(stageRoot) {
+  rmSync(stageRoot, { recursive: true, force: true });
 }
 
 function run(command, args, options = {}) {
@@ -533,9 +753,11 @@ function stageProject(stageRoot, projectId, ports) {
 
 function runSupabase(context, args, options = {}) {
   let output;
+  let pullObserver;
   try {
+    if (args[0] === "start") pullObserver = installDockerPullObserver(context);
     output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
-      env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env },
+      env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env, ...(pullObserver ? { PATH: pullObserver.path } : {}) },
       stdio: "pipe",
       discardOutput: args[0] !== "status",
       failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
@@ -543,7 +765,12 @@ function runSupabase(context, args, options = {}) {
       startDiagnostics: args[0] === "start",
     });
   } catch (error) {
-    if (args[0] === "start") throw new Error(startupFailure(error, collectStartupContainerDiagnostics(context.projectId, context.preexistingResources)));
+    if (args[0] === "start") {
+      const pullDiagnostics = pullObserver
+        ? formatPullObserverDiagnostics(pullObserver.diagnosticsPath)
+        : "Startup pull observer: unavailable; no image fields were emitted.";
+      throw new Error(startupFailure(error, collectStartupContainerDiagnostics(context.projectId, context.preexistingResources), pullDiagnostics));
+    }
     throw error;
   }
   if (args[0] === "start") console.log("Isolated Supabase startup completed; validating published port bindings.");
@@ -552,7 +779,249 @@ function runSupabase(context, args, options = {}) {
   return output;
 }
 
-function runSecuritySelfTests() {
+async function runDockerPullObserverSelfTests() {
+  const testRoot = mkdtempSync(join(tmpdir(), "pr1-docker-pull-observer-self-test-"));
+  try {
+    chmodSync(testRoot, 0o700);
+    const fakeDocker = join(testRoot, "fake-docker");
+    const shimDirectory = mkdtempSync(join(testRoot, "shim-"));
+    const diagnosticsPath = join(testRoot, "pull-attempts.json");
+    const callsPath = join(testRoot, "calls.jsonl");
+    writeFileSync(diagnosticsPath, "[]", { mode: 0o600 });
+    writeFileSync(callsPath, "", { mode: 0o600 });
+    writeFileSync(fakeDocker, `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+appendFileSync(process.env.FAKE_DOCKER_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+const finish = () => {
+  const stdout = process.env.FAKE_DOCKER_STDOUT ?? "fake docker stdout\\n";
+  const stderr = process.env.FAKE_DOCKER_STDERR ?? "fake docker stderr\\n";
+  if (process.env.FAKE_DOCKER_SIGNAL) {
+    let pendingWrites = 2;
+    const terminate = () => { if (--pendingWrites === 0) process.kill(process.pid, process.env.FAKE_DOCKER_SIGNAL); };
+    process.stdout.write(stdout, terminate);
+    process.stderr.write(stderr, terminate);
+  } else {
+    process.stdout.write(stdout);
+    process.stderr.write(stderr);
+    process.exit(Number(process.env.FAKE_DOCKER_EXIT ?? 0));
+  }
+};
+const delay = Number(process.env.FAKE_DOCKER_DELAY_MS ?? 0);
+if (delay > 0) setTimeout(finish, delay); else finish();
+`, { mode: 0o700 });
+    chmodSync(fakeDocker, 0o700);
+    const shim = writeDockerPullObserver(shimDirectory, diagnosticsPath, fakeDocker);
+    const invoke = (args, env = {}) => spawnSync(shim, args, {
+      encoding: "utf8", env: { ...process.env, FAKE_DOCKER_CALLS: callsPath, ...env },
+    });
+    const invokeAsync = (args, env = {}) => new Promise((resolveResult, rejectResult) => {
+      const child = spawn(shim, args, { env: { ...process.env, FAKE_DOCKER_CALLS: callsPath, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.once("error", rejectResult);
+      child.once("close", (code, signal) => resolveResult({ code, signal, stdout, stderr }));
+    });
+    const waitForCallCount = async (expectedCount) => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const content = readFileSync(callsPath, "utf8").trim();
+        if (content && content.split(/\r?\n/).length >= expectedCount) return;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+      }
+      assert.fail(`Timed out waiting for ${expectedCount} synthetic Docker invocation(s)`);
+    };
+
+    const firstDigest = `@sha256:${"a".repeat(64)}`;
+    const first = `ghcr.io/supabase/postgres:15.8.1${firstDigest}`;
+    const second = "docker.io/library/kong:2.8.1";
+    for (const [candidate, stderr] of [
+      [first, "429 Too Many Requests token=rate-secret"],
+      [second, "unauthorized password=auth-secret"],
+      [first, "TLS handshake timeout authorization=network-secret"],
+    ]) {
+      const result = invoke(["pull", candidate], {
+        FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "progress url=https://user:pull-secret@example.invalid/",
+        FAKE_DOCKER_STDERR: stderr,
+      });
+      assert.equal(result.status, 1);
+    }
+    let records = readPullObserverRecords(diagnosticsPath);
+    assert.deepEqual(records.map(({ order, attempt, registry, image, service, exitCode, category, signal }) =>
+      ({ order, attempt, registry, image, service, exitCode, category, signal })), [
+      { order: 1, attempt: 1, registry: "ghcr.io", image: "supabase/postgres", service: "db", exitCode: 1, category: "image-pull-rate-limit", signal: null },
+      { order: 2, attempt: 1, registry: "docker.io", image: "library/kong", service: "kong", exitCode: 1, category: "image-pull-authentication", signal: null },
+      { order: 3, attempt: 2, registry: "ghcr.io", image: "supabase/postgres", service: "db", exitCode: 1, category: "network-timeout", signal: null },
+    ]);
+    const safePulls = formatPullObserverDiagnostics(diagnosticsPath);
+    assert.match(safePulls, /order=1 attempt=1 registry=ghcr\.io image=supabase\/postgres service=db exit_code=1 detail=image-pull-rate-limit/);
+    assert.match(safePulls, /order=2 attempt=1 registry=docker\.io image=library\/kong service=kong exit_code=1 detail=image-pull-authentication/);
+    assert.match(safePulls, /order=3 attempt=2 registry=ghcr\.io image=supabase\/postgres service=db exit_code=1 detail=network-timeout/);
+    assert.doesNotMatch(safePulls, /15\.8\.1|sha256/i);
+    assert.doesNotMatch(safePulls, /sha256|rate-secret|auth-secret|network-secret|pull-secret|authorization=|https?:\/\//i);
+    const storedDiagnostics = readFileSync(diagnosticsPath, "utf8");
+    assert.doesNotMatch(storedDiagnostics, /sha256|rate-secret|auth-secret|network-secret|pull-secret|authorization=|https?:\/\//i);
+
+    const callsBeforeConcurrentPulls = readFileSync(callsPath, "utf8").trim().split(/\r?\n/).length;
+    const firstConcurrent = invokeAsync(["pull", "ghcr.io/supabase/postgres:15.8.1"], {
+      FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_DELAY_MS: "120", FAKE_DOCKER_STDERR: "429 Too Many Requests concurrent-one-secret",
+    });
+    await waitForCallCount(callsBeforeConcurrentPulls + 1);
+    const secondConcurrent = invokeAsync(["pull", "ghcr.io/supabase/postgres:15.8.1"], {
+      FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_DELAY_MS: "10", FAKE_DOCKER_STDERR: "unauthorized concurrent-two-secret",
+    });
+    const concurrentResults = await Promise.all([firstConcurrent, secondConcurrent]);
+    assert.deepEqual(concurrentResults.map((result) => result.code), [1, 1]);
+    const concurrentRecords = readPullObserverRecords(diagnosticsPath).slice(records.length, records.length + 2);
+    assert.deepEqual(concurrentRecords.map(({ order, attempt, category }) => ({ order, attempt, category })), [
+      { order: records.length + 1, attempt: 3, category: "image-pull-rate-limit" },
+      { order: records.length + 2, attempt: 4, category: "image-pull-authentication" },
+    ]);
+    assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /concurrent-one-secret|concurrent-two-secret/);
+    assert.doesNotMatch(readdirSync(testRoot).join("\n"), /\.lock|\.tmp/);
+
+    const categoryCases = [
+      ["requested access to the resource is denied", "image-pull-authentication"],
+      ["manifest unknown", "image-unavailable"],
+      ["connection reset by peer", "network-timeout"],
+      ["unexpected private error token=classification-secret", "unclassified-pull-failure"],
+    ];
+    for (const [stderr, category] of categoryCases) {
+      const result = invoke(["pull", "ghcr.io/supabase/gotrue:v2.197.0"], {
+        FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: stderr,
+      });
+      assert.equal(result.status, 1);
+      assert.equal(readPullObserverRecords(diagnosticsPath).at(-1).category, category);
+    }
+    const success = invoke(["pull", "ghcr.io/supabase/realtime:v2.197.0"], {
+      FAKE_DOCKER_EXIT: "0", FAKE_DOCKER_STDOUT: "pull-complete", FAKE_DOCKER_STDERR: "",
+    });
+    assert.equal(success.status, 0);
+    assert.equal(readPullObserverRecords(diagnosticsPath).at(-1).category, "success");
+
+    const malicious = "https://user:top-secret@evil.invalid/supabase/postgres:15.8.1?token=secret-value";
+    const expectedRejectedOrder = readPullObserverRecords(diagnosticsPath).length + 1;
+    const rejected = invoke(["pull", malicious], {
+      FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "unauthorized password=secret-value",
+    });
+    assert.equal(rejected.status, 1);
+    const rejectedRecord = readPullObserverRecords(diagnosticsPath).at(-1);
+    assert.deepEqual(rejectedRecord, {
+      order: expectedRejectedOrder, attempt: 1,
+      candidateStatus: "allowlist-rejected", exitCode: 1, category: "image-pull-authentication",
+      signal: null,
+    });
+    assert.doesNotMatch(readFileSync(diagnosticsPath, "utf8"), /evil\.invalid|top-secret|secret-value|sha256|token=/i);
+    assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /evil\.invalid|top-secret|secret-value|token=|password=/i);
+    for (const unsafeTag of ["15.8.1-secret-tag", "15.8.1-ghp_credentialLikeToken123"]) {
+      const result = invoke(["pull", `ghcr.io/supabase/postgres:${unsafeTag}`], {
+        FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "image unavailable",
+      });
+      assert.equal(result.status, 1);
+    }
+    const afterUnsafeTags = formatPullObserverDiagnostics(diagnosticsPath);
+    assert.doesNotMatch(afterUnsafeTags, /secret-tag|ghp_|credentialLikeToken123|15\.8\.1/);
+    assert.doesNotMatch(readFileSync(diagnosticsPath, "utf8"), /secret-tag|ghp_|credentialLikeToken123|15\.8\.1/);
+    const unknownReference = invoke(["pull", "ghcr.io/untrusted/private-package:latest"], {
+      FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "unauthorized",
+    });
+    assert.equal(unknownReference.status, 1);
+    assert.equal(readPullObserverRecords(diagnosticsPath).at(-1).candidateStatus, "allowlist-rejected");
+    assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /untrusted|private-package/);
+    const tamperedDiagnosticsPath = join(testRoot, "tampered-pull-attempts.json");
+    writeFileSync(tamperedDiagnosticsPath, JSON.stringify([{
+      order: 1, attempt: 1, candidateStatus: "validated", registry: "ghcr.io",
+      image: "supabase/postgres:15.8.1", service: "db", exitCode: 1,
+      category: "image-pull-authentication", rawCandidate: "https://user:secret@evil.invalid/?token=secret",
+    }]), { mode: 0o600 });
+    const tampered = formatPullObserverDiagnostics(tamperedDiagnosticsPath);
+    assert.match(tampered, /diagnostics unavailable/);
+    assert.doesNotMatch(tampered, /evil\.invalid|secret|token=/i);
+
+    const callCountBeforePassthrough = readFileSync(callsPath, "utf8").trim().split(/\r?\n/).length;
+    const passthroughArgs = ["version", "--format", "{{.Client.Version}}", "opaque-arg"];
+    const passthrough = invoke(passthroughArgs, {
+      FAKE_DOCKER_EXIT: "23", FAKE_DOCKER_STDOUT: "passthrough stdout marker", FAKE_DOCKER_STDERR: "passthrough stderr marker",
+    });
+    assert.equal(passthrough.status, 23);
+    assert.equal(passthrough.stdout, "passthrough stdout marker");
+    assert.equal(passthrough.stderr, "passthrough stderr marker");
+    const calls = readFileSync(callsPath, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.equal(calls.length, callCountBeforePassthrough + 1);
+    assert.deepEqual(calls.at(-1), passthroughArgs);
+    const recordCountBeforeSignals = readPullObserverRecords(diagnosticsPath).length;
+    const missingDockerPath = join(testRoot, "missing-docker-executable");
+    const launchDiagnosticsPath = join(testRoot, "launch-failure.json");
+    const missingShimDirectory = mkdtempSync(join(testRoot, "missing-shim-"));
+    writeFileSync(launchDiagnosticsPath, "[]", { mode: 0o600 });
+    const missingDockerShim = writeDockerPullObserver(missingShimDirectory, launchDiagnosticsPath, missingDockerPath);
+
+    const nonPullLaunchFailure = spawnSync(missingDockerShim, passthroughArgs, {
+      encoding: "utf8", env: { ...process.env, FAKE_DOCKER_CALLS: callsPath },
+    });
+    assert.equal(nonPullLaunchFailure.status, 127);
+    assert.notEqual(nonPullLaunchFailure.status, 254);
+    assert.doesNotMatch(nonPullLaunchFailure.stderr, /ENOENT|missing-docker|spawn /);
+    assert.deepEqual(readPullObserverRecords(launchDiagnosticsPath), []);
+    assert.equal(readPullObserverRecords(diagnosticsPath).length, recordCountBeforeSignals);
+
+    const nonPullSignal = invoke(["version"], {
+      FAKE_DOCKER_SIGNAL: "SIGTERM", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "",
+    });
+    assert.equal(nonPullSignal.signal, "SIGTERM");
+    const pullSignal = invoke(["pull", "ghcr.io/supabase/postgres:15.8.1"], {
+      FAKE_DOCKER_SIGNAL: "SIGTERM", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "unauthorized signal-secret",
+    });
+    assert.equal(pullSignal.signal, "SIGTERM");
+    const signalRecord = readPullObserverRecords(diagnosticsPath).at(-1);
+    assert.equal(signalRecord.exitCode, null);
+    assert.equal(signalRecord.signal, "SIGTERM");
+    assert.equal(signalRecord.category, "image-pull-authentication");
+    assert.match(formatPullObserverDiagnostics(diagnosticsPath), /exit_code=unavailable signal=SIGTERM detail=image-pull-authentication/);
+    assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /signal-secret/);
+    assert.equal(readPullObserverRecords(diagnosticsPath).length, recordCountBeforeSignals + 1);
+
+    const launchFailure = spawnSync(missingDockerShim, ["pull", "ghcr.io/supabase/postgres:15.8.1"], {
+      encoding: "utf8", env: { ...process.env, FAKE_DOCKER_CALLS: callsPath },
+    });
+    assert.equal(launchFailure.status, 127);
+    assert.equal(readPullObserverRecords(launchDiagnosticsPath).at(-1).category, "docker-cli-launch-failure");
+    assert.doesNotMatch(launchFailure.stderr, /ENOENT|missing-docker|spawn /);
+    assert.doesNotMatch(readdirSync(testRoot).join("\n"), /\.lock|\.tmp/);
+
+    const stagedRuntimeRoot = mkdtempSync(join(testRoot, "runtime-stage-"));
+    const fakeBin = mkdtempSync(join(testRoot, "fake-bin-"));
+    const fakeDockerOnPath = join(fakeBin, "docker");
+    cpSync(fakeDocker, fakeDockerOnPath);
+    chmodSync(fakeDockerOnPath, 0o700);
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = fakeBin;
+      const installedObserver = installDockerPullObserver({ stagedRoot: stagedRuntimeRoot });
+      assert.equal(installedObserver.path.split(delimiter).slice(1).join(delimiter), fakeBin);
+      assert.equal(process.env.PATH, fakeBin);
+      assert.equal(existsSync(installedObserver.diagnosticsPath), true);
+      assert.equal(existsSync(join(installedObserver.path.split(delimiter)[0], "docker")), true);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      removeTemporaryStage(stagedRuntimeRoot);
+    }
+    assert.equal(existsSync(stagedRuntimeRoot), false);
+
+    const finalFailure = startupFailure({
+      startupFailureCategory: "image-pull-authentication", startupExitCode: 1,
+      startupImageDiagnosticStatus: "not-found",
+    }, "Startup containers: none created or ownership could not be established.", formatPullObserverDiagnostics(diagnosticsPath));
+    assert.doesNotMatch(finalFailure, /rate-secret|auth-secret|network-secret|pull-secret|classification-secret|secret-value|top-secret|evil\.invalid|sha256|passthrough/);
+  } finally {
+    removeTemporaryStage(testRoot);
+    assert.equal(existsSync(testRoot), false);
+  }
+}
+
+async function runSecuritySelfTests() {
   const validContainer = (hostIp) => ({
     Name: "/supabase_db_pr1-test",
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
@@ -648,23 +1117,23 @@ function runSecuritySelfTests() {
   }), (error) => error.message === safeStartFailure
     && error.startupFailureCategory === "image-pull-rate-limit"
     && error.startupImageDiagnosticStatus === "validated"
-    && error.startupImageDiagnostic.includes("registry=ghcr.io image=supabase/postgres:15.8.1 service=db")
+    && error.startupImageDiagnostic.includes("registry=ghcr.io image=supabase/postgres service=db")
     && !error.message.includes("hidden-test-token"));
   assert.equal(classifyStartFailure("failed to pull image: unauthorized: password=private"), "image-pull-authentication");
   assert.equal(classifyStartFailure("daemon reported no space left on device"), "disk-capacity");
   assert.deepEqual(startupImageDiagnostic("pull access denied for library/kong:2.8.1, repository does not exist or may require 'docker login'"), {
-    status: "validated", line: "Startup image: registry=docker.io image=library/kong:2.8.1 service=kong",
+    status: "validated", line: "Startup image: registry=docker.io image=library/kong service=kong",
   });
   assert.deepEqual(startupImageDiagnostic('Head "https://ghcr.io/v2/supabase/cli/auth/manifests/v2.197.0": unauthorized'), {
-    status: "validated", line: "Startup image: registry=ghcr.io image=supabase/cli/auth:v2.197.0 service=auth",
+    status: "validated", line: "Startup image: registry=ghcr.io image=supabase/cli/auth service=auth",
   });
   const validDigest = "a".repeat(64);
   const aggregatePullFailure = `failed to pull docker image from all registries: ghcr.io/supabase/cli/postgres:15.8.1@sha256:${validDigest} attempt 1: unauthorized: token=first-secret; docker.io/supabase/postgres:15.8.1 attempt 2: unauthorized: password=second-secret`;
   assert.deepEqual(startupImageDiagnostic(aggregatePullFailure), {
-    status: "validated", line: "Startup image attempt: registry=ghcr.io image=supabase/cli/postgres:15.8.1 service=db attempt=1 detail=image-pull-authentication\nStartup image attempt: registry=docker.io image=supabase/postgres:15.8.1 service=db attempt=2 detail=image-pull-authentication",
+    status: "validated", line: "Startup image attempt: registry=ghcr.io image=supabase/cli/postgres service=db attempt=1 detail=image-pull-authentication\nStartup image attempt: registry=docker.io image=supabase/postgres service=db attempt=2 detail=image-pull-authentication",
   });
   assert.deepEqual(startupImageDiagnostic(`failed to pull docker image from all registries: docker.io/supabase/postgres:15.8.1 attempt 1: unauthorized; ghcr.io/supabase/cli/postgres:15.8.1@sha256:${validDigest} attempt 2: too many requests`), {
-    status: "validated", line: "Startup image attempt: registry=docker.io image=supabase/postgres:15.8.1 service=db attempt=1 detail=image-pull-authentication\nStartup image attempt: registry=ghcr.io image=supabase/cli/postgres:15.8.1 service=db attempt=2 detail=image-pull-rate-limit",
+    status: "validated", line: "Startup image attempt: registry=docker.io image=supabase/postgres service=db attempt=1 detail=image-pull-authentication\nStartup image attempt: registry=ghcr.io image=supabase/cli/postgres service=db attempt=2 detail=image-pull-rate-limit",
   });
   assert.deepEqual(startupImageDiagnostic("authentication required"), { status: "not-found", line: "" });
   assert.deepEqual(startupImageDiagnostic("failed to pull docker image from all registries: malformed candidate"), { status: "format-mismatch", line: "" });
@@ -690,7 +1159,7 @@ function runSecuritySelfTests() {
     }),
     "Startup containers: none created or ownership could not be established.",
   );
-  assert.match(safeAggregateFailure, /registry=ghcr\.io image=supabase\/cli\/postgres:15\.8\.1 service=db attempt=1 detail=image-pull-authentication/);
+  assert.match(safeAggregateFailure, /registry=ghcr\.io image=supabase\/cli\/postgres service=db attempt=1 detail=image-pull-authentication/);
   assert.doesNotMatch(safeAggregateFailure, /first-secret|second-secret|password|token=/);
   assert.deepEqual(startupImageDiagnostic("pull access denied for private.registry.invalid/team/image:tag, unauthorized"), { status: "allowlist-rejected", line: "" });
   assert.deepEqual(startupImageDiagnostic('Head "https://ghcr.io/v2/untrusted/private-package/manifests/secret-tag": unauthorized'), { status: "allowlist-rejected", line: "" });
@@ -708,7 +1177,7 @@ function runSecuritySelfTests() {
   const cliJsonDiagnostic = startupImageDiagnostic(cliJsonAggregateFailure);
   assert.deepEqual(cliJsonDiagnostic, {
     status: "validated",
-    line: "Startup image attempt: registry=public.ecr.aws image=supabase/postgres:15.8.1 service=db attempt=1 detail=image-pull-rate-limit\nStartup image attempt: registry=ghcr.io image=supabase/postgres:15.8.1 service=db attempt=2 detail=image-pull-authentication\nStartup image attempt: registry=docker.io image=library/kong:2.8.1 service=kong attempt=1 detail=image-pull-rate-limit",
+    line: "Startup image attempt: registry=public.ecr.aws image=supabase/postgres service=db attempt=1 detail=image-pull-rate-limit\nStartup image attempt: registry=ghcr.io image=supabase/postgres service=db attempt=2 detail=image-pull-authentication\nStartup image attempt: registry=docker.io image=library/kong service=kong attempt=1 detail=image-pull-rate-limit",
   });
   assert.equal(classifyStartFailure(cliJsonAggregateFailure), "image-pull-rate-limit");
   const cliJsonSafeFailure = startupFailure(Object.assign(new Error("sensitive raw output"), {
@@ -755,7 +1224,7 @@ function runSecuritySelfTests() {
     }),
     "Startup containers: none created or ownership could not be established.",
   );
-  assert.match(safeImageFailure, /registry=docker\.io image=library\/kong:2\.8\.1 service=kong/);
+  assert.match(safeImageFailure, /registry=docker\.io image=library\/kong service=kong/);
   assert.doesNotMatch(safeImageFailure, /token=secret|password|docker login/);
   const safeContainerSummary = containerDiagnostic({
     Name: "/supabase_db_pr1-123-abcd",
@@ -778,7 +1247,8 @@ function runSecuritySelfTests() {
   }), (error) => error.message.includes("version_history_introduction_read.test.sql")
     && !error.message.includes("generated-db-password") && !error.message.includes("sb_secret_"));
 
-  console.log("Staging security self-tests passed (Docker bindings and suppressed Supabase CLI credentials).");
+  await runDockerPullObserverSelfTests();
+  console.log("Staging security self-tests passed (Docker bindings, pull diagnostics, and suppressed Supabase CLI credentials).");
 }
 
 function verifyLocalStatus(context) {
@@ -813,7 +1283,7 @@ export async function withStagedLocalSupabase(callback) {
   try {
     context = stageProject(stageRoot, projectId, ports);
   } catch (error) {
-    rmSync(stageRoot, { recursive: true, force: true });
+    removeTemporaryStage(stageRoot);
     throw error;
   }
   const before = snapshot();
@@ -856,7 +1326,7 @@ export async function withStagedLocalSupabase(callback) {
         writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
         cleanupOwnedResources(resources, projectId, before);
       }
-      rmSync(stageRoot, { recursive: true, force: true });
+      removeTemporaryStage(stageRoot);
     } catch (error) {
       console.error(`Local Supabase cleanup stopped because ownership or removal could not be verified. Resources were left untouched where verification failed. Ownership manifest: ${ownershipPath}`);
       if (callbackError) console.error(`Test failure: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`);
@@ -870,12 +1340,10 @@ export async function withStagedLocalSupabase(callback) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const options = new Set(process.argv.slice(2));
   if (options.size === 1 && options.has("--security-self-test")) {
-    try {
-      runSecuritySelfTests();
-    } catch (error) {
+    runSecuritySelfTests().catch((error) => {
       console.error(error instanceof Error ? error.message : "Staging security self-tests failed.");
       process.exitCode = 1;
-    }
+    });
   } else if (options.has("--cleanup-manifest") && process.argv.length === 4) {
     try {
       cleanupFromManifest(process.argv[3]);
