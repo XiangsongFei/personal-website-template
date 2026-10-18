@@ -2,13 +2,15 @@
 // Resource cleanup is limited to Docker IDs created by this invocation and
 // verified with this run's unique Compose project label.
 /* global console, process, URL */
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer, isIP } from "node:net";
 import { accessSync, chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
@@ -244,11 +246,45 @@ function classifyDockerPullFailure(output, exitCode) {
   return "unclassified-pull-failure";
 }
 
+function pullObserverKey(statePath) {
+  const key = readFileSync(`${statePath}.key`);
+  if (key.length !== 32) throw new Error("Invalid pull observer key");
+  return key;
+}
+
+function pullObserverMac(key, records) {
+  return createHmac("sha256", key).update(JSON.stringify(records)).digest("hex");
+}
+
+function initializePullObserverState(statePath) {
+  const key = randomBytes(32);
+  writeFileSync(`${statePath}.key`, key, { mode: 0o600 });
+  writeFileSync(statePath, JSON.stringify({ records: [], mac: pullObserverMac(key, []) }), { mode: 0o600 });
+  chmodSync(`${statePath}.key`, 0o600);
+  chmodSync(statePath, 0o600);
+}
+
+function pullCandidateId(statePath, candidate) {
+  try {
+    return createHmac("sha256", pullObserverKey(statePath)).update(candidate).digest("hex").slice(0, 24);
+  } catch {
+    return null;
+  }
+}
+
 function readPullObserverRecords(diagnosticsPath) {
-  if (!existsSync(diagnosticsPath)) return [];
-  let records;
-  try { records = JSON.parse(readFileSync(diagnosticsPath, "utf8")); } catch { return null; }
-  if (!Array.isArray(records)) return null;
+  let envelope;
+  let key;
+  try {
+    envelope = JSON.parse(readFileSync(diagnosticsPath, "utf8"));
+    key = pullObserverKey(diagnosticsPath);
+  } catch { return null; }
+  if (!envelope || JSON.stringify(Object.keys(envelope).sort()) !== JSON.stringify(["mac", "records"])
+    || !Array.isArray(envelope.records) || !/^[a-f0-9]{64}$/.test(envelope.mac)) return null;
+  const actualMac = Buffer.from(envelope.mac, "hex");
+  const expectedMac = Buffer.from(pullObserverMac(key, envelope.records), "hex");
+  if (!timingSafeEqual(actualMac, expectedMac)) return null;
+  const records = envelope.records;
   const validated = [];
   for (const record of records) {
     if (!record || !Number.isSafeInteger(record.order) || record.order !== validated.length + 1
@@ -271,9 +307,17 @@ function readPullObserverRecords(diagnosticsPath) {
       validated.push({ order: record.order, attempt: record.attempt, candidateStatus: record.candidateStatus,
         registry: safe.registry, image: safe.image, service: safe.service, exitCode: record.exitCode, category: record.category, signal: record.signal });
     } else {
-      const expectedKeys = ["attempt", "candidateStatus", "category", "exitCode", "order", "signal"];
-      if (record.attempt !== 1 || JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)) return null;
+      const withId = record.candidateStatus === "allowlist-rejected";
+      const expectedKeys = withId
+        ? ["attempt", "candidateId", "candidateStatus", "category", "exitCode", "order", "signal"]
+        : ["attempt", "candidateStatus", "category", "exitCode", "order", "signal"];
+      const expectedAttempt = withId
+        ? validated.filter((previous) => previous.candidateStatus === "allowlist-rejected" && previous.candidateId === record.candidateId).length + 1
+        : 1;
+      if ((withId && !/^[a-f0-9]{24}$/.test(record.candidateId))
+        || record.attempt !== expectedAttempt || JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expectedKeys)) return null;
       validated.push({ order: record.order, attempt: record.attempt, candidateStatus: record.candidateStatus,
+        ...(withId ? { candidateId: record.candidateId } : {}),
         exitCode: record.exitCode, category: record.category, signal: record.signal });
     }
   }
@@ -287,7 +331,8 @@ function formatPullObserverDiagnostics(diagnosticsPath) {
   if (records.length === 0) return "Startup pull observer: no pull attempts observed.";
   const lines = records.slice(0, 30).map((record) => {
     const imageFields = record.candidateStatus === "validated"
-      ? ` registry=${record.registry} image=${record.image} service=${record.service}` : ` candidate=${record.candidateStatus}`;
+      ? ` registry=${record.registry} image=${record.image} service=${record.service}`
+      : ` candidate=${record.candidateStatus}${record.candidateId ? ` candidate_id=${record.candidateId}` : ""}`;
     const exitCode = record.exitCode === null ? "unavailable" : record.exitCode;
     const category = record.category ?? "unclassified-pull-failure";
     const signal = record.signal ? ` signal=${record.signal}` : "";
@@ -316,7 +361,7 @@ function updatePullObserverState(statePath, update) {
     if (records === null) return null;
     const result = update(records);
     const temporaryPath = `${statePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    writeFileSync(temporaryPath, JSON.stringify(records), { mode: 0o600 });
+    writeFileSync(temporaryPath, JSON.stringify({ records, mac: pullObserverMac(pullObserverKey(statePath), records) }), { mode: 0o600 });
     chmodSync(temporaryPath, 0o600);
     renameSync(temporaryPath, statePath);
     return result;
@@ -329,16 +374,19 @@ function updatePullObserverState(statePath, update) {
   }
 }
 
-function reservePullObserverAttempt(statePath, candidateStatus, image) {
+function reservePullObserverAttempt(statePath, candidateStatus, image, candidateId) {
   return updatePullObserverState(statePath, (records) => {
     const order = records.length + 1;
     const attempt = image
       ? records.filter((record) => record.candidateStatus === "validated"
         && record.registry === image.registry && record.image === image.image).length + 1
-      : 1;
+      : candidateId
+        ? records.filter((record) => record.candidateStatus === "allowlist-rejected" && record.candidateId === candidateId).length + 1
+        : 1;
     const reservation = {
       order, attempt, candidateStatus, exitCode: null, category: null, signal: null,
       ...(candidateStatus === "validated" ? { registry: image.registry, image: image.image, service: image.service } : {}),
+      ...(candidateStatus === "allowlist-rejected" && candidateId ? { candidateId } : {}),
     };
     records.push(reservation);
     return { order, attempt };
@@ -375,7 +423,10 @@ export async function dockerPullObserverMain(args, config) {
   const candidateArgument = args.length === 2 ? args[1] : null;
   const image = !isPull || candidateArgument === null ? null : parseSafeImageReference(candidateArgument);
   const candidateStatus = candidateArgument === null ? "format-mismatch" : (image ? "validated" : "allowlist-rejected");
-  const reservation = isPull ? reservePullObserverAttempt(config.diagnosticsPath, candidateStatus, image) : null;
+  const candidateId = isPull && candidateStatus === "allowlist-rejected"
+    ? pullCandidateId(config.diagnosticsPath, candidateArgument) : null;
+  const reservation = isPull && (candidateStatus !== "allowlist-rejected" || candidateId)
+    ? reservePullObserverAttempt(config.diagnosticsPath, candidateStatus, image, candidateId) : null;
   const child = spawn(config.realDockerPath, args, isPull
     ? { stdio: ["inherit", "pipe", "pipe"] }
     : { stdio: "inherit" });
@@ -436,8 +487,7 @@ function installDockerPullObserver(context) {
   const directory = mkdtempSync(join(context.stagedRoot, "docker-pull-observer-"));
   chmodSync(directory, 0o700);
   const diagnosticsPath = join(directory, "pull-attempts.json");
-  writeFileSync(diagnosticsPath, "[]", { mode: 0o600 });
-  chmodSync(diagnosticsPath, 0o600);
+  initializePullObserverState(diagnosticsPath);
   writeDockerPullObserver(directory, diagnosticsPath, realDockerPath);
   return { path: `${directory}${delimiter}${process.env.PATH ?? ""}`, diagnosticsPath };
 }
@@ -787,7 +837,7 @@ async function runDockerPullObserverSelfTests() {
     const shimDirectory = mkdtempSync(join(testRoot, "shim-"));
     const diagnosticsPath = join(testRoot, "pull-attempts.json");
     const callsPath = join(testRoot, "calls.jsonl");
-    writeFileSync(diagnosticsPath, "[]", { mode: 0o600 });
+    initializePullObserverState(diagnosticsPath);
     writeFileSync(callsPath, "", { mode: 0o600 });
     writeFileSync(fakeDocker, `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
@@ -907,11 +957,12 @@ if (delay > 0) setTimeout(finish, delay); else finish();
     });
     assert.equal(rejected.status, 1);
     const rejectedRecord = readPullObserverRecords(diagnosticsPath).at(-1);
-    assert.deepEqual(rejectedRecord, {
+    assert.deepEqual({ ...rejectedRecord, candidateId: "<opaque>" }, {
       order: expectedRejectedOrder, attempt: 1,
       candidateStatus: "allowlist-rejected", exitCode: 1, category: "image-pull-authentication",
-      signal: null,
+      signal: null, candidateId: "<opaque>",
     });
+    assert.match(rejectedRecord.candidateId, /^[a-f0-9]{24}$/);
     assert.doesNotMatch(readFileSync(diagnosticsPath, "utf8"), /evil\.invalid|top-secret|secret-value|sha256|token=/i);
     assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /evil\.invalid|top-secret|secret-value|token=|password=/i);
     for (const unsafeTag of ["15.8.1-secret-tag", "15.8.1-ghp_credentialLikeToken123"]) {
@@ -927,17 +978,52 @@ if (delay > 0) setTimeout(finish, delay); else finish();
       FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_STDOUT: "", FAKE_DOCKER_STDERR: "unauthorized",
     });
     assert.equal(unknownReference.status, 1);
-    assert.equal(readPullObserverRecords(diagnosticsPath).at(-1).candidateStatus, "allowlist-rejected");
+    const unknownRecord = readPullObserverRecords(diagnosticsPath).at(-1);
+    assert.equal(unknownRecord.candidateStatus, "allowlist-rejected");
+    assert.notEqual(unknownRecord.candidateId, rejectedRecord.candidateId);
     assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /untrusted|private-package/);
-    const tamperedDiagnosticsPath = join(testRoot, "tampered-pull-attempts.json");
-    writeFileSync(tamperedDiagnosticsPath, JSON.stringify([{
-      order: 1, attempt: 1, candidateStatus: "validated", registry: "ghcr.io",
-      image: "supabase/postgres:15.8.1", service: "db", exitCode: 1,
-      category: "image-pull-authentication", rawCandidate: "https://user:secret@evil.invalid/?token=secret",
-    }]), { mode: 0o600 });
-    const tampered = formatPullObserverDiagnostics(tamperedDiagnosticsPath);
-    assert.match(tampered, /diagnostics unavailable/);
-    assert.doesNotMatch(tampered, /evil\.invalid|secret|token=/i);
+    const unknownRetry = invoke(["pull", "ghcr.io/untrusted/private-package:latest"], {
+      FAKE_DOCKER_EXIT: "0", FAKE_DOCKER_STDOUT: "pull-complete", FAKE_DOCKER_STDERR: "",
+    });
+    assert.equal(unknownRetry.status, 0);
+    const retriedRecord = readPullObserverRecords(diagnosticsPath).at(-1);
+    assert.equal(retriedRecord.candidateId, unknownRecord.candidateId);
+    assert.equal(retriedRecord.attempt, 2);
+    assert.equal(retriedRecord.category, "success");
+    assert.match(formatPullObserverDiagnostics(diagnosticsPath), new RegExp(`candidate=allowlist-rejected candidate_id=${unknownRecord.candidateId} exit_code=0 detail=success`));
+
+    const callsBeforeUnknownConcurrent = readFileSync(callsPath, "utf8").trim().split(/\r?\n/).length;
+    const concurrentCandidate = "ghcr.io/untrusted/concurrent-private:secret-tag";
+    const unknownConcurrentFailure = invokeAsync(["pull", concurrentCandidate], {
+      FAKE_DOCKER_EXIT: "1", FAKE_DOCKER_DELAY_MS: "120", FAKE_DOCKER_STDERR: "429 Too Many Requests concurrent-private-secret",
+    });
+    await waitForCallCount(callsBeforeUnknownConcurrent + 1);
+    const unknownConcurrentSuccess = invokeAsync(["pull", concurrentCandidate], {
+      FAKE_DOCKER_EXIT: "0", FAKE_DOCKER_DELAY_MS: "10", FAKE_DOCKER_STDERR: "",
+    });
+    assert.deepEqual((await Promise.all([unknownConcurrentFailure, unknownConcurrentSuccess])).map((result) => result.code), [1, 0]);
+    const unknownConcurrentRecords = readPullObserverRecords(diagnosticsPath).slice(-2);
+    assert.deepEqual(unknownConcurrentRecords.map(({ attempt, category }) => ({ attempt, category })), [
+      { attempt: 1, category: "image-pull-rate-limit" }, { attempt: 2, category: "success" },
+    ]);
+    assert.equal(unknownConcurrentRecords[0].candidateId, unknownConcurrentRecords[1].candidateId);
+    assert.notEqual(unknownConcurrentRecords[0].candidateId, unknownRecord.candidateId);
+    assert.doesNotMatch(formatPullObserverDiagnostics(diagnosticsPath), /concurrent-private|secret-tag|private-package|concurrent-private-secret/);
+    assert.doesNotMatch(readFileSync(diagnosticsPath, "utf8"), /concurrent-private|secret-tag|private-package|concurrent-private-secret/);
+    assert.doesNotMatch(readdirSync(testRoot).join("\n"), /\.lock|\.tmp/);
+
+    const separateDiagnosticsPath = join(testRoot, "separate-pull-attempts.json");
+    initializePullObserverState(separateDiagnosticsPath);
+    assert.notEqual(pullCandidateId(separateDiagnosticsPath, concurrentCandidate), unknownConcurrentRecords[0].candidateId);
+    const originalState = readFileSync(diagnosticsPath, "utf8");
+    const tamperedEnvelope = JSON.parse(originalState);
+    tamperedEnvelope.records.at(-1).candidateId = "e".repeat(24);
+    writeFileSync(diagnosticsPath, JSON.stringify(tamperedEnvelope), { mode: 0o600 });
+    assert.match(formatPullObserverDiagnostics(diagnosticsPath), /diagnostics unavailable/);
+    assert.equal(invoke(["pull", concurrentCandidate], { FAKE_DOCKER_EXIT: "0" }).status, 0);
+    assert.match(formatPullObserverDiagnostics(diagnosticsPath), /diagnostics unavailable/);
+    writeFileSync(diagnosticsPath, originalState, { mode: 0o600 });
+    assert.notEqual(readPullObserverRecords(diagnosticsPath), null);
 
     const callCountBeforePassthrough = readFileSync(callsPath, "utf8").trim().split(/\r?\n/).length;
     const passthroughArgs = ["version", "--format", "{{.Client.Version}}", "opaque-arg"];
@@ -954,7 +1040,7 @@ if (delay > 0) setTimeout(finish, delay); else finish();
     const missingDockerPath = join(testRoot, "missing-docker-executable");
     const launchDiagnosticsPath = join(testRoot, "launch-failure.json");
     const missingShimDirectory = mkdtempSync(join(testRoot, "missing-shim-"));
-    writeFileSync(launchDiagnosticsPath, "[]", { mode: 0o600 });
+    initializePullObserverState(launchDiagnosticsPath);
     const missingDockerShim = writeDockerPullObserver(missingShimDirectory, launchDiagnosticsPath, missingDockerPath);
 
     const nonPullLaunchFailure = spawnSync(missingDockerShim, passthroughArgs, {
