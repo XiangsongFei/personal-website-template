@@ -49,6 +49,8 @@ export interface ResumeRepository extends Partial<Batch6BWriteRepository> {
   discardPendingExperienceSave?(resumeId?: string): void;
   loadAdminSkillsWriteState?(resumeId: string): Promise<AdminSkillsWriteState>;
   saveSkillsWithWorker?(resumeId: string, items: SkillItem[]): Promise<SkillItem[]>;
+  loadAdminSectionTitlesWriteState?(resumeId: string): Promise<AdminSectionTitlesWriteState>;
+  saveSectionTitlesWithWorker?(resumeId: string, titles: SectionTitlesAggregate, expectedBaseline?: SectionTitlesAggregate): Promise<SectionTitlesAggregate>;
   hasPendingSkillsWorkerSave?(resumeId: string, actorUserId: string | null): boolean;
   hasLegacyPendingSkillsSave?(resumeId: string): boolean;
   hasUnverifiedSkillsPendingSave?(resumeId: string, actorUserId: string | null): boolean;
@@ -120,6 +122,9 @@ export type AdminFeatureState = {
 export type AdminAwardsWriteState = { resumeId: string; activityLogEnabled: boolean; awardsWriteMode: "direct" | "rpc"; awardsTrustedContextRequired: boolean; baselineDigest?: string; baselineProof?: string };
 export type AdminDomainWriteState<D extends "experience" | "skills" | "projects" | "website_links" | "files"> = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; domain: D };
 export type AdminSkillsWriteState = AdminDomainWriteState<"skills"> & { baselineDigest?: string; baselineProof?: string };
+export type SectionTitlesAggregate = { translations: { zh: Record<SectionTitleKey, string>; en: Record<SectionTitleKey, string> } };
+export type SectionTitleKey = "education_label" | "experience_label" | "skills_label" | "honors_label" | "project_heading" | "kaggle_label";
+export type AdminSectionTitlesWriteState = { resumeId: string; activityLogEnabled: boolean; writeMode: "direct" | "rpc"; trustedContextRequired: boolean; snapshot: SectionTitlesAggregate; baselineDigest?: string; baselineProof?: string };
 export type AdminFilesWriteState = AdminDomainWriteState<"files"> & { storageProtocol: "legacy" | "intent_v1" };
 export type AdminEducationWriteState = { resumeId: string; activityLogEnabled: boolean; educationWriteMode: "direct" | "rpc"; educationTrustedContextRequired: boolean };
 export type AdminContactWriteState = { resumeId: string; activityLogEnabled: boolean; contactWriteMode: "direct" | "rpc"; contactTrustedContextRequired: boolean };
@@ -291,7 +296,7 @@ export type ActivityLogV13CRejectedEvent = ActivityLogV13CCommon & {
 };
 export type ActivityLogV13CEvent = ActivityLogV13CSuccessEvent | ActivityLogV13CRejectedEvent;
 
-export type VersionHistoryDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+export type VersionHistoryDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files" | "section_titles";
 export type VersionHistoryOperation = ActivityLogEvent["operation"];
 export type VersionHistoryCursor = { occurredAt: string; eventId: string };
 export type VersionHistoryScalar = string | number | boolean | null;
@@ -505,7 +510,8 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
               || (row.section_key === "contact" && row.entity_type === "contact_section")
               || (row.section_key === "profile" && row.entity_type === "profile_settings")
               || (row.section_key === "website_links" && row.entity_type === "website_links_settings")
-              || (row.section_key === "files" && row.entity_type === "resume_file_set"))))) {
+              || (row.section_key === "files" && row.entity_type === "resume_file_set")
+              || (row.section_key === "section_titles" && row.entity_type === "section_titles_settings"))))) {
         throw new Error("Invalid Activity Log response");
       }
       const changes: ActivityLogEvent["changes"] = {};
@@ -518,15 +524,23 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
       }
       if (row.payload_version === 2) {
         const snapshot = row.entity_snapshot as Record<string, unknown>;
-        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+        const key = row.section_key as "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files" | "section_titles";
         const change = changes[key];
-        if (key === "website_links" || key === "files") {
+        if (key === "website_links" || key === "files" || key === "section_titles") {
           const snapshot = row.entity_snapshot as Record<string, unknown>;
           if (Object.keys(snapshot).join(",") !== key || Object.keys(changes).join(",") !== key || !change
             ) throw new Error("Invalid Activity Log response");
-          if (key === "website_links") canonicalizeWebsiteLinks(change.before); else canonicalizeFiles(change.before);
-          const canonicalAfter = key === "website_links" ? canonicalizeWebsiteLinks(change.after) : canonicalizeFiles(change.after);
-          const canonicalSnapshot = key === "website_links" ? canonicalizeWebsiteLinks(snapshot[key]) : canonicalizeFiles(snapshot[key]);
+          const canonicalTitles = (raw: unknown): string => {
+            const titleKeys = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"];
+            if (!isRecord(raw) || !hasExactKeys(raw, ["translations"]) || !isRecord(raw.translations) || !hasExactKeys(raw.translations, ["en", "zh"])) throw new Error("titles");
+            for (const locale of ["zh", "en"] as const) if (!isRecord(raw.translations[locale]) || !hasExactKeys(raw.translations[locale], titleKeys)
+              || Object.values(raw.translations[locale]).some(value => typeof value !== "string")) throw new Error("titles");
+            return JSON.stringify(raw);
+          };
+          const canonicalize = (raw: unknown) => key === "website_links" ? canonicalizeWebsiteLinks(raw) : key === "files" ? canonicalizeFiles(raw) : canonicalTitles(raw);
+          canonicalize(change.before);
+          const canonicalAfter = canonicalize(change.after);
+          const canonicalSnapshot = canonicalize(snapshot[key]);
           if (canonicalAfter !== canonicalSnapshot) throw new Error("Invalid Activity Log response");
         }
         const validContact = (raw: unknown, requireDensePositions: boolean): boolean => {
@@ -670,7 +684,7 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
           if (Object.keys(snapshot).sort().join(",") !== key || Object.keys(changes).sort().join(",") !== key
             || !Array.isArray(change.before) || !Array.isArray(change.after)
             || !validArray(change.before, key, key !== "projects") || !validArray(change.after, key)) throw new Error("Invalid Activity Log response");
-        } else if (key !== "website_links" && key !== "files") throw new Error("Invalid Activity Log response");
+        } else if (key !== "website_links" && key !== "files" && key !== "section_titles") throw new Error("Invalid Activity Log response");
       }
       return {
         ...common,
@@ -715,7 +729,7 @@ function mapActivityLogV13CRows(value: unknown): ActivityLogV13CEvent[] {
 
 const VERSION_HISTORY_ROW_KEYS = ["event_id", "occurred_at", "actor_account_label", "actor_role", "domain_key",
   "operation", "payload_version", "entity_type", "entity_id", "comparison_kind", "comparison", "has_more"] as const;
-const VERSION_HISTORY_DOMAINS: readonly VersionHistoryDomain[] = ["introduction", "awards", "experience", "skills", "education", "projects", "contact", "profile", "website_links", "files"];
+const VERSION_HISTORY_DOMAINS: readonly VersionHistoryDomain[] = ["introduction", "awards", "experience", "skills", "education", "projects", "contact", "profile", "website_links", "files", "section_titles"];
 const VERSION_HISTORY_OPERATIONS: readonly VersionHistoryOperation[] = ["create", "update", "delete", "reorder", "upload", "remove"];
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).sort().join(",") === [...keys].sort().join(",");
@@ -802,6 +816,7 @@ function versionHistoryEntityMatches(domain: VersionHistoryDomain, entityType: s
     profile: { v1: ["profile_settings", "profile_image"], v2: ["profile_settings"] },
     website_links: { v1: ["public_link"], v2: ["website_links_settings"] },
     files: { v1: ["resume_file"], v2: ["resume_file_set"] },
+    section_titles: { v1: [] as string[], v2: ["section_titles_settings"] },
   } satisfies Record<VersionHistoryDomain, { v1: string[]; v2: string[] }>;
   if (version === 1) {
     return contracts[domain].v1.includes(entityType);
@@ -989,7 +1004,7 @@ async function readResumePdfFilename(supabase: SupabaseClient, supabaseUrl: stri
 export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: string): CompleteResumeRepository {
   let pendingIntroductionRequest: { actorUserId: string; resumeId: string; fingerprint: string; requestId: string; inFlight?: Promise<IntroItem[]>; discardWhenSettled?: boolean } | null = null;
   const introductionFlights = new Map<string, Promise<IntroItem[]>>();
-  type PendingDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "profile" | "contact" | "website_links" | "files";
+  type PendingDomain = "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "profile" | "contact" | "website_links" | "files" | "section_titles";
   type PendingEnvelope = { actorUserId: string; domain: PendingDomain; payloadDigest: string; payload: unknown; requestId: string; resumeId: string; requestMetadata?: Record<string, string> };
   const pendingStorageKey = (domain: PendingDomain, resumeId: string, actorUserId: string, scope?: string) =>
     `admin-pending-save-v2:${domain}:${resumeId}:${actorUserId}${scope ? `:${scope}` : ""}`;
@@ -1004,6 +1019,7 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
     contact: `admin-contact-rpc-pending-v1:${resumeId}`,
     website_links: `admin-website_links-rpc-pending-v1:${resumeId}`,
     files: `admin-files-rpc-pending-v1:${resumeId}`,
+    section_titles: `admin-section_titles-rpc-pending-v1:${resumeId}`,
   })[domain];
   const verifiedActorSession = async (operation?: FilesSaveOperation) => {
     const awaitAuth = <T>(promise: PromiseLike<T> | T, step: string) => operation
@@ -1094,8 +1110,10 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
   type AwardsPendingPayload = { awards: AwardsPayload; expectedBaselineDigest: string; baselineProof: string };
   const awardsBaselineByResumeId = new Map<string, { digest: string; proof: string }>();
   const skillsBaselineByResumeId = new Map<string, { digest: string; proof: string }>();
+  const sectionTitlesBaselineByResumeId = new Map<string, { digest: string; proof: string; snapshot: SectionTitlesAggregate }>();
   const awardsBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
   const skillsBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
+  const sectionTitlesBaselineKey = (resumeId: string, actorUserId: string) => `${resumeId}:${actorUserId}`;
   const validAwardsPayload = (value: unknown): value is AwardsPayload => Array.isArray(value) && value.length <= 32
     && value.every((item, position) => item && typeof item === "object" && !Array.isArray(item)
       && Object.keys(item).sort().join(",") === "en,id,position,zh"
@@ -1621,6 +1639,95 @@ export function createResumeRepository(supabase: SupabaseClient, supabaseUrl?: s
         writeMode: row.skills_write_mode, trustedContextRequired: row.skills_trusted_context_required,
         baselineDigest: typeof row.skills_baseline_digest === "string" ? row.skills_baseline_digest : undefined,
         baselineProof: typeof row.skills_baseline_proof === "string" ? row.skills_baseline_proof : undefined };
+    },
+    async loadAdminSectionTitlesWriteState(resumeId) {
+      if (!resumeId) throw new Error("Missing resume ID");
+      const identity = await verifiedActorSession();
+      const { data, error } = await supabase.rpc("load_admin_section_titles_write_state", { target_resume_id: resumeId });
+      if (error) throw new Error("Unable to load Section Titles write state");
+      const row = Array.isArray(data) && data.length === 1 ? data[0] as Record<string, unknown> : null;
+      const keys = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"] as const;
+      const valid = (value: unknown): value is SectionTitlesAggregate => {
+        if (!isRecord(value) || !hasExactKeys(value, ["translations"]) || !isRecord(value.translations) || !hasExactKeys(value.translations, ["zh", "en"])) return false;
+        const translations = value.translations;
+        return (["zh", "en"] as const).every(locale => isRecord(translations[locale]) && hasExactKeys(translations[locale] as Record<string, unknown>, keys)
+          && Object.values(translations[locale] as Record<string, unknown>).every(item => typeof item === "string"));
+      };
+      if (!row || row.resume_id !== resumeId || typeof row.activity_log_enabled !== "boolean"
+        || (row.section_titles_write_mode !== "direct" && row.section_titles_write_mode !== "rpc")
+        || typeof row.section_titles_trusted_context_required !== "boolean" || !valid(row.section_titles_snapshot)
+        || (row.section_titles_write_mode === "direct" && row.section_titles_trusted_context_required)
+        || (row.section_titles_write_mode === "rpc" && (typeof row.section_titles_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(row.section_titles_baseline_digest)
+          || typeof row.section_titles_baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(row.section_titles_baseline_proof)))) throw new Error("Invalid Section Titles write state");
+      const snapshot = row.section_titles_snapshot as SectionTitlesAggregate;
+      if (row.section_titles_write_mode === "rpc") sectionTitlesBaselineByResumeId.set(sectionTitlesBaselineKey(resumeId, identity.actorUserId), {
+        digest: row.section_titles_baseline_digest as string, proof: row.section_titles_baseline_proof as string, snapshot,
+      });
+      return { resumeId, activityLogEnabled: row.activity_log_enabled, writeMode: row.section_titles_write_mode,
+        trustedContextRequired: row.section_titles_trusted_context_required, snapshot,
+        baselineDigest: typeof row.section_titles_baseline_digest === "string" ? row.section_titles_baseline_digest : undefined,
+        baselineProof: typeof row.section_titles_baseline_proof === "string" ? row.section_titles_baseline_proof : undefined };
+    },
+    async saveSectionTitlesWithWorker(resumeId, titles, expectedBaseline) {
+      const keys = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"] as const;
+      const canonicalTitles = (value: SectionTitlesAggregate) => JSON.stringify({ translations: {
+        zh: Object.fromEntries(keys.map(key => [key, value.translations.zh[key]])),
+        en: Object.fromEntries(keys.map(key => [key, value.translations.en[key]])),
+      } });
+      const valid = (value: unknown): value is SectionTitlesAggregate => {
+        if (!isRecord(value) || !hasExactKeys(value, ["translations"]) || !isRecord(value.translations) || !hasExactKeys(value.translations, ["zh", "en"])) return false;
+        const translations = value.translations;
+        return (["zh", "en"] as const).every(locale => isRecord(translations[locale]) && hasExactKeys(translations[locale] as Record<string, unknown>, keys)
+          && Object.values(translations[locale] as Record<string, unknown>).every(item => typeof item === "string" && new TextEncoder().encode(item).byteLength <= 1024));
+      };
+      if (!valid(titles)) throw new AggregateWorkerSaveError("Section title content is invalid.");
+      const identity = await verifiedActorSession();
+      const existing = await readPendingEnvelope("section_titles", resumeId, identity.actorUserId, 8192);
+      const baseline = sectionTitlesBaselineByResumeId.get(sectionTitlesBaselineKey(resumeId, identity.actorUserId));
+      if (!baseline) throw new AggregateWorkerSaveError("The original Section Titles snapshot could not be verified. Reload the editor; no save request was sent.");
+      let request: { requestId: string; titles: SectionTitlesAggregate; expectedBaselineDigest: string; baselineProof: string };
+      if (existing) {
+        const pending = existing.payload as Record<string, unknown>;
+        if (!isRecord(pending) || !hasExactKeys(pending, ["titles", "expectedBaselineDigest", "baselineProof"])
+          || !valid(pending.titles) || JSON.stringify(pending.titles) !== JSON.stringify(titles)
+          || pending.expectedBaselineDigest !== baseline.digest || pending.baselineProof !== baseline.proof)
+          throw new AggregateWorkerSaveError("A pending Section Titles request does not match this account, target, baseline, and draft. It was retained.");
+        request = { requestId: existing.requestId, titles: pending.titles, expectedBaselineDigest: pending.expectedBaselineDigest as string, baselineProof: pending.baselineProof as string };
+      } else {
+        if (expectedBaseline && (!valid(expectedBaseline) || canonicalTitles(expectedBaseline) !== canonicalTitles(baseline.snapshot)))
+          throw new AggregateWorkerSaveError("Section Titles changed since this draft was loaded. Refresh and compare Activity Log before saving.");
+        if (!globalThis.crypto?.randomUUID) throw new AggregateWorkerSaveError("Secure Section Titles saving is unavailable. Refresh the Admin and try again.");
+        request = { requestId: globalThis.crypto.randomUUID(), titles, expectedBaselineDigest: baseline.digest, baselineProof: baseline.proof };
+        await writePendingEnvelope("section_titles", identity.actorUserId, resumeId, request.requestId,
+          { titles: request.titles, expectedBaselineDigest: request.expectedBaselineDigest, baselineProof: request.baselineProof }, 8192);
+      }
+      let response: Response;
+      try { response = await fetch("/api/admin/v1/section-titles/save", { method: "POST", credentials: "omit",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${identity.token}` },
+        body: JSON.stringify({ request_id: request.requestId, resume_id: resumeId, section_titles: request.titles,
+          expected_baseline_digest: request.expectedBaselineDigest, baseline_proof: request.baselineProof }), signal: AbortSignal.timeout(20_000) }); }
+      catch { throw new AggregateWorkerSaveError("The Section Titles save result is uncertain. Retry the exact pending request."); }
+      if (!response.ok) {
+        if (response.status >= 500) throw new AggregateWorkerSaveError("The Section Titles save result is uncertain. Retry the exact pending request.");
+        throw new AggregateWorkerSaveError(response.status === 409 ? "Section Titles changed after this request began or its request ID conflicts. Refresh and compare Activity Log before creating a new request."
+          : "Section Titles could not be saved. Your draft remains available.");
+      }
+      let result: unknown;
+      try { result = await response.json(); } catch { throw new AggregateWorkerSaveError("The Section Titles save result is uncertain. Retry the exact pending request."); }
+      if (!isRecord(result) || !hasExactKeys(result, ["section_titles"])
+        || !valid(result.section_titles) || canonicalTitles(result.section_titles) !== canonicalTitles(request.titles)
+        )
+        throw new AggregateWorkerSaveError("The Section Titles result could not be confirmed. Retry the exact pending request.");
+      clearPendingEnvelope("section_titles", resumeId, identity.actorUserId);
+      const nextState = await supabase.rpc("load_admin_section_titles_write_state", { target_resume_id: resumeId });
+      const stateRow = Array.isArray(nextState.data) && nextState.data.length === 1 ? nextState.data[0] as Record<string, unknown> : null;
+      if (nextState.error || !stateRow || stateRow.resume_id !== resumeId || typeof stateRow.section_titles_baseline_digest !== "string"
+        || typeof stateRow.section_titles_baseline_proof !== "string" || !valid(stateRow.section_titles_snapshot))
+        throw new AggregateWorkerSaveError("Section Titles were saved, but the next baseline could not be verified. Refresh and review the saved values before making another change.");
+      sectionTitlesBaselineByResumeId.set(sectionTitlesBaselineKey(resumeId, identity.actorUserId), {
+        digest: stateRow.section_titles_baseline_digest, proof: stateRow.section_titles_baseline_proof, snapshot: stateRow.section_titles_snapshot,
+      });
+      return result.section_titles;
     },
     async saveSkillsWithWorker(resumeId, items) {
       if (!resumeId || !Array.isArray(items) || items.length > 16) throw new AggregateWorkerSaveError("Skills content is invalid.");

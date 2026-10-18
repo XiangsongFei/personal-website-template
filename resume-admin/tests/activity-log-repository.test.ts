@@ -49,6 +49,21 @@ describe("Activity Log repository RPC boundary", () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: new Error("denied") });
     await expect(repository(rpc).loadAdminFilesRestoreCapability!("qa-target")).rejects.toThrow("Unable to load Files Restore capability");
   });
+  it("accepts a Section Titles V2 event only with the exact aggregate contract", async () => {
+    const aggregate = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "项目链接" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "Project link" },
+    } };
+    const event = activityRow({ section_key: "section_titles", entity_type: "section_titles_settings", entity_id: null,
+      entity_snapshot: { section_titles: aggregate }, changes: { section_titles: { before: aggregate, after: aggregate } }, payload_version: 2 });
+    const rpc = vi.fn().mockResolvedValue({ data: [event], error: null });
+    const result = await repository(rpc).loadActivityLogPageV13C!("qa-resume", 50, v13cFilters);
+    expect(result[0]).toMatchObject({ section: "section_titles", entityType: "section_titles_settings", payloadVersion: 2 });
+    const invalid = activityRow({ ...event, entity_type: "resume_file_set" });
+    const invalidRpc = vi.fn().mockResolvedValue({ data: [invalid], error: null });
+    await expect(repository(invalidRpc).loadActivityLogPageV13C!("qa-resume", 50, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+
   it("loads target-scoped server-owned capability and Introduction mode", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: false }], error: null });
     await expect(repository(rpc).loadAdminFeatureState!("qa-target")).resolves.toEqual({ resumeId: "qa-target", activityLogEnabled: true, introductionWriteMode: "rpc", introductionTrustedContextRequired: false });

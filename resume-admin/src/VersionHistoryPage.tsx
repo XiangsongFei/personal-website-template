@@ -14,6 +14,7 @@ const domainLabels: Record<VersionHistoryDomain, string> = {
   introduction: "Introduction",
   awards: "Awards", experience: "Experience", skills: "Skills", education: "Education",
   projects: "Projects", contact: "Contact", profile: "Profile", website_links: "Website & Links", files: "Files",
+  section_titles: "Section titles",
 };
 
 const operationLabels: Record<VersionHistoryEntry["operation"], string> = {
@@ -28,6 +29,7 @@ const itemTypeLabels: Record<string, string> = {
   contact: "Contact information", profile_details: "Profile details", profile_photo: "Profile photo",
   public_link: "Public link", website_links: "Website & Links", navigation_item: "Navigation link", project_method: "Method",
   recorded_item: "Recorded item",
+  section_titles: "Section titles",
 };
 const RESTORE_DOMAINS: readonly RestorePreviewDomain[] = ["awards", "experience", "skills", "education", "projects", "contact", "website_links"];
 const MAX_COLLAPSED_FIELDS = 3;
@@ -46,6 +48,9 @@ function scalarText(value: string | number | boolean | null, t: (value: string) 
 }
 
 function fieldLabelFor(domain: VersionHistoryDomain, itemType: string, key: string): string {
+  if (domain === "section_titles") return ({ "Education section title": "Education section title", "Experience section title": "Experience section title",
+    "Skills section title": "Skills section title", "Awards section title": "Awards section title", "Projects section title": "Projects section title",
+    "Project link label": "Project link label" } as Record<string, string>)[key] ?? "Recorded item";
   if (domain === "introduction" && key === "text") return "Paragraph text";
   if (domain === "introduction" && key === "position") return "Position";
   if (key === "value" && itemType === "project_method") return "Method";
@@ -57,6 +62,8 @@ function fieldLabelFor(domain: VersionHistoryDomain, itemType: string, key: stri
   if (key === "title" && domain === "projects") return "Project name";
   if (key === "title" && domain === "skills") return "Skill group title";
   const labels: Record<string, string> = {
+    education_label: "Education section title", experience_label: "Experience section title", skills_label: "Skills section title",
+    honors_label: "Awards section title", project_heading: "Projects section title", kaggle_label: "Project link label",
     name: "Name", year: "Year", organization: "Organization", role: "Role", period: "Period", location: "Location",
     description: "Description", items: "Skill content", institution: "Institution", program: "Program", date: "Date", grade: "Grade",
     course_title: "Course title", course_name: "Course title", course_description: "Course description", custom_category_label: "Category",

@@ -16,6 +16,22 @@ const aggregate = (before: VersionHistoryJson, after: VersionHistoryJson, overri
   entry({ ...overrides, comparison: { kind: "aggregate", before, after } });
 
 describe("presentVersionHistoryChange", () => {
+  it("presents Section Titles aggregate changes with locale-specific labels and values", () => {
+    const before = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "View project" },
+    } } as VersionHistoryJson & { translations: { zh: Record<string, string>; en: Record<string, string> } };
+    const after = structuredClone(before);
+    after.translations.zh.education_label = "教育经历";
+    after.translations.en.kaggle_label = "Open project";
+    const result = presentVersionHistoryChange(aggregate(before, after, { domain: "section_titles", entityType: "section_titles_settings" }));
+    expect(result).toMatchObject({ domain: "section_titles", state: "changes", items: [{ itemType: "section_titles", state: "updated" }] });
+    expect(result.items[0]?.fields).toEqual([
+      { key: "Education section title", locale: "zh", kind: "updated", before: { recorded: true, value: "教育" }, after: { recorded: true, value: "教育经历" } },
+      { key: "Project link label", locale: "en", kind: "updated", before: { recorded: true, value: "View project" }, after: { recorded: true, value: "Open project" } },
+    ]);
+  });
+
   it("presents bilingual Introduction paragraphs, additions, removals, and numeric position changes", () => {
     const intro = entry({ domain: "introduction", entityType: "introduction_paragraph", payloadVersion: 1,
       comparison: { kind: "paragraph_changes", paragraphs: [

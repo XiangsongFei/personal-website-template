@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeFilesActivity, describeProfileActivity, describeProjectsActivity, describeWebsiteLinksActivity } from "../src/ActivityLogPage";
+import { ActivityLogPage, beijingDateRange, beijingDateStartUtc, describeAwardsActivity, describeContactActivity, describeExperienceSkillsActivity, describeFilesActivity, describeProfileActivity, describeProjectsActivity, describeSectionTitlesActivity, describeWebsiteLinksActivity } from "../src/ActivityLogPage";
 import type { ActivityLogEvent, ActivityLogV13CEvent, ActivityLogV13CRejectedEvent, ActivityLogV13CSuccessEvent, ResumeRepository } from "../src/data/resumeRepository";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
 
@@ -106,6 +106,28 @@ describe("Activity Log page", () => {
     expect(await screen.findByRole("heading", { name: "Files" })).toBeTruthy();
     expect(screen.getByText(/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\.pdf/)).toBeTruthy();
     expect(document.body.textContent).not.toContain("storage.example.test");
+  });
+
+  it("describes a bilingual Section Titles V2 event as one change per modified field", async () => {
+    const before = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "View project" },
+    } } as { translations: { zh: Record<string, string>; en: Record<string, string> } };
+    const after = structuredClone(before);
+    after.translations.zh.education_label = "教育经历";
+    after.translations.en.kaggle_label = "Open project";
+    const row: ActivityLogV13CEvent = { ...event("section-titles-v2"), section: "section_titles", entityType: "section_titles_settings", entityId: null,
+      entitySnapshot: { section_titles: after }, changes: { section_titles: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeSectionTitlesActivity(row)).toEqual([
+      { kind: "Updated", label: "Section titles", locale: "Chinese", field: "Education section title", before: "教育", after: "教育经历" },
+      { kind: "Updated", label: "Section titles", locale: "English", field: "Project link label", before: "View project", after: "Open project" },
+    ]);
+    const repository = { loadActivityLogAuthorizedTargets: vi.fn().mockResolvedValue([{ resumeId, siteKey: "example-cv-qa-activity-log", role: "qa" }]),
+      loadActivityLogPageV13C: vi.fn().mockResolvedValue([row]) } as unknown as ResumeRepository;
+    renderPage(repository);
+    fireEvent.click(await screen.findByText(/View changed fields/));
+    expect(await screen.findByText(/Chinese · Education section title · Section titles · Before: 教育 · After: 教育经历/)).toBeTruthy();
+    expect(screen.getByText(/English · Project link label · Section titles · Before: View project · After: Open project/)).toBeTruthy();
   });
 
   it("renders V2 Experience/Skills semantic rows in English and Chinese", async () => {

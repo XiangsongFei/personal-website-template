@@ -15,6 +15,7 @@ const SAVE_PATH = `${API_ROOT}/introduction/save`;
 const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
 const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
 const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
+const SAVE_SECTION_TITLES_PATH = `${API_ROOT}/section-titles/save`;
 const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
 const SAVE_PROJECTS_PATH = `${API_ROOT}/projects/save`;
 const SAVE_CONTACT_PATH = `${API_ROOT}/contact/save`;
@@ -89,7 +90,7 @@ interface SignedContext {
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files" | "section_titles";
   operation: "update";
   request_id: string;
   mutation_digest: string;
@@ -1018,6 +1019,70 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function saveSectionTitles(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 24 * 1024);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "baseline_proof,expected_baseline_digest,request_id,resume_id,section_titles")
+    throw apiError(400, "invalid_request", "Request must contain only the Section Titles payload and signed baseline fields.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.expected_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_baseline_digest)
+    || typeof parsed.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(parsed.baseline_proof))
+    throw apiError(422, "invalid_section_titles_baseline", "Request IDs and the database-signed baseline must be valid.");
+  const payload = parsed.section_titles;
+  const titleKeys = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"];
+  if (!isPlainObject(payload) || Object.keys(payload).sort().join(",") !== "translations" || !isPlainObject(payload.translations)
+    || Object.keys(payload.translations).sort().join(",") !== "en,zh") throw apiError(422, "invalid_section_titles", "Section Titles must contain both supported languages.");
+  const translations = payload.translations as Record<string, unknown>;
+  for (const locale of ["zh", "en"] as const) {
+    const fields = translations[locale];
+    if (!isPlainObject(fields) || Object.keys(fields).sort().join(",") !== [...titleKeys].sort().join(",")
+      || Object.values(fields).some(value => typeof value !== "string" || UTF8.encode(value).byteLength > 1024
+        || Array.from(value).some(character => { const code = character.codePointAt(0) ?? 0; return code <= 31 || code === 127; })))
+      throw apiError(422, "invalid_section_titles", "Section Titles contains an invalid field.");
+  }
+  const canonical = JSON.stringify({ translations: {
+    zh: Object.fromEntries(titleKeys.map(key => [key, (translations.zh as Record<string, string>)[key]])),
+    en: Object.fromEntries(titleKeys.map(key => [key, (translations.en as Record<string, string>)[key]])),
+  } });
+  if (UTF8.encode(canonical).byteLength > 16384) throw apiError(413, "canonical_payload_too_large", "Section Titles exceeds the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(), domain: "section_titles", operation: "update", request_id: parsed.request_id.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical), expected_baseline_digest: parsed.expected_baseline_digest,
+    baseline_proof: parsed.baseline_proof, issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_section_titles_v1`, {
+      method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
+        "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_section_titles: canonical,
+        signed_context: signed.serialized, signature_hex: signed.signatureHex }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same Section Titles request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const result = await readJsonResponse(upstream, 24 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, result)) throw apiError(409, "idempotency_conflict", "The Section Titles request ID conflicts with another payload.");
+    const details = isPlainObject(result) && typeof result.code === "string" ? result.code : "";
+    if (details === "P13B2") throw apiError(409, "section_titles_baseline_conflict", "Section Titles changed after this request began. Refresh and review before saving again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", "The data service could not save Section Titles.");
+  }
+  if (!isPlainObject(result) || Object.keys(result).sort().join(",") !== "translations" || !isPlainObject(result.translations)
+    || Object.keys(result.translations).sort().join(",") !== "en,zh") throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Section Titles result.");
+  return Response.json({ section_titles: result }, { headers: { "Cache-Control": "no-store" } });
+}
+
 async function saveEducation(request: Request, env: WorkerEnv): Promise<Response> {
   const rawBody = await readBoundedBody(request, REQUEST_BODY_LIMIT);
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
@@ -1927,7 +1992,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   }
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_SECTION_TITLES_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1944,6 +2009,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_EDUCATION_PATH) return await saveEducation(request, env);
     if (url.pathname === SAVE_PROJECTS_PATH) return await saveProjects(request, env);
     if (url.pathname === SAVE_CONTACT_PATH) return await saveContact(request, env);
+    if (url.pathname === SAVE_SECTION_TITLES_PATH) return await saveSectionTitles(request, env);
     if (url.pathname === SAVE_PROFILE_PATH) return await saveProfile(request, env);
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");

@@ -9,7 +9,7 @@ import type { AdminAuthClient } from "../src/auth/supabase";
 import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
-import { AggregateWorkerSaveError, createFilesSaveOperation, createResumeRepository, type AdminFilesWriteState, type FilesSaveOperation, type ResumeRepository, type ResumeSectionRepository, type EditableRepeatableSection } from "../src/data/resumeRepository";
+import { AggregateWorkerSaveError, createFilesSaveOperation, createResumeRepository, type AdminFilesWriteState, type FilesSaveOperation, type ResumeRepository, type ResumeSectionRepository, type EditableRepeatableSection, type SectionTitlesAggregate } from "../src/data/resumeRepository";
 import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, LinksSection, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
@@ -32,7 +32,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; failExperienceRpc?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; failExperienceRpc?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean; sectionTitlesWriteMode?: "direct" | "rpc"; sectionTitlesTrustedContextRequired?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -86,6 +86,17 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(async (targetResumeId: string, locale: Locale, fields: Partial<LinksSection["translations"][Locale]>) => { void targetResumeId; void locale; void fields; }), updateNavigationLabel: vi.fn(),
+    loadAdminSectionTitlesWriteState: vi.fn(async (targetResumeId = resumeId) => {
+      const source = fixtureSections.links.translations;
+      const snapshot: SectionTitlesAggregate = { translations: { zh: { education_label: source.zh.educationLabel, experience_label: source.zh.experienceLabel,
+        skills_label: source.zh.skillsLabel, honors_label: source.zh.honorsLabel, project_heading: source.zh.projectHeading, kaggle_label: source.zh.kaggleLabel },
+        en: { education_label: source.en.educationLabel, experience_label: source.en.experienceLabel, skills_label: source.en.skillsLabel,
+          honors_label: source.en.honorsLabel, project_heading: source.en.projectHeading, kaggle_label: source.en.kaggleLabel } } };
+      return { resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.sectionTitlesWriteMode === "rpc",
+        writeMode: options.sectionTitlesWriteMode ?? "direct", trustedContextRequired: options.sectionTitlesTrustedContextRequired ?? false, snapshot,
+        baselineDigest: "1".repeat(64), baselineProof: "2".repeat(64) };
+    }),
+    saveSectionTitlesWithWorker: vi.fn(async (_targetResumeId: string, draft: SectionTitlesAggregate) => structuredClone(draft)),
     loadAdminFeatureState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct", introductionTrustedContextRequired: options.introductionTrustedContextRequired ?? false })),
     loadAdminAwardsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId,
       activityLogEnabled: options.activityLogEnabled ?? options.awardsWriteMode === "rpc",
@@ -524,6 +535,21 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { kaggleLabel: "查看项目" });
     expect(repo.methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "" }));
+  });
+
+  it("routes RPC-mode public title changes through one bilingual Section Titles request", async () => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
+    const [targetId, payload, baseline] = methods.saveSectionTitlesWithWorker.mock.calls[0] as unknown as [string, SectionTitlesAggregate, SectionTitlesAggregate];
+    expect(targetId).toBe(resumeId);
+    expect(payload.translations.zh.education_label).toBe("教育标题更新");
+    expect(payload.translations.en.education_label).toBe("Education");
+    expect(baseline.translations.zh.education_label).toBe("教育背景");
   });
 
   it("keeps relocated section text draft in Preview and restores it on Cancel", async () => {

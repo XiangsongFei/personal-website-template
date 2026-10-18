@@ -64,6 +64,7 @@ Object.assign(dictionary, {
 
 Object.assign(dictionary, {
   "Activity Log": "活动记录", "Admin tools": "管理工具", "Review recorded changes to this resume.": "查看此简历的已记录修改。",
+  "Section titles": "板块标题", "Project link label": "项目链接文案", "Skills section title": "技能区标题",
   "Loading Activity Log…": "正在加载活动记录……", "Unable to load Activity Log.": "无法加载活动记录。",
   "No activity has been recorded yet.": "暂时没有活动记录。", Introduction: "个人简介",
   Created: "已创建", Updated: "已修改", Deleted: "已删除", Reordered: "顺序已调整", by: "操作人：",

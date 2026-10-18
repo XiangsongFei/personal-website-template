@@ -215,6 +215,12 @@ function readProfile(value: unknown): { shared: ScalarMap; translations: LocaleM
   return { shared, translations };
 }
 
+const SECTION_TITLE_KEYS = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"] as const;
+function readSectionTitles(value: unknown): LocaleMap {
+  if (!isDict(value) || !exactKeys(value, ["translations"])) throw new Error("invalid section titles");
+  return readLocaleFields(value.translations, SECTION_TITLE_KEYS);
+}
+
 function labelFor(domain: VersionHistoryDomain, before: Row | null, after: Row | null, locale: HistoryLocale = "en"): string | null {
   const orderByDomain: Partial<Record<VersionHistoryDomain, string[]>> = {
     awards: ["name"], experience: ["title", "organization"], skills: ["title"], education: ["title", "program"],
@@ -438,6 +444,13 @@ function presentV2(entry: VersionHistoryEntry): HistoryChangePresentation {
     items = [itemForObject(entry.domain, entry, before, after, "website_links")];
   } else if (entry.domain === "profile") {
     items = [itemForObject(entry.domain, entry, before, after, "profile_details")];
+  } else if (entry.domain === "section_titles" && entry.entityType === "section_titles_settings") {
+    const oldTitles = readSectionTitles(before), newTitles = readSectionTitles(after);
+    const aliases = { education_label: "Education section title", experience_label: "Experience section title", skills_label: "Skills section title",
+      honors_label: "Awards section title", project_heading: "Projects section title", kaggle_label: "Project link label" };
+    const fields = [...scalarFields(oldTitles.zh, newTitles.zh, "zh", aliases), ...scalarFields(oldTitles.en, newTitles.en, "en", aliases)];
+    if (fields.length === 0) return generic(entry);
+    items = [{ itemType: "section_titles", state: "updated", label: null, fields, children: [] }];
   } else return generic(entry);
   items = items.filter(item => item.state !== "updated" || item.fields.length > 0 || item.children.length > 0);
   if (items.length === 0) return generic(entry);

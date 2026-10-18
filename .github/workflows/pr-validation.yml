@@ -102,9 +102,10 @@ jobs:
           awards_idempotency_array="20261111000000_awards_idempotency_result_array.sql"
           awards_jsonb_validation="20261112000000_awards_jsonb_object_validation.sql"
           skills_baseline_cas="20261113000000_skills_baseline_cas.sql"
+          section_titles="20261114000000_activity_log_section_titles.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} ${awards_idempotency_array} ${awards_jsonb_validation} ${skills_baseline_cas} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} ${awards_idempotency_array} ${awards_jsonb_validation} ${skills_baseline_cas} ${section_titles} "
           test_awards_skills="20261108000000_awards_skills_test_rpc_routing.sql"
           test -f "resume-admin/migrations/${test_awards_skills}"
           test ! -e "${cli_dir}/${test_awards_skills}"
@@ -113,7 +114,7 @@ jobs:
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}" "${awards_idempotency_array}" "${awards_jsonb_validation}" "${skills_baseline_cas}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}" "${awards_idempotency_array}" "${awards_jsonb_validation}" "${skills_baseline_cas}" "${section_titles}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
@@ -148,6 +149,9 @@ jobs:
           printf '%s  %s\n' \
             "3a4565de0d7a09ced22f1e65b222797b73199265d1808d330522ebed200b878d" \
             "resume-admin/migrations/${skills_baseline_cas}" | sha256sum --check
+          printf '%s  %s\n' \
+            "f1e1de1a54ebc522613311a18c9d689ca316c54bccb0155456c2a0a661f77422" \
+            "resume-admin/migrations/${section_titles}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests
