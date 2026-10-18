@@ -5,7 +5,7 @@ import { App } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient } from "../src/auth/supabase";
 import { mapResumeRows } from "../src/data/resumeMapper";
-import type { ResumeRepository } from "../src/data/resumeRepository";
+import type { ResumeRepository, SectionTitlesAggregate } from "../src/data/resumeRepository";
 import type { EducationItem, Locale } from "../src/model";
 import { resumeTables } from "../src/data/resumeRepository";
 import type { ResumeRows } from "../src/data/resumeMapper";
@@ -320,7 +320,13 @@ describe("Stage 4G Education production CRUD", () => {
   it("states that the Education title saved separately when the collection RPC fails and keeps the collection draft retryable", async () => {
     const saveEducationWithWorker = vi.fn(async () => { throw new Error("Education RPC unavailable. Your draft remains available."); });
     const updateSiteText = vi.fn(async () => {});
+    const saveSectionTitlesWithWorker = vi.fn(async (_target: string, titles: SectionTitlesAggregate) => titles);
+    const localeTitles = { education_label: "Education", experience_label: "Experience", skills_label: "Skills",
+      honors_label: "Awards", project_heading: "Projects", kaggle_label: "Kaggle" };
     const repo = makeRepository({ updateSiteText,
+      loadAdminSectionTitlesWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true, writeMode: "rpc" as const,
+        trustedContextRequired: true, snapshot: { translations: { zh: localeTitles, en: localeTitles } } })),
+      saveSectionTitlesWithWorker,
       loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true,
         educationWriteMode: "rpc" as const, educationTrustedContextRequired: true })), saveEducationWithWorker });
     openEducation(repo);
@@ -331,7 +337,8 @@ describe("Stage 4G Education production CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Education changes" }));
 
     await screen.findByText(/section title was saved separately; collection changes remain unsaved and can be retried/i);
-    expect(updateSiteText).toHaveBeenCalledOnce();
+    expect(saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(updateSiteText).not.toHaveBeenCalled();
     expect(saveEducationWithWorker).toHaveBeenCalledOnce();
     expect(label.value).toBe("Education title saved first");
     expect(title.value).toBe("Collection draft retained");

@@ -130,6 +130,28 @@ describe("Activity Log page", () => {
     expect(screen.getByText(/English · Project link label · Section titles · Before: View project · After: Open project/)).toBeTruthy();
   });
 
+  it.each([
+    ["education_label", "Education section title"], ["experience_label", "Experience section title"],
+    ["skills_label", "Skills section title"], ["honors_label", "Awards section title"],
+    ["project_heading", "Projects section title"], ["kaggle_label", "Project link label"],
+  ] as const)("shows both language changes for %s in Activity Log", (titleKey, label) => {
+    const before = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "View project" },
+    } };
+    const after = structuredClone(before);
+    after.translations.zh[titleKey] = `新${before.translations.zh[titleKey]}`;
+    after.translations.en[titleKey] = `New ${before.translations.en[titleKey]}`;
+    const row: ActivityLogV13CEvent = { ...event("section-titles-v2"), section: "section_titles", entityType: "section_titles_settings", entityId: null,
+      entitySnapshot: { section_titles: after }, changes: { section_titles: { before, after } }, eventSource: "activity", sourceRank: 1, payloadVersion: 2 };
+    expect(describeSectionTitlesActivity(row)).toEqual([
+      { kind: "Updated", label: "Section titles", locale: "Chinese", field: label,
+        before: before.translations.zh[titleKey], after: after.translations.zh[titleKey] },
+      { kind: "Updated", label: "Section titles", locale: "English", field: label,
+        before: before.translations.en[titleKey], after: after.translations.en[titleKey] },
+    ]);
+  });
+
   it("renders V2 Experience/Skills semantic rows in English and Chinese", async () => {
     const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const row = { id, position: 0, zh: { title: "语言", items: "中文" }, en: { title: "Languages", items: "Chinese" } };

@@ -149,10 +149,18 @@ describe("Batch 6B scoped repository writes", () => {
   });
   it("updates only explicitly changed locale-content columns", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
-    await repo.updateSiteText!(resumeId, "en", { educationLabel: "Education updated" });
-    expect(db.calls[0]).toMatchObject({ table: "resume_locale_content", op: "update", payload: { education_label: "Education updated" }, filters: [["resume_id", resumeId], ["locale", "en"]] });
-    expect(Object.keys(db.calls[0].payload!)).toEqual(["education_label"]);
+    await repo.updateSiteText!(resumeId, "en", { portfolioLabel: "Download resume" });
+    expect(db.calls[0]).toMatchObject({ table: "resume_locale_content", op: "update", payload: { portfolio_label: "Download resume" }, filters: [["resume_id", resumeId], ["locale", "en"]] });
+    expect(Object.keys(db.calls[0].payload!)).toEqual(["portfolio_label"]);
   });
+  it.each(["educationLabel", "experienceLabel", "skillsLabel", "honorsLabel", "projectHeading", "kaggleLabel"] as const)(
+    "rejects direct writes to audited Section Titles: %s", async key => {
+      const db = database(); const repo = createResumeRepository(db.client);
+      await expect(repo.updateSiteText!(resumeId, "en", { [key]: "Changed", portfolioLabel: "Also changed" }))
+        .rejects.toThrow("Section Titles require the audited writer");
+      expect(db.calls).toEqual([]);
+    },
+  );
   it("keeps navigation writes label-only and locale-scoped", async () => {
     const db = database(); const repo = createResumeRepository(db.client);
     await repo.updateNavigationLabel!(resumeId, "nav-id", "zh", "经历");

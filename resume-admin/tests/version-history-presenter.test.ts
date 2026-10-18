@@ -16,6 +16,27 @@ const aggregate = (before: VersionHistoryJson, after: VersionHistoryJson, overri
   entry({ ...overrides, comparison: { kind: "aggregate", before, after } });
 
 describe("presentVersionHistoryChange", () => {
+  it.each([
+    ["education_label", "Education section title"], ["experience_label", "Experience section title"],
+    ["skills_label", "Skills section title"], ["honors_label", "Awards section title"],
+    ["project_heading", "Projects section title"], ["kaggle_label", "Project link label"],
+  ] as const)("shows both language values for %s", (titleKey, label) => {
+    const before = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "View project" },
+    } };
+    const after = structuredClone(before);
+    after.translations.zh[titleKey] = `新${before.translations.zh[titleKey]}`;
+    after.translations.en[titleKey] = `New ${before.translations.en[titleKey]}`;
+    const result = presentVersionHistoryChange(aggregate(before, after, { domain: "section_titles", entityType: "section_titles_settings" }));
+    expect(result.items[0]?.fields).toEqual([
+      { key: label, locale: "zh", kind: "updated", before: { recorded: true, value: before.translations.zh[titleKey] },
+        after: { recorded: true, value: after.translations.zh[titleKey] } },
+      { key: label, locale: "en", kind: "updated", before: { recorded: true, value: before.translations.en[titleKey] },
+        after: { recorded: true, value: after.translations.en[titleKey] } },
+    ]);
+  });
+
   it("presents Section Titles aggregate changes with locale-specific labels and values", () => {
     const before = { translations: {
       zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },

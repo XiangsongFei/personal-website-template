@@ -222,8 +222,8 @@ describe("Batch 6A production repeatable CRUD", () => {
     { path: "/projects", label: "Chinese Section title", value: "Project section name", key: "projectHeading" },
     { path: "/skills", label: "Chinese Section title", value: "Skills section name", key: "skillsLabel" },
     { path: "/awards", label: "Chinese Section title", value: "Awards section name", key: "honorsLabel" },
-  ] as const)("relocates and saves $key on $path through the existing site-text writer", async ({ path, label, value, key }) => {
-    const setup = makeRepository("skills");
+  ] as const)("relocates and saves $key on $path through the audited Section Titles writer", async ({ path, label, value, key }) => {
+    const setup = makeRepository("skills", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     const repository = path === "/education" ? addEducationWriters(setup.repository) : setup.repository;
     open({ path }, repository);
     const title = await screen.findByLabelText(label) as HTMLInputElement;
@@ -247,11 +247,18 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save();
     await screen.findByText("No unsaved changes");
-    expect(setup.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { [key]: value });
+    expect(setup.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    const titleColumns: Record<string, keyof SectionTitlesAggregate["translations"]["zh"]> = {
+      educationLabel: "education_label", experienceLabel: "experience_label", projectHeading: "project_heading",
+      skillsLabel: "skills_label", honorsLabel: "honors_label",
+    };
+    const titleColumn = titleColumns[key];
+    expect(setup.methods.saveSectionTitlesWithWorker.mock.calls[0]?.[1].translations.zh[titleColumn]).toBe(value);
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
   });
 
-  it("shows the global project link text only below a project URL and saves it through the existing site-text writer", async () => {
-    const { repository, methods } = makeRepository("projects");
+  it("shows the global project link text only below a project URL and saves it through the audited writer", async () => {
+    const { repository, methods } = makeRepository("projects", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     open({ path: "/projects" }, repository);
     const heading = await screen.findByLabelText("Chinese Section title") as HTMLInputElement;
     expect(screen.getByRole("heading", { name: "Section title", level: 2 })).toBeTruthy();
@@ -273,7 +280,9 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.change(visibleLabel, { target: { value: "查看项目" } });
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Project area", kaggleLabel: "查看项目" });
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.saveSectionTitlesWithWorker.mock.calls[0]?.[1].translations.zh).toMatchObject({ project_heading: "Project area", kaggle_label: "查看项目" });
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
     expect(methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "https://example.test/project" }));
   });
@@ -520,7 +529,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("keeps the global link text when a project URL is cleared and saved", async () => {
-    const repo = makeRepository("projects");
+    const repo = makeRepository("projects", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     for (const item of repo.items as ProjectItem[]) {
       item.translations.zh.href = "https://example.test/project";
       item.translations.en.href = "https://example.test/project";
@@ -532,7 +541,8 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
     save();
     await screen.findByText("No unsaved changes");
-    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { kaggleLabel: "查看项目" });
+    expect(repo.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateSiteText).not.toHaveBeenCalled();
     expect(repo.methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "" }));
   });
@@ -550,6 +560,17 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(payload.translations.zh.education_label).toBe("教育标题更新");
     expect(payload.translations.en.education_label).toBe("Education");
     expect(baseline.translations.zh.education_label).toBe("教育背景");
+  });
+
+  it("keeps a title dirty instead of saving it without history in direct mode", async () => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "direct" });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("Unsaved changes");
+    expect(methods.loadAdminSectionTitlesWriteState).toHaveBeenCalledWith(resumeId);
+    expect(methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -579,19 +600,20 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("saves section text with existing content and keeps only failed text dirty for retry", async () => {
-    const { repository, methods } = makeRepository("experience");
-    methods.updateSiteText.mockRejectedValueOnce(new Error("temporary section text failure"));
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
+    methods.saveSectionTitlesWithWorker.mockRejectedValueOnce(new Error("temporary section text failure"));
     open({ path: "/experience" }, repository);
     fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "经历标题" } });
     fireEvent.change(screen.getByLabelText("Chinese Organization"), { target: { value: "更新后的组织" } });
     save();
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
-    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { experienceLabel: "经历标题" });
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
     expect(methods.updateEditableTranslation).toHaveBeenCalled();
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.updateSiteText).toHaveBeenCalledTimes(2);
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledTimes(2);
     expect(methods.updateEditableTranslation).toHaveBeenCalledTimes(1);
   });
 
@@ -1839,13 +1861,15 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("reports a separate locale-content success when the Projects aggregate RPC fails", async () => {
-    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true, activityLogEnabled: true, failProjectsRpc: true });
+    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true,
+      sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true, failProjectsRpc: true });
     open({ path: "/projects" }, repo.repository);
     fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Projects heading saved separately" } });
     fireEvent.change(await screen.findByLabelText("Chinese Title"), { target: { value: "Aggregate remains unsaved" } });
     save();
     await screen.findByText("Projects collection save did not complete. The section title or link text saved successfully; verify the collection before retrying.");
-    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Projects heading saved separately" });
+    expect(repo.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateSiteText).not.toHaveBeenCalled();
     expect(repo.methods.saveProjectsWithWorker).toHaveBeenCalledOnce();
     expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
     expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();

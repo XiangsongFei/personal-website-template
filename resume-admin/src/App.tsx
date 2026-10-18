@@ -574,54 +574,28 @@ function useSectionText(page: SectionTextPage | null) {
   };
   const save = async (): Promise<boolean> => {
     if (!dirty) return true;
-    if (!context.repository?.updateSiteText || !resumeId) return false;
+    if (!resumeId || !context.repository?.loadAdminSectionTitlesWriteState || !context.repository.saveSectionTitlesWithWorker) return false;
     const titleKeys: Record<SectionTextKey, SectionTitleKey> = { educationLabel: "education_label", experienceLabel: "experience_label",
       projectHeading: "project_heading", kaggleLabel: "kaggle_label", skillsLabel: "skills_label", honorsLabel: "honors_label" };
     const asAggregate = (translations: Bilingual<SiteTextTranslation>): SectionTitlesAggregate => ({ translations: {
       zh: Object.fromEntries(Object.entries(titleKeys).map(([source, target]) => [target, translations.zh[source as SectionTextKey]])) as Record<SectionTitleKey, string>,
       en: Object.fromEntries(Object.entries(titleKeys).map(([source, target]) => [target, translations.en[source as SectionTextKey]])) as Record<SectionTitleKey, string>,
     } });
-    if (context.repository.loadAdminSectionTitlesWriteState && context.repository.saveSectionTitlesWithWorker) {
-      try {
-        const writeState = await context.repository.loadAdminSectionTitlesWriteState(resumeId);
-        if (writeState.writeMode === "rpc") {
-          if (!writeState.activityLogEnabled || !writeState.trustedContextRequired) return false;
-          const current = context.siteTextTranslations ?? context.sections.links.translations;
-          const desired: Bilingual<SiteTextTranslation> = { zh: { ...current.zh }, en: { ...current.en } };
-          for (const locale of ["zh", "en"] as const) for (const key of keys) desired[locale][key] = draft[locale][key] ?? current[locale][key];
-          await context.repository.saveSectionTitlesWithWorker(resumeId, asAggregate(desired), asAggregate(current));
-          const changed = new Set<string>();
-          for (const locale of ["zh", "en"] as const) for (const key of keys) if (draft[locale][key] !== baseline[locale][key])
-            changed.add(bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale));
-          context.onBilingualSave(changed);
-          context.onSiteTextChanged?.(resumeId, desired);
-          if (page) context.setSectionTextDrafts(state => ({ ...state, [page]: { baseline: draft, draft } }));
-          return true;
-        }
-      } catch { return false; }
-    }
-    let complete = true;
-    let updatedTranslations = context.siteTextTranslations ?? context.sections.links.translations;
-    let changedAny = false;
-    for (const locale of ["zh", "en"] as const) {
-      const changed = Object.fromEntries(keys.filter(key => draft[locale][key] !== baseline[locale][key]).map(key => [key, draft[locale][key]])) as SectionTextValues;
-      if (!Object.keys(changed).length) continue;
-      try {
-        await context.repository.updateSiteText(resumeId, locale, changed);
-        changedAny = true;
-        updatedTranslations = { ...updatedTranslations, [locale]: { ...updatedTranslations[locale], ...changed } };
-        context.onBilingualSave(new Set(Object.keys(changed).map(key => bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale))));
-        if (page) context.setSectionTextDrafts(current => {
-          const latest = current[page] ?? { baseline, draft };
-          return { ...current, [page]: {
-            baseline: { ...latest.baseline, [locale]: { ...latest.baseline[locale], ...changed } },
-            draft: { ...latest.draft, [locale]: { ...latest.draft[locale], ...changed } },
-          } };
-        });
-      } catch { complete = false; }
-    }
-    if (changedAny) context.onSiteTextChanged?.(resumeId, updatedTranslations);
-    return complete;
+    try {
+      const writeState = await context.repository.loadAdminSectionTitlesWriteState(resumeId);
+      if (writeState.writeMode !== "rpc" || !writeState.activityLogEnabled || !writeState.trustedContextRequired) return false;
+      const current = context.siteTextTranslations ?? context.sections.links.translations;
+      const desired: Bilingual<SiteTextTranslation> = { zh: { ...current.zh }, en: { ...current.en } };
+      for (const locale of ["zh", "en"] as const) for (const key of keys) desired[locale][key] = draft[locale][key] ?? current[locale][key];
+      await context.repository.saveSectionTitlesWithWorker(resumeId, asAggregate(desired), asAggregate(current));
+      const changed = new Set<string>();
+      for (const locale of ["zh", "en"] as const) for (const key of keys) if (draft[locale][key] !== baseline[locale][key])
+        changed.add(bilingualFieldKey({ section: "links", itemId: "links", field: key }, locale));
+      context.onBilingualSave(changed);
+      context.onSiteTextChanged?.(resumeId, desired);
+      if (page) context.setSectionTextDrafts(state => ({ ...state, [page]: { baseline: draft, draft } }));
+      return true;
+    } catch { return false; }
   };
   const confirmLocal = () => {
     if (!page) return;

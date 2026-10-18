@@ -86,6 +86,20 @@ BEGIN
     result_value:=public.test_only_section_titles_save(target_id,req,titles,NULL,NULL,true);
     PERFORM public.rls_test_assert(public.test_only_section_titles_event_count(target_id)=events_before+1,
       'each changed title field produces exactly one event');
+    PERFORM public.rls_test_assert(EXISTS(
+      SELECT 1 FROM public.read_activity_log_events_v13c(target_id,100,NULL,NULL,NULL,'successful','section_titles') event
+      WHERE event.actor_user_id=(SELECT auth.uid()) AND event.resume_id=target_id
+        AND event.entity_type='section_titles_settings' AND event.payload_version=2
+        AND event.changes->'section_titles'->'before'=original
+        AND event.changes->'section_titles'->'after'=titles
+        AND event.entity_snapshot->'section_titles'=titles),
+      'each title event has the authorized actor, target and full bilingual before/after values');
+    PERFORM public.rls_test_assert(EXISTS(
+      SELECT 1 FROM public.read_version_history_v1(target_id,100) history
+      WHERE history.domain_key='section_titles' AND history.entity_type='section_titles_settings'
+        AND history.comparison_kind='aggregate' AND history.comparison->'before'=original
+        AND history.comparison->'after'=titles),
+      'Version History returns the same full bilingual values for every changed title');
     SELECT section_titles_snapshot INTO original FROM public.load_admin_section_titles_write_state(target_id);
     PERFORM public.rls_test_assert(result_value=original, 'Section Titles writer returns authoritative aggregate state');
     events_before:=events_before+1;

@@ -340,6 +340,8 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
     },
     updateSiteText: async (resumeId: string, locale: Locale, values: Partial<LinksSection["translations"][Locale]>) => {
       assertIdentity(resumeId); validateLocale(locale);
+      const sectionTitleKeys = ["educationLabel", "experienceLabel", "skillsLabel", "honorsLabel", "projectHeading", "kaggleLabel"] as const;
+      if (sectionTitleKeys.some(key => Object.hasOwn(values, key))) throw new Error("Section Titles require the audited writer");
       const keys: Record<keyof LinksSection["translations"][Locale], string> = { educationLabel: "education_label", experienceLabel: "experience_label", projectHeading: "project_heading", skillsLabel: "skills_label", honorsLabel: "honors_label", portfolioLabel: "portfolio_label", portfolioHref: "portfolio_href", kaggleLabel: "kaggle_label", updatedAtLabel: "updated_at_label", linkedInLabel: "linkedin_label", linkedInHref: "linkedin_href" };
       const payload: Row = {}; for (const key of Object.keys(values) as (keyof LinksSection["translations"][Locale])[]) { if (typeof values[key] !== "string") throw new Error("Invalid site text value"); payload[keys[key]] = values[key]; }
       if (!Object.keys(payload).length) return;
