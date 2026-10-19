@@ -138,6 +138,83 @@ const safeStartupErrorCodes = new Set([
   "ImagePrepullError", "DockerRunError", "DockerLifecycleInspectError", "DockerLifecycleListError", "NetworkCreateError",
 ]);
 
+const startupDiagnosticEnums = {
+  version: ["expected", "different", "unparseable", "probe-failed"],
+  stdout: ["empty", "non-json", "json-lines", "mixed", "multiline-json"],
+  stderr: ["empty", "non-json", "json-lines", "mixed", "multiline-json"],
+  shape: ["matched", "json-shape-mismatch", "no-json", "unavailable"],
+  code: ["allowlisted", "missing", "invalid-type", "not-allowlisted", "no-matched-error", "unavailable"],
+  source: ["structured-messages", "fallback-text", "unavailable"],
+};
+
+function safeStartupMetadata(metadata = {}) {
+  const labels = ["CLI version verification", "Startup stdout format", "Startup stderr format",
+    "Startup error shape", "Startup first error code status", "Startup classification source"];
+  return Object.entries(startupDiagnosticEnums).map(([key, allowed], index) => {
+    const fallback = key === "version" ? "probe-failed" : key === "stdout" || key === "stderr" ? "empty" : "unavailable";
+    return `${labels[index]}: ${allowed.includes(metadata?.[key]) ? metadata[key] : fallback}`;
+  }).join("\n");
+}
+
+function startupOutputFormat(output) {
+  const lines = String(output ?? "").split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return { format: "empty", hasJson: false };
+  const parses = (text) => { try { JSON.parse(text); return true; } catch { return false; } };
+  const count = lines.filter(parses).length;
+  if (count === lines.length) return { format: "json-lines", hasJson: true };
+  if (parses(String(output))) return { format: "multiline-json", hasJson: true };
+  return { format: count ? "mixed" : "non-json", hasJson: count > 0 };
+}
+
+function startupOutputMetadata(stdout, stderr, errors) {
+  try {
+    const out = startupOutputFormat(stdout);
+    const err = startupOutputFormat(stderr);
+    const available = typeof stdout === "string" || typeof stderr === "string";
+    return {
+      stdout: out.format, stderr: err.format,
+      shape: !available ? "unavailable" : errors.length ? "matched"
+        : out.hasJson || err.hasJson ? "json-shape-mismatch" : "no-json",
+      code: !available ? "unavailable" : errors[0]?.codeStatus ?? "no-matched-error",
+    };
+  } catch { return {}; }
+}
+
+function probeCliVersion(env, launch = spawn, timeoutMs = 3000) {
+  return new Promise((resolveProbe) => {
+    let child;
+    let timer;
+    let done = false;
+    let output = "";
+    const finish = (status) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolveProbe(status);
+    };
+    const abort = () => {
+      finish("probe-failed");
+      try { child?.kill("SIGKILL"); } catch { /* Diagnostic only. */ }
+    };
+    try {
+      child = launch("supabase", ["--version"], { env, stdio: ["ignore", "pipe", "pipe"] });
+      timer = setTimeout(abort, timeoutMs);
+      child.stdout.on("data", (chunk) => {
+        if (output.length + chunk.length > 1024) return abort();
+        output += chunk.toString();
+      });
+      child.stderr.on("data", () => {}); // Never retain or emit stderr.
+      child.on("error", abort);
+      child.on("close", (code) => {
+        if (code !== 0) return finish("probe-failed");
+        const version = output.trim();
+        finish(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
+          ? "unparseable" : version === "2.119.0" ? "expected" : "different");
+      });
+    } catch { abort(); }
+  });
+}
+
 function structuredStartupErrors(output) {
   const errors = [];
   for (const line of String(output).split(/\r?\n/)) {
@@ -146,6 +223,9 @@ function structuredStartupErrors(output) {
       if ((parsed?._tag === "Error" || parsed?.type === "error") && typeof parsed.error?.message === "string") {
         errors.push({
           code: safeStartupErrorCodes.has(parsed.error.code) ? parsed.error.code : "unrecognized",
+          codeStatus: !Object.hasOwn(parsed.error, "code") ? "missing"
+            : typeof parsed.error.code !== "string" ? "invalid-type"
+            : safeStartupErrorCodes.has(parsed.error.code) ? "allowlisted" : "not-allowlisted",
           message: parsed.error.message,
         });
       }
@@ -306,7 +386,7 @@ function startupFailure(error, diagnostics, pullDiagnostics = "") {
   const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
   const pulls = pullDiagnostics ? `\n${pullDiagnostics}` : "";
   const errorCode = safeStartupErrorCodes.has(error?.startupErrorCode) ? error.startupErrorCode : "unavailable";
-  return `${safeStartFailure}\nStartup failure category: ${category}\nSupabase CLI error code: ${errorCode}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
+  return `${safeStartFailure}\n${safeStartupMetadata(error?.startupMetadata)}\nStartup failure category: ${category}\nSupabase CLI error code: ${errorCode}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
 }
 
 const pullFailureCategories = new Set([
@@ -591,8 +671,14 @@ function run(command, args, options = {}) {
         const startOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
         const structuredErrors = structuredStartupErrors(startOutput);
         error.startupErrorCode = structuredErrors[0]?.code;
-        error.startupFailureCategory = classifyStartFailure(structuredErrors.length > 0
-          ? structuredErrors.map(({ message }) => message).join("\n") : startOutput);
+        error.startupMetadata = startupOutputMetadata(result.stdout, result.stderr, structuredErrors);
+        if (structuredErrors.length > 0) {
+          error.startupMetadata.source = "structured-messages";
+          error.startupFailureCategory = classifyStartFailure(structuredErrors.map(({ message }) => message).join("\n"));
+        } else {
+          error.startupMetadata.source = "fallback-text";
+          error.startupFailureCategory = classifyStartFailure(startOutput);
+        }
         const imageDiagnostic = startupImageDiagnostic(startOutput);
         error.startupImageDiagnosticStatus = imageDiagnostic.status;
         error.startupImageDiagnostic = imageDiagnostic.line;
@@ -896,7 +982,10 @@ function runSupabase(context, args, options = {}) {
   let output;
   let pullObserver;
   try {
-    if (args[0] === "start") pullObserver = installDockerPullObserver(context);
+    if (args[0] === "start") {
+      if (context.startupObserverError) throw context.startupObserverError;
+      pullObserver = context.startupPullObserver ?? installDockerPullObserver(context);
+    }
     output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
       env: supabaseCommandEnv(args, options, pullObserver),
       stdio: "pipe",
@@ -907,6 +996,7 @@ function runSupabase(context, args, options = {}) {
     });
   } catch (error) {
     if (args[0] === "start") {
+      error.startupMetadata = { ...error.startupMetadata, version: context.cliVersionVerification };
       const pullDiagnostics = pullObserver
         ? formatPullObserverDiagnostics(pullObserver.diagnosticsPath)
         : "Startup pull observer: unavailable; no image fields were emitted.";
@@ -1199,6 +1289,105 @@ if (delay > 0) setTimeout(finish, delay); else finish();
 }
 
 async function runSecuritySelfTests() {
+  // All assertions below expose only booleans or fixed enums on failure.
+  const secret = "diagnostic-private-marker";
+  const jsonError = (code, message = "address already in use", includeCode = true) => JSON.stringify({
+    _tag: "Error", error: { ...(includeCode ? { code } : {}), message },
+  });
+  const formatCases = [
+    ["", "empty"], [" \n\t", "empty"], ["plain text", "non-json"],
+    ['{}', "json-lines"], ['{}\n[]', "json-lines"], ['{}\nnoise', "mixed"],
+    ['{\n  "value": true\n}', "multiline-json"], ['\n {}\n \n[]\n', "json-lines"],
+  ];
+  for (const [input, expected] of formatCases) assert.equal(startupOutputFormat(input).format, expected);
+  const accepted = structuredStartupErrors(jsonError("ImagePrepullError"));
+  assert.equal(startupOutputMetadata('{}', 'plain', []).stdout, "json-lines");
+  assert.equal(startupOutputMetadata('{}', 'plain', []).stderr, "non-json");
+  assert.equal(startupOutputMetadata(undefined, undefined, []).shape, "unavailable");
+  assert.equal(startupOutputMetadata(undefined, undefined, []).code, "unavailable");
+  assert.equal(startupOutputMetadata('', '', []).shape, "no-json");
+  assert.equal(startupOutputMetadata(jsonError("ImagePrepullError"), '', accepted).shape, "matched");
+  for (const input of ['{}', '{"_tag":"Other","error":{"message":"x"}}',
+    '{"type":"error","error":{}}', '{"type":"error","error":{"message":1}}',
+    JSON.stringify({ _tag: "Error", error: { message: "x" } }, null, 2)]) {
+    const errors = structuredStartupErrors(input);
+    assert.equal(errors.length, 0);
+    const metadata = startupOutputMetadata(input, '', errors);
+    assert.equal(metadata.shape, "json-shape-mismatch");
+    assert.equal(metadata.code, "no-matched-error");
+  }
+  assert.equal(structuredStartupErrors('{"type":"error","error":{"message":"x"}}').length, 1);
+  for (const [input, expected] of [
+    [jsonError("ImagePrepullError"), "allowlisted"],
+    [jsonError(undefined, "x", false), "missing"], [jsonError(null), "invalid-type"],
+    [jsonError(123), "invalid-type"], [jsonError(secret), "not-allowlisted"],
+    [jsonError(secret) + "\n" + jsonError("ImagePrepullError"), "not-allowlisted"],
+    [jsonError("ImagePrepullError") + "\n" + jsonError(secret), "allowlisted"],
+  ]) assert.equal(startupOutputMetadata(input, '', structuredStartupErrors(input)).code, expected);
+  for (const [stdout, stderr, source, category] of [
+    [jsonError(secret + "-code", "address already in use " + secret + "-body"), "unauthorized " + secret + "-stderr", "structured-messages", "port-allocation"],
+    ["unauthorized " + secret, "", "fallback-text", "image-pull-authentication"],
+    [JSON.stringify({ unknown: secret + "-field", url: "https://example.invalid/?token=" + secret + "-url" }), "TLS handshake timeout", "fallback-text", "network-timeout"],
+  ]) {
+    let caught;
+    try { run("supabase", ["start"], {
+      spawn: () => ({ status: 1, stdout, stderr }), failureMessage: safeStartFailure, startDiagnostics: true,
+    }); } catch (error) { caught = error; }
+    assert.equal(Boolean(caught), true);
+    assert.equal(caught.startupMetadata.source, source);
+    assert.equal(caught.startupFailureCategory, category);
+    assert.equal(startupFailure(caught, "").includes(secret), false);
+  }
+  assert.throws(() => run("supabase", ["start"], {
+    spawn: () => ({ error: new Error(secret) }), failureMessage: safeStartFailure, startDiagnostics: true,
+  }), (error) => startupFailure(error, "").includes("Startup classification source: unavailable")
+    && !startupFailure(error, "").includes(secret));
+  const { EventEmitter } = await import("node:events");
+  const probeEnv = { PATH: "/diagnostic/mock-only" };
+  const fakeVersion = (output, status = 0, mode = "close") => (_command, args, options) => {
+    assert.equal(_command, "supabase");
+    assert.deepEqual(args, ["--version"]);
+    assert.equal(options.env === probeEnv, true);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.kill = () => true;
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(output));
+      child.stderr.emit("data", Buffer.from(secret));
+      if (mode === "error") child.emit("error", new Error(secret));
+      else if (mode !== "timeout") child.emit("close", status);
+    });
+    return child;
+  };
+  for (const [output, status, mode, expected] of [
+    ["2.119.0\n", 0, "close", "expected"], ["2.120.0", 0, "close", "different"],
+    [secret + "-version", 0, "close", "unparseable"], [secret, 1, "close", "probe-failed"],
+    [secret, 0, "error", "probe-failed"], [secret, 0, "timeout", "probe-failed"],
+  ]) {
+    const version = await probeCliVersion(probeEnv, fakeVersion(output, status, mode), 10);
+    assert.equal(version, expected);
+    assert.equal(safeStartupMetadata({ version }).includes(secret), false);
+    // Probe result is metadata only; run's success/failure decision is unchanged.
+    assert.equal(run("supabase", ["start"], { spawn: () => ({ status: 0, stdout: "" }) }), "");
+    let failed;
+    try { run("supabase", ["start"], {
+      spawn: () => ({ status: 1, stdout: "unauthorized", stderr: "" }),
+      failureMessage: safeStartFailure, startDiagnostics: true,
+    }); } catch (error) { failed = error; }
+    assert.equal(Boolean(failed), true);
+    failed.startupMetadata.version = version;
+    assert.equal(failed.startupFailureCategory, "image-pull-authentication");
+    assert.equal(startupFailure(failed, "").includes(secret), false);
+  }
+  assert.equal(await probeCliVersion(probeEnv, () => { throw new Error(secret); }), "probe-failed");
+  const unsafeMetadata = Object.fromEntries(Object.keys(startupDiagnosticEnums).map((key) => [key, secret]));
+  for (const metadata of [unsafeMetadata, {}, ...Object.entries(startupDiagnosticEnums).flatMap(([key, values]) => values.map((value) => ({ [key]: value })))]) {
+    const safe = safeStartupMetadata(metadata);
+    assert.equal(safe.includes(secret), false);
+    safe.split("\n").forEach((line, index) => {
+      assert.equal(Object.values(startupDiagnosticEnums)[index].includes(line.split(": ")[1]), true);
+    });
+  }
   const workflow = readFileSync(resolve(utilityDir, "../../../.github/workflows/pr-validation.yml"), "utf8");
   assert.match(workflow, /version:\s*2\.119\.0\s*$/m);
   assert.equal(verifiedSupabaseImages.length, 12);
@@ -1556,6 +1745,11 @@ export async function withStagedLocalSupabase(callback) {
     context.dockerNetworkId = loopbackNetwork.id;
     verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
+    try { context.startupPullObserver = installDockerPullObserver(context); }
+    catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
+    if (!context.startupObserverError) {
+      context.cliVersionVerification = await probeCliVersion(supabaseCommandEnv(["start"], {}, context.startupPullObserver));
+    }
     runSupabase(context, ["start"]);
     started = true;
     Object.assign(resources, identifyOwnedResources(projectId, before));
