@@ -133,21 +133,32 @@ function parseSafeImageReference(value, explicitRegistry) {
   return { registry, image, service };
 }
 
-function startupImageDiagnostic(output) {
-  const rawText = String(output);
-  const structuredMessages = [];
-  for (const line of rawText.split(/\r?\n/)) {
+const safeStartupErrorCodes = new Set([
+  "StartWorkdirError", "StartConfigLoadError", "StartInvalidConfigError",
+  "ImagePrepullError", "DockerRunError", "DockerLifecycleInspectError", "DockerLifecycleListError", "NetworkCreateError",
+]);
+
+function structuredStartupErrors(output) {
+  const errors = [];
+  for (const line of String(output).split(/\r?\n/)) {
     try {
       const parsed = JSON.parse(line);
-      if (parsed?._tag === "Error" && typeof parsed.error?.message === "string") {
-        structuredMessages.push(parsed.error.message);
-      } else if (parsed?.type === "error" && typeof parsed.error?.message === "string") {
-        structuredMessages.push(parsed.error.message);
+      if ((parsed?._tag === "Error" || parsed?.type === "error") && typeof parsed.error?.message === "string") {
+        errors.push({
+          code: safeStartupErrorCodes.has(parsed.error.code) ? parsed.error.code : "unrecognized",
+          message: parsed.error.message,
+        });
       }
     } catch {
       // JSON mode can share stderr with Docker pull progress; ignore non-JSON lines.
     }
   }
+  return errors;
+}
+
+function startupImageDiagnostic(output) {
+  const rawText = String(output);
+  const structuredMessages = structuredStartupErrors(rawText).map(({ message }) => message);
   const texts = structuredMessages.length > 0 ? structuredMessages : [rawText];
   let rejectedCandidate = false;
   const diagnostic = (image, suffix = "") => ({
@@ -294,7 +305,8 @@ function startupFailure(error, diagnostics, pullDiagnostics = "") {
   const imageStatus = error?.startupImageDiagnosticStatus ?? "not-found";
   const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
   const pulls = pullDiagnostics ? `\n${pullDiagnostics}` : "";
-  return `${safeStartFailure}\nStartup failure category: ${category}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
+  const errorCode = safeStartupErrorCodes.has(error?.startupErrorCode) ? error.startupErrorCode : "unavailable";
+  return `${safeStartFailure}\nStartup failure category: ${category}\nSupabase CLI error code: ${errorCode}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
 }
 
 const pullFailureCategories = new Set([
@@ -564,7 +576,7 @@ function removeTemporaryStage(stageRoot) {
 
 function run(command, args, options = {}) {
   const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, startDiagnostics = false, ...spawnOptions } = options;
-  const commandArgs = startDiagnostics ? ["--output", "json", ...args] : args;
+  const commandArgs = startDiagnostics ? ["--output-format", "json", ...args] : args;
   const result = spawn(command, commandArgs, { encoding: "utf8", ...spawnOptions });
   if (result.error) {
     const error = new Error(failureMessage ?? `${command} could not be started; output suppressed.`);
@@ -577,7 +589,10 @@ function run(command, args, options = {}) {
       const error = new Error(`${failureMessage}${diagnostics ? `\n${diagnostics}` : ""}`);
       if (startDiagnostics) {
         const startOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-        error.startupFailureCategory = classifyStartFailure(startOutput);
+        const structuredErrors = structuredStartupErrors(startOutput);
+        error.startupErrorCode = structuredErrors[0]?.code;
+        error.startupFailureCategory = classifyStartFailure(structuredErrors.length > 0
+          ? structuredErrors.map(({ message }) => message).join("\n") : startOutput);
         const imageDiagnostic = startupImageDiagnostic(startOutput);
         error.startupImageDiagnosticStatus = imageDiagnostic.status;
         error.startupImageDiagnostic = imageDiagnostic.line;
@@ -1317,7 +1332,7 @@ async function runSecuritySelfTests() {
   assert.equal(successOutput, "");
   assert.throws(() => run("supabase", ["start"], {
     spawn: (_command, args) => {
-      assert.deepEqual(args.slice(0, 2), ["--output", "json"]);
+      assert.deepEqual(args.slice(0, 2), ["--output-format", "json"]);
       return { status: 1, stdout: cliCredentials, stderr: cliCredentials };
     },
     stdio: "pipe", discardOutput: true, failureMessage: safeStartFailure, startDiagnostics: true,
@@ -1338,9 +1353,24 @@ async function runSecuritySelfTests() {
     stdio: "pipe", failureMessage: safeStartFailure, startDiagnostics: true,
   }), (error) => error.message === safeStartFailure
     && error.startupFailureCategory === "image-pull-rate-limit"
+    && error.startupErrorCode === "ImagePrepullError"
     && error.startupImageDiagnosticStatus === "validated"
     && error.startupImageDiagnostic.includes("registry=ghcr.io image=supabase/postgres service=db")
     && !error.message.includes("hidden-test-token"));
+  const typedStartupError = JSON.stringify({
+    _tag: "Error", error: { code: "StartInvalidConfigError", message: "address already in use" },
+  });
+  assert.throws(() => run("supabase", ["start"], {
+    spawn: () => ({ status: 1, stdout: typedStartupError, stderr: "unauthorized token=hidden-noise" }),
+    failureMessage: safeStartFailure, startDiagnostics: true,
+  }), (error) => error.startupErrorCode === "StartInvalidConfigError"
+    && error.startupFailureCategory === "port-allocation"
+    && startupFailure(error, "").includes("Supabase CLI error code: StartInvalidConfigError")
+    && !startupFailure(error, "").includes("hidden-noise"));
+  assert.equal(structuredStartupErrors(JSON.stringify({
+    _tag: "Error", error: { code: "secret-code-value", message: "secret-message" },
+  }))[0].code, "unrecognized");
+  assert.doesNotMatch(startupFailure({ startupErrorCode: "secret-code-value" }, ""), /secret-code-value/);
   assert.equal(classifyStartFailure("failed to pull image: unauthorized: password=private"), "image-pull-authentication");
   assert.equal(classifyStartFailure("daemon reported no space left on device"), "disk-capacity");
   assert.deepEqual(startupImageDiagnostic("pull access denied for library/kong:2.8.1, repository does not exist or may require 'docker login'"), {
