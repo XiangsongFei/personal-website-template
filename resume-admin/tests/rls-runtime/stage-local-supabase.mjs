@@ -136,7 +136,10 @@ function parseSafeImageReference(value, explicitRegistry) {
 
 const safeStartupErrorCodes = new Set([
   "StartWorkdirError", "StartConfigLoadError", "StartInvalidConfigError",
-  "ImagePrepullError", "DockerRunError", "DockerLifecycleInspectError", "DockerLifecycleListError", "NetworkCreateError",
+  "ImagePrepullError", "DockerRunError", "DockerLifecycleInspectError", "DockerLifecycleListError", "NetworkCreateError", "DbSetupError",
+]);
+const safeDbSetupReasons = new Set([
+  "database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect",
 ]);
 
 const startupDiagnosticEnums = {
@@ -146,11 +149,12 @@ const startupDiagnosticEnums = {
   shape: ["matched", "json-shape-mismatch", "no-json", "unavailable"],
   code: ["allowlisted", "missing", "invalid-type", "not-allowlisted", "no-matched-error", "unavailable"],
   source: ["structured-messages", "fallback-text", "unavailable"],
+  setupReason: ["database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect", "unavailable"],
 };
 
 function safeStartupMetadata(metadata = {}) {
   const labels = ["CLI version verification", "Startup stdout format", "Startup stderr format",
-    "Startup error shape", "Startup first error code status", "Startup classification source"];
+    "Startup error shape", "Startup first error code status", "Startup classification source", "Supabase DB setup reason"];
   return Object.entries(startupDiagnosticEnums).map(([key, allowed], index) => {
     const fallback = key === "version" ? "probe-failed" : key === "stdout" || key === "stderr" ? "empty" : "unavailable";
     return `${labels[index]}: ${allowed.includes(metadata?.[key]) ? metadata[key] : fallback}`;
@@ -177,6 +181,8 @@ function startupOutputMetadata(stdout, stderr, errors) {
       shape: !available ? "unavailable" : errors.length ? "matched"
         : out.hasJson || err.hasJson ? "json-shape-mismatch" : "no-json",
       code: !available ? "unavailable" : errors[0]?.codeStatus ?? "no-matched-error",
+      setupReason: errors[0]?.code === "DbSetupError" && safeDbSetupReasons.has(errors[0]?.setupReason)
+        ? errors[0].setupReason : "unavailable",
     };
   } catch { return {}; }
 }
@@ -227,6 +233,8 @@ function structuredStartupErrors(output) {
           codeStatus: !Object.hasOwn(parsed.error, "code") ? "missing"
             : typeof parsed.error.code !== "string" ? "invalid-type"
             : safeStartupErrorCodes.has(parsed.error.code) ? "allowlisted" : "not-allowlisted",
+          setupReason: parsed.error.code === "DbSetupError" && safeDbSetupReasons.has(parsed.error.reason)
+            ? parsed.error.reason : "unavailable",
           message: parsed.error.message,
         });
       }
@@ -1593,6 +1601,35 @@ async function runSecuritySelfTests() {
     [jsonError(secret) + "\n" + jsonError("ImagePrepullError"), "not-allowlisted"],
     [jsonError("ImagePrepullError") + "\n" + jsonError(secret), "allowlisted"],
   ]) assert.equal(startupOutputMetadata(input, '', structuredStartupErrors(input)).code, expected);
+  const dbSetupJson = JSON.stringify({ _tag: "Error", error: {
+    code: "DbSetupError", reason: "registry_pull", message: `private ${secret}`,
+  } });
+  const dbSetupErrors = structuredStartupErrors(dbSetupJson);
+  const dbSetupMetadata = startupOutputMetadata(dbSetupJson, "", dbSetupErrors);
+  assert.equal(dbSetupErrors[0]?.code, "DbSetupError");
+  assert.equal(dbSetupErrors[0]?.setupReason, "registry_pull");
+  assert.equal(dbSetupMetadata.setupReason, "registry_pull");
+  assert.match(safeStartupMetadata(dbSetupMetadata), /Supabase DB setup reason: registry_pull/);
+  assert.doesNotMatch(safeStartupMetadata(dbSetupMetadata), new RegExp(secret));
+  let dbSetupFailure;
+  try { run("supabase", ["start"], {
+    spawn: () => ({ status: 1, stdout: dbSetupJson, stderr: "" }), failureMessage: safeStartFailure, startDiagnostics: true,
+  }); } catch (error) { dbSetupFailure = error; }
+  const safeDbSetupFailure = startupFailure(dbSetupFailure, "");
+  assert.match(safeDbSetupFailure, /Supabase CLI error code: DbSetupError/);
+  assert.match(safeDbSetupFailure, /Supabase DB setup reason: registry_pull/);
+  assert.doesNotMatch(safeDbSetupFailure, new RegExp(secret));
+  const invalidDbSetupJson = JSON.stringify({ _tag: "Error", error: {
+    code: "DbSetupError", reason: `${secret}-reason`, message: `private ${secret}`,
+  } });
+  const invalidDbSetupMetadata = startupOutputMetadata(invalidDbSetupJson, "", structuredStartupErrors(invalidDbSetupJson));
+  assert.equal(invalidDbSetupMetadata.setupReason, "unavailable");
+  assert.match(safeStartupMetadata(invalidDbSetupMetadata), /Supabase DB setup reason: unavailable/);
+  assert.doesNotMatch(safeStartupMetadata(invalidDbSetupMetadata), new RegExp(secret));
+  const nonDbSetupJson = JSON.stringify({ _tag: "Error", error: {
+    code: "ImagePrepullError", reason: "registry_pull", message: "private message",
+  } });
+  assert.equal(startupOutputMetadata(nonDbSetupJson, "", structuredStartupErrors(nonDbSetupJson)).setupReason, "unavailable");
   for (const [stdout, stderr, source, category] of [
     [jsonError(secret + "-code", "address already in use " + secret + "-body"), "unauthorized " + secret + "-stderr", "structured-messages", "port-allocation"],
     ["unauthorized " + secret, "", "fallback-text", "image-pull-authentication"],
