@@ -6,6 +6,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { createServer, isIP } from "node:net";
 import { accessSync, chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
@@ -1010,6 +1011,264 @@ function runSupabase(context, args, options = {}) {
   return output;
 }
 
+const containerEventRoles = new Set([
+  "postgres", "postgres-init", "auth", "auth-init", "realtime", "realtime-init", "storage", "storage-init",
+  "rest", "imgproxy", "kong", "pg_meta", "studio", "functions", "analytics", "vector", "supavisor", "mailpit",
+]);
+const containerEventStates = new Set(["create", "start", "die"]);
+const containerEventExitClasses = new Set(["success", "failure", "unavailable"]);
+const maxContainerEventLineBytes = 32 * 1024;
+const maxContainerEvents = 256;
+
+function containerEventRole(event, projectId) {
+  const attributes = event?.Actor?.Attributes;
+  if (!attributes || attributes["com.docker.compose.project"] !== projectId) return null;
+  const image = parseSafeImageReference(attributes.image);
+  if (!image) return null;
+  let role = image.service === "db" ? "postgres" : image.service;
+  const imageIsCli = image.image.startsWith("supabase/cli/");
+  const name = typeof attributes.name === "string" ? attributes.name.replace(/^\//, "") : "";
+  const expectedSuffix = `_${projectId}`;
+  const projectIndex = name.lastIndexOf(expectedSuffix);
+  const afterProject = projectIndex < 0 ? null : name.slice(projectIndex + expectedSuffix.length);
+  if (name.startsWith("supabase_") && projectIndex > "supabase_".length
+    && afterProject !== null && /^(?:-[1-9]\d*)?$/.test(afterProject)) {
+    const serviceName = name.slice("supabase_".length, projectIndex);
+    const initRole = /^(auth|realtime|storage)(?:_migrations?|_init|_setup)$/.exec(serviceName)?.[1];
+    if (initRole) role = `${initRole}-init`;
+    if (/^(?:db|postgres)(?:_migrations?|_init|_setup)$/.test(serviceName)) role = "postgres-init";
+  }
+  if (imageIsCli && ["postgres", "auth", "realtime", "storage"].includes(role)) role = `${role}-init`;
+  return containerEventRoles.has(role) ? role : null;
+}
+
+function acceptContainerEvent(observer, line) {
+  if (!line) return;
+  if (Buffer.byteLength(line) > maxContainerEventLineBytes || observer.eventCount >= maxContainerEvents) {
+    observer.complete = false;
+    observer.stopReading = true;
+    observer.response?.destroy();
+    return;
+  }
+  let event;
+  try { event = JSON.parse(line); } catch {
+    observer.complete = false;
+    return;
+  }
+  if (event?.Type !== "container") return;
+  const attributes = event?.Actor?.Attributes;
+  if (attributes?.["com.docker.compose.project"] !== observer.projectId) {
+    observer.complete = false;
+    return;
+  }
+  if (!containerEventStates.has(event.Action)) return;
+  const role = containerEventRole(event, observer.projectId);
+  if (!role) {
+    observer.complete = false;
+    return;
+  }
+  let exitClass = "unavailable";
+  if (event.Action === "die") {
+    const rawExitCode = attributes.exitCode;
+    if (typeof rawExitCode === "string" && /^\d{1,3}$/.test(rawExitCode)) {
+      exitClass = Number(rawExitCode) === 0 ? "success" : "failure";
+    } else {
+      observer.complete = false;
+    }
+  }
+  const key = `${role}\t${event.Action}\t${exitClass}`;
+  observer.counts.set(key, (observer.counts.get(key) ?? 0) + 1);
+  observer.eventCount += 1;
+}
+
+function formatContainerEventSummary(observer, complete = observer.complete) {
+  const lines = [`Docker container events: observation=${complete ? "complete" : "incomplete"}`];
+  for (const [key, count] of [...observer.counts.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const [role, state, exitClass] = key.split("\t");
+    if (!containerEventRoles.has(role) || !containerEventStates.has(state) || !containerEventExitClasses.has(exitClass)) continue;
+    lines.push(`Docker container event: role=${role} state=${state}${state === "die" ? ` exit=${exitClass}` : ""} count=${count}`);
+  }
+  return lines.join("\n");
+}
+
+async function startDockerContainerEventObserver(projectId, { socketPath = "/var/run/docker.sock", apiVersion, request = httpRequest } = {}) {
+  if (!/^pr1-[0-9]+-[a-f0-9]{12}$/.test(projectId)) throw new Error("Docker container event observer refused an invalid isolated project identity");
+  if (!/^\d+\.\d+$/.test(apiVersion ?? "")) throw new Error("Docker container event observer could not verify the Engine API version");
+  const filters = encodeURIComponent(JSON.stringify({ type: ["container"], label: [`com.docker.compose.project=${projectId}`] }));
+  const observer = {
+    projectId, counts: new Map(), eventCount: 0, complete: true, ready: false, stopping: false, stopReading: false,
+    lastActivity: Date.now(), pending: "", response: null, request: null,
+  };
+  await new Promise((resolveReady, rejectReady) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) rejectReady(error);
+      else resolveReady();
+    };
+    const timer = setTimeout(() => {
+      observer.complete = false;
+      observer.request?.destroy();
+      finish(new Error("Docker container event subscription was not ready"));
+    }, 5000);
+    try {
+      observer.request = request({
+        socketPath,
+        path: `/v${apiVersion}/events?filters=${filters}`,
+        method: "GET",
+        headers: { Accept: "application/json" },
+      }, (response) => {
+        observer.response = response;
+        if (response.statusCode !== 200) {
+          observer.complete = false;
+          response.resume();
+          finish(new Error("Docker container event subscription was rejected"));
+          return;
+        }
+        observer.ready = true;
+        response.on("data", (chunk) => {
+          observer.lastActivity = Date.now();
+          if (observer.stopReading) return;
+          observer.pending += chunk.toString("utf8");
+          if (Buffer.byteLength(observer.pending) > maxContainerEventLineBytes && !observer.pending.includes("\n")) {
+            observer.complete = false;
+            observer.stopReading = true;
+            response.destroy();
+            return;
+          }
+          let newline;
+          while ((newline = observer.pending.indexOf("\n")) !== -1) {
+            const line = observer.pending.slice(0, newline).trim();
+            observer.pending = observer.pending.slice(newline + 1);
+            acceptContainerEvent(observer, line);
+            if (observer.stopReading) break;
+          }
+          if (Buffer.byteLength(observer.pending) > maxContainerEventLineBytes) {
+            observer.complete = false;
+            observer.stopReading = true;
+            response.destroy();
+          }
+        });
+        response.on("end", () => {
+          if (!observer.stopping) observer.complete = false;
+          if (!settled) finish(new Error("Docker container event subscription ended before readiness"));
+        });
+        response.on("error", () => {
+          if (!observer.stopping) observer.complete = false;
+          if (!settled) finish(new Error("Docker container event subscription failed"));
+        });
+        response.on("close", () => {
+          if (!observer.stopping) observer.complete = false;
+        });
+        finish();
+      });
+      observer.request.on("error", () => {
+        if (!observer.stopping) observer.complete = false;
+        if (!settled) finish(new Error("Docker container event subscription failed"));
+      });
+      observer.request.end();
+    } catch {
+      observer.complete = false;
+      finish(new Error("Docker container event subscription failed"));
+    }
+  });
+  return observer;
+}
+
+async function stopDockerContainerEventObserver(observer) {
+  if (!observer) return "Docker container events: observation=incomplete";
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline && Date.now() - observer.lastActivity < 200) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  if (Date.now() >= deadline) observer.complete = false;
+  if (observer.pending.trim()) observer.complete = false;
+  if (observer.eventCount === 0 || !observer.ready || observer.stopReading) observer.complete = false;
+  observer.stopping = true;
+  observer.response?.destroy();
+  observer.request?.destroy();
+  return formatContainerEventSummary(observer);
+}
+
+function verifyDockerEventsSocket() {
+  if (process.env.DOCKER_HOST) throw new Error("Docker container event observer requires the verified local Unix socket");
+  try {
+    if (run("docker", ["context", "show"]).trim() !== "default"
+      || run("docker", ["context", "inspect", "default", "--format", "{{.Endpoints.docker.Host}}"]).trim() !== "unix:///var/run/docker.sock") {
+      throw new Error("Docker context mismatch");
+    }
+    const apiVersion = run("docker", ["version", "--format", "{{.Server.APIVersion}}"])
+      .trim();
+    if (!/^\d+\.\d+$/.test(apiVersion)) throw new Error("Docker API version unavailable");
+    return apiVersion;
+  } catch {
+    throw new Error("Docker container event observer could not verify the isolated Docker socket");
+  }
+}
+
+async function runContainerEventObserverSelfTests() {
+  const testRoot = mkdtempSync(join(tmpdir(), "pr1-docker-container-events-self-test-"));
+  const socketPath = join("/tmp", `pr1-docker-events-${process.pid}-${randomBytes(4).toString("hex")}.sock`);
+  const projectId = "pr1-1234567890123-abcdef123456";
+  let activeResponse;
+  let requestValid = false;
+  const server = createHttpServer((request, response) => {
+    const query = new URL(request.url, "http://docker.local");
+    const parsed = JSON.parse(query.searchParams.get("filters") ?? "{}");
+    requestValid = query.pathname === "/v1.47/events"
+      && parsed.type?.length === 1 && parsed.type[0] === "container"
+      && parsed.label?.length === 1 && parsed.label[0] === `com.docker.compose.project=${projectId}`;
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.flushHeaders();
+    activeResponse = response;
+  });
+  try {
+    chmodSync(testRoot, 0o700);
+    await new Promise((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(socketPath, resolveListen);
+    });
+    const observer = await startDockerContainerEventObserver(projectId, { socketPath, apiVersion: "1.47" });
+    assert.equal(observer.ready, true);
+    assert.equal(requestValid, true);
+    const makeEvent = (action, service, image, extra = {}) => JSON.stringify({
+      Type: "container", Action: action, Actor: { ID: "sensitive-id", Attributes: {
+        name: `supabase_${service}_${projectId}`, image, "com.docker.compose.project": projectId,
+        private: "hidden-value", url: "https://private.invalid/hidden", ...extra,
+      } },
+    });
+    for (const [service, image, role] of [
+      ["db", "ghcr.io/supabase/postgres:17.11.0.002", "postgres"],
+      ["realtime_migrations", "ghcr.io/supabase/cli/realtime:2.119.0", "realtime-init"],
+      ["storage_migrations", "ghcr.io/supabase/cli/storage:2.119.0", "storage-init"],
+      ["auth_migrations", "ghcr.io/supabase/cli/auth:2.119.0", "auth-init"],
+    ]) {
+      activeResponse.write(`${makeEvent("create", service, image)}\n`);
+      activeResponse.write(`${makeEvent("start", service, image)}\n`);
+      if (service === "auth_migrations") activeResponse.write(`${makeEvent("die", service, image, { exitCode: "17" })}\n`);
+      assert.ok(containerEventRoles.has(role));
+    }
+    const summary = await stopDockerContainerEventObserver(observer);
+    assert.match(summary, /observation=complete/);
+    assert.match(summary, /role=postgres state=create count=1/);
+    assert.match(summary, /role=realtime-init state=start count=1/);
+    assert.match(summary, /role=storage-init state=create count=1/);
+    assert.match(summary, /role=auth-init state=die exit=failure count=1/);
+    assert.doesNotMatch(summary, /sensitive-id|hidden-value|private\.invalid|17\.11\.0|2\.119\.0|sha256|https?:\/\//i);
+
+    const emptyObserver = await startDockerContainerEventObserver(projectId, { socketPath, apiVersion: "1.47" });
+    const emptySummary = await stopDockerContainerEventObserver(emptyObserver);
+    assert.match(emptySummary, /observation=incomplete/);
+  } finally {
+    activeResponse?.destroy();
+    await new Promise((resolveClose) => server.close(resolveClose));
+    rmSync(socketPath, { force: true });
+    removeTemporaryStage(testRoot);
+  }
+}
+
 async function runDockerPullObserverSelfTests() {
   const testRoot = mkdtempSync(join(tmpdir(), "pr1-docker-pull-observer-self-test-"));
   try {
@@ -1689,7 +1948,8 @@ async function runSecuritySelfTests() {
     && !error.message.includes("generated-db-password") && !error.message.includes("sb_secret_"));
 
   await runDockerPullObserverSelfTests();
-  console.log("Staging security self-tests passed (Docker bindings, pull diagnostics, and suppressed Supabase CLI credentials).");
+  await runContainerEventObserverSelfTests();
+  console.log("Staging security self-tests passed (Docker bindings, pull and container-event diagnostics, and suppressed Supabase CLI credentials).");
 }
 
 function verifyLocalStatus(context) {
@@ -1736,6 +1996,8 @@ export async function withStagedLocalSupabase(callback) {
   let started = false;
   let callbackError;
   let cleanupFailure;
+  let containerEventObserver;
+  let containerEventObserverAttempted = false;
   try {
     const preexisting = identifyOwnedResources(projectId, before);
     if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
@@ -1745,6 +2007,9 @@ export async function withStagedLocalSupabase(callback) {
     context.dockerNetworkId = loopbackNetwork.id;
     verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
+    containerEventObserverAttempted = true;
+    const dockerApiVersion = verifyDockerEventsSocket();
+    containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
     try { context.startupPullObserver = installDockerPullObserver(context); }
     catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
     if (!context.startupObserverError) {
@@ -1773,11 +2038,21 @@ export async function withStagedLocalSupabase(callback) {
         writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
         cleanupOwnedResources(resources, projectId, before);
       }
-      removeTemporaryStage(stageRoot);
     } catch (error) {
       console.error(`Local Supabase cleanup stopped because ownership or removal could not be verified. Resources were left untouched where verification failed. Ownership manifest: ${ownershipPath}`);
       if (callbackError) console.error(`Test failure: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`);
       cleanupFailure = error;
+    } finally {
+      if (containerEventObserverAttempted) {
+        let summary;
+        try { summary = await stopDockerContainerEventObserver(containerEventObserver); }
+        catch { summary = "Docker container events: observation=incomplete"; }
+        console.log(summary);
+        if (callbackError) callbackError = new Error(`${callbackError.message}\n${summary}`);
+        if (cleanupFailure) cleanupFailure = new Error(`${cleanupFailure.message}\n${summary}`);
+      }
+      try { removeTemporaryStage(stageRoot); }
+      catch (error) { cleanupFailure ??= error; }
     }
   }
   if (cleanupFailure) throw cleanupFailure;
