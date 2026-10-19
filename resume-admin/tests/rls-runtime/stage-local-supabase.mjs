@@ -21,6 +21,64 @@ const excludedMigrations = new Set([
 ]);
 
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
+// These tags are from Supabase CLI 2.119.0's embedded compose template. Their
+// GHCR manifest digests were checked against the matching public ECR manifests.
+// Pulling by digest, then tagging the verified GHCR reference, lets the CLI's
+// normal registry resolution reuse the GHCR image locally.
+const verifiedSupabaseImages = [
+  ["supabase/postgres", "17.11.0.002", "0450166354dc9c1d25f0322ac8b580774d4fb0184d2b087f6e4fe9499c66cf53"],
+  ["supabase/kong", "2.8.1", "1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d"],
+  ["postgrest/postgrest", "v16.4", "d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df"],
+  ["supabase/postgres-meta", "v0.99.0", "9a079ac1c94d89629262822a4bd1902d5b1be4adb464e5a0a8fd078aaed72158"],
+  ["darthsim/imgproxy", "v3.26.0", "f3130cc154e8584643581ad7ba53970ec779e7e974f98b121854bba2a46b3b76"],
+  ["supabase/edge-runtime", "v1.77.1", "645d0e45446181f3e9d87efeef637b494615f32365befff00e2d2b0fe8535fef"],
+  ["timberio/vector", "0.58.0-alpine", "5dcf67db0ee378caa87f3395cb9484ebe3e97bb0334d119f2ac33116e00c5773"],
+  ["supabase/supavisor", "2.9.13", "07f1a6098ffc04b80263bca4eb5c3e7bd2e03dfd1fc465aa108d7329000a1a4e"],
+  ["supabase/gotrue", "v2.197.0", "1736a63078f5922b198c4cbe50f80ab9a2d3b54fe8b7b6cfb2e9dc5dbbc12c6b"],
+  ["supabase/realtime", "v2.140.3", "f66c721c71b576f5854c78f86df0c78a98368d900dcf62e4ddd96c6913139999"],
+  ["supabase/storage-api", "v1.79.28", "1f6c99d3952d78d57129802aa2ae8a80d75e327492cf24742fd0aeaf90967b96"],
+  ["supabase/logflare", "1.50.15", "a82f96c8845c1bcab128cfe17b4e325943ab949b657e9629a0bcc66f1d363179"],
+].map(([repository, tag, digest]) => ({
+  repository,
+  source: `ghcr.io/${repository}@sha256:${digest}`,
+  target: `ghcr.io/${repository}:${tag}`,
+}));
+
+function classifyVerifiedImagePullFailure(output, launchFailed = false) {
+  if (launchFailed) return "docker-cli-launch-failure";
+  const text = String(output).toLowerCase();
+  if (/toomanyrequests|too many requests|rate limit exceeded|429\s+too many requests/.test(text)) return "image-pull-rate-limit";
+  if (/pull access denied|unauthorized|authentication required|requested access to the resource is denied/.test(text)) return "image-pull-authentication";
+  if (/manifest unknown|no matching manifest|not found|name unknown/.test(text)) return "image-unavailable";
+  if (/tls handshake timeout|i\/o timeout|context deadline exceeded|connection reset by peer|network is unreachable/.test(text)) return "network-timeout";
+  return "unclassified-pull-failure";
+}
+
+function prefetchVerifiedSupabaseImages(spawn = spawnSync) {
+  for (const { repository, source, target } of verifiedSupabaseImages) {
+    const image = repository.split("/").at(-1);
+    const inspectImageId = () => {
+      const inspected = spawn("docker", ["image", "inspect", "--format", "{{.Id}}", source], { encoding: "utf8", stdio: "pipe" });
+      const imageId = inspected?.stdout?.trim();
+      return !inspected.error && inspected.status === 0 && /^sha256:[a-f0-9]{64}$/.test(imageId ?? "") ? imageId : null;
+    };
+    let imageId = inspectImageId();
+    if (!imageId) {
+      const pulled = spawn("docker", ["pull", source], { encoding: "utf8", stdio: "pipe" });
+      if (pulled.error || pulled.status !== 0) {
+        const detail = classifyVerifiedImagePullFailure(`${pulled?.stdout ?? ""}\n${pulled?.stderr ?? ""}`, Boolean(pulled?.error));
+        throw new Error(`Verified Supabase image preload failed; image=${image}; detail=${detail}`);
+      }
+      imageId = inspectImageId();
+      if (!imageId) throw new Error(`Verified Supabase image cache verification failed; image=${image}; detail=image-cache-verify-failure`);
+    }
+    const tagged = spawn("docker", ["image", "tag", imageId, target], { encoding: "utf8", stdio: "pipe" });
+    if (tagged.error || tagged.status !== 0) {
+      throw new Error(`Verified Supabase image cache setup failed; image=${image}; detail=image-cache-tag-failure`);
+    }
+  }
+  console.log(`Preloaded ${verifiedSupabaseImages.length} verified Supabase images from GHCR.`);
+}
 
 const safeImageServices = new Map([
   ["library/kong", "kong"], ["supabase/postgres", "db"], ["supabase/gotrue", "auth"],
@@ -1108,6 +1166,48 @@ if (delay > 0) setTimeout(finish, delay); else finish();
 }
 
 async function runSecuritySelfTests() {
+  const workflow = readFileSync(resolve(utilityDir, "../../../.github/workflows/pr-validation.yml"), "utf8");
+  assert.match(workflow, /version:\s*2\.119\.0\s*$/m);
+  assert.equal(verifiedSupabaseImages.length, 12);
+  assert.equal(new Set(verifiedSupabaseImages.map(({ target }) => target)).size, verifiedSupabaseImages.length);
+  for (const { source, target } of verifiedSupabaseImages) {
+    assert.match(source, /^ghcr\.io\/[a-z0-9/-]+@sha256:[a-f0-9]{64}$/);
+    assert.match(target, /^ghcr\.io\/[a-z0-9/-]+:[a-z0-9_.-]+$/);
+  }
+  const dockerCommands = [];
+  let inspectCalls = 0;
+  prefetchVerifiedSupabaseImages((command, args) => {
+    dockerCommands.push([command, ...args]);
+    if (args[0] === "image" && args[1] === "inspect" && inspectCalls++ % 2 === 0) return { status: 1, stdout: "", stderr: "not found" };
+    return { status: 0, stdout: args[0] === "image" && args[1] === "inspect" ? `sha256:${"a".repeat(64)}\n` : "", stderr: "" };
+  });
+  assert.equal(dockerCommands.length, verifiedSupabaseImages.length * 4);
+  for (let index = 0; index < verifiedSupabaseImages.length; index += 1) {
+    const { source, target } = verifiedSupabaseImages[index];
+    assert.deepEqual(dockerCommands[index * 4], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
+    assert.deepEqual(dockerCommands[index * 4 + 1], ["docker", "pull", source]);
+    assert.deepEqual(dockerCommands[index * 4 + 2], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
+    assert.deepEqual(dockerCommands[index * 4 + 3], ["docker", "image", "tag", `sha256:${"a".repeat(64)}`, target]);
+  }
+  const cachedCommands = [];
+  prefetchVerifiedSupabaseImages((command, args) => {
+    cachedCommands.push([command, ...args]);
+    return { status: 0, stdout: args[1] === "inspect" ? `sha256:${"b".repeat(64)}\n` : "", stderr: "" };
+  });
+  assert.equal(cachedCommands.length, verifiedSupabaseImages.length * 2);
+  assert.ok(cachedCommands.every(([, ...args]) => args[0] !== "pull"));
+  assert.equal(classifyVerifiedImagePullFailure("toomanyrequests: hidden-token"), "image-pull-rate-limit");
+  assert.equal(classifyVerifiedImagePullFailure("unauthorized: password=hidden"), "image-pull-authentication");
+  assert.equal(classifyVerifiedImagePullFailure("TLS handshake timeout: hidden"), "network-timeout");
+  assert.equal(classifyVerifiedImagePullFailure("manifest unknown"), "image-unavailable");
+  assert.equal(classifyVerifiedImagePullFailure("", true), "docker-cli-launch-failure");
+  assert.throws(() => prefetchVerifiedSupabaseImages(() => ({
+    status: 1,
+    stdout: "unauthorized token=hidden-value",
+    stderr: "password=also-hidden",
+  })), (error) => error.message === "Verified Supabase image preload failed; image=postgres; detail=image-pull-authentication"
+    && !error.message.includes("hidden"));
+
   const validContainer = (hostIp) => ({
     Name: "/supabase_db_pr1-test",
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: hostIp, HostPort: "55422" }] } },
@@ -1384,6 +1484,7 @@ export async function withStagedLocalSupabase(callback) {
   try {
     const preexisting = identifyOwnedResources(projectId, before);
     if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    prefetchVerifiedSupabaseImages();
     const loopbackNetwork = createLoopbackNetwork(projectId);
     resources.networks.push(loopbackNetwork.id);
     context.dockerNetworkId = loopbackNetwork.id;
