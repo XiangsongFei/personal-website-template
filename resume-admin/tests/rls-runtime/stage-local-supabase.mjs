@@ -1179,6 +1179,8 @@ async function startDockerContainerEventObserver(projectId, { socketPath = "/var
 
 async function stopDockerContainerEventObserver(observer) {
   if (!observer) return "Docker container events: observation=incomplete";
+  // Startup runs through synchronous child processes; let queued HTTP event callbacks drain before closing the stream.
+  observer.lastActivity = Date.now();
   const deadline = Date.now() + 1500;
   while (Date.now() < deadline && Date.now() - observer.lastActivity < 200) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
@@ -1257,6 +1259,14 @@ async function runContainerEventObserverSelfTests() {
     assert.match(summary, /role=storage-init state=create count=1/);
     assert.match(summary, /role=auth-init state=die exit=failure count=1/);
     assert.doesNotMatch(summary, /sensitive-id|hidden-value|private\.invalid|17\.11\.0|2\.119\.0|sha256|https?:\/\//i);
+
+    const delayedObserver = await startDockerContainerEventObserver(projectId, { socketPath, apiVersion: "1.47" });
+    setTimeout(() => activeResponse.write(`${makeEvent("start", "db", "ghcr.io/supabase/postgres:17.11.0.002")}\n`), 10);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);
+    const delayedSummary = await stopDockerContainerEventObserver(delayedObserver);
+    assert.match(delayedSummary, /observation=complete/);
+    assert.match(delayedSummary, /role=postgres state=start count=1/);
+    assert.doesNotMatch(delayedSummary, /sensitive-id|hidden-value|private\.invalid|17\.11\.0|2\.119\.0|sha256|https?:\/\//i);
 
     const emptyObserver = await startDockerContainerEventObserver(projectId, { socketPath, apiVersion: "1.47" });
     const emptySummary = await stopDockerContainerEventObserver(emptyObserver);
