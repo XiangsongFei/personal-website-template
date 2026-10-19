@@ -10,7 +10,7 @@ import { createServer, isIP } from "node:net";
 import { accessSync, chmodSync, constants as fsConstants, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { setTimeout } from "node:timers";
+import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
@@ -1351,7 +1351,7 @@ async function runSecuritySelfTests() {
     const child = new EventEmitter();
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
     child.kill = () => true;
-    queueMicrotask(() => {
+    Promise.resolve().then(() => {
       child.stdout.emit("data", Buffer.from(output));
       child.stderr.emit("data", Buffer.from(secret));
       if (mode === "error") child.emit("error", new Error(secret));
