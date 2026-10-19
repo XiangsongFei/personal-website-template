@@ -23,8 +23,9 @@ const excludedMigrations = new Set([
 const safeStartFailure = "Supabase start failed; CLI output suppressed.";
 // These tags are from Supabase CLI 2.119.0's embedded compose template. Their
 // GHCR manifest digests were checked against the matching public ECR manifests.
-// Pulling by digest, then tagging the verified GHCR reference, lets the CLI's
-// normal registry resolution reuse the GHCR image locally.
+// Supabase mirrors each upstream image as ghcr.io/supabase/<last path segment>,
+// which matches the CLI's GHCR fallback. Pulling by digest and tagging that
+// reference lets normal registry resolution reuse the verified image locally.
 const verifiedSupabaseImages = [
   ["supabase/postgres", "17.11.0.002", "0450166354dc9c1d25f0322ac8b580774d4fb0184d2b087f6e4fe9499c66cf53"],
   ["supabase/kong", "2.8.1", "1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d"],
@@ -38,17 +39,21 @@ const verifiedSupabaseImages = [
   ["supabase/realtime", "v2.140.3", "f66c721c71b576f5854c78f86df0c78a98368d900dcf62e4ddd96c6913139999"],
   ["supabase/storage-api", "v1.79.28", "1f6c99d3952d78d57129802aa2ae8a80d75e327492cf24742fd0aeaf90967b96"],
   ["supabase/logflare", "1.50.15", "a82f96c8845c1bcab128cfe17b4e325943ab949b657e9629a0bcc66f1d363179"],
-].map(([repository, tag, digest]) => ({
-  repository,
-  source: `ghcr.io/${repository}@sha256:${digest}`,
-  target: `ghcr.io/${repository}:${tag}`,
-}));
+].map(([repository, tag, digest]) => {
+  const image = repository.split("/").at(-1);
+  const mirror = `supabase/${image}`;
+  return {
+    repository,
+    source: `ghcr.io/${mirror}@sha256:${digest}`,
+    target: `ghcr.io/${mirror}:${tag}`,
+  };
+});
 
 function classifyVerifiedImagePullFailure(output, launchFailed = false) {
   if (launchFailed) return "docker-cli-launch-failure";
   const text = String(output).toLowerCase();
   if (/toomanyrequests|too many requests|rate limit exceeded|429\s+too many requests/.test(text)) return "image-pull-rate-limit";
-  if (/pull access denied|unauthorized|authentication required|requested access to the resource is denied/.test(text)) return "image-pull-authentication";
+  if (/pull access denied|unauthorized|authentication required|requested access to the resource is denied|invalid token|forbidden|\b(?:401|403)\b/.test(text)) return "image-pull-authentication";
   if (/manifest unknown|no matching manifest|not found|name unknown/.test(text)) return "image-unavailable";
   if (/tls handshake timeout|i\/o timeout|context deadline exceeded|connection reset by peer|network is unreachable/.test(text)) return "network-timeout";
   return "unclassified-pull-failure";
@@ -1170,9 +1175,14 @@ async function runSecuritySelfTests() {
   assert.match(workflow, /version:\s*2\.119\.0\s*$/m);
   assert.equal(verifiedSupabaseImages.length, 12);
   assert.equal(new Set(verifiedSupabaseImages.map(({ target }) => target)).size, verifiedSupabaseImages.length);
-  for (const { source, target } of verifiedSupabaseImages) {
-    assert.match(source, /^ghcr\.io\/[a-z0-9/-]+@sha256:[a-f0-9]{64}$/);
-    assert.match(target, /^ghcr\.io\/[a-z0-9/-]+:[a-z0-9_.-]+$/);
+  for (const { repository, source, target } of verifiedSupabaseImages) {
+    assert.match(source, /^ghcr\.io\/supabase\/[a-z0-9-]+@sha256:[a-f0-9]{64}$/);
+    assert.match(target, /^ghcr\.io\/supabase\/[a-z0-9-]+:[a-z0-9_.-]+$/);
+    const sourceImage = source.match(/^ghcr\.io\/(supabase\/[a-z0-9-]+)@sha256:[a-f0-9]{64}$/)?.[1];
+    const targetImage = target.match(/^ghcr\.io\/(supabase\/[a-z0-9-]+):[a-z0-9_.-]+$/)?.[1];
+    const cliMirrorImage = `supabase/${repository.split("/").at(-1)}`;
+    assert.equal(sourceImage, cliMirrorImage);
+    assert.equal(targetImage, cliMirrorImage);
   }
   const dockerCommands = [];
   let inspectCalls = 0;
@@ -1198,6 +1208,7 @@ async function runSecuritySelfTests() {
   assert.ok(cachedCommands.every(([, ...args]) => args[0] !== "pull"));
   assert.equal(classifyVerifiedImagePullFailure("toomanyrequests: hidden-token"), "image-pull-rate-limit");
   assert.equal(classifyVerifiedImagePullFailure("unauthorized: password=hidden"), "image-pull-authentication");
+  assert.equal(classifyVerifiedImagePullFailure("403 Forbidden: invalid token=hidden"), "image-pull-authentication");
   assert.equal(classifyVerifiedImagePullFailure("TLS handshake timeout: hidden"), "network-timeout");
   assert.equal(classifyVerifiedImagePullFailure("manifest unknown"), "image-unavailable");
   assert.equal(classifyVerifiedImagePullFailure("", true), "docker-cli-launch-failure");
