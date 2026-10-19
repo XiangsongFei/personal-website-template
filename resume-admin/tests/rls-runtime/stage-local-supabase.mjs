@@ -62,24 +62,27 @@ function classifyVerifiedImagePullFailure(output, launchFailed = false) {
 function prefetchVerifiedSupabaseImages(spawn = spawnSync) {
   for (const { repository, source, target } of verifiedSupabaseImages) {
     const image = repository.split("/").at(-1);
-    const inspectImageId = () => {
-      const inspected = spawn("docker", ["image", "inspect", "--format", "{{.Id}}", source], { encoding: "utf8", stdio: "pipe" });
+    const inspectImageId = (reference) => {
+      const inspected = spawn("docker", ["image", "inspect", "--format", "{{.Id}}", reference], { encoding: "utf8", stdio: "pipe" });
       const imageId = inspected?.stdout?.trim();
       return !inspected.error && inspected.status === 0 && /^sha256:[a-f0-9]{64}$/.test(imageId ?? "") ? imageId : null;
     };
-    let imageId = inspectImageId();
+    let imageId = inspectImageId(source);
     if (!imageId) {
       const pulled = spawn("docker", ["pull", source], { encoding: "utf8", stdio: "pipe" });
       if (pulled.error || pulled.status !== 0) {
         const detail = classifyVerifiedImagePullFailure(`${pulled?.stdout ?? ""}\n${pulled?.stderr ?? ""}`, Boolean(pulled?.error));
         throw new Error(`Verified Supabase image preload failed; image=${image}; detail=${detail}`);
       }
-      imageId = inspectImageId();
+      imageId = inspectImageId(source);
       if (!imageId) throw new Error(`Verified Supabase image cache verification failed; image=${image}; detail=image-cache-verify-failure`);
     }
     const tagged = spawn("docker", ["image", "tag", imageId, target], { encoding: "utf8", stdio: "pipe" });
     if (tagged.error || tagged.status !== 0) {
       throw new Error(`Verified Supabase image cache setup failed; image=${image}; detail=image-cache-tag-failure`);
+    }
+    if (inspectImageId(target) !== imageId) {
+      throw new Error(`Verified Supabase image cache setup failed; image=${image}; detail=image-cache-tag-verification-failure`);
     }
   }
   console.log(`Preloaded ${verifiedSupabaseImages.length} verified Supabase images from GHCR.`);
@@ -864,13 +867,23 @@ function stageProject(stageRoot, projectId, ports) {
   return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports };
 }
 
+function supabaseCommandEnv(args, options = {}, pullObserver) {
+  return {
+    ...process.env,
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    ...options.env,
+    ...(args[0] === "start" ? { SUPABASE_INTERNAL_IMAGE_REGISTRY: "ghcr.io" } : {}),
+    ...(pullObserver ? { PATH: pullObserver.path } : {}),
+  };
+}
+
 function runSupabase(context, args, options = {}) {
   let output;
   let pullObserver;
   try {
     if (args[0] === "start") pullObserver = installDockerPullObserver(context);
     output = run("supabase", ["--workdir", context.stagedRoot, "--network-id", context.dockerNetworkId, ...args], {
-      env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1", ...options.env, ...(pullObserver ? { PATH: pullObserver.path } : {}) },
+      env: supabaseCommandEnv(args, options, pullObserver),
       stdio: "pipe",
       discardOutput: args[0] !== "status",
       failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
@@ -1188,24 +1201,36 @@ async function runSecuritySelfTests() {
   let inspectCalls = 0;
   prefetchVerifiedSupabaseImages((command, args) => {
     dockerCommands.push([command, ...args]);
-    if (args[0] === "image" && args[1] === "inspect" && inspectCalls++ % 2 === 0) return { status: 1, stdout: "", stderr: "not found" };
+    if (args[0] === "image" && args[1] === "inspect" && inspectCalls++ % 3 === 0) return { status: 1, stdout: "", stderr: "not found" };
     return { status: 0, stdout: args[0] === "image" && args[1] === "inspect" ? `sha256:${"a".repeat(64)}\n` : "", stderr: "" };
   });
-  assert.equal(dockerCommands.length, verifiedSupabaseImages.length * 4);
+  assert.equal(dockerCommands.length, verifiedSupabaseImages.length * 5);
   for (let index = 0; index < verifiedSupabaseImages.length; index += 1) {
     const { source, target } = verifiedSupabaseImages[index];
-    assert.deepEqual(dockerCommands[index * 4], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
-    assert.deepEqual(dockerCommands[index * 4 + 1], ["docker", "pull", source]);
-    assert.deepEqual(dockerCommands[index * 4 + 2], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
-    assert.deepEqual(dockerCommands[index * 4 + 3], ["docker", "image", "tag", `sha256:${"a".repeat(64)}`, target]);
+    assert.deepEqual(dockerCommands[index * 5], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
+    assert.deepEqual(dockerCommands[index * 5 + 1], ["docker", "pull", source]);
+    assert.deepEqual(dockerCommands[index * 5 + 2], ["docker", "image", "inspect", "--format", "{{.Id}}", source]);
+    assert.deepEqual(dockerCommands[index * 5 + 3], ["docker", "image", "tag", `sha256:${"a".repeat(64)}`, target]);
+    assert.deepEqual(dockerCommands[index * 5 + 4], ["docker", "image", "inspect", "--format", "{{.Id}}", target]);
   }
   const cachedCommands = [];
   prefetchVerifiedSupabaseImages((command, args) => {
     cachedCommands.push([command, ...args]);
     return { status: 0, stdout: args[1] === "inspect" ? `sha256:${"b".repeat(64)}\n` : "", stderr: "" };
   });
-  assert.equal(cachedCommands.length, verifiedSupabaseImages.length * 2);
+  assert.equal(cachedCommands.length, verifiedSupabaseImages.length * 3);
   assert.ok(cachedCommands.every(([, ...args]) => args[0] !== "pull"));
+  assert.throws(() => prefetchVerifiedSupabaseImages((command, args) => ({
+    status: 0,
+    stdout: command === "docker" && args[1] === "inspect"
+      ? `sha256:${(args.at(-1).includes("@sha256:") ? "a" : "b").repeat(64)}\n`
+      : "",
+    stderr: "",
+  })), /detail=image-cache-tag-verification-failure/);
+  const startEnv = supabaseCommandEnv(["start"], { env: { SUPABASE_INTERNAL_IMAGE_REGISTRY: "public.ecr.aws" } }, { path: "/safe-observer" });
+  assert.equal(startEnv.SUPABASE_INTERNAL_IMAGE_REGISTRY, "ghcr.io");
+  assert.equal(startEnv.PATH, "/safe-observer");
+  assert.equal(supabaseCommandEnv(["status"], { env: { SUPABASE_INTERNAL_IMAGE_REGISTRY: "public.ecr.aws" } }).SUPABASE_INTERNAL_IMAGE_REGISTRY, "public.ecr.aws");
   assert.equal(classifyVerifiedImagePullFailure("toomanyrequests: hidden-token"), "image-pull-rate-limit");
   assert.equal(classifyVerifiedImagePullFailure("unauthorized: password=hidden"), "image-pull-authentication");
   assert.equal(classifyVerifiedImagePullFailure("403 Forbidden: invalid token=hidden"), "image-pull-authentication");
