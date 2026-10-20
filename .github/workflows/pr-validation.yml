@@ -147,7 +147,7 @@ jobs:
             "c11f7c74c99c4a229bfd41214e2ee4f2452ae1bb79928987089f42ab7a2c7c35" \
             "resume-admin/migrations/${awards_jsonb_validation}" | sha256sum --check
           printf '%s  %s\n' \
-            "3a4565de0d7a09ced22f1e65b222797b73199265d1808d330522ebed200b878d" \
+            "f00d6689ac757530221db13bc231986474d01b8ce16fa917116362572e0f29bb" \
             "resume-admin/migrations/${skills_baseline_cas}" | sha256sum --check
           printf '%s  %s\n' \
             "f1e1de1a54ebc522613311a18c9d689ca316c54bccb0155456c2a0a661f77422" \

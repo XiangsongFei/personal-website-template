@@ -125,7 +125,7 @@ CREATE OR REPLACE FUNCTION public.save_resume_skills_v1(target_resume_id uuid,ca
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 AS $function$
 DECLARE target_site_key text; ctx jsonb; incoming jsonb; before_rows jsonb; result_value jsonb; change_value jsonb;
-  actor_id uuid; request_id_value uuid; digest_value bytea; current_baseline_digest text; old_digest bytea; old_result jsonb; old_completed timestamptz; old_expiry timestamptz;
+  actor_id uuid; request_id_value uuid; digest_value bytea; current_baseline_digest text; expected_baseline_digest text; old_digest bytea; old_result jsonb; old_completed timestamptz; old_expiry timestamptz;
   entry jsonb; saved_id uuid; max_position integer; offset_value bigint; item_count integer; zh_count integer; en_count integer;
 BEGIN
   IF (SELECT auth.uid()) IS NULL THEN RAISE EXCEPTION 'Authentication required' USING ERRCODE='42501'; END IF;
