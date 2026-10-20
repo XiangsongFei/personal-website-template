@@ -122,6 +122,10 @@ AS $function$
 $function$;
 REVOKE ALL ON FUNCTION cms_private.activity_event_payload_v2_is_allowed(text,text,text,text,jsonb,jsonb) FROM PUBLIC,anon,authenticated,service_role;
 
+ALTER TABLE cms_private.activity_log_events DROP CONSTRAINT activity_log_events_section_key_check;
+ALTER TABLE cms_private.activity_log_events ADD CONSTRAINT activity_log_events_section_key_check CHECK (section_key IN (
+  'introduction','education','experience','awards','skills','contact','projects','website_links','profile','files','section_titles'));
+
 ALTER TABLE cms_private.activity_log_events DROP CONSTRAINT activity_log_events_entity_type_check;
 ALTER TABLE cms_private.activity_log_events ADD CONSTRAINT activity_log_events_entity_type_check CHECK(entity_type IN
  ('introduction_paragraph','education_entry','education_list','experience_entry','experience_list','project_entry','project_list','award_entry','award_list','skill_group','skill_group_list','contact_focus_item','contact_status_item','contact_section','public_link','profile_settings','resume_file','profile_image','website_links_settings','resume_file_set','section_titles_settings'));
