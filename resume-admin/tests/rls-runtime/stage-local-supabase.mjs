@@ -254,6 +254,41 @@ function structuredStartupErrors(output) {
   return errors;
 }
 
+// PostgreSQL 17 Appendix A condition names; unknown codes are never emitted.
+const migrationSqlStates = new Map([
+  ["42601", "syntax_error"], ["42501", "insufficient_privilege"],
+  ["42P01", "undefined_table"], ["42703", "undefined_column"], ["42704", "undefined_object"],
+  ["42883", "undefined_function"], ["42804", "datatype_mismatch"], ["42P13", "invalid_function_definition"],
+  ["42710", "duplicate_object"], ["42P07", "duplicate_table"], ["42701", "duplicate_column"],
+  ["23502", "not_null_violation"], ["23503", "foreign_key_violation"],
+  ["23505", "unique_violation"], ["23514", "check_violation"],
+  ["2BP01", "dependent_objects_still_exist"], ["0A000", "feature_not_supported"],
+  ["25001", "active_sql_transaction"], ["25P02", "in_failed_sql_transaction"],
+  ["3F000", "invalid_schema_name"], ["3D000", "invalid_catalog_name"],
+  ["28000", "invalid_authorization_specification"], ["28P01", "invalid_password"],
+  ["22023", "invalid_parameter_value"], ["22P02", "invalid_text_representation"],
+  ["P0001", "raise_exception"], ["XX000", "internal_error"],
+]);
+
+function migrationApplyDiagnostic(error, stderr, migrationManifest = []) {
+  if (error?.code !== "MigrationApplyError") return "";
+  // v2.119.0 migrate-and-seed.ts emits this progress line before each file.
+  // Do not fall back to an earlier known filename if the last one is unknown.
+  const progress = String(stderr ?? "").split(/\r?\n/).filter((line) => line.startsWith("Applying migration ")).at(-1);
+  const candidate = /^Applying migration (\d{14}_[a-z0-9_]+\.sql)\.\.\.$/.exec(progress ?? "")?.[1];
+  const file = candidate && Array.isArray(migrationManifest) && migrationManifest.includes(candidate)
+    ? candidate : "unavailable";
+  // db-connection.sql-pg.layer.ts renders the server SQLSTATE on the first
+  // line; migration-apply.ts then adds a zero-based "At statement" marker.
+  // Never scan SQL context for a SQLSTATE or expose the message/detail itself.
+  const lines = String(error.message ?? "").split(/\r?\n/);
+  const code = /^(?:ERROR|FATAL): [^\r\n]* \(SQLSTATE ([0-9A-Z]{5})\)$/.exec(lines[0])?.[1];
+  const condition = code ? migrationSqlStates.get(code) ?? "other_sqlstate" : "unavailable";
+  const marker = code ? lines.slice(1).find((line) => line.startsWith("At statement:")) : undefined;
+  const index = /^At statement: (0|[1-9][0-9]{0,4})$/.exec(marker ?? "")?.[1] ?? "unavailable";
+  return `Migration apply file: ${file}\nMigration apply statement index: ${index}\nMigration apply SQLSTATE condition: ${condition}`;
+}
+
 function startupImageDiagnostic(output) {
   const rawText = String(output);
   const structuredMessages = structuredStartupErrors(rawText).map(({ message }) => message);
@@ -407,7 +442,8 @@ function startupFailure(error, diagnostics, pullDiagnostics = "") {
   const image = error?.startupImageDiagnostic ? `\n${error.startupImageDiagnostic}` : "";
   const pulls = pullDiagnostics ? `\n${pullDiagnostics}` : "";
   const errorCode = safeStartupErrorCodes.has(error?.startupErrorCode) ? error.startupErrorCode : "unavailable";
-  return `${safeStartFailure}\n${safeStartupMetadata(error?.startupMetadata)}\nStartup failure category: ${category}\nSupabase CLI error code: ${errorCode}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
+  const migration = error?.startupMigrationDiagnostic ? `\n${error.startupMigrationDiagnostic}` : "";
+  return `${safeStartFailure}\n${safeStartupMetadata(error?.startupMetadata)}\nStartup failure category: ${category}\nSupabase CLI error code: ${errorCode}${migration}\nStartup image diagnostic status: ${imageStatus}${image}\nSupabase CLI exit code: ${exitCode}${pulls}\n${diagnostics}`;
 }
 
 const pullFailureCategories = new Set([
@@ -676,7 +712,7 @@ function removeTemporaryStage(stageRoot) {
 }
 
 function run(command, args, options = {}) {
-  const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, startDiagnostics = false, ...spawnOptions } = options;
+  const { spawn = spawnSync, discardOutput = false, failureMessage, sqlDiagnostics = false, startDiagnostics = false, migrationManifest = [], ...spawnOptions } = options;
   const commandArgs = startDiagnostics ? ["--output-format", "json", ...args] : args;
   const result = spawn(command, commandArgs, { encoding: "utf8", ...spawnOptions });
   if (result.error) {
@@ -692,6 +728,7 @@ function run(command, args, options = {}) {
         const startOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
         const structuredErrors = structuredStartupErrors(startOutput);
         error.startupErrorCode = structuredErrors[0]?.code;
+        error.startupMigrationDiagnostic = migrationApplyDiagnostic(structuredErrors[0], result.stderr, migrationManifest);
         error.startupMetadata = startupOutputMetadata(result.stdout, result.stderr, structuredErrors);
         if (structuredErrors.length > 0) {
           error.startupMetadata.source = "structured-messages";
@@ -1014,6 +1051,7 @@ function runSupabase(context, args, options = {}) {
       failureMessage: args[0] === "start" ? safeStartFailure : `Supabase ${args[0]} failed; CLI output suppressed.`,
       sqlDiagnostics: args[0] === "test" && args[1] === "db",
       startDiagnostics: args[0] === "start",
+      migrationManifest: context.migrationManifest,
     });
   } catch (error) {
     if (args[0] === "start") {
@@ -1676,6 +1714,49 @@ async function runSecuritySelfTests() {
     { _tag: "Error", code: "DbConnectError", error: { message: secret } },
     { _tag: "Error", error: { _tag: "DbConnectError", cause: { code: "DbConnectError" }, message: secret } },
   ]) assert.equal(structuredStartupErrors(JSON.stringify(input))[0]?.codeStatus, "missing");
+  const knownMigration = "20261001000000_known_migration.sql";
+  const progress = `Applying migration ${knownMigration}...`;
+  const migrationError = (state, index = "3") => ({ code: "MigrationApplyError",
+    message: `ERROR: ${secret} (SQLSTATE ${state})\nAt statement: ${index}\nSELECT '${secret}';\nAt statement: 999\nERROR: hidden (SQLSTATE 42501)`,
+  });
+  for (const [state, condition] of [...migrationSqlStates, ["ZZ999", "other_sqlstate"]]) {
+    const diagnostic = migrationApplyDiagnostic(migrationError(state), progress, [knownMigration]);
+    assert.equal(diagnostic, `Migration apply file: ${knownMigration}\nMigration apply statement index: 3\nMigration apply SQLSTATE condition: ${condition}`);
+    assert.equal(diagnostic.includes(secret), false);
+    assert.equal(diagnostic.includes(state), false);
+  }
+  for (const index of ["0", "99999", "-1", "100000", "01", secret]) {
+    const diagnostic = migrationApplyDiagnostic(migrationError("42601", index), progress, [knownMigration]);
+    assert.equal(diagnostic.includes(`Migration apply statement index: ${["0", "99999"].includes(index) ? index : "unavailable"}\n`), true);
+  }
+  for (const stderr of ["", `${progress}\nApplying migration ${secret}.sql...`,
+    `${progress}\nApplying migration ../../${knownMigration}...`,
+    `${progress}\nApplying migration 20261002000000_unknown.sql...`]) {
+    const diagnostic = migrationApplyDiagnostic(migrationError("42601"), stderr, [knownMigration]);
+    assert.equal(diagnostic.startsWith("Migration apply file: unavailable\n"), true);
+    assert.equal(diagnostic.includes(secret), false);
+  }
+  assert.equal(migrationApplyDiagnostic(migrationError("42601"), progress).startsWith("Migration apply file: unavailable\n"), true);
+  for (const message of [`${secret}\nERROR: hidden (SQLSTATE 42501)\nAt statement: 1`,
+    `ERROR: ${secret} (SQLSTATE ${secret})\nAt statement: 1`]) {
+    const diagnostic = migrationApplyDiagnostic({ code: "MigrationApplyError", message }, progress, [knownMigration]);
+    assert.equal(diagnostic.includes("statement index: unavailable"), true);
+    assert.equal(diagnostic.includes("SQLSTATE condition: unavailable"), true);
+    assert.equal(diagnostic.includes(secret), false);
+  }
+  assert.equal(migrationApplyDiagnostic({ ...migrationError("42601"), code: "DbSetupError" }, progress, [knownMigration]), "");
+  let migrationFailure;
+  try { run("supabase", ["start"], {
+    spawn: (_command, args, options) => {
+      assert.deepEqual(args, ["--output-format", "json", "start"]);
+      assert.equal(Object.hasOwn(options, "migrationManifest"), false);
+      return { status: 1, stdout: JSON.stringify({ _tag: "Error", error: migrationError("42601") }), stderr: progress };
+    }, failureMessage: safeStartFailure, startDiagnostics: true, migrationManifest: [knownMigration],
+  }); } catch (error) { migrationFailure = error; }
+  const safeMigrationFailure = startupFailure(migrationFailure, "");
+  assert.equal(safeMigrationFailure.includes(`Migration apply file: ${knownMigration}`), true);
+  assert.equal(safeMigrationFailure.includes("SQLSTATE condition: syntax_error"), true);
+  assert.equal(safeMigrationFailure.includes(secret), false);
   for (const [stdout, stderr, source, category] of [
     [jsonError(secret + "-code", "address already in use " + secret + "-body"), "unauthorized " + secret + "-stderr", "structured-messages", "port-allocation"],
     ["unauthorized " + secret, "", "fallback-text", "image-pull-authentication"],
