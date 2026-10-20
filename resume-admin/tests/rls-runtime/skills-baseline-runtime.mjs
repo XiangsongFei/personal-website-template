@@ -84,7 +84,7 @@ await withStagedLocalSupabase(async (ctx, supabase) => {
   assert.equal(old.snapshot.length, 1);
   assert.match(old.digest, /^[a-f0-9]{64}$/);
   const stale = [{ ...old.snapshot[0], zh: { ...old.snapshot[0].zh, items: "stale" } }];
-  const holder = session(ctx, `BEGIN; SELECT id FROM public.resume_sites WHERE id='${resumeId}' FOR UPDATE; UPDATE public.resume_skill_group_translations SET items='fresh concurrent edit' WHERE resume_id='${resumeId}' AND skill_group_id='${skillId}' AND locale='zh'; SELECT 'SKILLS_ROW_LOCK_READY';`, true);
+  const holder = session(ctx, `BEGIN; SELECT id FROM public.resume_sites WHERE id='${resumeId}' FOR UPDATE; UPDATE public.resume_skill_group_translations SET items='fresh concurrent edit' WHERE resume_id='${resumeId}' AND skill_group_id='${skillId}' AND locale='zh'; SELECT 'SKILLS_ROW_LOCK_READY';\n`, true);
   const deadline = Date.now() + 5000;
   while (!holder.stdout.includes("SKILLS_ROW_LOCK_READY")) {
     if (Date.now() > deadline) { holder.child.kill("SIGKILL"); throw new Error("Timed out acquiring Skills target lock."); }
