@@ -150,7 +150,7 @@ jobs:
             "f00d6689ac757530221db13bc231986474d01b8ce16fa917116362572e0f29bb" \
             "resume-admin/migrations/${skills_baseline_cas}" | sha256sum --check
           printf '%s  %s\n' \
-            "9f672721fbfe2c1b4593272df6e2e2afb7adb91c1745a1c274f502996ad3aab4" \
+            "e0d4dab30a18fea5c07f58f39ad04e197ddcb90486ea3b987bacb192242744d2" \
             "resume-admin/migrations/${section_titles}" | sha256sum --check
 
   admin_local_sql:

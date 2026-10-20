@@ -21,7 +21,7 @@ describe("Section Titles writer migration", () => {
     expect(canonical).toContain("FOR UPDATE"); expect(canonical).toContain("P13B1"); expect(canonical).toContain("P13B2");
     expect(canonical).toContain("activity_event_payload_v2_section_titles_is_allowed");
     expect(canonical.indexOf("INSERT INTO cms_private.activity_log_idempotency")).toBeLessThan(canonical.indexOf("INSERT INTO cms_private.activity_log_events"));
-    expect(canonical).toContain("UPDATE cms_private.activity_log_idempotency SET result_payload=after_value");
+    expect(canonical).toContain("UPDATE cms_private.activity_log_idempotency SET result_payload=pg_catalog.jsonb_build_array(after_value)");
   });
   it("keeps the direct-write guard limited to the six title columns and conditional on RPC routing", () => {
     expect(canonical).toContain("BEFORE UPDATE OF education_label,experience_label,skills_label,honors_label,project_heading,kaggle_label");

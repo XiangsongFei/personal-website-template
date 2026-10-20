@@ -256,8 +256,19 @@ BEGIN
   IF FOUND THEN
     IF old_expiry<=pg_catalog.clock_timestamp() THEN RAISE EXCEPTION 'Section Titles request expired; use a new request ID' USING ERRCODE='22023'; END IF;
     IF old_digest IS DISTINCT FROM digest_value THEN RAISE EXCEPTION 'Section Titles request ID conflicts with a different payload' USING ERRCODE='P13B1'; END IF;
-    IF old_completed IS NULL OR old_result IS NULL OR NOT cms_private.section_titles_aggregate_is_allowed(old_result) THEN RAISE EXCEPTION 'Incomplete Section Titles idempotency result' USING ERRCODE='22023'; END IF;
-    RETURN old_result;
+    IF old_completed IS NULL OR old_result IS NULL OR pg_catalog.jsonb_typeof(old_result) IS DISTINCT FROM 'array' THEN
+      RAISE EXCEPTION 'Incomplete Section Titles idempotency result' USING ERRCODE='22023';
+    END IF;
+    IF pg_catalog.jsonb_array_length(old_result) <> 1 THEN
+      RAISE EXCEPTION 'Incomplete Section Titles idempotency result' USING ERRCODE='22023';
+    END IF;
+    IF pg_catalog.jsonb_typeof(old_result->0) IS DISTINCT FROM 'object' THEN
+      RAISE EXCEPTION 'Incomplete Section Titles idempotency result' USING ERRCODE='22023';
+    END IF;
+    IF cms_private.section_titles_aggregate_is_allowed(old_result->0) IS NOT TRUE THEN
+      RAISE EXCEPTION 'Incomplete Section Titles idempotency result' USING ERRCODE='22023';
+    END IF;
+    RETURN old_result->0;
   END IF;
   before_value:=cms_private.section_titles_aggregate(target_resume_id);
   IF pg_catalog.encode(extensions.digest(pg_catalog.convert_to(before_value::text,'UTF8'),'sha256'),'hex')<>expected_digest THEN
@@ -286,7 +297,7 @@ BEGIN
         'update','section_titles','section_titles_settings',NULL,pg_catalog.jsonb_build_object('section_titles',after_value),event_changes,2,
         (context_row->>'ip_network')::cidr,context_row->>'country_code',context_row->>'region',context_row->>'city');
   ELSE after_value:=before_value; END IF;
-  UPDATE cms_private.activity_log_idempotency SET result_payload=after_value,completed_at=pg_catalog.transaction_timestamp()
+  UPDATE cms_private.activity_log_idempotency SET result_payload=pg_catalog.jsonb_build_array(after_value),completed_at=pg_catalog.transaction_timestamp()
     WHERE actor_user_id=actor_id AND resume_id=target_resume_id AND domain_key='section_titles' AND request_id=request_value;
   RETURN after_value;
 END

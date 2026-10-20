@@ -8,6 +8,7 @@ CREATE FUNCTION public.test_only_section_titles_save(target_resume uuid,target_r
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 AS $function$
 DECLARE snapshot_value jsonb; digest_value text; proof_value text; canonical text; ctx jsonb; context_value text; signature_value text; result_value jsonb; stamp bigint;
+  stored_result jsonb; replay_result jsonb; invalid_result jsonb; denied boolean;
 BEGIN
   IF expected_digest IS NULL OR expected_proof IS NULL THEN
     SELECT section_titles_snapshot,section_titles_baseline_digest,section_titles_baseline_proof
@@ -24,9 +25,48 @@ BEGIN
   signature_value:=pg_catalog.encode(extensions.hmac(pg_catalog.convert_to(context_value,'UTF8'),
     pg_catalog.decode('00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff','hex'),'sha256'),'hex');
   result_value:=public.save_resume_section_titles_v1(target_resume,canonical,context_value,signature_value);
+  SELECT result_payload INTO stored_result FROM cms_private.activity_log_idempotency
+    WHERE actor_user_id=(SELECT auth.uid()) AND resume_id=target_resume
+      AND domain_key='section_titles' AND request_id=target_request;
+  PERFORM public.rls_test_assert(CASE WHEN pg_catalog.jsonb_typeof(stored_result)='array' THEN
+    pg_catalog.jsonb_array_length(stored_result)=1
+      AND pg_catalog.jsonb_typeof(stored_result->0)='object' AND stored_result->0=result_value
+    ELSE false END, 'idempotency stores exactly one aggregate object in an array');
+  PERFORM public.rls_test_assert(pg_catalog.jsonb_typeof(result_value)='object',
+    'first write returns an aggregate object, not the storage array');
   IF replay THEN
-    PERFORM public.rls_test_assert(public.save_resume_section_titles_v1(target_resume,canonical,context_value,signature_value)=result_value,
+    replay_result:=public.save_resume_section_titles_v1(target_resume,canonical,context_value,signature_value);
+    PERFORM public.rls_test_assert(pg_catalog.jsonb_typeof(replay_result)='object' AND replay_result=result_value,
       'same request replays without another event');
+    -- These subtransactions restore the valid row after each negative replay probe.
+    FOREACH invalid_result IN ARRAY ARRAY['[]'::jsonb,'[null]'::jsonb,'[{}]'::jsonb,
+      pg_catalog.jsonb_build_array(result_value,result_value)] LOOP
+      BEGIN
+        UPDATE cms_private.activity_log_idempotency SET result_payload=invalid_result
+          WHERE actor_user_id=(SELECT auth.uid()) AND resume_id=target_resume
+            AND domain_key='section_titles' AND request_id=target_request;
+        denied:=false;
+        BEGIN PERFORM public.save_resume_section_titles_v1(target_resume,canonical,context_value,signature_value);
+        EXCEPTION WHEN SQLSTATE '22023' THEN denied:=true; END;
+        PERFORM public.rls_test_assert(denied,'invalid stored array cannot be replayed');
+        RAISE EXCEPTION 'TEST ONLY restore valid idempotency row' USING ERRCODE='PT001';
+      EXCEPTION WHEN SQLSTATE 'PT001' THEN NULL;
+      END;
+    END LOOP;
+    BEGIN
+      UPDATE cms_private.activity_log_idempotency
+        SET created_at=pg_catalog.transaction_timestamp()-interval '8 days',
+            completed_at=pg_catalog.transaction_timestamp()-interval '8 days',
+            expires_at=pg_catalog.transaction_timestamp()-interval '1 day'
+        WHERE actor_user_id=(SELECT auth.uid()) AND resume_id=target_resume
+          AND domain_key='section_titles' AND request_id=target_request;
+      denied:=false;
+      BEGIN PERFORM public.save_resume_section_titles_v1(target_resume,canonical,context_value,signature_value);
+      EXCEPTION WHEN SQLSTATE '22023' THEN denied:=true; END;
+      PERFORM public.rls_test_assert(denied,'expired request cannot replay a stored result');
+      RAISE EXCEPTION 'TEST ONLY restore valid idempotency row' USING ERRCODE='PT001';
+    EXCEPTION WHEN SQLSTATE 'PT001' THEN NULL;
+    END;
   END IF;
   RETURN result_value;
 END
@@ -34,6 +74,11 @@ $function$;
 CREATE FUNCTION public.test_only_section_titles_event_count(target_resume uuid)
 RETURNS bigint LANGUAGE sql SECURITY DEFINER SET search_path=''
 AS $function$ SELECT count(*) FROM cms_private.activity_log_events WHERE resume_id=target_resume AND section_key='section_titles' AND entity_type='section_titles_settings' $function$;
+CREATE FUNCTION public.test_only_section_titles_request_exists(target_resume uuid,target_request uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path=''
+AS $function$ SELECT EXISTS(SELECT 1 FROM cms_private.activity_log_idempotency
+  WHERE actor_user_id=(SELECT auth.uid()) AND resume_id=target_resume
+    AND domain_key='section_titles' AND request_id=target_request) $function$;
 CREATE FUNCTION public.test_only_section_titles_fail_audit()
 RETURNS trigger LANGUAGE plpgsql SET search_path=''
 AS $function$ BEGIN IF pg_catalog.current_setting('section_titles.fail_audit',true)='true' THEN RAISE EXCEPTION 'TEST ONLY forced audit failure'; END IF; RETURN NEW; END $function$;
@@ -109,7 +154,7 @@ BEGIN
   -- A request ID reused with another payload conflicts before stale baseline validation.
   updated:=pg_catalog.jsonb_set(titles,'{translations,en,kaggle_label}','"different"'::jsonb);
   denied:=false;
-  BEGIN PERFORM public.test_only_section_titles_save(target_id,'dc111111-1111-4111-8111-111111111116',updated);
+  BEGIN PERFORM public.test_only_section_titles_save(target_id,req,updated);
   EXCEPTION WHEN SQLSTATE 'P13B1' THEN denied:=true; END;
   PERFORM public.rls_test_assert(denied AND public.test_only_section_titles_event_count(target_id)=events_before,
     'same request ID with different content is rejected without an event');
@@ -131,7 +176,7 @@ BEGIN
   PERFORM pg_catalog.set_config('section_titles.fail_audit','false',true);
   PERFORM public.rls_test_assert(denied AND (SELECT section_titles_snapshot FROM public.load_admin_section_titles_write_state(target_id))=original
     AND public.test_only_section_titles_event_count(target_id)=events_before+1
-    AND NOT EXISTS(SELECT 1 FROM cms_private.activity_log_idempotency WHERE resume_id=target_id AND domain_key='section_titles' AND request_id='dc111111-1111-4111-8111-111111111119'),
+    AND NOT public.test_only_section_titles_request_exists(target_id,'dc111111-1111-4111-8111-111111111119'),
     'forced audit failure rolls back title values and idempotency');
   denied:=false;
   BEGIN UPDATE public.resume_locale_content SET education_label='direct forbidden' WHERE resume_id=target_id AND locale='zh';
