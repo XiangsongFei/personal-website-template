@@ -8,6 +8,10 @@ BEGIN
 END
 $owner_guard$;
 
+ALTER TABLE cms_private.activity_log_idempotency DROP CONSTRAINT activity_log_idempotency_domain_key_check;
+ALTER TABLE cms_private.activity_log_idempotency ADD CONSTRAINT activity_log_idempotency_domain_key_check CHECK (domain_key IN (
+  'introduction','education','experience','awards','skills','contact','projects','website_links','profile','files','section_titles'));
+
 ALTER TABLE cms_private.resume_write_modes DROP CONSTRAINT resume_write_modes_domain_key_check;
 ALTER TABLE cms_private.resume_write_modes ADD CONSTRAINT resume_write_modes_domain_key_check CHECK (domain_key IN (
   'introduction','education','experience','awards','skills','contact','projects','website_links','profile','files','section_titles'));
