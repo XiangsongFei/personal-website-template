@@ -15,7 +15,7 @@ const adminRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const targetId = "ea111111-1111-4111-8111-111111111111";
 const officialId = "20000000-0000-4000-8000-000000000001";
 async function integration() {
-await withStagedLocalSupabase(async (stage, supabase) => {
+await observeStaging(withStagedLocalSupabase, async (stage, supabase) => {
 process.send?.({ kind: "stage", manifest: join(stage.stagedRoot, "ownership.json") });
 process.send?.({ kind: "phase", value: "fixture-preflight" });
 const authContainer = stage.authContainer;
@@ -79,6 +79,7 @@ try {
 }
 catch { testSummary = null; }
 process.send?.({ kind: "results", summary: testSummary });
+reportStage("vitest", result.status === 0 && testSummary?.passed ? "success" : "failed");
 process.send?.({ kind: "phase", value: "fixture-cleanup" });
 let networkCheckPassed = false;
 let cleanupPassed = true;
@@ -111,6 +112,7 @@ try {
 } catch {
   networkCheckPassed = false;
 }
+reportStage("fixture-check", networkCheckPassed ? "success" : "failed");
 try {
   if (priorRequirement === "absent") {
     psql(`DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key='introduction' AND requirement_key='trusted_network_context_v11'`);
@@ -121,6 +123,7 @@ try {
 } catch {
   cleanupPassed = false;
 }
+reportStage("fixture-restore", cleanupPassed ? "success" : "failed");
 if (!networkCheckPassed) console.error("Local Worker network-context persistence check failed.");
 if (!cleanupPassed) console.error("Local requirement cleanup failed; the isolated project will be removed after ownership verification.");
 if (!cleanupPassed) throw new Error("Local integration fixture cleanup failed");
@@ -130,15 +133,97 @@ if (result.status !== 0 || !testSummary?.passed) throw new Error("Local Worker i
 
 }
 
+// No error object or dynamic error text crosses IPC. The staging helper rethrows
+// the callback error by identity after successful cleanup; cleanup errors override it.
+const stageNames = new Set(["vitest", "fixture-check", "fixture-restore", "resources"]);
+const stageStatuses = new Set(["success", "failed", "unverified"]);
+function captureStageStatus(stages, message) {
+  if (message?.kind === "stage-result" && stageNames.has(message.stage) && stageStatuses.has(message.status)) stages[message.stage] = message.status;
+}
+function reportStage(stage, status) { process.send?.({ kind: "stage-result", stage, status }); }
+async function observeStaging(stageRunner, callback, emit = reportStage) {
+  let callbackError; let callbackExited = false;
+  try {
+    await stageRunner(async (...args) => {
+      try { return await callback(...args); }
+      catch (error) { callbackError = error; throw error; }
+      finally { callbackExited = true; }
+    });
+    emit("resources", "success");
+  } catch (error) {
+    emit("resources", !callbackExited ? "unverified" : error === callbackError ? "success" : "failed");
+    throw error;
+  }
+}
+
+const trustedTestPath = resolve(adminRoot, "tests/activity-log-v11-local-integration.test.ts");
+const trustedTestLines = readFileSync(trustedTestPath, "utf8").split(/\r?\n/);
+const caseTitles = new Map([
+  ["integrates signed Worker saves, retry semantics, trusted context, idempotency scopes, and two-session concurrency", "introduction"],
+  ["integrates Awards Worker saves with local PostgREST/RPC, replay, conflict, no-op, rollback, and RLS", "awards"],
+  ["integrates Projects state/read and signed Worker \u2192 PostgREST \u2192 RPC save, exact replay, and conflict", "projects"],
+  ["integrates Contact mode/read, no-op, changed aggregate, generated IDs, replay, and conflict through Worker \u2192 PostgREST \u2192 RPC", "contact"],
+  ["integrates Profile read, no-op, one changed aggregate, replay/conflict, direct-DML denial, and photo-origin fail-closed through Worker \u2192 PostgREST \u2192 RPC", "profile"],
+  ["accepts a valid request at the 4096-byte canonical boundary and stores a result within 8192 bytes", "payload-boundary"],
+  ["integrates Website & Links and Files through the Worker, local PostgREST, and typed RPCs", "website-links-files"],
+  ["rejects independently tampered Awards actor/authenticated-user binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards target resume binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards domain binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards operation binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards request_id binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards mutation digest binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards baseline digest binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards database baseline proof binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards canonical payload digest binding before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards issued timestamp future bound before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards expired context before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards expiry maximum lifetime before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards signature_hex integrity before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards key ID allowlist before content or audit writes", "awards-tamper"],
+  ["rejects independently tampered Awards required signed network-context fields before content or audit writes", "awards-tamper"],
+ ]);
+const failureClasses = new Set(["assertion", "timeout", "setup", "transport", "unknown"]);
+function failureDiagnostic(row) {
+  const category = caseTitles.get(row?.title) ?? "unknown";
+  const fallback = { category, failure: "unknown", line: "unavailable", column: "unavailable" };
+  if (category === "unknown" || !Array.isArray(row.failureMessages) || row.failureMessages.length > 8) return fallback;
+  for (const text of row.failureMessages) {
+    if (typeof text !== "string" || text.length > 65_536) continue;
+    // Classification is a bounded message-prefix hint, not a proven root cause.
+    const failure = /^AssertionError:/.test(text) ? "assertion"
+      : /^Error: (?:Test|Hook) timed out in [0-9]+ms\./.test(text) ? "timeout"
+      : /^(?:TypeError: fetch failed|Error: (?:ECONNREFUSED|ECONNRESET|ETIMEDOUT)\b)/.test(text) ? "transport" : "unknown";
+    // Accept only a complete stack frame for this exact checkout's trusted file.
+    // Never print the frame, path, function name, message, or source contents.
+    for (const frame of text.split(/\r?\n/).slice(0, 256)) {
+      const match = /^\s+at (?:[^()\r\n]{1,256} \()?(.+):([0-9]{1,6}):([0-9]{1,5})\)?$/.exec(frame);
+      if (!match || ![trustedTestPath, `file://${trustedTestPath}`].includes(match[1])) continue;
+      const line = Number(match[2]); const column = Number(match[3]);
+      if (line < 1 || line > trustedTestLines.length || column < 1 || column > trustedTestLines[line - 1].length + 1) continue;
+      return { category, failure, line, column };
+    }
+    if (failure !== "unknown") return { ...fallback, failure };
+  }
+  return fallback;
+}
+function formatFailure(index, diagnostic) {
+  if (!Number.isInteger(index) || index < 1 || index > 22 || !diagnostic) return null;
+  const category = new Set([...caseTitles.values(), "unknown"]).has(diagnostic.category) ? diagnostic.category : "unknown";
+  const failure = failureClasses.has(diagnostic.failure) ? diagnostic.failure : "unknown";
+  const valid = Number.isInteger(diagnostic.line) && diagnostic.line >= 1 && diagnostic.line <= trustedTestLines.length
+    && Number.isInteger(diagnostic.column) && diagnostic.column >= 1 && diagnostic.column <= trustedTestLines[diagnostic.line - 1].length + 1;
+  return `v11_failure_case=${index} category=${category} class=${failure} line=${valid ? diagnostic.line : "unavailable"} column=${valid ? diagnostic.column : "unavailable"}`;
+}
+
 // Only fixed statuses and bounded counts leave the disposable child process.
 function summarizeResults(report) {
   const suites = report?.testResults;
   if (!Array.isArray(suites) || suites.length !== 1 || !Array.isArray(suites[0].assertionResults)) return null;
   const rows = suites[0].assertionResults;
-  if (rows.length !== 22 || new Set(rows.map(row => row.fullName)).size !== 22
-    || rows.some(row => typeof row.fullName !== "string" || !["passed", "failed", "pending", "skipped", "todo"].includes(row.status))) return null;
+  if (rows.length !== 22 || new Set(rows.map(row => row?.fullName)).size !== 22
+    || rows.some(row => !row || typeof row.fullName !== "string" || !["passed", "failed", "pending", "skipped", "todo"].includes(row.status))) return null;
   const statuses = rows.map(row => row.status === "passed" ? "passed" : row.status === "failed" ? "failed" : "skipped");
-  return { statuses, passed: report.success === true && report.numTotalTests === 22 && report.numPassedTests === 22
+  return { statuses, diagnostics: rows.map(row => row.status === "failed" ? failureDiagnostic(row) : null), passed: report.success === true && report.numTotalTests === 22 && report.numPassedTests === 22
     && report.numFailedTests === 0 && report.numPendingTests === 0 && statuses.every(value => value === "passed") };
 }
 
@@ -147,11 +232,13 @@ async function supervise() {
     cwd: adminRoot, detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"],
   });
   let manifest; let phase = "staging"; let results; let timedOut = false;
+  const stages = Object.fromEntries([...stageNames].map(name => [name, "unverified"]));
   const phases = new Set(["fixture-preflight", "database-reset", "integration-tests", "fixture-cleanup"]);
   child.on("message", message => {
     if (message?.kind === "stage" && typeof message.manifest === "string") manifest = message.manifest;
     if (message?.kind === "phase" && phases.has(message.value)) { phase = message.value; console.log(`v11_phase=${phase}`); }
     if (message?.kind === "results") results = message.summary;
+    captureStageStatus(stages, message);
   });
   // Twelve minutes includes staging/reset, five-minute Vitest and normal cleanup.
   // A forced stop has a separate two-minute ownership-checked cleanup budget.
@@ -164,9 +251,17 @@ async function supervise() {
     child.once("close", status => resolveExit(status));
   });
   clearTimeout(timer);
+  for (const [stage, status] of Object.entries(stages)) console.log(`v11_stage=${stage} status=${status}`);
   if (results && Array.isArray(results.statuses) && results.statuses.length === 22
     && results.statuses.every(value => ["passed", "failed", "skipped"].includes(value))) {
-    results.statuses.forEach((status, index) => console.log(`v11_case=${index + 1} status=${status}`));
+    results.statuses.forEach((status, index) => {
+      console.log(`v11_case=${index + 1} status=${status}`);
+      if (status === "failed") {
+        const line = formatFailure(index + 1, results.diagnostics?.[index]);
+        if (line) console.log(line);
+      }
+    });
+    console.log("v11_total=22");
     for (const status of ["passed", "failed", "skipped"]) console.log(`v11_${status}=${results.statuses.filter(value => value === status).length}`);
   } else console.log("v11_results=unavailable_or_invalid");
   if (timedOut || code !== 0) {
@@ -206,6 +301,52 @@ if (process.argv.includes("--security-self-test")) {
   }
   const malformed = globalThis.structuredClone(report); malformed.testResults[0].assertionResults[0].status = "unknown-secret";
   assert.equal(summarizeResults(malformed), null);
+  const title = [...caseTitles.keys()][0];
+  const secret = "FAKE_JWT_SECRET_DO_NOT_PRINT";
+  const assertion = { title, failureMessages: [`AssertionError: ${secret}\n    at ${trustedTestPath}:600:5`] };
+  assert.deepEqual(failureDiagnostic(assertion), { category: "introduction", failure: "assertion", line: 600, column: 5 });
+  assert.equal(formatFailure(1, failureDiagnostic(assertion)).includes(secret), false);
+  for (const text of [secret, `AssertionError: ${secret}\n    at /untrusted/secret.ts:600:5`,
+    `AssertionError: ${secret}\n    at ${trustedTestPath}:999999:5`,
+    `AssertionError: ${secret}\n    at ${trustedTestPath}:600:99999`, "x".repeat(65_537)]) {
+    const diagnostic = failureDiagnostic({ title, failureMessages: [text] });
+    assert.equal(diagnostic.line, "unavailable");
+    assert.equal(formatFailure(1, diagnostic).includes(secret), false);
+  }
+  assert.equal(failureDiagnostic({ title: secret, failureMessages: assertion.failureMessages }).category, "unknown");
+  for (const messages of [null, {}, [null], [123], Array(9).fill(secret)]) {
+    assert.equal(failureDiagnostic({ title, failureMessages: messages }).line, "unavailable");
+  }
+  assert.equal(failureDiagnostic({ title, failureMessages: ["Error: Test timed out in 5000ms."] }).failure, "timeout");
+  assert.equal(failureDiagnostic({ title, failureMessages: ["TypeError: fetch failed"] }).failure, "transport");
+  assert.equal(formatFailure(1, { category: secret, failure: secret, line: secret, column: secret }),
+    "v11_failure_case=1 category=unknown class=unknown line=unavailable column=unavailable");
+  const nullRow = globalThis.structuredClone(report); nullRow.testResults[0].assertionResults[0] = null;
+  assert.equal(summarizeResults(nullRow), null);
+  for (const [callbackFails, cleanupFails, expected] of [[false, false, "success"], [true, false, "success"], [false, true, "failed"], [true, true, "failed"]]) {
+    const events = [];
+    const callbackError = new Error(secret);
+    const stageRunner = async callback => {
+      let error;
+      try { await callback(); } catch (caught) { error = caught; }
+      if (cleanupFails) throw new Error(secret);
+      if (error) throw error;
+    };
+    try { await observeStaging(stageRunner, async () => { if (callbackFails) throw callbackError; }, (...args) => events.push(args)); }
+    catch { assert(callbackFails || cleanupFails); }
+    assert.deepEqual(events, [["resources", expected]]);
+    assert.equal(JSON.stringify(events).includes(secret), false);
+  }
+  const independent = Object.fromEntries([...stageNames].map(name => [name, "unverified"]));
+  for (const [stage, status] of [["vitest", "failed"], ["fixture-check", "failed"], ["fixture-restore", "success"], ["resources", "success"]]) {
+    captureStageStatus(independent, { kind: "stage-result", stage, status });
+  }
+  captureStageStatus(independent, { kind: "stage-result", stage: secret, status: "success" });
+  captureStageStatus(independent, { kind: "stage-result", stage: "resources", status: secret });
+  assert.deepEqual(independent, { vitest: "failed", "fixture-check": "failed", "fixture-restore": "success", resources: "success" });
+  const early = [];
+  await assert.rejects(observeStaging(async () => { throw new Error(secret); }, async () => {}, (...args) => early.push(args)));
+  assert.deepEqual(early, [["resources", "unverified"]]);
   const hanging = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
   const timer = setTimeout(() => process.kill(-hanging.pid, "SIGKILL"), 100);
   const signal = await new Promise((resolveSignal, reject) => { hanging.once("error", reject); hanging.once("close", (_code, value) => resolveSignal(value)); });
