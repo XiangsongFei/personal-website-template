@@ -137,9 +137,14 @@ function parseSafeImageReference(value, explicitRegistry) {
 const safeStartupErrorCodes = new Set([
   "StartWorkdirError", "StartConfigLoadError", "StartInvalidConfigError",
   "ImagePrepullError", "DockerRunError", "DockerLifecycleInspectError", "DockerLifecycleListError", "NetworkCreateError", "DbSetupError",
+  // CLI v2.119.0 db-bootstrap/db-setup.ts: StartSetupLocalDatabaseError plus
+  // the pooled connection's DbConnectError returned by startSetupLocalDatabase.
+  "DbConfigLoadError", "DbConnectError", "MigrationApplyError", "MigrationSeedError", "MigrationVaultError",
 ]);
-const safeDbSetupReasons = new Set([
-  "database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect",
+const safeDatabaseStartupReasons = new Map([
+  ["DbSetupError", new Set(["database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect"])],
+  ["ImagePrepullError", new Set(["docker_daemon", "config", "registry_pull", "image_inspect"])],
+  ["MigrationApplyError", new Set(["local_pg_net_unavailable"])],
 ]);
 
 const startupDiagnosticEnums = {
@@ -149,7 +154,7 @@ const startupDiagnosticEnums = {
   shape: ["matched", "json-shape-mismatch", "no-json", "unavailable"],
   code: ["allowlisted", "missing", "invalid-type", "not-allowlisted", "no-matched-error", "unavailable"],
   source: ["structured-messages", "fallback-text", "unavailable"],
-  setupReason: ["database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect", "unavailable"],
+  setupReason: ["database", "filesystem", "invalid_config", "docker_daemon", "config", "registry_pull", "image_inspect", "local_pg_net_unavailable", "unavailable"],
 };
 
 function safeStartupMetadata(metadata = {}) {
@@ -181,7 +186,7 @@ function startupOutputMetadata(stdout, stderr, errors) {
       shape: !available ? "unavailable" : errors.length ? "matched"
         : out.hasJson || err.hasJson ? "json-shape-mismatch" : "no-json",
       code: !available ? "unavailable" : errors[0]?.codeStatus ?? "no-matched-error",
-      setupReason: errors[0]?.code === "DbSetupError" && safeDbSetupReasons.has(errors[0]?.setupReason)
+      setupReason: safeDatabaseStartupReasons.get(errors[0]?.code)?.has(errors[0]?.setupReason)
         ? errors[0].setupReason : "unavailable",
     };
   } catch { return {}; }
@@ -228,12 +233,16 @@ function structuredStartupErrors(output) {
     try {
       const parsed = JSON.parse(line);
       if ((parsed?._tag === "Error" || parsed?.type === "error") && typeof parsed.error?.message === "string") {
+        // v2.119.0 shared/output/normalize-error.ts maps the failure's _tag to
+        // error.code; output.layer.ts emits {_tag: "Error", error: normalized}.
+        // Normalization omits reason. Missing reasons must remain unavailable;
+        // never infer them from message/detail/suggestion or a nested cause.
         errors.push({
           code: safeStartupErrorCodes.has(parsed.error.code) ? parsed.error.code : "unrecognized",
           codeStatus: !Object.hasOwn(parsed.error, "code") ? "missing"
             : typeof parsed.error.code !== "string" ? "invalid-type"
             : safeStartupErrorCodes.has(parsed.error.code) ? "allowlisted" : "not-allowlisted",
-          setupReason: parsed.error.code === "DbSetupError" && safeDbSetupReasons.has(parsed.error.reason)
+          setupReason: safeDatabaseStartupReasons.get(parsed.error.code)?.has(parsed.error.reason)
             ? parsed.error.reason : "unavailable",
           message: parsed.error.message,
         });
@@ -336,6 +345,9 @@ function formatStartupImageDiagnostic(image) {
 }
 
 function classifyStartFailure(output) {
+  // Text categories are hints only: ordinary database "unauthorized" text also
+  // matches image-pull-authentication. Use typed errors and operation evidence
+  // to determine the failed phase; this classifier cannot establish a cause.
   const text = String(output).toLowerCase();
   const categories = [
     [/address already in use|port is already allocated|bind:.*address/, "port-allocation"],
@@ -1626,10 +1638,44 @@ async function runSecuritySelfTests() {
   assert.equal(invalidDbSetupMetadata.setupReason, "unavailable");
   assert.match(safeStartupMetadata(invalidDbSetupMetadata), /Supabase DB setup reason: unavailable/);
   assert.doesNotMatch(safeStartupMetadata(invalidDbSetupMetadata), new RegExp(secret));
-  const nonDbSetupJson = JSON.stringify({ _tag: "Error", error: {
-    code: "ImagePrepullError", reason: "registry_pull", message: "private message",
-  } });
-  assert.equal(startupOutputMetadata(nonDbSetupJson, "", structuredStartupErrors(nonDbSetupJson)).setupReason, "unavailable");
+  // Match the real CLI normalization: only code/message/detail/suggestion are
+  // serialized, even when the internal tagged error has a finite reason.
+  for (const code of ["DbConfigLoadError", "DbConnectError", "DbSetupError", "MigrationApplyError",
+    "MigrationSeedError", "MigrationVaultError", "ImagePrepullError"]) {
+    const input = JSON.stringify({ _tag: "Error", error: {
+      code, message: `unauthorized ${secret}`, detail: secret, suggestion: secret,
+    } });
+    const parsed = structuredStartupErrors(input);
+    assert.equal(parsed[0]?.code, code);
+    assert.equal(parsed[0]?.codeStatus, "allowlisted");
+    assert.equal(parsed[0]?.setupReason, "unavailable");
+    let failure;
+    try { run("supabase", ["start"], {
+      spawn: () => ({ status: 1, stdout: input, stderr: "" }), failureMessage: safeStartFailure, startDiagnostics: true,
+    }); } catch (error) { failure = error; }
+    assert.equal(failure.startupErrorCode, code);
+    assert.equal(failure.startupMetadata.source, "structured-messages");
+    // Demonstrates why this text heuristic must not be reported as a root cause.
+    assert.equal(failure.startupFailureCategory, "image-pull-authentication");
+    assert.equal(startupFailure(failure, "").includes(secret), false);
+    assert.equal(startupFailure(failure, "").includes(`Supabase CLI error code: ${code}`), true);
+  }
+  for (const [code, reasons] of safeDatabaseStartupReasons) {
+    for (const reason of [...reasons, secret, null, {}, ""]) {
+      const input = JSON.stringify({ _tag: "Error", error: { code, reason, message: secret } });
+      const metadata = startupOutputMetadata(input, "", structuredStartupErrors(input));
+      assert.equal(metadata.setupReason, reasons.has(reason) ? reason : "unavailable");
+      assert.equal(safeStartupMetadata(metadata).includes(secret), false);
+    }
+  }
+  for (const code of ["DbConnectError", "MigrationSeedError", "MigrationVaultError", "DbConfigLoadError", secret]) {
+    const input = JSON.stringify({ _tag: "Error", error: { code, reason: "database", message: secret } });
+    assert.equal(startupOutputMetadata(input, "", structuredStartupErrors(input)).setupReason, "unavailable");
+  }
+  for (const input of [
+    { _tag: "Error", code: "DbConnectError", error: { message: secret } },
+    { _tag: "Error", error: { _tag: "DbConnectError", cause: { code: "DbConnectError" }, message: secret } },
+  ]) assert.equal(structuredStartupErrors(JSON.stringify(input))[0]?.codeStatus, "missing");
   for (const [stdout, stderr, source, category] of [
     [jsonError(secret + "-code", "address already in use " + secret + "-body"), "unauthorized " + secret + "-stderr", "structured-messages", "port-allocation"],
     ["unauthorized " + secret, "", "fallback-text", "image-pull-authentication"],
