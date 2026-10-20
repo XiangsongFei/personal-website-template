@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFilesSaveOperation, createResumeRepository } from "../src/data/resumeRepository";
+import { fixtureSections } from "../src/fixtures";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const resumeId = "11111111-1111-4111-8111-111111111111";
@@ -73,7 +74,12 @@ function database() {
       ? { data: localeRows, error: localeReadError } : { data: response(), error: null }).then(resolve, reject)) as never;
     return q;
   });
-  return { client: { from, storage: { from: storageFrom }, supabaseUrl: "https://storage.example.test" } as unknown as SupabaseClient, calls, storageUpload, storageDownload, storageInfo, storageRemove, getPublicUrl, storageFrom,
+  return { client: { from, rpc: vi.fn(async (name: string) => ({ data: [{ resume_id: resumeId, activity_log_enabled: false,
+    ...(name === "load_admin_profile_write_state" ? { profile_write_mode: "direct", profile_trusted_context_required: false }
+      : { contact_write_mode: "direct", contact_trusted_context_required: false }) }], error: null })), auth: {
+    getSession: async () => ({ data: { session: { access_token: "local-test-token", expires_at: Date.now() / 1000 + 3600, user: { id: resumeId } } }, error: null }),
+    getUser: async () => ({ data: { user: { id: resumeId } }, error: null }),
+  }, storage: { from: storageFrom }, supabaseUrl: "https://storage.example.test" } as unknown as SupabaseClient, calls, storageUpload, storageDownload, storageInfo, storageRemove, getPublicUrl, storageFrom,
     setLocaleRows(rows: Array<{ portfolio_href: string }>) { localeRows = rows; }, setLocaleReadError(error: Error | null) { localeReadError = error; } };
 }
 
@@ -414,4 +420,173 @@ describe("Batch 6B scoped repository writes", () => {
     await Promise.resolve(); await Promise.resolve();
     expect(remove).toHaveBeenCalledOnce();
   });
+});
+
+describe("Section Titles direct authorization", () => {
+  it.each(["educationLabel", "experienceLabel", "skillsLabel", "honorsLabel", "projectHeading", "kaggleLabel"] as const)("permits %s only after target-scoped authorization", async key => {
+    const db = database();
+    db.client.rpc = vi.fn().mockResolvedValue({ data: true, error: null });
+    const repo = createResumeRepository(db.client);
+    await repo.updateSiteText!(resumeId, "en", { [key]: "Changed" });
+    expect(db.client.rpc).toHaveBeenCalledWith("can_direct_write_section_titles", { target_resume_id: resumeId });
+    expect(db.calls).toHaveLength(1);
+    expect(Object.keys(db.calls[0].payload!)).toHaveLength(1);
+    expect(db.calls[0].filters).toEqual([["resume_id", resumeId], ["locale", "en"]]);
+  });
+  it.each([false, null, "true"])("denies unverified direct authorization %j", async data => {
+    const db = database(); db.client.rpc = vi.fn().mockResolvedValue({ data, error: null });
+    await expect(createResumeRepository(db.client).updateSiteText!(resumeId, "zh", { educationLabel: "Changed" })).rejects.toThrow("authorization");
+    expect(db.calls).toHaveLength(0);
+  });
+  it("rechecks permission for each write so a mode change cannot authorize the next locale", async () => {
+    const db = database(); db.client.rpc = vi.fn().mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: false, error: null });
+    const repo = createResumeRepository(db.client);
+    await repo.updateSiteText!(resumeId, "zh", { skillsLabel: "技能" });
+    await expect(repo.updateSiteText!(resumeId, "en", { skillsLabel: "Skills" })).rejects.toThrow("authorization");
+    expect(db.calls).toHaveLength(1);
+  });
+});
+
+describe("direct writer final Pending boundary", () => {
+  function block(domain: "section_titles" | "website_links", kind: "legacy" | "unavailable" | "pending") {
+    const key = kind === "legacy" ? `admin-${domain}-rpc-pending-v1:${resumeId}` : `admin-pending-save-v2:${domain}:${resumeId}:${resumeId}`;
+    const raw = kind === "legacy" ? "original-unattributed-record" : JSON.stringify({ actorUserId: resumeId, domain, resumeId,
+      requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", payload: { original: true }, payloadDigest: "a".repeat(64) });
+    sessionStorage.setItem(key, raw);
+    if (kind === "unavailable") vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    return { key, raw };
+  }
+  it.each(["legacy", "unavailable", "pending"] as const)("retains the draft and refuses DML when %s appears during the real title authorization RPC", async kind => {
+    const db = database();
+    let grant!: (value: { data: boolean; error: null }) => void;
+    db.client.rpc = vi.fn(() => new Promise(resolve => { grant = resolve; })) as unknown as SupabaseClient["rpc"];
+    const repo = createResumeRepository(db.client);
+    const draft = { skillsLabel: "unsaved title" }; const original = structuredClone(draft);
+    const saving = repo.updateSiteText!(resumeId, "zh", draft);
+    await vi.waitFor(() => expect(grant).toBeTypeOf("function"));
+    const record = block("section_titles", kind);
+    grant({ data: true, error: null });
+    await expect(saving).rejects.toThrow("blocked");
+    expect(db.calls).toHaveLength(0); expect(draft).toEqual(original);
+    vi.restoreAllMocks(); expect(sessionStorage.getItem(record.key)).toBe(record.raw);
+  });
+  it.each(["public", "text", "navigation"] as const)("checks each %s writer again after its final asynchronous account check", async writer => {
+    for (const kind of ["legacy", "unavailable", "pending"] as const) {
+      sessionStorage.clear();
+      const db = database(); let checks = 0;
+      let release!: () => void;
+      vi.spyOn(db.client.auth, "getUser").mockImplementation(async () => {
+        if (++checks === 2) await new Promise<void>(resolve => { release = resolve; });
+        return { data: { user: { id: resumeId } }, error: null } as Awaited<ReturnType<typeof db.client.auth.getUser>>;
+      });
+      const repo = createResumeRepository(db.client);
+      const saving = writer === "public" ? repo.updatePublicLinks!(resumeId, { email: "changed@example.test" })
+        : writer === "text" ? repo.updateSiteText!(resumeId, "en", { portfolioLabel: "Changed" })
+          : repo.updateNavigationLabel!(resumeId, "nav-id", "zh", "Changed");
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      const record = block("website_links", kind); release();
+      await expect(saving).rejects.toThrow("blocked");
+      expect(db.calls).toHaveLength(0);
+      vi.restoreAllMocks(); expect(sessionStorage.getItem(record.key)).toBe(record.raw);
+    }
+  });
+  it.each(["missing", "throws", "undefined", "null", "unknown"] as const)("rejects a %s reader after internal title authorization", async kind => {
+    const db = database(); const repo = createResumeRepository(db.client);
+    db.client.rpc = vi.fn(async () => {
+      if (kind === "missing") delete repo.readPendingSaveState;
+      else repo.readPendingSaveState = () => {
+        if (kind === "throws") throw new Error("unreadable");
+        return (kind === "null" ? null : kind === "undefined" ? undefined : { status: "future" }) as never;
+      };
+      return { data: true, error: null };
+    }) as unknown as SupabaseClient["rpc"];
+    await expect(repo.updateSiteText!(resumeId, "zh", { skillsLabel: "Changed" })).rejects.toThrow("blocked");
+    expect(db.calls).toHaveLength(0);
+  });
+  it("rejects an actor switch during title authorization", async () => {
+    const db = database(); let actor = resumeId;
+    vi.spyOn(db.client.auth, "getSession").mockImplementation(async () => ({ data: { session: { access_token: `test-${actor}`, expires_at: Date.now()/1000+3600, user: { id: actor } } }, error: null }) as Awaited<ReturnType<typeof db.client.auth.getSession>>);
+    vi.spyOn(db.client.auth, "getUser").mockImplementation(async () => ({ data: { user: { id: actor } }, error: null }) as Awaited<ReturnType<typeof db.client.auth.getUser>>);
+    db.client.rpc = vi.fn(async () => { actor = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"; return { data: true, error: null }; }) as unknown as SupabaseClient["rpc"];
+    await expect(createResumeRepository(db.client).updateSiteText!(resumeId, "zh", { skillsLabel: "Changed" })).rejects.toThrow("blocked");
+    expect(db.calls).toHaveLength(0);
+  });
+});
+
+it("refuses a direct title write if the current session changes while getUser verifies the captured token", async () => {
+  const db = database(); let actor = resumeId; let checks = 0;
+  vi.spyOn(db.client.auth, "getSession").mockImplementation(async () => ({ data: { session: { access_token: `test-${actor}`, expires_at: Date.now()/1000+3600, user: { id: actor } } }, error: null }) as Awaited<ReturnType<typeof db.client.auth.getSession>>);
+  vi.spyOn(db.client.auth, "getUser").mockImplementation(async () => {
+    const verified = actor;
+    if (++checks === 2) actor = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    return { data: { user: { id: verified } }, error: null } as Awaited<ReturnType<typeof db.client.auth.getUser>>;
+  });
+  db.client.rpc = vi.fn().mockResolvedValue({ data: true, error: null });
+  await expect(createResumeRepository(db.client).updateSiteText!(resumeId, "en", { skillsLabel: "Unconfirmed" })).rejects.toThrow("blocked");
+  expect(db.calls).toHaveLength(0);
+});
+
+
+describe("Contact and Profile final direct-write safety", () => {
+  const cases = [
+    ["contact", "label", (r: ReturnType<typeof createResumeRepository>) => r.updateContactLabel!(resumeId, "zh", "draft")],
+    ["contact", "availability", (r: ReturnType<typeof createResumeRepository>) => r.updateContactAvailability!(resumeId, "en", "draft")],
+    ...(["focus", "status"] as const).flatMap(kind => [
+      ["contact", `${kind} position`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.updateFocusPosition!(resumeId, "entry", 1) : r.updateStatusPosition!(resumeId, "entry", 1)],
+      ["contact", `${kind} insert`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.insertFocus!(resumeId, 0) : r.insertStatus!(resumeId, 0, "open")],
+      ["contact", `${kind} translation`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.updateFocusTranslation!(resumeId, "entry", "zh", { title: "draft", detail: "" }) : r.updateStatusTranslation!(resumeId, "entry", "zh", { title: "draft", detail: "" })],
+      ["contact", `${kind} translation insert`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.insertFocusTranslation!(resumeId, "entry", "en", { title: "draft", detail: "" }) : r.insertStatusTranslation!(resumeId, "entry", "en", { title: "draft", detail: "" })],
+      ["contact", `${kind} delete`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.deleteFocus!(resumeId, "entry") : r.deleteStatus!(resumeId, "entry")],
+      ["contact", `${kind} translation delete`, (r: ReturnType<typeof createResumeRepository>) => kind === "focus" ? r.deleteFocusTranslation!(resumeId, "entry", "zh") : r.deleteStatusTranslation!(resumeId, "entry", "zh")],
+    ]),
+    ["contact", "status type", (r: ReturnType<typeof createResumeRepository>) => r.updateStatusType!(resumeId, "entry", "open")],
+    ["profile", "shared", (r: ReturnType<typeof createResumeRepository>) => r.updateProfileSharedDetails(resumeId, structuredClone(fixtureSections.profile.shared))],
+    ...(["zh", "en"] as const).map(locale => ["profile", locale, (r: ReturnType<typeof createResumeRepository>) => r.updateProfileTranslation(resumeId, locale, structuredClone(fixtureSections.profile.translations[locale]))]),
+  ] as Array<["contact" | "profile", string, (r: ReturnType<typeof createResumeRepository>) => Promise<unknown>]>;
+  it.each(cases)("blocks %s %s after delayed authorization for every unsafe state", async (domain, _name, write) => {
+    for (const kind of ["legacy", "unavailable", "pending", "missing", "throws", "invalid", "actor"] as const) {
+      sessionStorage.clear(); const db = database(); let actor = resumeId;
+      vi.spyOn(db.client.auth, "getSession").mockImplementation(async () => ({ data: { session: { access_token: `test-${actor}`, expires_at: 4_000_000_000, user: { id: actor } } }, error: null }) as never);
+      vi.spyOn(db.client.auth, "getUser").mockImplementation(async () => ({ data: { user: { id: actor } }, error: null }) as never);
+      let release!: () => void;
+      db.client.rpc = vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); return { data: [{ resume_id: resumeId, activity_log_enabled: false, [`${domain}_write_mode`]: "direct", [`${domain}_trusted_context_required`]: false }], error: null }; }) as never;
+      const repo = createResumeRepository(db.client); const draftBefore = JSON.stringify(fixtureSections.profile);
+      const saving = write(repo); await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      const key = kind === "legacy" ? `admin-${domain}-rpc-pending-v1:${resumeId}` : `admin-pending-save-v2:${domain}:${resumeId}:${resumeId}`;
+      const raw = kind === "legacy" ? "protected legacy" : JSON.stringify({ actorUserId: resumeId, domain, resumeId, requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", payload: { draft: true }, payloadDigest: "a".repeat(64) });
+      sessionStorage.setItem(key, raw);
+      if (kind === "unavailable") vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unreadable"); });
+      if (kind === "missing") delete repo.readPendingSaveState;
+      if (kind === "throws") repo.readPendingSaveState = () => { throw new Error("unreadable"); };
+      if (kind === "invalid") repo.readPendingSaveState = () => ({ status: "future" }) as never;
+      if (kind === "actor") actor = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      release(); await expect(saving).rejects.toThrow("blocked");
+      expect(db.calls).toHaveLength(0); expect(JSON.stringify(fixtureSections.profile)).toBe(draftBefore);
+      vi.restoreAllMocks(); expect(sessionStorage.getItem(key)).toBe(raw);
+    }
+  });
+  it.each(["contact", "profile"] as const)("rejects RPC mode for the real %s direct writer", async domain => {
+    const db = database(); db.client.rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [`${domain}_write_mode`]: "rpc", [`${domain}_trusted_context_required`]: true }], error: null });
+    const r = createResumeRepository(db.client);
+    await expect(domain === "contact" ? r.updateContactLabel!(resumeId, "zh", "draft") : r.updateProfileSharedDetails(resumeId, fixtureSections.profile.shared)).rejects.toThrow("blocked");
+    expect(db.calls).toHaveLength(0);
+  });
+});
+
+it.each(["focus", "status"] as const)("rechecks Pending after the %s translation existence read, before its actual DML", async kind => {
+  const db = database(); const originalFrom = vi.mocked(db.client.from).getMockImplementation()!;
+  let release!: () => void;
+  vi.spyOn(db.client, "from").mockImplementation((table: string) => {
+    const query = originalFrom(table);
+    const mutable = query as unknown as { maybeSingle: () => Promise<unknown> };
+    mutable.maybeSingle = async () => { await new Promise<void>(resolve => { release = resolve; }); return { data: null, error: null }; };
+    return query;
+  });
+  const repo = createResumeRepository(db.client); const draft = { title: "protected", detail: "draft" };
+  const saving = kind === "focus" ? repo.updateFocusTranslation!(resumeId, "entry", "zh", draft) : repo.updateStatusTranslation!(resumeId, "entry", "en", draft);
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const key = `admin-contact-rpc-pending-v1:${resumeId}`; sessionStorage.setItem(key, "protected legacy"); release();
+  await expect(saving).rejects.toThrow("blocked");
+  expect(db.calls.filter(call => call.op !== "select")).toHaveLength(0);
+  expect(draft).toEqual({ title: "protected", detail: "draft" }); expect(sessionStorage.getItem(key)).toBe("protected legacy");
 });

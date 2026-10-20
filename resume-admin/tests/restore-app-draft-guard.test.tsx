@@ -37,6 +37,7 @@ function mockRepository(domain: "awards" | "contact", overrides: Partial<ResumeR
     status: [{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", position: 0, status_type: "open", zh: { title: "开放", detail: "" }, en: { title: "Open", detail: "" } }],
   };
   return {
+    readPendingSaveState: vi.fn().mockReturnValue({ status: "clear", aggregatePending: false, uploadLocales: [] }),
     loadVersionHistoryPage: vi.fn().mockResolvedValue({ entries: [event(domain)], hasMore: false, nextCursor: null }),
     previewRestore: vi.fn().mockResolvedValue({ status: "ready", sourceEventId: eventId, sourceOccurredAt: "2026-10-05T02:10:04Z", domain,
       historicalState, currentState, comparison: { before: currentState, after: historicalState }, expectedCurrentDigest: "a".repeat(64) }),
@@ -88,5 +89,32 @@ describe("App-owned Restore draft and in-flight guard", () => {
     await screen.findByText("This section was restored. A new entry was added to Version History; earlier history remains unchanged.");
     fireEvent.click(screen.getByRole("button", { name: "Open contact" }));
     expect(await screen.findByLabelText("Chinese Availability")).toHaveProperty("value", "Keep this unrelated draft");
+  });
+});
+
+describe("Restore pending inspection safety", () => {
+  it.each(["missing", "throws", "invalid", "undefined", "null", "unknown"] as const)("blocks an %s inspection contract without issuing Restore", async mode => {
+    const repository = mockRepository("awards");
+    if (mode === "missing") delete repository.readPendingSaveState;
+    else repository.readPendingSaveState = () => {
+      if (mode === "throws") throw new Error("unreadable");
+      return (mode === "undefined" ? undefined : mode === "null" ? null : { status: mode === "unknown" ? "future" : "clear" }) as unknown as ReturnType<NonNullable<ResumeRepository["readPendingSaveState"]>>;
+    };
+    renderApp(repository);
+    fireEvent.click(screen.getByRole("button", { name: "Open history" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preview what would be restored" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this section" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Restore is paused");
+    expect(repository.restoreDomain).not.toHaveBeenCalled();
+  });
+  it.each(["unavailable", "legacy", "pending"] as const)("blocks %s state without issuing Restore", async status => {
+    const repository = mockRepository("awards", { readPendingSaveState: vi.fn().mockReturnValue({ status, aggregatePending: status === "pending", uploadLocales: [] }) });
+    renderApp(repository);
+    fireEvent.click(screen.getByRole("button", { name: "Open history" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Preview what would be restored" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this section" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Restore is paused");
+    if (status !== "pending") expect(await screen.findByText(/A previous save cannot be safely verified/)).toBeTruthy();
+    expect(repository.restoreDomain).not.toHaveBeenCalled();
   });
 });

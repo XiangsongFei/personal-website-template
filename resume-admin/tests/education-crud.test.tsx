@@ -40,6 +40,7 @@ function makeRepository(overrides: Partial<ResumeRepository> = {}, withSecondEdu
   let items = structuredClone(snapshot(withSecondEducation).sections.education);
   const inserted: Record<string, EducationItem["translations"][Locale]> = {};
   const repo: ResumeRepository = {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
     loadAdminEducationWriteState: vi.fn(async () => ({ resumeId, activityLogEnabled: true, educationWriteMode: "direct" as const, educationTrustedContextRequired: false })),
     saveEducationWithWorker: vi.fn(async (_resume: string, next: EducationItem[]) => structuredClone(next.map((item, position) => ({ ...item, position })))),
     load: vi.fn(async () => ({ ...snapshot(), sections: { ...snapshot().sections, education: structuredClone(items) } })),

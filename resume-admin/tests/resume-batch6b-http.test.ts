@@ -30,13 +30,18 @@ describe("Batch 6B Supabase HTTP request construction", () => {
       accessToken: async () => signedInJwt,
       global: { fetch: fetchMock },
     });
-    const writes = createBatch6BRepositoryWrites(client);
+    // Transport-only test: full Repository authorization/Pending guards are tested separately.
+    const assertClear = vi.fn();
+    const guard = vi.fn(async () => ({ actorId: "10000000-0000-4000-8000-000000000002", assertClear }));
+    const writes = createBatch6BRepositoryWrites(client, supabaseUrl, guard);
 
     await writes.insertFocus("resume-uuid", 0);
     await writes.insertStatus("resume-uuid", 0, "open");
     await writes.insertProjectMethod("resume-uuid", "project-uuid", "en", 0, "Method");
     await writes.readProjectMethodByPosition("resume-uuid", "project-uuid", "en", 0, "Method");
 
+    expect(guard.mock.calls).toEqual([["resume-uuid", ["contact"]], ["resume-uuid", ["contact"]]]);
+    expect(assertClear).toHaveBeenCalledTimes(2);
     expect(requests.map(request => new URL(request.url).pathname)).toEqual([
       "/rest/v1/resume_contact_focus_items",
       "/rest/v1/resume_contact_status_items",

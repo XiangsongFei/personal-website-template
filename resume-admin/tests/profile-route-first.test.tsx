@@ -28,6 +28,7 @@ function snapshot(): LoadedResume {
 
 function repository(overrides: Partial<ResumeRepository & ResumeSectionRepository> = {}): ResumeRepository & ResumeSectionRepository {
   return {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
     load: vi.fn().mockResolvedValue(snapshot()),
     loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     loadSiteMetadata: vi.fn().mockResolvedValue(metadata),

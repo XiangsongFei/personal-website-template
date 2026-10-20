@@ -11,8 +11,13 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); window.sessionSto
 describe("Profile transactional repository", () => {
   it("decodes target-scoped write state and rejects an invalid direct/trusted combination", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, profile_write_mode: "rpc", profile_trusted_context_required: true }], error: null });
-    const repo = createResumeRepository({ rpc, from: vi.fn() } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ rpc, from: vi.fn(), auth: {
+      getSession: async () => ({ data: { session: { access_token: "synthetic", expires_at: 4_000_000_000, user: { id: actorId } } }, error: null }),
+      getUser: async () => ({ data: { user: { id: actorId } }, error: null }),
+    } } as unknown as SupabaseClient);
     await expect(repo.loadAdminProfileWriteState!(resumeId)).resolves.toEqual({ resumeId, activityLogEnabled: true, profileWriteMode: "rpc", profileTrustedContextRequired: true });
+    rpc.mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, profile_write_mode: "direct", profile_trusted_context_required: true }], error: null });
+    await expect(repo.loadAdminProfileWriteState!(resumeId)).rejects.toThrow("Invalid Profile write state");
   });
 
   it("uses one Worker request and replays the exact pending request after an ambiguous response", async () => {

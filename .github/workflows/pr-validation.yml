@@ -158,7 +158,7 @@ jobs:
     needs: detect_changes
     if: needs.detect_changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       SUPABASE_USE_SLIM_IMAGES: "false"
     steps:
@@ -166,6 +166,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Node.js for isolated integration tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+
+      - name: Install locked Admin test dependencies
+        working-directory: resume-admin
+        run: npm ci
+
+      - name: Verify integration runner result guards
+        run: node resume-admin/tests/run-v11-local-integration.mjs --security-self-test
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
@@ -354,6 +368,12 @@ jobs:
 
       - name: Stage isolated local Supabase and run SQL tests
         run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
+
+      # The runner caps staging/tests/normal cleanup at 12 minutes and fallback
+      # ownership-checked cleanup at 2 minutes; leave one minute for reporting.
+      - name: Run 22 isolated Worker PostgREST integration tests
+        timeout-minutes: 15
+        run: node resume-admin/tests/run-v11-local-integration.mjs
 
       - name: Report bounded Docker API diagnostics
         if: always()

@@ -3,14 +3,14 @@ import { createPortal } from "react-dom";
 import { Link, NavLink, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { fixtureMeta, fixtureSections } from "./fixtures";
 import type { LoadedResume, OverviewResumeData, ResumeSiteMetadata } from "./data/resumeMapper";
-import { AggregateWorkerSaveError, createFilesSaveOperation, runFilesSavePreflight, runFilesSaveRequest, type FilesSaveOperation, type AdminFeatureState, type EditableRepeatableSection, type EditableTranslation, type ResumeRepository, type UpdatedEducationEntryRow, type UpdatedEducationTranslationRow, type UpdatedProfileRow, type UpdatedProfileTranslationRow } from "./data/resumeRepository";
+import { safelyReadPendingSaveState, pendingManualReviewMessage, AggregateWorkerSaveError, createFilesSaveOperation, runFilesSavePreflight, runFilesSaveRequest, type FilesSaveOperation, type AdminFeatureState, type EditableRepeatableSection, type EditableTranslation, type ResumeRepository, type UpdatedEducationEntryRow, type UpdatedEducationTranslationRow, type UpdatedProfileRow, type UpdatedProfileTranslationRow } from "./data/resumeRepository";
 import { managedResumePdfObjectPath, validateWebsiteLinksAggregate, type FilesAggregate, type WebsiteLinksAggregate } from "./data/websiteFilesAggregate";
 import type {
   AwardItem, Bilingual, ContactSection, EducationCategory, EducationItem, ExperienceItem, FocusItem,
   EditorSections, IntroItem, Locale, LinksSection, OrderedItem, ProfileSection, ProjectItem, ProjectMethod, SectionKey,
   SkillItem, SiteTextTranslation, StatusItem,
 } from "./model";
-import type { SectionTitleKey, SectionTitlesAggregate } from "./data/resumeRepository";
+import type { PendingSaveDomain, SectionTitleKey, SectionTitlesAggregate } from "./data/resumeRepository";
 import { buildCanonicalResumePreview, type CanonicalResumePreview } from "./preview/resumeContentMapper";
 import { ResumePreviewPanel, type PreviewSection } from "./preview/ResumePreviewPanel";
 import { validateProfilePhoto } from "./data/profilePhoto";
@@ -25,6 +25,25 @@ import { SystemStateContent } from "./SystemState";
 import { ActivityLogPage } from "./ActivityLogPage";
 import { VersionHistoryPage } from "./VersionHistoryPage";
 import type { RestorePreviewDomain } from "./data/restorePreviewContract";
+
+export function pendingSaveBlockReason(repository: ResumeRepository | null, resumeId: string, actorId: string | null, domains: PendingSaveDomain[], requireClear = false): string | null {
+  try {
+    if (!repository || typeof repository.readPendingSaveState !== "function") return pendingManualReviewMessage;
+    for (const domain of domains) {
+      const state = safelyReadPendingSaveState(repository, domain, resumeId, actorId);
+      if ((state.status !== "clear" && state.status !== "pending") || (requireClear && state.status !== "clear")) return pendingManualReviewMessage;
+    }
+    return null;
+  } catch { return pendingManualReviewMessage; }
+}
+function assertPendingSaveReadable(repository: ResumeRepository | null, resumeId: string, actorId: string | null, domains: PendingSaveDomain[]) {
+  const reason = pendingSaveBlockReason(repository, resumeId, actorId, domains);
+  if (reason) throw new Error(reason);
+}
+function PendingSaveBoundary({ blocked, children }: { blocked: boolean; children: ReactNode }) {
+  // Keep the existing direct-child preview layout when editing is available.
+  return blocked ? <fieldset disabled style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{children}</fieldset> : <>{children}</>;
+}
 
 const navigation = [
   { label: "Overview", path: "/overview" },
@@ -554,6 +573,59 @@ function useSectionText(page: SectionTextPage | null) {
   const { t } = useUiLocale();
   const keys = page ? sectionTextKeys[page] : [];
   const resumeId = context.siteTextResumeId ?? context.additionalResumeId ?? (page === "education" ? context.educationResumeId : null) ?? context.resume?.resumeId ?? null;
+  const repository = context.repository;
+  const actorId = context.identityId;
+  const pendingStatus = page && context.productionMode ? (resumeId ? safelyReadPendingSaveState(repository, "section_titles", resumeId, actorId).status : "unavailable") : "clear";
+  const [recovery, setRecovery] = useState<{ target: string; actor: string; snapshot?: string; error?: string } | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState("");
+  const [retryBusy, setRetryBusy] = useState(false);
+  const retryLock = useRef<object | null>(null);
+  const activeBinding = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    activeBinding.current = {};
+    retryLock.current = null;
+    setRetryBusy(false);
+    setRecoveryNotice("");
+    setRecovery(null);
+    return () => { activeBinding.current = null; };
+  }, [repository, resumeId, actorId]);
+  useEffect(() => {
+    let current = true;
+    if (pendingStatus === "pending" && resumeId && actorId) {
+      const inspect = async () => {
+        try {
+          if (!repository?.inspectPendingSectionTitles || !repository.retryPendingSectionTitles) throw new Error("unavailable");
+          const value = await repository.inspectPendingSectionTitles(resumeId, actorId);
+          if (!value) throw new Error("changed");
+          if (current) setRecovery({ target: resumeId, actor: actorId, snapshot: value.snapshot });
+        } catch {
+          if (current) setRecovery({ target: resumeId, actor: actorId, error: pendingManualReviewMessage });
+        }
+      };
+      void inspect();
+    }
+    return () => { current = false; };
+  }, [repository, resumeId, actorId, pendingStatus]);
+  const retryPending = async () => {
+    if (retryLock.current || !resumeId || !actorId || !repository?.retryPendingSectionTitles
+      || recovery?.target !== resumeId || recovery.actor !== actorId || !recovery.snapshot) return;
+    const binding = activeBinding.current;
+    const isCurrent = () => binding !== null && activeBinding.current === binding;
+    retryLock.current = binding; setRetryBusy(true); setRecoveryNotice("");
+    try {
+      await repository.retryPendingSectionTitles(resumeId, actorId, recovery.snapshot, isCurrent);
+      if (isCurrent()) {
+        setRecovery(null);
+        // Confirmation of an old request must not overwrite or mark current drafts saved.
+        setRecoveryNotice("The original Section Titles request was confirmed. Current drafts were kept unchanged; refresh and review before a new save.");
+      }
+    } catch (error) {
+      if (isCurrent()) setRecoveryNotice(error instanceof Error ? error.message : pendingManualReviewMessage);
+    } finally {
+      if (retryLock.current === binding) retryLock.current = null;
+      if (isCurrent()) setRetryBusy(false);
+    }
+  };
   const stored = page ? context.sectionTextDrafts[page] : undefined;
   const siteText = context.siteTextTranslations ?? context.sections.links.translations;
   const pick = (locale: Locale) => Object.fromEntries(keys.map(key => [key, siteText[locale][key]])) as SectionTextValues;
@@ -573,8 +645,12 @@ function useSectionText(page: SectionTextPage | null) {
     setDraft(baseline);
   };
   const save = async (): Promise<boolean> => {
-    if (!dirty) return true;
-    if (!resumeId || !context.repository?.loadAdminSectionTitlesWriteState || !context.repository.saveSectionTitlesWithWorker) return false;
+    if (!page) return true;
+    if (retryLock.current) return false;
+    if (!dirty) return pendingStatus === "clear";
+    // A pending request has its own manual recovery path, independent of the current draft.
+    if (pendingStatus === "pending") return false;
+    if (!resumeId || !context.repository) return false;
     const titleKeys: Record<SectionTextKey, SectionTitleKey> = { educationLabel: "education_label", experienceLabel: "experience_label",
       projectHeading: "project_heading", kaggleLabel: "kaggle_label", skillsLabel: "skills_label", honorsLabel: "honors_label" };
     const asAggregate = (translations: Bilingual<SiteTextTranslation>): SectionTitlesAggregate => ({ translations: {
@@ -582,11 +658,34 @@ function useSectionText(page: SectionTextPage | null) {
       en: Object.fromEntries(Object.entries(titleKeys).map(([source, target]) => [target, translations.en[source as SectionTextKey]])) as Record<SectionTitleKey, string>,
     } });
     try {
-      const writeState = await context.repository.loadAdminSectionTitlesWriteState(resumeId);
-      if (writeState.writeMode !== "rpc" || !writeState.activityLogEnabled || !writeState.trustedContextRequired) return false;
+      assertPendingSaveReadable(context.repository, resumeId, context.identityId, ["section_titles"]);
       const current = context.siteTextTranslations ?? context.sections.links.translations;
       const desired: Bilingual<SiteTextTranslation> = { zh: { ...current.zh }, en: { ...current.en } };
       for (const locale of ["zh", "en"] as const) for (const key of keys) desired[locale][key] = draft[locale][key] ?? current[locale][key];
+      const direct = await context.repository.loadSectionTitlesDirectWritePermission?.(resumeId);
+      if (direct === true) {
+        if (!context.repository.updateSiteText
+          || pendingSaveBlockReason(context.repository, resumeId, context.identityId, ["section_titles"], true)) return false;
+        let confirmed = current;
+        for (const locale of ["zh", "en"] as const) {
+          const fields: Partial<SiteTextTranslation> = {};
+          for (const key of keys) if (desired[locale][key] !== current[locale][key]) fields[key] = desired[locale][key];
+          if (!Object.keys(fields).length) continue;
+          if (pendingSaveBlockReason(context.repository, resumeId, context.identityId, ["section_titles"], true)) return false;
+          await context.repository.updateSiteText(resumeId, locale, fields);
+          confirmed = { ...confirmed, [locale]: { ...confirmed[locale], ...fields } };
+          context.onSiteTextChanged?.(resumeId, confirmed);
+          context.onBilingualSave(new Set(Object.keys(fields).map(field => bilingualFieldKey({ section: "links", itemId: "links", field }, locale))));
+          if (page) context.setSectionTextDrafts(state => {
+            const prior = state[page] ?? { baseline, draft };
+            return { ...state, [page]: { ...prior, baseline: { ...prior.baseline, [locale]: { ...prior.baseline[locale], ...fields } } } };
+          });
+        }
+        return true;
+      }
+      if (!context.repository.loadAdminSectionTitlesWriteState || !context.repository.saveSectionTitlesWithWorker) return false;
+      const writeState = await context.repository.loadAdminSectionTitlesWriteState(resumeId);
+      if (writeState.writeMode !== "rpc" || !writeState.activityLogEnabled || !writeState.trustedContextRequired) return false;
       await context.repository.saveSectionTitlesWithWorker(resumeId, asAggregate(desired), asAggregate(current));
       const changed = new Set<string>();
       for (const locale of ["zh", "en"] as const) for (const key of keys) if (draft[locale][key] !== baseline[locale][key])
@@ -615,6 +714,14 @@ function useSectionText(page: SectionTextPage | null) {
   </div> : null;
   const rendered = page && <section className="section-text-editor section-text-editor-heading-only">
     <h2>{t("Section title")}</h2>
+    {pendingStatus === "pending" && <div role="status">
+      <p>{t(recovery?.target === resumeId && recovery.actor === actorId && recovery.error ? recovery.error : "An unconfirmed Section Titles request is retained. Verify and retry the original request without changing the current draft.")}</p>
+      <button type="button" className="button secondary" onClick={() => void retryPending()}
+        disabled={retryBusy || recovery?.target !== resumeId || recovery.actor !== actorId || !recovery.snapshot}>
+        {t(retryBusy ? "Retrying original Section Titles request…" : "Retry exact Section Titles save")}
+      </button>
+    </div>}
+    {recoveryNotice && <p role="status">{t(recoveryNotice)}</p>}
     <p className="section-text-helper">{t("Public resume section name")}</p>
     {renderFields(page === "projects" ? ["projectHeading"] : keys, undefined,
       page === "education" ? ["educationLabel"] : page === "experience" ? ["experienceLabel"] : page === "projects" ? ["projectHeading"] : page === "skills" ? ["skillsLabel"] : page === "awards" ? ["honorsLabel"] : [])}
@@ -906,6 +1013,7 @@ function ProductionRepeatableSection({ section, resumeId, items, repository, dra
     const patchCache = () => onChanged?.(section, resumeId, clone(working.baseline));
     commit(working);
     try {
+      assertPendingSaveReadable(repository, resumeId, identityId, [section]);
       let introductionFeatureState: AdminFeatureState | null = null;
       let pendingWorkerRetry = false;
       let awardsWriteState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminAwardsWriteState"]>>> | null = null;
@@ -1615,8 +1723,8 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
         setPhotoError("");
       }
       return true;
-    } catch {
-      setState(current => current ? { ...current, saveError: true, notice: "Could not save shared profile details. Your edits are still here; please retry." } : current);
+    } catch (error) {
+      setState(current => current ? { ...current, saveError: true, notice: error instanceof Error && error.message === pendingManualReviewMessage ? error.message : "Could not save shared profile details. Your edits are still here; please retry." } : current);
       return false;
     } finally {
       requests.shared = false;
@@ -1644,10 +1752,10 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       } : current);
       onTranslationSaved(confirmed);
       return true;
-    } catch {
+    } catch (error) {
       setState(current => current ? {
         ...current,
-        translationNotices: { ...current.translationNotices, [locale]: { message: `${language} profile translation was not saved. Your edits remain; please retry.`, error: true } },
+        translationNotices: { ...current.translationNotices, [locale]: { message: error instanceof Error && error.message === pendingManualReviewMessage ? error.message : `${language} profile translation was not saved. Your edits remain; please retry.`, error: true } },
       } : current);
       return false;
     } finally {
@@ -1662,10 +1770,11 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
     setSaveInFlight(true);
     setProfileStatus(null);
     try {
+      assertPendingSaveReadable(repository, resumeId, context.identityId, ["profile"]);
       if (!repository.loadAdminProfileWriteState) throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again.");
       let writeState;
       try { writeState = await repository.loadAdminProfileWriteState(resumeId); }
-      catch { throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again."); }
+      catch (error) { if (error instanceof Error && error.message === pendingManualReviewMessage) throw error; throw new Error("Profile save routing could not be verified. Refresh the Admin before trying again."); }
       const pendingRpcRetry = repository.hasPendingProfileWorkerSave?.(resumeId, context.identityId) ?? false;
       if (writeState.resumeId !== resumeId || (writeState.profileWriteMode === "direct" && writeState.profileTrustedContextRequired)
         || (pendingRpcRetry && !(writeState.profileWriteMode === "rpc" && writeState.profileTrustedContextRequired && writeState.activityLogEnabled))) {
@@ -1710,6 +1819,8 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
         setProfileStatus({ message: "Profile changes saved.", error: false });
         return;
       }
+      const pendingBlock = pendingSaveBlockReason(repository, resumeId, context.identityId, ["profile"], true);
+      if (pendingBlock) throw new Error(pendingBlock);
       const operations: Promise<boolean>[] = [];
       if (sharedDirty) operations.push(saveShared());
       if (translationDirty.zh) operations.push(saveTranslation("zh"));
@@ -1721,7 +1832,7 @@ function ProductionProfile({ state, setState, requests, resumeId, repository, on
       else if (savedCount > 0) setProfileStatus({ message: "Some Profile changes could not be saved. Saved changes are kept; remaining changes are still unsaved.", error: true });
       else setProfileStatus({ message: "Profile changes were not saved. Your edits remain; please retry.", error: true });
     } catch (error) {
-      setProfileStatus({ message: error instanceof Error && error.message.startsWith("Profile ") ? error.message : "Profile changes were not saved. Your edits remain; please retry.", error: true });
+      setProfileStatus({ message: error instanceof Error && (error.message.startsWith("Profile ") || error.message === pendingManualReviewMessage) ? error.message : "Profile changes were not saved. Your edits remain; please retry.", error: true });
     } finally {
       saveLock.current = false;
       setSaveInFlight(false);
@@ -2016,6 +2127,7 @@ function ProductionEducation({ resumeId, editor, setEditor, repository, onEducat
     const releaseRestoreWrite = context.beginRestoreDomainWrite("education", resumeId);
     setEditor(current => current ? { ...current, saving: true, notice: "", error: false } : current);
     try {
+      assertPendingSaveReadable(repository, resumeId, context.identityId, ["education"]);
       const writeState = await repository.loadAdminEducationWriteState!(resumeId);
       if (pendingEducationRetry && !(writeState.resumeId === resumeId && writeState.educationWriteMode === "rpc"
         && writeState.activityLogEnabled && writeState.educationTrustedContextRequired)) {
@@ -2534,10 +2646,11 @@ const contactCreateRecovery = new Map<string, { entryId?: string; confirmed: Loc
 function recoveryKey(kind: "focus" | "status", resumeId: string, draftId: string) { return `${kind}:${resumeId}:${draftId}`; }
 
 async function saveContactProduction(repository: ResumeRepository, resumeId: string, actorUserId: string | null, next: ContactSection, baseline: ContactSection): Promise<ContactSection> {
+  assertPendingSaveReadable(repository, resumeId, actorUserId, ["contact"]);
   if (!repository.loadAdminContactWriteState || !repository.saveContactWithWorker) throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again.");
   let writeState: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminContactWriteState"]>>>;
   try { writeState = await repository.loadAdminContactWriteState(resumeId); }
-  catch { throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again."); }
+  catch (error) { if (error instanceof Error && error.message === pendingManualReviewMessage) throw error; throw new Error("Contact save routing could not be verified. Refresh the Admin before trying again."); }
   const pendingRpcRetry = repository.hasPendingContactWorkerSave?.(resumeId, actorUserId) ?? false;
   if (writeState.resumeId !== resumeId || (writeState.contactWriteMode === "direct" && writeState.contactTrustedContextRequired)
     || (pendingRpcRetry && !(writeState.contactWriteMode === "rpc" && writeState.contactTrustedContextRequired && writeState.activityLogEnabled))) {
@@ -2547,6 +2660,8 @@ async function saveContactProduction(repository: ResumeRepository, resumeId: str
     if (!writeState.activityLogEnabled || !writeState.contactTrustedContextRequired) throw new Error("Secure Contact saving is not fully enabled for this target.");
     return await repository.saveContactWithWorker(resumeId, next);
   }
+  const pendingBlock = pendingSaveBlockReason(repository, resumeId, actorUserId, ["contact"], true);
+  if (pendingBlock) throw new Error(pendingBlock);
   const required = [repository.updateContactLabel, repository.updateFocusPosition, repository.insertFocus, repository.updateFocusTranslation, repository.insertFocusTranslation,
     repository.readFocusTranslation, repository.deleteFocus, repository.updateStatusPosition, repository.insertStatus, repository.updateStatusTranslation,
     repository.insertStatusTranslation, repository.readStatusTranslation, repository.deleteStatus, repository.updateStatusType];
@@ -2664,6 +2779,7 @@ function cleanupNeedsWarning(result: unknown): boolean {
 }
 
 async function saveLinksProduction(repository: ResumeRepository, resumeId: string, actorUserId: string | null, next: LinksSection, baseline: LinksSection, pdfFiles: Partial<Record<Locale, File>> = {}, operation?: FilesSaveOperation): Promise<LinksSection | ProductionSaveNotice<LinksSection>> {
+  assertPendingSaveReadable(repository, resumeId, actorUserId, ["website_links", "files"]);
   const saveOperation = operation ?? createFilesSaveOperation();
   if (!repository.updatePublicLinks || !repository.updateSiteText || !repository.updateNavigationLabel) throw new Error("Website & Links / Files production writes are unavailable.");
   if (next.navigation.length !== 5 || baseline.navigation.length !== 5) throw new Error("Navigation structure is fixed; only the five existing labels may be edited.");
@@ -2682,6 +2798,8 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     const statePromise = repository.loadAdminWebsiteLinksWriteState?.(resumeId, saveOperation);
     const state = statePromise ? await runFilesSavePreflight(saveOperation, "Website & Links state check", statePromise) : null;
     if (!state || state.resumeId !== resumeId || state.domain !== "website_links") throw new Error("Website & Links write state is unavailable.");
+    if (state.writeMode === "direct" && pendingSaveBlockReason(repository, resumeId, actorUserId, ["website_links"], true))
+      throw new Error(pendingManualReviewMessage);
     if (state.writeMode === "rpc") {
       if (!state.activityLogEnabled || !state.trustedContextRequired || !repository.saveWebsiteLinksWithWorker) throw new Error("Secure Website & Links RPC saving is not fully enabled.");
       const payload: WebsiteLinksAggregate = validateWebsiteLinksAggregate({
@@ -2693,15 +2811,22 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
       await runFilesSaveRequest(saveOperation, "Website & Links save", () => repository.saveWebsiteLinksWithWorker!(resumeId, next, saveOperation));
       if (!payload) throw new Error("Website & Links aggregate validation failed.");
     } else {
+      const checkDirectPending = () => {
+        if (pendingSaveBlockReason(repository, resumeId, actorUserId, ["website_links"], true)) throw new Error(pendingManualReviewMessage);
+      };
+      checkDirectPending();
       if (Object.keys(shared).length) await runFilesSaveRequest(saveOperation, "Website & Links save", () => repository.updatePublicLinks!(resumeId, shared));
       for (const locale of ["zh", "en"] as const) {
         const fields: Partial<LinksSection["translations"][Locale]> = {};
         for (const key of websiteTranslationKeys) if (next.translations[locale][key] !== baseline.translations[locale][key]) fields[key] = next.translations[locale][key];
+        checkDirectPending();
         if (Object.keys(fields).length) await runFilesSaveRequest(saveOperation, "Website & Links save", () => repository.updateSiteText!(resumeId, locale, fields));
       }
       for (const item of next.navigation) for (const locale of ["zh", "en"] as const)
-        if (item.translations[locale].label !== baseline.navigation.find(value => value.id === item.id)!.translations[locale].label)
+        if (item.translations[locale].label !== baseline.navigation.find(value => value.id === item.id)!.translations[locale].label) {
+          checkDirectPending();
           await runFilesSaveRequest(saveOperation, "Website & Links save", () => repository.updateNavigationLabel!(resumeId, item.id, locale, item.translations[locale].label));
+        }
     }
     websiteSaved = true;
   }
@@ -2717,7 +2842,8 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     __productionSaveNotice: true, value: confirmed, message: websiteSaved ? `Website & Links saved. ${message}` : message,
     warning: true, keepProductionDraft: keepDraft, savedPdfLocales,
   });
-  if (filesLocales.length) {
+  let filesPending = safelyReadPendingSaveState(repository, "files", resumeId, actorUserId);
+  if (filesLocales.length || filesPending?.status === "pending") {
     try {
       const statePromise = repository.loadAdminFilesWriteState?.(resumeId, saveOperation);
       fileState = statePromise ? await runFilesSavePreflight(saveOperation, "write-state check", statePromise) : null;
@@ -2735,7 +2861,11 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
     if (fileState.writeMode === "rpc" && Object.values(directPending).some(Boolean)) return partialNotice("A prior direct Files request needs reconciliation before RPC-mode saving.");
     const oldRefs = { zh: baseline.translations.zh.portfolioHref, en: baseline.translations.en.portfolioHref };
     let saved: FilesAggregate;
-    if (fileState.writeMode === "rpc" && repository.hasPendingFilesWorkerSave?.(resumeId, actorUserId)) {
+    filesPending = safelyReadPendingSaveState(repository, "files", resumeId, actorUserId);
+    if (filesPending?.status === "legacy" || filesPending?.status === "unavailable") throw new Error(pendingManualReviewMessage);
+    if (fileState.writeMode === "direct" && filesPending?.status === "pending")
+      return partialNotice("A prior Files RPC request must be resolved before direct saving.");
+    if (fileState.writeMode === "rpc" && (filesPending ? filesPending.aggregatePending : repository.hasPendingFilesWorkerSave?.(resumeId, actorUserId))) {
       if (!repository.retryPendingFilesWithWorker) throw new Error("A pending Files request requires exact retry support.");
       const retryResult = await repository.retryPendingFilesWithWorker(resumeId, saveOperation);
       saved = retryResult.files;
@@ -2748,7 +2878,11 @@ async function saveLinksProduction(repository: ResumeRepository, resumeId: strin
         message: `${retryCleanupWarning ? "The Files request was confirmed; Storage cleanup needs attention. " : ""}The pending Files request was confirmed. Your current file selection remains unsaved; review it before saving again.` };
     }
     if (fileState.writeMode === "rpc") {
+      if (filesPending?.uploadLocales.some(locale => !pdfFiles[locale]))
+        return partialNotice("An earlier PDF upload needs the exact original file for each pending language. Select those files before retrying; the upload records and authoritative references were retained.");
       const useStorageIntent = fileState.storageProtocol === "intent_v1";
+      if (filesPending?.uploadLocales.length && !useStorageIntent)
+        return partialNotice("Files authorization changed while an upload was pending. Keep the records and selected files for manual review.");
       if (useStorageIntent && (!fileState.activityLogEnabled || !fileState.trustedContextRequired || !repository.uploadResumePdfWithWorker))
         return partialNotice("Secure Files Storage authorization is not fully enabled. The selected PDFs remain available.");
       if (!useStorageIntent && !repository.uploadResumePdf) throw new Error("Resume PDF upload is unavailable.");
@@ -3003,7 +3137,8 @@ function Links() {
   };
   return <div className="links-editor-scope"><SectionForm section="links" title="Links & Site Text" description="" quietCancelNotice hidePageHeading hideSaveModeNotice saveLabel="Save site & link changes" initial={sections.links}
     lockEditingWhileSaving
-    productionDirty={Boolean(pdfFiles.zh || pdfFiles.en || (typeof linksResumeId === "string" && hasDirectPdfPending(linksResumeId)))} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts} onProductionPartialSaved={clearSavedPdfDrafts}
+    productionDirty={Boolean(pdfFiles.zh || pdfFiles.en || (typeof linksResumeId === "string" && (hasDirectPdfPending(linksResumeId)
+      || safelyReadPendingSaveState(context.repository, "files", linksResumeId, context.identityId).status === "pending")))} onProductionCancel={clearPdfDrafts} onProductionSaved={clearPdfDrafts} onProductionPartialSaved={clearSavedPdfDrafts}
     productionSave={context.repository && typeof linksResumeId === "string" && linksResumeId.trim() ? (draft, baseline, operation) => saveLinksProduction(context.repository!, linksResumeId, context.identityId, draft, baseline, pdfFiles, operation) : undefined}>
     {(links, onChange, confirmed) => <>
       <section className="links-section" data-editor-anchor="links:public-links"><h2>{t("Public links")}</h2>
@@ -3185,6 +3320,8 @@ export function App({ identityEmail, identityId = null, sessionKey = "", onSignO
       projects: repository.hasPendingProjectsWorkerSave, contact: repository.hasPendingContactWorkerSave,
       website_links: repository.hasPendingWebsiteLinksWorkerSave,
     };
+    if (pendingSaveBlockReason(repository, targetResumeId, identityId, [domain], true))
+      return { allowed: false, message: pendingManualReviewMessage };
     const pendingCheck = pendingChecks[domain];
     if (!pendingCheck) return { allowed: false, message: "Restore safety could not be verified because pending saves cannot be checked." };
     try {
@@ -3412,6 +3549,12 @@ export function App({ identityEmail, identityId = null, sessionKey = "", onSignO
   const additionalErrorText = additionalRouteKey ? ({ introduction: "Unable to load Introduction.", experience: "Unable to load Experience.", projects: "Unable to load Projects.", skills: "Unable to load Skills.", awards: "Unable to load Awards.", contact: "Unable to load Contact.", links: "Unable to load Links & Site Text." } as const)[additionalRouteKey] : "";
   const previewSection = previewRouteByPath[location.pathname];
   const isPreviewRoute = previewSection !== undefined;
+  const pendingDomains: PendingSaveDomain[] = previewSection === "links" ? ["website_links", "files"]
+    : location.pathname === "/version-history" ? ["awards", "experience", "skills", "education", "projects", "contact", "website_links"]
+    : previewSection ? [previewSection, ...(["education", "experience", "projects", "skills", "awards"].includes(previewSection) ? ["section_titles" as const] : [])] : [];
+  const pendingTargetId = (previewSection === "profile" ? profileResumeId : previewSection === "education" ? educationResumeId : additionalResumeId) ?? resume?.resumeId ?? "";
+  const pendingBlock = productionMode && pendingTargetId ? pendingSaveBlockReason(repository, pendingTargetId, identityId, pendingDomains) : null;
+
   const headerWorkspaceSwitcher = isPreviewRoute && (wideDesktop || desktopEditorOnlyViewport);
   const editorOnlyDesktop = Boolean(!wideDesktop && desktopEditorOnlyViewport && previewSection && previewModes[previewSection] === "editor");
   const routeDataReady = !productionMode || resume !== null || fullSnapshotState === "error"
@@ -3907,7 +4050,10 @@ export function App({ identityEmail, identityId = null, sessionKey = "", onSignO
           {headerWorkspaceSwitcher && <div ref={setWorkspaceSwitcherHost} className="topbar-workspace-slot" />}<PublicSiteLink className="topbar-public-site-link" /></div>
         <div className="account-placeholder"><ReviewLocaleSwitch /><span className="account-avatar" aria-hidden="true">A</span><span>{identityEmail || t("Authenticated admin")}</span><button type="button" onClick={onSignOut} disabled={signOutPending}>{t("Sign Out")}</button></div></header>
       {signOutError && <p className="sign-out-error" role="alert">{signOutError}</p>}
-      <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1}>{showOverviewRouteState
+      <main id="main-content" className={isPreviewRoute ? "preview-route-main" : undefined} tabIndex={-1} onSubmitCapture={event => {
+        const reason = productionMode ? pendingSaveBlockReason(repository, pendingTargetId, identityId, pendingDomains) : null;
+        if (reason) { event.preventDefault(); event.stopPropagation(); }
+      }}>{pendingBlock && <p role="alert" className="save-notice">{t(pendingBlock)}</p>}<PendingSaveBoundary blocked={Boolean(pendingBlock) && isPreviewRoute}>{showOverviewRouteState
         ? <WorkspaceSystemState eyebrow={t("Workspace Overview")} title={t("Overview")} description={t(overviewLoadState === "loading" ? "Loading Overview..." : "Unable to load Overview.")} busy={overviewLoadState === "loading"}
           action={overviewLoadState === "error" ? <button type="button" className="button secondary" onClick={onRetryOverview ?? undefined}>{t("Retry")}</button> : undefined} />
         : showEducationTextState
@@ -3939,7 +4085,7 @@ export function App({ identityEmail, identityId = null, sessionKey = "", onSignO
         <Route path="/projects" element={<PreviewWorkspace section="projects"><Projects /></PreviewWorkspace>} /><Route path="/skills" element={<PreviewWorkspace section="skills"><Skills /></PreviewWorkspace>} />
         <Route path="/awards" element={<PreviewWorkspace section="awards"><Awards /></PreviewWorkspace>} /><Route path="/contact" element={<PreviewWorkspace section="contact"><Contact /></PreviewWorkspace>} />
         <Route path="/links" element={<PreviewWorkspace section="links"><Links /></PreviewWorkspace>} /><Route path="*" element={<NotFound />} />
-      </Routes>}</main>
+      </Routes>}</PendingSaveBoundary></main>
     </div>
   </div></EditorContext.Provider>;
 }

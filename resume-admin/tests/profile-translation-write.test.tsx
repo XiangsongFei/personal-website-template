@@ -28,7 +28,9 @@ function deferred<T>() {
 }
 
 function mockRepository(update: ResumeRepository["updateProfileTranslation"] = vi.fn().mockResolvedValue(confirmed("zh", "新名字"))): ResumeRepository {
-  return { load: vi.fn().mockResolvedValue(snapshot()),
+  return {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
+    load: vi.fn().mockResolvedValue(snapshot()),
     loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }),
     updateProfileSharedDetails: vi.fn(async (_id, shared) => ({ resumeId, shared, updatedAt: null })),
     updateProfileTranslation: update };
@@ -41,6 +43,14 @@ function showProfile(repository: ResumeRepository, onTranslationSaved = vi.fn())
 }
 
 afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
+
+function directProfileClient(client: object): SupabaseClient {
+  const actor = "10000000-0000-4000-8000-000000000002";
+  return { ...client, auth: {
+    getSession: async () => ({ data: { session: { access_token: "synthetic", expires_at: 4_000_000_000, user: { id: actor } } }, error: null }),
+    getUser: async () => ({ data: { user: { id: actor } }, error: null }),
+  }, rpc: async () => ({ data: [{ resume_id: resumeId, activity_log_enabled: false, profile_write_mode: "direct", profile_trusted_context_required: false }], error: null }) } as unknown as SupabaseClient;
+}
 
 describe("Stage 4F repository translation boundary", () => {
   it.each(["zh", "en"] as const)("updates %s by resume_id and locale using only the seven translation columns", async locale => {
@@ -57,7 +67,7 @@ describe("Stage 4F repository translation boundary", () => {
     const firstEq = vi.fn().mockReturnValue({ eq: secondEq });
     const update = vi.fn().mockReturnValue({ eq: firstEq });
     const from = vi.fn().mockReturnValue({ update });
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository(directProfileClient({ from }));
     const extra = { ...row.translation, resume_id: "wrong", locale: locale === "zh" ? "en" : "zh", graduationValue: "forbidden" };
     expect(await repo.updateProfileTranslation(resumeId, locale, extra)).toEqual(row);
     expect(from).toHaveBeenCalledExactlyOnceWith("resume_profile_translations");
@@ -120,7 +130,7 @@ describe("Stage 4F repository translation boundary", () => {
   it("rejects unsupported locales, invalid fields, missing rows, and mismatched row identities", async () => {
     const single = vi.fn().mockResolvedValue({ data: null, error: null });
     const from = vi.fn().mockReturnValue({ update: () => ({ eq: () => ({ eq: () => ({ select: () => ({ single }) }) }) }) });
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository(directProfileClient({ from }));
     const input = fixtureSections.profile.translations.zh;
     await expect(repo.updateProfileTranslation(resumeId, "fr" as Locale, input)).rejects.toThrow("Invalid profile locale");
     await expect(repo.updateProfileTranslation(resumeId, "zh", { ...input, name: null } as unknown as ProfileTranslation)).rejects.toThrow("Invalid profile translation");

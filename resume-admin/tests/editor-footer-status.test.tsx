@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../src/App";
+import type { ResumeRepository } from "../src/data/resumeRepository";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { fixtureSections } from "../src/fixtures";
 import { UI_LOCALE_KEY, UiLocaleProvider } from "../src/uiLocale";
@@ -40,7 +41,8 @@ describe("shared Admin editor footer status presentation", () => {
   it("keeps the production-write-unavailable fallback warning and refuses the save", async () => {
     const resume = { resumeId: "footer-test-resume", siteKey: "example-cv", isPublished: true, updatedAt: null, sections: structuredClone(fixtureSections) } as LoadedResume;
     render(<UiLocaleProvider><MemoryRouter initialEntries={["/introduction"]}>
-      <App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} />
+      <App identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume}
+        repository={{ readPendingSaveState: () => ({ status: "clear", aggregatePending: false, uploadLocales: [] }) } as unknown as ResumeRepository} />
     </MemoryRouter></UiLocaleProvider>);
     await screen.findByRole("heading", { name: "Introduction", level: 1 });
     expect(Array.from(document.querySelectorAll(".save-notice")).some(notice => notice.textContent === "Local draft only. Production writes are disabled for this section.")).toBe(true);
