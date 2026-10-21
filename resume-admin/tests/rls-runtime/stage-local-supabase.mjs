@@ -14,6 +14,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { candidateMigrationNames } from "./compatibility-contract.mjs";
+
 const utilityDir = dirname(fileURLToPath(import.meta.url));
 const sourceProject = resolve(utilityDir, "supabase");
 const excludedMigrations = new Set([
@@ -999,14 +1001,20 @@ async function uniquePorts() {
   return { api: ports[0], db: ports[1], shadow: ports[2], analytics: ports[3], vector: ports[4] };
 }
 
-function stageProject(stageRoot, projectId, ports) {
+function stageProject(stageRoot, projectId, ports, profile = "current") {
+  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
   const stagedSupabase = join(stageRoot, "supabase");
   cpSync(sourceProject, stagedSupabase, {
     recursive: true,
     filter: (source) => !source.includes("/.temp") && !source.includes("/node_modules"),
   });
   const migrationDir = join(stagedSupabase, "migrations");
-  for (const migration of excludedMigrations) rmSync(join(migrationDir, migration));
+  const excluded = new Set(excludedMigrations);
+  if (profile === "candidate-pre-pr28") {
+    for (const name of candidateMigrationNames) excluded.add(name);
+    excluded.add("20261103000000_education_experience_test_rpc_routing.sql");
+  }
+  for (const migration of excluded) rmSync(join(migrationDir, migration));
 
   const configPath = join(stagedSupabase, "config.toml");
   let config = readFileSync(configPath, "utf8");
@@ -1032,7 +1040,7 @@ function stageProject(stageRoot, projectId, ports) {
   writeFileSync(configPath, config);
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  const expected = sourceMigrations.filter((name) => !excludedMigrations.has(name));
+  const expected = sourceMigrations.filter((name) => !excluded.has(name));
   const stagedMigrations = readdirSync(migrationDir).filter((name) => name.endsWith(".sql")).sort();
   if (JSON.stringify(stagedMigrations) !== JSON.stringify(expected)) {
     throw new Error("Staged migration manifest differs from source order minus the two approved signing-probe migrations");
@@ -1042,7 +1050,7 @@ function stageProject(stageRoot, projectId, ports) {
     const staged = readFileSync(join(migrationDir, migration));
     if (!source.equals(staged)) throw new Error(`Staged migration content differs: ${migration}`);
   }
-  for (const migration of excludedMigrations) {
+  for (const migration of excluded) {
     if (existsSync(join(migrationDir, migration))) throw new Error(`Excluded migration unexpectedly staged: ${migration}`);
   }
   return { stagedSupabase, stagedRoot: stageRoot, migrationManifest: stagedMigrations, ports };
@@ -2188,7 +2196,8 @@ function verifyLocalStatus(context) {
   return { apiUrl, dbUrl };
 }
 
-export async function withStagedLocalSupabase(callback) {
+export async function withStagedLocalSupabase(callback, profile = "current") {
+  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
   const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
     .trim();
   verifyDockerHostBindingPlatform(dockerOperatingSystem);
@@ -2198,7 +2207,7 @@ export async function withStagedLocalSupabase(callback) {
   const ports = await uniquePorts();
   let context;
   try {
-    context = stageProject(stageRoot, projectId, ports);
+    context = stageProject(stageRoot, projectId, ports, profile);
   } catch (error) {
     removeTemporaryStage(stageRoot);
     throw error;
@@ -2223,6 +2232,7 @@ export async function withStagedLocalSupabase(callback) {
     context.dockerNetworkId = loopbackNetwork.id;
     verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
     writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
+    if (profile === "candidate-pre-pr28") process.send?.({ kind: "compat-manifest", path: ownershipPath });
     containerEventObserverAttempted = true;
     const dockerApiVersion = verifyDockerEventsSocket();
     containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
