@@ -14,7 +14,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { candidateMigrationNames } from "./compatibility-contract.mjs";
+import { candidateBaselineMigrations, stageCandidateMigrations, verifyCandidateMigrationFiles } from "./compatibility-contract.mjs";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
 const sourceProject = resolve(utilityDir, "supabase");
@@ -1006,15 +1006,16 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   const stagedSupabase = join(stageRoot, "supabase");
   cpSync(sourceProject, stagedSupabase, {
     recursive: true,
-    filter: (source) => !source.includes("/.temp") && !source.includes("/node_modules"),
+    filter: (source) => !source.includes("/.temp") && !source.includes("/node_modules")
+      && !(profile === "candidate-pre-pr28" && source === join(sourceProject, "migrations")),
   });
   const migrationDir = join(stagedSupabase, "migrations");
   const excluded = new Set(excludedMigrations);
   if (profile === "candidate-pre-pr28") {
-    for (const name of candidateMigrationNames) excluded.add(name);
-    excluded.add("20261103000000_education_experience_test_rpc_routing.sql");
+    stageCandidateMigrations(join(sourceProject, "migrations"), migrationDir);
+  } else {
+    for (const migration of excluded) rmSync(join(migrationDir, migration));
   }
-  for (const migration of excluded) rmSync(join(migrationDir, migration));
 
   const configPath = join(stagedSupabase, "config.toml");
   let config = readFileSync(configPath, "utf8");
@@ -1040,11 +1041,14 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   writeFileSync(configPath, config);
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  const expected = sourceMigrations.filter((name) => !excluded.has(name));
+  const expected = profile === "candidate-pre-pr28"
+    ? candidateBaselineMigrations.map(([name]) => name)
+    : sourceMigrations.filter((name) => !excluded.has(name));
   const stagedMigrations = readdirSync(migrationDir).filter((name) => name.endsWith(".sql")).sort();
   if (JSON.stringify(stagedMigrations) !== JSON.stringify(expected)) {
     throw new Error("Staged migration manifest differs from source order minus the two approved signing-probe migrations");
   }
+  if (profile === "candidate-pre-pr28") verifyCandidateMigrationFiles(stagedMigrations.map(name => [name, readFileSync(join(migrationDir, name))]));
   for (const migration of expected) {
     const source = readFileSync(join(sourceProject, "migrations", migration));
     const staged = readFileSync(join(migrationDir, migration));
@@ -1646,6 +1650,14 @@ if (delay > 0) setTimeout(finish, delay); else finish();
 }
 
 async function runSecuritySelfTests() {
+  const candidateTestRoot = mkdtempSync(join(tmpdir(), "pr1-candidate-manifest-selftest-"));
+  try {
+    const ports = { api: 55421, db: 55422, shadow: 55420, analytics: 55427, vector: 55428 };
+    const staged = stageProject(candidateTestRoot, "pr1-1-aabbccddeeff", ports, "candidate-pre-pr28");
+    assert.deepEqual(staged.migrationManifest, candidateBaselineMigrations.map(([name]) => name));
+    verifyCandidateMigrationFiles(staged.migrationManifest.map(name => [name, readFileSync(join(staged.stagedSupabase, "migrations", name))]));
+  } finally { rmSync(candidateTestRoot, { recursive: true, force: true }); }
+
   const callbackFailure = new Error("synthetic callback failure");
   assert.equal(appendContainerSummary(callbackFailure, "Docker container events: observation=incomplete"), callbackFailure);
   const cleanupTestRoot = mkdtempSync(join(tmpdir(), "pr1-cleanup-lifecycle-selftest-"));

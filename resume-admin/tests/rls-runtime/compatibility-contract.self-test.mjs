@@ -1,12 +1,15 @@
 import test from "node:test";
+import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
 import { setTimeout } from "node:timers";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
-import { migrations, combinations, caseNames, verifiedResults, safeResults, waitBoundedChild, candidateStep, safeStageResult, observeCompatibilityStaging } from "./compatibility-contract.mjs";
+import { migrations, combinations, caseNames, verifiedResults, safeResults, waitBoundedChild, candidateStep, safeStageResult, observeCompatibilityStaging, candidateSchemaSha, candidateBaselineMigrations, candidateHistoricalExclusions, verifyCandidateMigrationFiles, stageCandidateMigrations } from "./compatibility-contract.mjs";
 const admin = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const valid = () => ({ success: true, numTotalTests: 5, numPassedTests: 5, numFailedTests: 0, numPendingTests: 0,
   testResults: [{ assertionResults: caseNames.map(title => ({ title, status: "passed" })) }] });
@@ -123,4 +126,41 @@ test("callback failures and verified cleanup have independent outcomes", async (
   await assert.rejects(observeCompatibilityStaging(async () => { throw new Error("startup secret"); }, () => assert.fail("not reached"), (s, r) => early.push([s, r])));
   assert.deepEqual(early, [["callback", "unverified"], ["resources", "unverified"]]);
   await assert.rejects(observeCompatibilityStaging(async callback => callback(), async () => {}, () => { throw new Error("observer secret"); }));
+});
+
+
+test("candidate baseline matches the complete historical tree and SHA-256", () => {
+  const root = "resume-admin/tests/rls-runtime/supabase/migrations/";
+  const names = execFileSync("git", ["ls-tree", "-r", "--name-only", candidateSchemaSha, root], { cwd: resolve(admin, ".."), encoding: "utf8" }).trim().split("\n").map(path => path.slice(root.length));
+  assert.deepEqual(names.filter(name => !candidateHistoricalExclusions.includes(name)), candidateBaselineMigrations.map(([name]) => name));
+  const entries = candidateBaselineMigrations.map(([name]) => [name, execFileSync("git", ["show", `${candidateSchemaSha}:${root}${name}`], { cwd: admin })]);
+  verifyCandidateMigrationFiles(entries);
+  for (const mutate of [x => x.pop(), x => x.push(x[0]), x => x.reverse(), x => x[0] = ["20990101000000_future.sql", x[0][1]], x => x[0] = [x[0][0], Buffer.from("changed")]]) {
+    const changed = entries.map(([name, bytes]) => [name, Buffer.from(bytes)]); mutate(changed);
+    assert.throws(() => verifyCandidateMigrationFiles(changed));
+  }
+});
+
+test("candidate staging rejects future migrations and source drift before copying", () => {
+  const root = mkdtempSync(resolve(tmpdir(), "candidate-manifest-test-"));
+  const source = resolve(root, "source"); const destination = resolve(root, "staged");
+  try {
+    cpSync(resolve(admin, "tests/rls-runtime/supabase/migrations"), source, { recursive: true });
+    stageCandidateMigrations(source, destination);
+    assert.deepEqual(readdirSync(destination).sort(), candidateBaselineMigrations.map(([name]) => name));
+    rmSync(destination, { recursive: true });
+    const future = resolve(source, "20990101000000_future.sql");
+    writeFileSync(future, "SELECT 1;");
+    assert.throws(() => stageCandidateMigrations(source, destination)); assert(!existsSync(destination));
+    rmSync(future);
+    const first = resolve(source, candidateBaselineMigrations[0][0]); const original = readFileSync(first);
+    writeFileSync(first, "changed");
+    assert.throws(() => stageCandidateMigrations(source, destination)); assert(!existsSync(destination));
+    rmSync(first);
+    assert.throws(() => stageCandidateMigrations(source, destination)); assert(!existsSync(destination));
+    writeFileSync(first, original);
+    const duplicate = resolve(source, candidateBaselineMigrations[0][0].slice(0, 14) + "_duplicate.sql");
+    writeFileSync(duplicate, original);
+    assert.throws(() => stageCandidateMigrations(source, destination)); assert(!existsSync(destination));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

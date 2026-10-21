@@ -4,10 +4,15 @@ Base: `33ad6f49d9ce940fd694c6a3c84cbb98f039ac6e`.
 Candidate old Worker: `a7f1f6adf75256fa24c7958e30e74d9b774d8b21`, the previous main.
 That commit is not asserted to be the deployed production Worker.
 
-The candidate pre-PR28 schema is the frozen local synthetic schema with the
-seven 20261109–20261115 structural migrations and the 20261103 Test activation
-excluded. The signing probes remain excluded as in normal staging. Seeds are
-synthetic and deliberately do not reproduce unknown Production state.
+The candidate pre-PR28 Migration baseline is the 42-file SHA-256 allowlist
+from commit `a7f1f6adf75256fa24c7958e30e74d9b774d8b21`, excluding exactly the
+two signing probes and the 20261103 Test activation. Each filename, execution
+order and byte digest is fixed in compatibility-contract.mjs. Only these files
+are copied; additional, missing or altered baseline inputs fail closed. An
+unknown future file in the current source directory also fails the candidate
+profile rather than silently becoming part of the old schema. The seven pinned
+upgrade migrations remain separate. Seeds/config are current synthetic test
+fixtures, not an assertion of historical or Production runtime state.
 No production credentials, connection, dump or data are inputs.
 
 The driver first checks old DB/old Worker and old DB/new Worker. It applies each
