@@ -33,6 +33,7 @@ function createRepository() {
     loadLinks: vi.fn(async () => sections.links),
   };
   const repository = {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
     load: vi.fn(async () => { throw new Error("Preview should use the section cache, not a duplicate full-snapshot request"); }),
     loadSiteMetadata: vi.fn(async () => ({ resumeId, siteKey: "example-cv" as const, isPublished: true, updatedAt: null })),
     loadOverview: vi.fn(async () => ({ profileName: sections.profile.translations.en.name })),

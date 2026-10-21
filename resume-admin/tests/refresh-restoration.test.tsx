@@ -15,6 +15,8 @@ const resume = {
   resumeId: "refresh-resume", siteKey: "example-cv" as const, isPublished: true, updatedAt: null,
   sections: structuredClone(fixtureSections),
 };
+// Preview geometry fixtures have a readable, empty pending store.
+const previewRepository = { readPendingSaveState: () => ({ status: "clear", aggregatePending: false, uploadLocales: [] }) } as unknown as ResumeRepository;
 const uiKey = "example-cv-cms:ui:";
 const workspaceViewKey = (section: string) => `${uiKey}workspace-view:${section}`;
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
@@ -54,7 +56,7 @@ function mockPreviewRestoreGeometry(finalScrollHeight = 2601, previewClientHeigh
 function open(path: string, props: Partial<ComponentProps<typeof App>> = {}, reload = false) {
   if (reload) mockDocumentReload();
   return render(<UiLocaleProvider><MemoryRouter initialEntries={[path]}><PathnameProbe /><App identityEmail="admin@example.test"
-    onSignOut={() => {}} signOutPending={false} signOutError="" {...props} /></MemoryRouter></UiLocaleProvider>);
+    onSignOut={() => {}} signOutPending={false} signOutError="" repository={previewRepository} {...props} /></MemoryRouter></UiLocaleProvider>);
 }
 
 function PathnameProbe() { const location = useLocation(); return <div data-testid="current-path">{location.pathname}</div>; }
@@ -320,7 +322,7 @@ describe("route-scoped refresh restoration", () => {
 
     view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
-      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} repository={previewRepository} /></MemoryRouter></UiLocaleProvider>);
 
     await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(1929));
     expect(preview.querySelector(".resume-preview-stage")).not.toBeNull();
@@ -361,7 +363,7 @@ describe("route-scoped refresh restoration", () => {
 
     view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
-      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} repository={previewRepository} /></MemoryRouter></UiLocaleProvider>);
 
     await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(1929));
     expect(preview.scrollTop).toBe(1929);
@@ -429,7 +431,7 @@ describe("route-scoped refresh restoration", () => {
 
     view.rerender(<UiLocaleProvider><MemoryRouter initialEntries={["/profile"]}><PathnameProbe /><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" productionMode={true}
-      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} /></MemoryRouter></UiLocaleProvider>);
+      profileSection={fixtureSections.profile} profileLoadState="loading" fullSnapshotState="idle" resume={resume} repository={previewRepository} /></MemoryRouter></UiLocaleProvider>);
 
     await waitFor(() => expect(preview.scrollHeight - preview.clientHeight).toBe(860));
     expect(editor.scrollTop).toBe(360);

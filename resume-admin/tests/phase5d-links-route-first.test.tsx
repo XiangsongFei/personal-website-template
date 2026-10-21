@@ -28,6 +28,7 @@ function auth(): AdminAuthClient {
 }
 function repository(overrides: Partial<ResumeSectionRepository> = {}) {
   return {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
     load: vi.fn().mockResolvedValue({ resumeId, siteKey: "example-cv" as const, isPublished: true, updatedAt: null, sections: structuredClone(fixtureSections) }),
     loadSiteMetadata: vi.fn().mockResolvedValue({ resumeId, siteKey: "example-cv" as const, isPublished: true, updatedAt: null }),
     loadOverview: vi.fn().mockResolvedValue({ profileName: "Example" }),

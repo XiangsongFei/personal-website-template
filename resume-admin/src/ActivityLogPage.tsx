@@ -12,7 +12,7 @@ const EMPTY_DRAFT: ActivityLogDraft = { eventFilter: "all", section: "", operati
 const fields: Record<string, string> = { text_zh: "Chinese text", text_en: "English text", position: "Order" };
 const sections: Record<string, string> = {
   introduction: "Introduction", education: "Education", experience: "Experience", awards: "Awards", skills: "Skills",
-  contact: "Contact", projects: "Projects", website_links: "Website & Links", profile: "Profile", files: "Files",
+  contact: "Contact", projects: "Projects", website_links: "Website & Links", profile: "Profile", files: "Files", section_titles: "Section titles",
 };
 const operations: Record<ActivityLogEvent["operation"], string> = {
   create: "Create", update: "Update", delete: "Delete", reorder: "Reorder", upload: "Upload", remove: "Remove",
@@ -247,6 +247,39 @@ export function describeWebsiteLinksActivity(event: ActivityLogV13CEvent): Colle
   } catch { return []; }
 }
 
+const sectionTitleFields: Record<string, string> = {
+  education_label: "Education section title", experience_label: "Experience section title", skills_label: "Skills section title",
+  honors_label: "Awards section title", project_heading: "Projects section title", kaggle_label: "Project link label",
+};
+function sectionTitleAggregate(value: unknown): { zh: Record<string, string>; en: Record<string, string> } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  if (Object.keys(root).sort().join(",") !== "translations" || !root.translations || typeof root.translations !== "object" || Array.isArray(root.translations)) return null;
+  const translations = root.translations as Record<string, unknown>;
+  if (Object.keys(translations).sort().join(",") !== "en,zh") return null;
+  const readLocale = (locale: unknown) => {
+    if (!locale || typeof locale !== "object" || Array.isArray(locale)) return null;
+    const values = locale as Record<string, unknown>;
+    if (Object.keys(values).sort().join(",") !== Object.keys(sectionTitleFields).sort().join(",")
+      || Object.values(values).some(item => typeof item !== "string")) return null;
+    return values as Record<string, string>;
+  };
+  const zh = readLocale(translations.zh), en = readLocale(translations.en);
+  return zh && en ? { zh, en } : null;
+}
+export function describeSectionTitlesActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
+  if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "section_titles" || event.entityType !== "section_titles_settings") return [];
+  const change = event.changes.section_titles as { before?: unknown; after?: unknown } | undefined;
+  const before = sectionTitleAggregate(change?.before), after = sectionTitleAggregate(change?.after);
+  if (!before || !after) return [];
+  const lines: CollectionActivityLine[] = [];
+  for (const locale of ["zh", "en"] as const) for (const [field, label] of Object.entries(sectionTitleFields)) {
+    if (before[locale][field] !== after[locale][field]) lines.push({ kind: "Updated", label: "Section titles",
+      locale: locale === "zh" ? "Chinese" : "English", field: label, before: before[locale][field], after: after[locale][field] });
+  }
+  return lines;
+}
+
 export function describeFilesActivity(event: ActivityLogV13CEvent): CollectionActivityLine[] {
   if (event.eventSource !== "activity" || event.payloadVersion !== 2 || event.section !== "files" || event.entityType !== "resume_file_set") return [];
   try {
@@ -429,6 +462,8 @@ export function ActivityLogPage({ resumeId, repository, filesRestoreReady = fals
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ${t(line.field ?? "Experience title")} · ` : ""}{t(line.label)}{line.before !== undefined ? ` · ${t("Before")}: ${line.before} · ${t("After")}: ${line.after}` : ""}</span></dd>
                   </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "website_links_settings" ? <dl>{describeWebsiteLinksActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.label)} · {t(line.field ?? "Website & Links")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
+                  </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "section_titles_settings" ? <dl>{describeSectionTitlesActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
+                    <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.field ?? "Section titles")} · {t(line.label)} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
                   </div>)}</dl> : event.payloadVersion === 2 && event.entityType === "resume_file_set" ? <dl>{describeFilesActivity(event).map((line,index) => <div className="activity-log-change" key={`${line.kind}-${index}`}>
                     <dt>{t(line.kind)}</dt><dd><span>{line.locale ? `${t(line.locale)} · ` : ""}{t(line.label)} · {t(line.field ?? "Resume PDF")} · {t("Before")}: {line.before} · {t("After")}: {line.after}</span></dd>
                   </div>)}</dl> : <dl>{Object.entries(event.changes).map(([key, change]) => <div className="activity-log-change" key={key}>

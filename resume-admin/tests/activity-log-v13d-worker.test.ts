@@ -243,6 +243,33 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     expect(upstream).toHaveBeenCalledOnce();
   });
 
+  it("signs Skills CAS baseline into context while keeping the existing four-argument RPC contract", async () => {
+    const digest = "1".repeat(64), proof = "2".repeat(64);
+    const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const context = JSON.parse(String(body.signed_context)) as Record<string, unknown>;
+      expect(String(input)).toBe("https://local.test/rest/v1/rpc/save_resume_skills_v1");
+      expect(Object.keys(body).sort()).toEqual(["canonical_skills", "signature_hex", "signed_context", "target_resume_id"].sort());
+      expect(context).toMatchObject({ domain: "skills", request_id: requestId, expected_baseline_digest: digest, baseline_proof: proof });
+      return Response.json([skills]);
+    });
+    vi.stubGlobal("fetch", upstream);
+    const response = await handleWorkerRequest(request("/api/admin/v1/skills/save", {
+      request_id: requestId, resume_id: resumeId, expected_baseline_digest: digest, baseline_proof: proof, skills: [skills],
+    }), env());
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("maps a stale Skills baseline to an explicit conflict", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "P13B2" }, { status: 400 })));
+    const response = await handleWorkerRequest(request("/api/admin/v1/skills/save", {
+      request_id: requestId, resume_id: resumeId, expected_baseline_digest: "1".repeat(64), baseline_proof: "2".repeat(64), skills: [skills],
+    }), env());
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: "skills_baseline_conflict" } });
+  });
+
   it("canonicalizes exact Experience and Skills shapes, retaining NULL versus empty location", () => {
     expect(canonicalizeExperience([experience])).toBe('[{"id":null,"position":0,"zh":{"organization":"机构","title":"职位","period":"2024","description":"描述","location":null},"en":{"organization":"Org","title":"Role","period":"2024","description":"Work","location":""}}]');
     expect(canonicalizeSkills([skills])).toBe('[{"id":null,"position":0,"zh":{"title":"语言","items":"中文"},"en":{"title":"Languages","items":"English"}}]');
@@ -395,7 +422,7 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
       return Response.json([{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", position: 0 }]);
     });
     vi.stubGlobal("fetch", upstream);
-    const response = await handleWorkerRequest(request(path, { request_id: requestId, resume_id: resumeId, [domain]: [item] }), env());
+    const response = await handleWorkerRequest(request(path, { request_id: requestId, resume_id: resumeId, ...(domain === "skills" ? { expected_baseline_digest: "1".repeat(64), baseline_proof: "2".repeat(64) } : {}), [domain]: [item] }), env());
     expect(response.status).toBe(200);
     expect(upstream).toHaveBeenCalledOnce();
   });
@@ -405,7 +432,7 @@ describe("V1.3D Experience and Skills Worker boundary", () => {
     ["skills", "/api/admin/v1/skills/save", skills],
   ] as const)("rejects malformed %s contracts before making an upstream request", async (domain, path, item) => {
     const upstream = vi.fn(); vi.stubGlobal("fetch", upstream);
-    const body = (collection: unknown) => ({ request_id: requestId, resume_id: resumeId, [domain]: collection });
+    const body = (collection: unknown) => ({ request_id: requestId, resume_id: resumeId, ...(domain === "skills" ? { expected_baseline_digest: "1".repeat(64), baseline_proof: "2".repeat(64) } : {}), [domain]: collection });
     const malformed = domain === "experience"
       ? [{ ...item, zh: { ...item.zh, extra: true } }]
       : [{ ...item, en: { ...item.en, title: "x".repeat(65) } }];

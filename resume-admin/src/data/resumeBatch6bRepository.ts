@@ -111,7 +111,7 @@ function parseTranslation(section: "projects" | ContactEntryKind, row: Row, resu
   if (Object.values(content).some(value => typeof value !== "string")) throw new Error("Invalid production translation response");
   return { resumeId, entryId: id, locale, translation: content as ProjectItem["translations"][Locale] };
 }
-async function persistTranslation(client: SupabaseClient, section: "projects" | ContactEntryKind, resumeId: string, id: string, locale: Locale, value: ProjectItem["translations"][Locale] | FocusItem["translations"][Locale], operation: "insert" | "update"): Promise<Translation<ProjectItem["translations"][Locale] | FocusItem["translations"][Locale]>> {
+async function persistTranslation(client: SupabaseClient, section: "projects" | ContactEntryKind, resumeId: string, id: string, locale: Locale, value: ProjectItem["translations"][Locale] | FocusItem["translations"][Locale], operation: "insert" | "update", beforeWrite?: () => Promise<{ assertClear: () => void }>): Promise<Translation<ProjectItem["translations"][Locale] | FocusItem["translations"][Locale]>> {
   assertIdentity(resumeId, id); validateLocale(locale);
   const table = section === "projects" ? "resume_project_translations" : tableSpec[section].translations;
   const fk = section === "projects" ? "project_entry_id" : tableSpec[section].fk;
@@ -122,6 +122,7 @@ async function persistTranslation(client: SupabaseClient, section: "projects" | 
     if (error) throw new Error(`Unable to verify ${section} ${locale} translation`);
     if (!data) mode = "insert";
   }
+  if (beforeWrite) (await beforeWrite()).assertClear();
   const query = mode === "insert"
     ? client.from(table).insert({ resume_id: resumeId, [fk]: id, locale, ...fields }).select("*").single()
     : client.from(table).update(fields).eq("resume_id", resumeId).eq(fk, id).eq("locale", locale).select("*").single();
@@ -130,10 +131,12 @@ async function persistTranslation(client: SupabaseClient, section: "projects" | 
   return parseTranslation(section, checkedRow(data, resumeId), resumeId, id, locale);
 }
 
-export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUrl?: string) {
+export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUrl?: string,
+  guardDirectWrite: (resumeId: string, domains: ("section_titles" | "website_links" | "files" | "contact")[], expectedActorId?: string) => Promise<{ actorId: string; assertClear: () => void }> = async () => { throw new Error("Direct write safety is unavailable"); }) {
   async function updatePosition(kind: "projects" | ContactEntryKind, resumeId: string, id: string, position: number): Promise<OrderedParent> {
     assertIdentity(resumeId, id); if (!Number.isInteger(position) || position < 0) throw new Error("Invalid position");
     const table = kind === "projects" ? "resume_project_entries" : tableSpec[kind].parent;
+    if (kind !== "projects") (await guardDirectWrite(resumeId, ["contact"])).assertClear();
     const { data, error } = await client.from(table).update({ position }).eq("resume_id", resumeId).eq("id", id).select("*").single();
     if (error) throw new Error(`${kind} reorder was not confirmed`);
     return parseParent(checkedRow(data, resumeId, id), resumeId, kind === "projects");
@@ -144,23 +147,31 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
     const values: Row = { resume_id: resumeId, position };
     if (kind === "projects") values.source_key = null;
     if (kind === "status") values.status_type = statusType ?? "open";
+    if (kind !== "projects") (await guardDirectWrite(resumeId, ["contact"])).assertClear();
     const { data, error } = await client.from(table).insert(values).select("*").single();
     if (error || !data || typeof data.id !== "string" || !data.id) throw new Error(`${kind} parent creation was not confirmed; verify production before retrying`);
     return parseParent(checkedRow(data, resumeId), resumeId, kind === "projects");
   }
-  async function deleteTranslation(kind: "projects" | ContactEntryKind, resumeId: string, id: string, locale: Locale): Promise<void> {
+  async function deleteTranslation(kind: "projects" | ContactEntryKind, resumeId: string, id: string, locale: Locale, expectedActorId?: string): Promise<void> {
     assertIdentity(resumeId, id); validateLocale(locale);
     const table = kind === "projects" ? "resume_project_translations" : tableSpec[kind].translations;
     const fk = kind === "projects" ? "project_entry_id" : tableSpec[kind].fk;
+    if (kind !== "projects") (await guardDirectWrite(resumeId, ["contact"], expectedActorId)).assertClear();
     const { error } = await client.from(table).delete().eq("resume_id", resumeId).eq(fk, id).eq("locale", locale);
     if (error) throw new Error(`${kind} translation delete failed`);
   }
-  async function deleteParent(kind: "projects" | ContactEntryKind, resumeId: string, id: string): Promise<void> {
+  async function deleteParent(kind: "projects" | ContactEntryKind, resumeId: string, id: string, expectedActorId?: string): Promise<void> {
     assertIdentity(resumeId, id);
     const table = kind === "projects" ? "resume_project_entries" : tableSpec[kind].parent;
+    if (kind !== "projects") (await guardDirectWrite(resumeId, ["contact"], expectedActorId)).assertClear();
     const { data, error } = await client.from(table).delete().eq("resume_id", resumeId).eq("id", id).select("id,resume_id").single();
     if (error) throw new Error(`${kind} delete was not confirmed`);
     checkedRow(data, resumeId, id);
+  }
+  async function persistContactTranslation(kind: ContactEntryKind, resumeId: string, id: string, locale: Locale, value: FocusItem["translations"][Locale], operation: "insert" | "update") {
+    const actor = await guardDirectWrite(resumeId, ["contact"]);
+    return persistTranslation(client, kind, resumeId, id, locale, value, operation,
+      () => guardDirectWrite(resumeId, ["contact"], actor.actorId));
   }
   return {
     uploadProfilePhoto: async (resumeId: string, file: File): Promise<string> => {
@@ -306,48 +317,67 @@ export function createBatch6BRepositoryWrites(client: SupabaseClient, supabaseUr
     },
     updateFocusPosition: (resumeId: string, id: string, position: number) => updatePosition("focus", resumeId, id, position),
     insertFocus: (resumeId: string, position: number) => insertParent("focus", resumeId, position),
-    updateFocusTranslation: (resumeId: string, id: string, locale: Locale, value: FocusItem["translations"][Locale]) => persistTranslation(client, "focus", resumeId, id, locale, value, "update"),
-    insertFocusTranslation: (resumeId: string, id: string, locale: Locale, value: FocusItem["translations"][Locale]) => persistTranslation(client, "focus", resumeId, id, locale, value, "insert"),
+    updateFocusTranslation: (resumeId: string, id: string, locale: Locale, value: FocusItem["translations"][Locale]) => persistContactTranslation("focus", resumeId, id, locale, value, "update"),
+    insertFocusTranslation: (resumeId: string, id: string, locale: Locale, value: FocusItem["translations"][Locale]) => persistContactTranslation("focus", resumeId, id, locale, value, "insert"),
     readFocusTranslation: async (resumeId: string, id: string, locale: Locale) => { const { data, error } = await client.from(tableSpec.focus.translations).select("*").eq("resume_id", resumeId).eq("focus_item_id", id).eq("locale", locale).maybeSingle(); if (error) throw new Error("Unable to verify Focus translation"); return data ? parseTranslation("focus", data, resumeId, id, locale) : null; },
     deleteFocusTranslation: (resumeId: string, id: string, locale: Locale) => deleteTranslation("focus", resumeId, id, locale),
-    deleteFocus: async (resumeId: string, id: string) => { await deleteTranslation("focus", resumeId, id, "zh"); await deleteTranslation("focus", resumeId, id, "en"); await deleteParent("focus", resumeId, id); },
+    deleteFocus: async (resumeId: string, id: string) => { const actor = await guardDirectWrite(resumeId, ["contact"]); await deleteTranslation("focus", resumeId, id, "zh", actor.actorId); await deleteTranslation("focus", resumeId, id, "en", actor.actorId); await deleteParent("focus", resumeId, id, actor.actorId); },
     updateStatusPosition: (resumeId: string, id: string, position: number) => updatePosition("status", resumeId, id, position),
-    updateStatusType: async (resumeId: string, id: string, statusType: StatusItem["statusType"]) => { assertIdentity(resumeId, id); if (!["study", "graduation", "open"].includes(statusType)) throw new Error("Invalid status type"); const { data, error } = await client.from(tableSpec.status.parent).update({ status_type: statusType }).eq("resume_id", resumeId).eq("id", id).select("id,resume_id,status_type").single(); if (error || !data || data.id !== id || data.resume_id !== resumeId || data.status_type !== statusType) throw new Error("Status type save was not confirmed"); },
+    updateStatusType: async (resumeId: string, id: string, statusType: StatusItem["statusType"]) => { assertIdentity(resumeId, id); if (!["study", "graduation", "open"].includes(statusType)) throw new Error("Invalid status type"); (await guardDirectWrite(resumeId, ["contact"])).assertClear(); const { data, error } = await client.from(tableSpec.status.parent).update({ status_type: statusType }).eq("resume_id", resumeId).eq("id", id).select("id,resume_id,status_type").single(); if (error || !data || data.id !== id || data.resume_id !== resumeId || data.status_type !== statusType) throw new Error("Status type save was not confirmed"); },
     insertStatus: (resumeId: string, position: number, statusType: StatusItem["statusType"]) => insertParent("status", resumeId, position, statusType),
-    updateStatusTranslation: (resumeId: string, id: string, locale: Locale, value: StatusItem["translations"][Locale]) => persistTranslation(client, "status", resumeId, id, locale, value, "update"),
-    insertStatusTranslation: (resumeId: string, id: string, locale: Locale, value: StatusItem["translations"][Locale]) => persistTranslation(client, "status", resumeId, id, locale, value, "insert"),
+    updateStatusTranslation: (resumeId: string, id: string, locale: Locale, value: StatusItem["translations"][Locale]) => persistContactTranslation("status", resumeId, id, locale, value, "update"),
+    insertStatusTranslation: (resumeId: string, id: string, locale: Locale, value: StatusItem["translations"][Locale]) => persistContactTranslation("status", resumeId, id, locale, value, "insert"),
     readStatusTranslation: async (resumeId: string, id: string, locale: Locale) => { const { data, error } = await client.from(tableSpec.status.translations).select("*").eq("resume_id", resumeId).eq("status_item_id", id).eq("locale", locale).maybeSingle(); if (error) throw new Error("Unable to verify Status translation"); return data ? parseTranslation("status", data, resumeId, id, locale) : null; },
     deleteStatusTranslation: (resumeId: string, id: string, locale: Locale) => deleteTranslation("status", resumeId, id, locale),
-    deleteStatus: async (resumeId: string, id: string) => { await deleteTranslation("status", resumeId, id, "zh"); await deleteTranslation("status", resumeId, id, "en"); await deleteParent("status", resumeId, id); },
+    deleteStatus: async (resumeId: string, id: string) => { const actor = await guardDirectWrite(resumeId, ["contact"]); await deleteTranslation("status", resumeId, id, "zh", actor.actorId); await deleteTranslation("status", resumeId, id, "en", actor.actorId); await deleteParent("status", resumeId, id, actor.actorId); },
     updateContactAvailability: async (resumeId: string, locale: Locale, availability: string) => {
       assertIdentity(resumeId); validateLocale(locale);
+      (await guardDirectWrite(resumeId, ["contact"])).assertClear();
       const { data, error } = await client.from("resume_locale_content").update({ availability }).eq("resume_id", resumeId).eq("locale", locale).select("resume_id,locale,availability").single();
       if (error || !data || data.resume_id !== resumeId || data.locale !== locale || data.availability !== availability) throw new Error("Contact availability save was not confirmed");
     },
     updateContactLabel: async (resumeId: string, locale: Locale, contactLabel: string) => {
       assertIdentity(resumeId); validateLocale(locale); if (typeof contactLabel !== "string") throw new Error("Invalid Contact label");
+      (await guardDirectWrite(resumeId, ["contact"])).assertClear();
       const { data, error } = await client.from("resume_locale_content").update({ contact_label: contactLabel }).eq("resume_id", resumeId).eq("locale", locale).select("resume_id,locale,contact_label").single();
       if (error || !data || data.resume_id !== resumeId || data.locale !== locale || data.contact_label !== contactLabel) throw new Error("Contact text save was not confirmed");
       return { resumeId, locale, contactLabel };
     },
     updatePublicLinks: async (resumeId: string, values: Partial<LinksSection["shared"]>) => {
       assertIdentity(resumeId);
+      const actor = await guardDirectWrite(resumeId, ["website_links"]);
       const keys: Record<keyof LinksSection["shared"], string> = { email: "email", github: "github", githubLabel: "github_label", linkedInDisplayName: "linkedin_display_name", emailLabel: "email_label", linkedInLabel: "linkedin_label" };
       const payload: Row = {}; for (const key of Object.keys(values) as (keyof LinksSection["shared"])[]) { if (typeof values[key] !== "string") throw new Error("Invalid public link value"); payload[keys[key]] = values[key]; }
       if (!Object.keys(payload).length) return;
+      (await guardDirectWrite(resumeId, ["website_links"], actor.actorId)).assertClear();
       const { data, error } = await client.from("resume_public_links").update(payload).eq("resume_id", resumeId).select("resume_id").single();
       if (error || data?.resume_id !== resumeId) throw new Error("Public link save was not confirmed");
     },
     updateSiteText: async (resumeId: string, locale: Locale, values: Partial<LinksSection["translations"][Locale]>) => {
       assertIdentity(resumeId); validateLocale(locale);
+      const sectionTitleKeys = ["educationLabel", "experienceLabel", "skillsLabel", "honorsLabel", "projectHeading", "kaggleLabel"] as const;
+      const domains: ("section_titles" | "website_links" | "files")[] = [];
+      if (sectionTitleKeys.some(key => Object.hasOwn(values, key))) domains.push("section_titles");
+      if (Object.hasOwn(values, "portfolioHref")) domains.push("files");
+      if (Object.keys(values).some(key => key !== "portfolioHref" && !sectionTitleKeys.includes(key as typeof sectionTitleKeys[number]))) domains.push("website_links");
+      const actor = await guardDirectWrite(resumeId, domains);
+      if (domains.includes("section_titles")) {
+        try {
+          const { data, error } = await client.rpc("can_direct_write_section_titles", { target_resume_id: resumeId });
+          if (error || data !== true) throw new Error("unverified");
+        } catch { throw new Error("Section Titles require the audited writer unless direct authorization is verified"); }
+      }
       const keys: Record<keyof LinksSection["translations"][Locale], string> = { educationLabel: "education_label", experienceLabel: "experience_label", projectHeading: "project_heading", skillsLabel: "skills_label", honorsLabel: "honors_label", portfolioLabel: "portfolio_label", portfolioHref: "portfolio_href", kaggleLabel: "kaggle_label", updatedAtLabel: "updated_at_label", linkedInLabel: "linkedin_label", linkedInHref: "linkedin_href" };
       const payload: Row = {}; for (const key of Object.keys(values) as (keyof LinksSection["translations"][Locale])[]) { if (typeof values[key] !== "string") throw new Error("Invalid site text value"); payload[keys[key]] = values[key]; }
       if (!Object.keys(payload).length) return;
+      (await guardDirectWrite(resumeId, domains, actor.actorId)).assertClear();
       const { data, error } = await client.from("resume_locale_content").update(payload).eq("resume_id", resumeId).eq("locale", locale).select("resume_id,locale").single();
       if (error || data?.resume_id !== resumeId || data.locale !== locale) throw new Error("Site text save was not confirmed");
     },
     updateNavigationLabel: async (resumeId: string, id: string, locale: Locale, label: string) => {
       assertIdentity(resumeId, id); validateLocale(locale); if (typeof label !== "string") throw new Error("Invalid navigation label");
+      const actor = await guardDirectWrite(resumeId, ["website_links"]);
+      (await guardDirectWrite(resumeId, ["website_links"], actor.actorId)).assertClear();
       const { data, error } = await client.from("resume_navigation_item_translations").update({ label }).eq("resume_id", resumeId).eq("navigation_item_id", id).eq("locale", locale).select("resume_id,navigation_item_id,locale,label").single();
       if (error || !data || data.resume_id !== resumeId || data.navigation_item_id !== id || data.locale !== locale || data.label !== label) throw new Error("Navigation label save was not confirmed");
     },

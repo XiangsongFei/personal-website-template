@@ -27,6 +27,7 @@ function snapshot(): LoadedResume { return { ...metadata, sections: structuredCl
 
 function repository(overrides: Partial<ResumeRepository & ResumeSectionRepository> = {}): ResumeRepository & ResumeSectionRepository {
   return {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
     load: vi.fn().mockResolvedValue(snapshot()),
     loadSiteMetadata: vi.fn().mockResolvedValue(metadata),
     loadOverview: vi.fn().mockResolvedValue({ profileName: "Name" }),

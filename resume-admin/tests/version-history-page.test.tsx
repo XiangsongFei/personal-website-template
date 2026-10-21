@@ -16,14 +16,33 @@ const baseEntry = (overrides: Partial<VersionHistoryEntry> = {}): VersionHistory
 });
 const page = (entries: VersionHistoryEntry[], hasMore = false, nextCursor: Page["nextCursor"] = null): Page => ({ entries, hasMore, nextCursor });
 function LocaleButton() { const { setLocale } = useUiLocale(); return <button onClick={() => setLocale("zh")}>中文</button>; }
-function renderPage(repository: ResumeRepository) {
-  return render(<UiLocaleProvider><LocaleButton /><VersionHistoryPage resumeId={resumeId} repository={repository} /></UiLocaleProvider>);
+function renderPage(repository: ResumeRepository, restoreEnabled = false) {
+  return render(<UiLocaleProvider><LocaleButton /><VersionHistoryPage resumeId={resumeId} repository={repository} restoreEnabled={restoreEnabled} /></UiLocaleProvider>);
 }
 const repositoryWith = (loadVersionHistoryPage: NonNullable<ResumeRepository["loadVersionHistoryPage"]>) => ({ loadVersionHistoryPage } as ResumeRepository);
 
 afterEach(() => { cleanup(); window.localStorage.removeItem(UI_LOCALE_KEY); vi.restoreAllMocks(); });
 
 describe("Version History page human-readable presentation", () => {
+  it("shows bilingual Section Titles changes without offering Restore", async () => {
+    const before = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "查看项目" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "View project" },
+    } };
+    const after = structuredClone(before);
+    after.translations.zh.education_label = "教育经历";
+    after.translations.en.kaggle_label = "Open project";
+    const sectionTitles = baseEntry({ domain: "section_titles", payloadVersion: 2, entityType: "section_titles_settings", entityId: null,
+      comparison: { kind: "aggregate", before, after } });
+    renderPage(repositoryWith(vi.fn().mockResolvedValue(page([sectionTitles]))), true);
+    expect(await screen.findByRole("heading", { name: /Section titles.*Updated/, level: 2 })).toBeTruthy();
+    expect(screen.getByText("Education section title")).toBeTruthy();
+    expect(screen.getByText("教育经历")).toBeTruthy();
+    expect(screen.getByText("Project link label")).toBeTruthy();
+    expect(screen.getByText("Open project")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /restore|rollback/i })).toBeNull();
+  });
+
   it("shows Introduction text and position in both languages without IDs or Restore controls", async () => {
     const paragraphId = uuid(31);
     const intro = baseEntry({ domain: "introduction", entityType: "introduction_paragraph", entityId: null,
@@ -291,7 +310,7 @@ describe("Version History page human-readable presentation", () => {
       comparison: { before: previewCurrent, after: previewTarget }, expectedCurrentDigest: "a".repeat(64) });
     const repository = { loadVersionHistoryPage: vi.fn().mockResolvedValue(page([event])), previewRestore,
       getPendingRestoreAttempt: vi.fn().mockReturnValue(null) } as unknown as ResumeRepository;
-    renderPage(repository);
+    renderPage(repository, true);
     fireEvent.click(screen.getByRole("button", { name: "中文" }));
     fireEvent.click(await screen.findByRole("button", { name: "预览恢复内容" }));
     expect(await screen.findByRole("dialog", { name: "荣誉奖项" })).toBeTruthy();

@@ -21,7 +21,9 @@ const confirmed = (graduationValue: string): UpdatedProfileRow => ({
 });
 
 function mockRepository(update = vi.fn().mockResolvedValue(confirmed("2030"))): ResumeRepository {
-  return { load: vi.fn().mockResolvedValue(snapshot()), updateProfileSharedDetails: update, updateProfileTranslation: vi.fn(),
+  return {
+    readPendingSaveState: () => ({ status: "clear" as const, aggregatePending: false, uploadLocales: [] }),
+    load: vi.fn().mockResolvedValue(snapshot()), updateProfileSharedDetails: update, updateProfileTranslation: vi.fn(),
     loadAdminProfileWriteState: vi.fn().mockResolvedValue({ resumeId, activityLogEnabled: false, profileWriteMode: "direct", profileTrustedContextRequired: false }) };
 }
 
@@ -45,6 +47,14 @@ function deferred<T>() {
 
 afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.restoreAllMocks(); });
 
+function directProfileClient(client: object): SupabaseClient {
+  const actor = "10000000-0000-4000-8000-000000000002";
+  return { ...client, auth: {
+    getSession: async () => ({ data: { session: { access_token: "synthetic", expires_at: 4_000_000_000, user: { id: actor } } }, error: null }),
+    getUser: async () => ({ data: { user: { id: actor } }, error: null }),
+  }, rpc: async () => ({ data: [{ resume_id: resumeId, activity_log_enabled: false, profile_write_mode: "direct", profile_trusted_context_required: false }], error: null }) } as unknown as SupabaseClient;
+}
+
 describe("Stage 4E repository write allowlist", () => {
   it("updates only the shared profile columns including photo_url, filtered by loaded resume_id", async () => {
     const photoUrl = "https://storage.example.test/profile-images/example-cv/profile/photo.webp";
@@ -56,7 +66,7 @@ describe("Stage 4E repository write allowlist", () => {
     const eq = vi.fn().mockReturnValue({ select });
     const update = vi.fn().mockReturnValue({ eq });
     const from = vi.fn().mockReturnValue({ update });
-    const repo = createResumeRepository({ from } as unknown as SupabaseClient);
+    const repo = createResumeRepository(directProfileClient({ from }));
     const input = { ...confirmed("2030").shared, photoUrl, name: "NOT ALLOWED", resume_id: "WRONG" };
     const row = await repo.updateProfileSharedDetails(resumeId, input);
     expect(from).toHaveBeenCalledExactlyOnceWith("resume_profile");
@@ -72,7 +82,7 @@ describe("Stage 4E repository write allowlist", () => {
   it("rejects missing or mismatched confirmation and invalid shared values", async () => {
     const single = vi.fn().mockResolvedValue({ data: null, error: null });
     const client = { from: vi.fn().mockReturnValue({ update: () => ({ eq: () => ({ select: () => ({ single }) }) }) }) } as unknown as SupabaseClient;
-    const repo = createResumeRepository(client);
+    const repo = createResumeRepository(directProfileClient(client));
     await expect(repo.updateProfileSharedDetails(resumeId, confirmed("2030").shared)).rejects.toThrow("not confirmed");
     single.mockResolvedValue({ data: { resume_id: "another-resume" }, error: null });
     await expect(repo.updateProfileSharedDetails(resumeId, confirmed("2030").shared)).rejects.toThrow("not confirmed");
@@ -199,6 +209,7 @@ describe("Stage 4E Profile editor", () => {
   it("does not fall back to a local-only save when a production Links handler is unavailable", async () => {
     render(<MemoryRouter initialEntries={["/links"]}><App identityEmail="admin@example.test"
       onSignOut={() => {}} signOutPending={false} signOutError="" resume={snapshot()}
+      repository={{ readPendingSaveState: () => ({ status: "clear", aggregatePending: false, uploadLocales: [] }) } as unknown as ResumeRepository}
     /></MemoryRouter>);
     const file = new File(["%PDF test"], "pending-resume.pdf", { type: "application/pdf" });
     fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [file] } });
@@ -207,7 +218,7 @@ describe("Stage 4E Profile editor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save site & link changes" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("Production writes are unavailable for this section.");
+    expect((await screen.findByRole("alert")).textContent).toBe("Website & Links / Files production writes are unavailable.");
     expect(screen.getByText("Selected: pending-resume.pdf")).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });

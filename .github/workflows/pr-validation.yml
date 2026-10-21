@@ -97,14 +97,25 @@ jobs:
           restore="20261101000000_files_restore_capability_enforcement.sql"
           introduction="20261102000000_introduction_version_history_read.sql"
           education_experience="20261103000000_education_experience_test_rpc_routing.sql"
+          awards_baseline_safety="20261109000000_awards_baseline_pending_safety.sql"
+          restore_awards_compatibility="20261110000000_restore_awards_writer_compatibility.sql"
+          awards_idempotency_array="20261111000000_awards_idempotency_result_array.sql"
+          awards_jsonb_validation="20261112000000_awards_jsonb_object_validation.sql"
+          skills_baseline_cas="20261113000000_skills_baseline_cas.sql"
+          section_titles="20261114000000_activity_log_section_titles.sql"
+          files_restore_qa="20261115000000_files_restore_qa_reference_compatibility.sql"
           cli_dir="resume-admin/supabase/migrations"
           runtime_dir="resume-admin/tests/rls-runtime/supabase/migrations"
-          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} "
+          test "$(find "${cli_dir}" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | sort | tr '\n' ' ')" = "${p0} ${retention} ${restore} ${introduction} ${education_experience} ${awards_baseline_safety} ${restore_awards_compatibility} ${awards_idempotency_array} ${awards_jsonb_validation} ${skills_baseline_cas} ${section_titles} ${files_restore_qa} "
+          test_awards_skills="20261108000000_awards_skills_test_rpc_routing.sql"
+          test -f "resume-admin/migrations/${test_awards_skills}"
+          test ! -e "${cli_dir}/${test_awards_skills}"
+          test ! -e "${runtime_dir}/${test_awards_skills}"
           test -f "${runtime_dir}/20261031110000_test_only_installed_baseline_delta.sql"
           test -f "${runtime_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261102500000_test_only_rename_activity_log_test_target.sql"
           test ! -e "${cli_dir}/20261031110000_test_only_installed_baseline_delta.sql"
-          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}"; do
+          for migration in "${p0}" "${retention}" "${restore}" "${introduction}" "${education_experience}" "${awards_baseline_safety}" "${restore_awards_compatibility}" "${awards_idempotency_array}" "${awards_jsonb_validation}" "${skills_baseline_cas}" "${section_titles}" "${files_restore_qa}"; do
             canonical="resume-admin/migrations/${migration}"
             cmp "${canonical}" "${cli_dir}/${migration}"
             cmp "${canonical}" "${runtime_dir}/${migration}"
@@ -124,18 +135,55 @@ jobs:
           printf '%s  %s\n' \
             "81f98c70aa89ebc5f2c845b573f4a7bb853a4e65df20c6804038e0679e6a04cb" \
             "resume-admin/migrations/${education_experience}" | sha256sum --check
+          printf '%s  %s\n' \
+            "d0670714fb14f8a8d64a17a6c7d6bf213d58e530d2c2c308e8869e8f22fe62b0" \
+            "resume-admin/migrations/${awards_baseline_safety}" | sha256sum --check
+          printf '%s  %s\n' \
+            "bf278958011c339c2d2deb73f0a7227992d338ce568ed4ffe8bdceaaca2be622" \
+            "resume-admin/migrations/${restore_awards_compatibility}" | sha256sum --check
+          printf '%s  %s\n' \
+            "c7908d79ae37ba1e382cf7fe29f291a01daffd310bc28f267ccf7b11b451f385" \
+            "resume-admin/migrations/${awards_idempotency_array}" | sha256sum --check
+          printf '%s  %s\n' \
+            "c11f7c74c99c4a229bfd41214e2ee4f2452ae1bb79928987089f42ab7a2c7c35" \
+            "resume-admin/migrations/${awards_jsonb_validation}" | sha256sum --check
+          printf '%s  %s\n' \
+            "f00d6689ac757530221db13bc231986474d01b8ce16fa917116362572e0f29bb" \
+            "resume-admin/migrations/${skills_baseline_cas}" | sha256sum --check
+          printf '%s  %s\n' \
+            "e0d4dab30a18fea5c07f58f39ad04e197ddcb90486ea3b987bacb192242744d2" \
+            "resume-admin/migrations/${section_titles}" | sha256sum --check
+          printf '%s  %s\n' \
+            "66a84a7c9e0510bd68dd08ad68489dd34d9c4316f3230095410677a06a83de30" \
+            "resume-admin/migrations/${files_restore_qa}" | sha256sum --check
 
   admin_local_sql:
     name: Local Supabase SQL tests
     needs: detect_changes
     if: needs.detect_changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      SUPABASE_USE_SLIM_IMAGES: "false"
     steps:
       - name: Check out PR
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Set up Node.js for isolated integration tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+
+      - name: Install locked Admin test dependencies
+        working-directory: resume-admin
+        run: npm ci
+
+      - name: Verify integration runner result guards
+        run: node resume-admin/tests/run-v11-local-integration.mjs --security-self-test
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359 # v3.0.1
@@ -145,11 +193,260 @@ jobs:
       - name: Verify staging security guards
         run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
 
+      - name: Prepare bounded Docker API diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" != "Linux" ]] || [[ "$(uname -m)" != "x86_64" ]] || ! systemctl is-active --quiet docker.service 2>/dev/null; then
+            echo "docker_api_trace=unsupported_runner"
+            exit 1
+          fi
+          if [[ -n "${DOCKER_HOST:-}" ]] || [[ "$(docker context show 2>/dev/null)" != "default" ]] ||
+            [[ "$(docker context inspect default --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" != "unix:///var/run/docker.sock" ]] ||
+            [[ "$(docker info --format '{{.OSType}}' 2>/dev/null)" != "linux" ]]; then
+            echo "docker_api_trace=unexpected_context"
+            exit 1
+          fi
+          if [[ "$(supabase --version 2>/dev/null)" != "2.119.0" ]]; then
+            echo "docker_api_trace=unexpected_cli_version"
+            exit 1
+          fi
+          cat > "${RUNNER_TEMP}/pr28-docker-api-filter.py" <<'PY'
+          import json
+          import re
+          import shlex
+          import sys
+          from collections import Counter
+
+          mode = sys.argv[1]
+          counts = Counter()
+          info_seen = False
+          api_seen = False
+          categories = (
+              "image-inspect", "image-pull", "network-create", "network-inspect",
+              "container-create", "container-start", "container-inspect", "other-api",
+          )
+          statuses = ("attempted", "authentication", "rate-limit", "timeout", "not-found", "client-error", "server-error", "unknown-error")
+
+          def operation(method, url):
+              path = url.split("?", 1)[0]
+              path = re.sub(r"^/v[0-9]+\.[0-9]+", "", path)
+              if method == "GET" and path.startswith("/images/") and path.endswith("/json"):
+                  return "image-inspect"
+              if method == "POST" and path == "/images/create":
+                  return "image-pull"
+              if method == "POST" and path == "/networks/create":
+                  return "network-create"
+              if method == "GET" and path.startswith("/networks/"):
+                  return "network-inspect"
+              if method == "POST" and path == "/containers/create":
+                  return "container-create"
+              if method == "POST" and path.startswith("/containers/") and path.endswith("/start"):
+                  return "container-start"
+              if method == "GET" and path.startswith("/containers/") and path.endswith("/json"):
+                  return "container-inspect"
+              return "other-api"
+
+          for line in sys.stdin:
+              try:
+                  message = json.loads(line).get("MESSAGE", "")
+              except (ValueError, TypeError, AttributeError):
+                  continue
+              if not isinstance(message, str):
+                  continue
+              try:
+                  fields = dict(token.split("=", 1) for token in shlex.split(message) if "=" in token)
+              except ValueError:
+                  continue
+              if fields.get("module") != "api":
+                  continue
+              method = fields.get("method")
+              url = fields.get("request-url")
+              if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD") or not isinstance(url, str):
+                  continue
+              if fields.get("msg") == f"handling {method} request":
+                  api_seen = True
+                  info_seen |= method == "GET" and url.split("?", 1)[0].endswith("/info")
+                  counts[(operation(method, url), "attempted")] += 1
+              elif fields.get("msg") == f"error response for {method} request":
+                  api_seen = True
+                  status_value = fields.get("status", "")
+                  code = int(status_value) if re.fullmatch(r"[0-9]{3}", status_value) else 0
+                  status = (
+                      "authentication" if code in (401, 403) else
+                      "rate-limit" if code == 429 else
+                      "timeout" if code in (408, 504) else
+                      "not-found" if code == 404 else
+                      "client-error" if 400 <= code < 500 else
+                      "server-error" if 500 <= code < 600 else "unknown-error"
+                  )
+                  counts[(operation(method, url), status)] += 1
+
+          if mode == "--preflight":
+              if info_seen:
+                  print("docker_api_trace=ready")
+                  sys.exit(0)
+              sys.exit(1)
+          print("docker_api_trace=observed" if api_seen else "docker_api_trace=unavailable")
+          for category in categories:
+              for status in statuses:
+                  count = counts[(category, status)]
+                  if count:
+                      print(f"docker_api_operation={category} status={status} count={count}")
+          PY
+          chmod 700 "${RUNNER_TEMP}/pr28-docker-api-filter.py"
+          if [[ "$(docker info --format '{{.Debug}}' 2>/dev/null)" != "true" ]]; then
+            if ! sudo python3 - "${RUNNER_TEMP}" > /dev/null 2>&1 <<'PY'; then
+          import json
+          import os
+          import pathlib
+          import sys
+          import tempfile
+
+          root = pathlib.Path(sys.argv[1])
+          config = pathlib.Path("/etc/docker/daemon.json")
+          if config.is_symlink():
+              sys.exit(1)
+          original = config.read_bytes() if config.exists() else None
+          settings = json.loads(original) if original is not None else {}
+          if not isinstance(settings, dict):
+              sys.exit(1)
+          settings["debug"] = True
+          if original is not None:
+              (root / "pr28-docker-daemon-before.json").write_bytes(original)
+              os.chmod(root / "pr28-docker-daemon-before.json", 0o600)
+          (root / "pr28-docker-daemon-state").write_text("present" if original is not None else "absent")
+          fd, temporary = tempfile.mkstemp(prefix=".pr28-daemon-", dir=config.parent)
+          try:
+              os.fchmod(fd, config.stat().st_mode & 0o777 if original is not None else 0o644)
+              with os.fdopen(fd, "w") as output:
+                  json.dump(settings, output)
+              os.replace(temporary, config)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+          PY
+              echo "docker_api_trace=configuration_failed"
+              exit 1
+            fi
+            daemon_pid="$(systemctl show -p MainPID --value docker.service 2>/dev/null)"
+            if [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || ! sudo kill -HUP "${daemon_pid}" > /dev/null 2>&1; then
+              echo "docker_api_trace=reload_failed"
+              exit 1
+            fi
+          fi
+          debug_ready=false
+          for attempt in 1 2 3 4 5; do
+            if [[ "$(docker info --format '{{.Debug}}' 2>/dev/null)" == "true" ]]; then
+              debug_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${debug_ready}" != "true" ]]; then
+            echo "docker_api_trace=debug_unavailable"
+            exit 1
+          fi
+          probe_start="$(date +%s)"
+          docker info --format '{{.Debug}}' > /dev/null 2>&1
+          trace_ready=false
+          for attempt in 1 2 3; do
+            if sudo journalctl -q -u docker.service --since "@${probe_start}" -o json --no-pager 2>/dev/null |
+              python3 "${RUNNER_TEMP}/pr28-docker-api-filter.py" --preflight 2>/dev/null; then
+              trace_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${trace_ready}" != "true" ]]; then
+            echo "docker_api_trace=journal_unavailable"
+            exit 1
+          fi
+          journal_cursor="$(sudo journalctl -u docker.service -n 1 --show-cursor --no-pager -o cat 2>/dev/null | sed -n 's/^-- cursor: //p' | tail -n 1)"
+          cursor_pattern='^[A-Za-z0-9;=_-]+$'
+          if [[ ! "${journal_cursor}" =~ ${cursor_pattern} ]]; then
+            echo "docker_api_trace=cursor_unavailable"
+            exit 1
+          fi
+          printf '%s\n' "${journal_cursor}" > "${RUNNER_TEMP}/pr28-docker-api-cursor"
+
       - name: Stage isolated local Supabase and run SQL tests
         run: node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --sql
 
+      # The runner caps staging/tests/normal cleanup at 12 minutes and fallback
+      # ownership-checked cleanup at 2 minutes; leave one minute for reporting.
+      - name: Run 22 isolated Worker PostgREST integration tests
+        timeout-minutes: 15
+        run: node resume-admin/tests/run-v11-local-integration.mjs
+
+      - name: Report bounded Docker API diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f "${RUNNER_TEMP}/pr28-docker-api-cursor" ]] || [[ ! -f "${RUNNER_TEMP}/pr28-docker-api-filter.py" ]]; then
+            echo "docker_api_trace=unavailable"
+          elif ! sudo journalctl -q -u docker.service --after-cursor "$(cat "${RUNNER_TEMP}/pr28-docker-api-cursor")" -o json --no-pager 2>/dev/null |
+            python3 "${RUNNER_TEMP}/pr28-docker-api-filter.py" --report 2>/dev/null; then
+            echo "docker_api_trace=unavailable"
+          fi
+
       - name: Run Owner RPC activation scenarios in disposable local Supabase
         run: node resume-admin/tests/rls-runtime/owner-activation-runtime.mjs
+
+      - name: Run Awards baseline and pending replay scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-baseline-runtime.mjs
+
+      - name: Run Skills baseline CAS concurrency scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/skills-baseline-runtime.mjs
+
+      - name: Run Test Awards and Skills activation scenarios in disposable local Supabase
+        run: node resume-admin/tests/rls-runtime/awards-skills-test-activation-runtime.mjs
+
+      - name: Restore Docker daemon logging configuration
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_file="${RUNNER_TEMP}/pr28-docker-daemon-state"
+          if [[ ! -f "${state_file}" ]]; then
+            echo "docker_daemon_restore=not_needed"
+            exit 0
+          fi
+          if ! sudo python3 - "${RUNNER_TEMP}" > /dev/null 2>&1 <<'PY'; then
+          import os
+          import pathlib
+          import sys
+          import tempfile
+
+          root = pathlib.Path(sys.argv[1])
+          config = pathlib.Path("/etc/docker/daemon.json")
+          state = (root / "pr28-docker-daemon-state").read_text()
+          if state == "present":
+              original = (root / "pr28-docker-daemon-before.json").read_bytes()
+              fd, temporary = tempfile.mkstemp(prefix=".pr28-restore-", dir=config.parent)
+              try:
+                  os.fchmod(fd, config.stat().st_mode & 0o777)
+                  with os.fdopen(fd, "wb") as output:
+                      output.write(original)
+                  os.replace(temporary, config)
+              finally:
+                  if os.path.exists(temporary):
+                      os.unlink(temporary)
+          elif state == "absent":
+              config.unlink(missing_ok=True)
+          else:
+              sys.exit(1)
+          PY
+            echo "docker_daemon_restore=failed"
+            exit 1
+          fi
+          daemon_pid="$(systemctl show -p MainPID --value docker.service 2>/dev/null)"
+          if [[ ! "${daemon_pid}" =~ ^[1-9][0-9]*$ ]] || ! sudo kill -HUP "${daemon_pid}" > /dev/null 2>&1; then
+            echo "docker_daemon_restore=failed"
+            exit 1
+          fi
+          echo "docker_daemon_restore=done"
 
   public_tests_build:
     name: Public tests and production build

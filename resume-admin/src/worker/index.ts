@@ -15,6 +15,7 @@ const SAVE_PATH = `${API_ROOT}/introduction/save`;
 const SAVE_AWARDS_PATH = `${API_ROOT}/awards/save`;
 const SAVE_EXPERIENCE_PATH = `${API_ROOT}/experience/save`;
 const SAVE_SKILLS_PATH = `${API_ROOT}/skills/save`;
+const SAVE_SECTION_TITLES_PATH = `${API_ROOT}/section-titles/save`;
 const SAVE_EDUCATION_PATH = `${API_ROOT}/education/save`;
 const SAVE_PROJECTS_PATH = `${API_ROOT}/projects/save`;
 const SAVE_CONTACT_PATH = `${API_ROOT}/contact/save`;
@@ -89,10 +90,12 @@ interface SignedContext {
   key_id: string;
   actor_user_id: string;
   resume_id: string;
-  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files";
+  domain: "introduction" | "awards" | "experience" | "skills" | "education" | "projects" | "contact" | "profile" | "website_links" | "files" | "section_titles";
   operation: "update";
   request_id: string;
   mutation_digest: string;
+  expected_baseline_digest?: string;
+  baseline_proof?: string;
   issued_at: number;
   expires_at: number;
   ip_network: string | null;
@@ -662,6 +665,14 @@ function isV13BIdempotencyConflict(response: Response, body: unknown): boolean {
   return response.status === 400 && isPlainObject(body) && body.code === "P13B1";
 }
 
+function isAwardsBaselineConflict(response: Response, body: unknown): boolean {
+  return response.status === 400 && isPlainObject(body) && body.code === "P13B2";
+}
+
+function isSkillsBaselineConflict(response: Response, body: unknown): boolean {
+  return response.status === 400 && isPlainObject(body) && body.code === "P13B2";
+}
+
 async function reportV13BFailure(input: {
   env: WorkerEnv;
   supabase: { baseUrl: string; publishableKey: string };
@@ -899,11 +910,13 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
   let parsed: unknown;
   try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
   catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
-  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "awards,request_id,resume_id")
-    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, and awards.");
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "awards,baseline_proof,expected_baseline_digest,request_id,resume_id")
+    throw apiError(400, "invalid_request", "Request must contain only request_id, resume_id, expected_baseline_digest, and awards.");
   if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
-    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
-    throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.expected_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_baseline_digest)
+    || typeof parsed.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(parsed.baseline_proof))
+    throw apiError(422, "invalid_awards_baseline", "Request IDs and the database-signed Awards baseline must be valid.");
   const awards = validateAwards(parsed.awards);
   const canonical = canonicalizeAwards(awards);
   if (UTF8.encode(canonical).byteLength > 4096) throw apiError(413, "canonical_payload_too_large", "Awards exceed the allowed size.");
@@ -913,6 +926,7 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain: "awards", operation: "update",
     request_id: parsed.request_id.toLowerCase(), mutation_digest: await sha256Hex(canonical),
+    expected_baseline_digest: parsed.expected_baseline_digest, baseline_proof: parsed.baseline_proof,
     issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
   const signed = await signContext(context, key);
   if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
@@ -921,7 +935,7 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
     upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_awards_v1`, {
       method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
         "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_awards: canonical,
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_awards: canonical, expected_baseline_digest: parsed.expected_baseline_digest, baseline_proof: parsed.baseline_proof,
         signed_context: signed.serialized, signature_hex: signed.signatureHex }),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
@@ -934,9 +948,14 @@ async function saveAwards(request: Request, env: WorkerEnv): Promise<Response> {
   if (!upstream.ok) {
     if (isV13BIdempotencyConflict(upstream, responseBody))
       throw apiError(409, "idempotency_conflict", "The Awards retry conflicts with a different request. Refresh before trying again.");
+    if (isAwardsBaselineConflict(upstream, responseBody))
+      throw apiError(409, "awards_baseline_conflict", "Awards changed after this request began. Refresh the current data; the old request was not applied.");
     throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save Awards (HTTP ${upstream.status}).`);
   }
-  if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 8192)
+  if (!isPlainObject(responseBody) || Object.keys(responseBody).sort().join(",") !== "awards,baseline_digest,baseline_proof"
+    || !Array.isArray(responseBody.awards) || typeof responseBody.baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(responseBody.baseline_digest)
+    || typeof responseBody.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(responseBody.baseline_proof)
+    || UTF8.encode(JSON.stringify(responseBody)).byteLength > 8192)
     throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Awards result.");
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
 }
@@ -949,11 +968,17 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
   catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
   const collectionKey = domain;
-  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== [collectionKey, "request_id", "resume_id"].sort().join(","))
+  const expectedRequestKeys = domain === "skills"
+    ? [collectionKey, "baseline_proof", "expected_baseline_digest", "request_id", "resume_id"]
+    : [collectionKey, "request_id", "resume_id"];
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== expectedRequestKeys.sort().join(","))
     throw apiError(400, "invalid_request", `Request must contain only request_id, resume_id, and ${collectionKey}.`);
   if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
     || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id))
     throw apiError(422, "invalid_request_id", "Request and resume IDs must be UUIDs.");
+  if (domain === "skills" && (typeof parsed.expected_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_baseline_digest)
+    || typeof parsed.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(parsed.baseline_proof)))
+    throw apiError(422, "invalid_skills_baseline", "Skills baseline digest and database proof must be valid.");
   const items = domain === "experience" ? validateExperience(parsed[collectionKey]) : validateSkills(parsed[collectionKey]);
   const canonical = domain === "experience" ? canonicalizeExperience(items as ExperienceItem[]) : canonicalizeSkills(items as SkillsItem[]);
   if (UTF8.encode(canonical).byteLength > 196608)
@@ -963,7 +988,9 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
   const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
     resume_id: parsed.resume_id.toLowerCase(), domain, operation: "update", request_id: parsed.request_id.toLowerCase(),
-    mutation_digest: await sha256Hex(canonical), issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+    mutation_digest: await sha256Hex(canonical),
+    ...(domain === "skills" ? { expected_baseline_digest: parsed.expected_baseline_digest as string, baseline_proof: parsed.baseline_proof as string } : {}),
+    issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
   const signed = await signContext(context, key);
   if (UTF8.encode(signed.serialized).byteLength > 8192) throw apiError(503, "signing_unavailable", "Signed request exceeds the supported size.");
   let upstream: Response;
@@ -983,11 +1010,77 @@ async function saveExperienceOrSkills(request: Request, env: WorkerEnv, domain: 
   if (!upstream.ok) {
     if (isV13BIdempotencyConflict(upstream, responseBody))
       throw apiError(409, "idempotency_conflict", `The ${domain} retry conflicts with a different request. Refresh before trying again.`);
+    if (domain === "skills" && isSkillsBaselineConflict(upstream, responseBody))
+      throw apiError(409, "skills_baseline_conflict", "Skills changed after this request began. Refresh the current data; the old request was not applied.");
     throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", `The data service could not save ${domain} (HTTP ${upstream.status}).`);
   }
   if (!Array.isArray(responseBody) || UTF8.encode(JSON.stringify(responseBody)).byteLength > 212992)
     throw apiError(502, "invalid_upstream_response", `The data service returned an invalid ${domain} result.`);
   return Response.json(responseBody, { headers: { "Cache-Control": "no-store" } });
+}
+
+async function saveSectionTitles(request: Request, env: WorkerEnv): Promise<Response> {
+  const rawBody = await readBoundedBody(request, 24 * 1024);
+  if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json")
+    throw apiError(400, "invalid_content_type", "A JSON request body is required.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBody)) as unknown; }
+  catch { throw apiError(400, "invalid_json", "Request body must contain valid UTF-8 JSON."); }
+  if (!isPlainObject(parsed) || Object.keys(parsed).sort().join(",") !== "baseline_proof,expected_baseline_digest,request_id,resume_id,section_titles")
+    throw apiError(400, "invalid_request", "Request must contain only the Section Titles payload and signed baseline fields.");
+  if (typeof parsed.request_id !== "string" || !UUID_PATTERN.test(parsed.request_id)
+    || typeof parsed.resume_id !== "string" || !UUID_PATTERN.test(parsed.resume_id)
+    || typeof parsed.expected_baseline_digest !== "string" || !/^[0-9a-f]{64}$/.test(parsed.expected_baseline_digest)
+    || typeof parsed.baseline_proof !== "string" || !/^[0-9a-f]{64}$/.test(parsed.baseline_proof))
+    throw apiError(422, "invalid_section_titles_baseline", "Request IDs and the database-signed baseline must be valid.");
+  const payload = parsed.section_titles;
+  const titleKeys = ["education_label", "experience_label", "skills_label", "honors_label", "project_heading", "kaggle_label"];
+  if (!isPlainObject(payload) || Object.keys(payload).sort().join(",") !== "translations" || !isPlainObject(payload.translations)
+    || Object.keys(payload.translations).sort().join(",") !== "en,zh") throw apiError(422, "invalid_section_titles", "Section Titles must contain both supported languages.");
+  const translations = payload.translations as Record<string, unknown>;
+  for (const locale of ["zh", "en"] as const) {
+    const fields = translations[locale];
+    if (!isPlainObject(fields) || Object.keys(fields).sort().join(",") !== [...titleKeys].sort().join(",")
+      || Object.values(fields).some(value => typeof value !== "string" || UTF8.encode(value).byteLength > 1024
+        || Array.from(value).some(character => { const code = character.codePointAt(0) ?? 0; return code <= 31 || code === 127; })))
+      throw apiError(422, "invalid_section_titles", "Section Titles contains an invalid field.");
+  }
+  const canonical = JSON.stringify({ translations: {
+    zh: Object.fromEntries(titleKeys.map(key => [key, (translations.zh as Record<string, string>)[key]])),
+    en: Object.fromEntries(titleKeys.map(key => [key, (translations.en as Record<string, string>)[key]])),
+  } });
+  if (UTF8.encode(canonical).byteLength > 16384) throw apiError(413, "canonical_payload_too_large", "Section Titles exceeds the allowed size.");
+  const { header: authorization, actorId } = tokenActor(request.headers.get("authorization"));
+  const supabase = validateSupabaseConfig(env); const { keyId, key } = getSigningConfig(env);
+  const issuedAt = Math.floor(Date.now() / 1000); const network = getTrustedNetworkContext();
+  const context: SignedContext = { context_version: 1, key_id: keyId, actor_user_id: actorId,
+    resume_id: parsed.resume_id.toLowerCase(), domain: "section_titles", operation: "update", request_id: parsed.request_id.toLowerCase(),
+    mutation_digest: await sha256Hex(canonical), expected_baseline_digest: parsed.expected_baseline_digest,
+    baseline_proof: parsed.baseline_proof, issued_at: issuedAt, expires_at: issuedAt + SIGNATURE_LIFETIME_SECONDS, ...network };
+  const signed = await signContext(context, key);
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${supabase.baseUrl}/rest/v1/rpc/save_resume_section_titles_v1`, {
+      method: "POST", headers: { Authorization: authorization, apikey: supabase.publishableKey,
+        "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ target_resume_id: parsed.resume_id, canonical_section_titles: canonical,
+        signed_context: signed.serialized, signature_hex: signed.signatureHex }), signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      throw apiError(504, "upstream_timeout", "The data service timed out. Retry with the same Section Titles request ID.");
+    throw apiError(502, "upstream_unavailable", "The data service is unavailable.");
+  }
+  const result = await readJsonResponse(upstream, 24 * 1024);
+  if (!upstream.ok) {
+    if (isV13BIdempotencyConflict(upstream, result)) throw apiError(409, "idempotency_conflict", "The Section Titles request ID conflicts with another payload.");
+    const details = isPlainObject(result) && typeof result.code === "string" ? result.code : "";
+    if (details === "P13B2") throw apiError(409, "section_titles_baseline_conflict", "Section Titles changed after this request began. Refresh and review before saving again.");
+    throw apiError(upstream.status >= 500 ? 502 : 422, "upstream_failure", "The data service could not save Section Titles.");
+  }
+  if (!isPlainObject(result) || Object.keys(result).sort().join(",") !== "translations" || !isPlainObject(result.translations)
+    || Object.keys(result.translations).sort().join(",") !== "en,zh") throw apiError(502, "invalid_upstream_response", "The data service returned an invalid Section Titles result.");
+  return Response.json({ section_titles: result }, { headers: { "Cache-Control": "no-store" } });
 }
 
 async function saveEducation(request: Request, env: WorkerEnv): Promise<Response> {
@@ -1899,7 +1992,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
   }
   const uploadDiagnostic = url.pathname === UPLOAD_FILES_PATH ? createFilesUploadDiagnostic(env, request) : undefined;
   uploadDiagnostic?.mark("upload_route_entered");
-  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
+  if (url.pathname !== SAVE_PATH && url.pathname !== SAVE_AWARDS_PATH && url.pathname !== SAVE_EXPERIENCE_PATH && url.pathname !== SAVE_SKILLS_PATH && url.pathname !== SAVE_SECTION_TITLES_PATH && url.pathname !== SAVE_EDUCATION_PATH && url.pathname !== SAVE_PROJECTS_PATH && url.pathname !== SAVE_CONTACT_PATH && url.pathname !== SAVE_PROFILE_PATH && url.pathname !== SAVE_WEBSITE_LINKS_PATH && url.pathname !== SAVE_FILES_PATH && url.pathname !== RESTORE_FILES_PATH && url.pathname !== RESTORE_PREVIEW_PATH && url.pathname !== RESTORE_APPLY_PATH && url.pathname !== PROFILE_HISTORY_IMAGE_PATH && url.pathname !== UPLOAD_FILES_PATH && url.pathname !== CLEANUP_FILES_PATH) {
     return errorResponse(apiError(404, "not_found", "API endpoint not found."));
   }
   if (request.method !== "POST") {
@@ -1916,6 +2009,7 @@ export async function handleWorkerRequest(request: Request, env: WorkerEnv): Pro
     if (url.pathname === SAVE_EDUCATION_PATH) return await saveEducation(request, env);
     if (url.pathname === SAVE_PROJECTS_PATH) return await saveProjects(request, env);
     if (url.pathname === SAVE_CONTACT_PATH) return await saveContact(request, env);
+    if (url.pathname === SAVE_SECTION_TITLES_PATH) return await saveSectionTitles(request, env);
     if (url.pathname === SAVE_PROFILE_PATH) return await saveProfile(request, env);
     if (url.pathname === SAVE_WEBSITE_LINKS_PATH) return await saveWebsiteLinksOrFiles(request, env, "website_links");
     if (url.pathname === SAVE_FILES_PATH) return await saveWebsiteLinksOrFiles(request, env, "files");

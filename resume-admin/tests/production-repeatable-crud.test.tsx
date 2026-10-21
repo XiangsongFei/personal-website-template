@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useNavigate } from "react-router-dom";
-import { App } from "../src/App";
+import { App, pendingSaveBlockReason } from "../src/App";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient } from "../src/auth/supabase";
 import { fixtureSections } from "../src/fixtures";
 import type { LoadedResume } from "../src/data/resumeMapper";
 import { ResumeSectionStore } from "../src/data/resumeSectionStore";
-import { AggregateWorkerSaveError, createFilesSaveOperation, createResumeRepository, type AdminFilesWriteState, type FilesSaveOperation, type ResumeRepository, type ResumeSectionRepository, type EditableRepeatableSection } from "../src/data/resumeRepository";
+import { AggregateWorkerSaveError, createFilesSaveOperation, createResumeRepository, type PendingSaveDomain, type PendingSaveState, type AdminFilesWriteState, type FilesSaveOperation, type ResumeRepository, type ResumeSectionRepository, type EditableRepeatableSection, type SectionTitlesAggregate } from "../src/data/resumeRepository";
 import type { ContactSection, ExperienceItem, IntroItem, ProjectItem, SkillItem, AwardItem, EducationItem, LinksSection, Locale, StatusItem } from "../src/model";
 import { UiLocaleProvider, UI_LOCALE_KEY } from "../src/uiLocale";
 
@@ -32,7 +32,7 @@ function auth(): AdminAuthClient {
     isResumeAdmin: vi.fn().mockResolvedValue(true), signIn: vi.fn(), signOut: vi.fn(async () => listener?.("SIGNED_OUT", null)),
     subscribe: vi.fn(callback => { listener = callback as typeof listener; return () => { listener = undefined; }; }) };
 }
-function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; failExperienceRpc?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean } = {}) {
+function makeRepository(section: TestSection, options: { twoItems?: boolean; failEnOnce?: boolean; failUpdateOnce?: boolean; introductionMode?: "direct" | "rpc"; introductionTrustedContextRequired?: boolean; activityLogEnabled?: boolean; failIntroductionRpc?: boolean; awardsWriteMode?: "direct" | "rpc"; awardsTrustedContextRequired?: boolean; experienceWriteMode?: "direct" | "rpc"; experienceTrustedContextRequired?: boolean; failExperienceRpc?: boolean; skillsWriteMode?: "direct" | "rpc"; skillsTrustedContextRequired?: boolean; projectsWriteMode?: "direct" | "rpc"; projectsTrustedContextRequired?: boolean; failProjectsRpc?: boolean; contactWriteMode?: "direct" | "rpc"; contactTrustedContextRequired?: boolean; failContactRpc?: boolean; sectionTitlesWriteMode?: "direct" | "rpc"; sectionTitlesTrustedContextRequired?: boolean } = {}) {
   const original = structuredClone(fixtureSections[section]) as unknown as Item[];
   const items = options.twoItems ? [...original, { ...structuredClone(original[0]), id: `${original[0].id}-second`, sourceKey: original[0].sourceKey ? `${original[0].sourceKey}-second` : null, position: original.length } as Item] : original;
   const translations = new Map<string, Record<string, unknown>>();
@@ -86,12 +86,24 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     updateContactAvailability: vi.fn(), updateFocusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertFocus: vi.fn(async (_rid: string, position: number) => ({ resumeId: _rid, entryId: "focus-production-id", position, sourceKey: null })), updateFocusTranslation: vi.fn(), insertFocusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readFocusTranslation: vi.fn().mockResolvedValue(null), deleteFocus: vi.fn(),
     updateStatusPosition: vi.fn(async (_rid: string, id: string, position: number) => ({ resumeId: _rid, entryId: id, position, sourceKey: null })), insertStatus: vi.fn(async (_rid: string, position: number, statusType: StatusItem["statusType"]) => ({ resumeId: _rid, entryId: "status-production-id", position, sourceKey: null, statusType })), updateStatusType: vi.fn(), updateStatusTranslation: vi.fn(), insertStatusTranslation: vi.fn(async (_rid: string, id: string, locale: Locale, translation: Record<string, unknown>) => ({ resumeId: _rid, entryId: id, locale, translation })), readStatusTranslation: vi.fn().mockResolvedValue(null), deleteStatus: vi.fn(),
     updatePublicLinks: vi.fn(), updateSiteText: vi.fn(async (targetResumeId: string, locale: Locale, fields: Partial<LinksSection["translations"][Locale]>) => { void targetResumeId; void locale; void fields; }), updateNavigationLabel: vi.fn(),
+    loadAdminSectionTitlesWriteState: vi.fn(async (targetResumeId = resumeId) => {
+      const source = fixtureSections.links.translations;
+      const snapshot: SectionTitlesAggregate = { translations: { zh: { education_label: source.zh.educationLabel, experience_label: source.zh.experienceLabel,
+        skills_label: source.zh.skillsLabel, honors_label: source.zh.honorsLabel, project_heading: source.zh.projectHeading, kaggle_label: source.zh.kaggleLabel },
+        en: { education_label: source.en.educationLabel, experience_label: source.en.experienceLabel, skills_label: source.en.skillsLabel,
+          honors_label: source.en.honorsLabel, project_heading: source.en.projectHeading, kaggle_label: source.en.kaggleLabel } } };
+      return { resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.sectionTitlesWriteMode === "rpc",
+        writeMode: options.sectionTitlesWriteMode ?? "direct", trustedContextRequired: options.sectionTitlesTrustedContextRequired ?? false, snapshot,
+        baselineDigest: "1".repeat(64), baselineProof: "2".repeat(64) };
+    }),
+    saveSectionTitlesWithWorker: vi.fn(async (_targetResumeId: string, draft: SectionTitlesAggregate) => structuredClone(draft)),
     loadAdminFeatureState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, activityLogEnabled: options.activityLogEnabled ?? options.introductionMode === "rpc", introductionWriteMode: options.introductionMode ?? "direct", introductionTrustedContextRequired: options.introductionTrustedContextRequired ?? false })),
     loadAdminAwardsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId,
       activityLogEnabled: options.activityLogEnabled ?? options.awardsWriteMode === "rpc",
       awardsWriteMode: options.awardsWriteMode ?? "direct", awardsTrustedContextRequired: options.awardsTrustedContextRequired ?? false })),
     saveAwardsWithWorker: vi.fn(async (_resumeId: string, draft: AwardItem[]) => draft.map((item, index) => ({ ...item,
       id: item.id.startsWith("local-") ? `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, "0")}` : item.id, position: index }))),
+    hasLegacyPendingAwardsSave: vi.fn(() => false),
     loadAdminExperienceWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "experience" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.experienceWriteMode === "rpc", writeMode: options.experienceWriteMode ?? "direct",
       trustedContextRequired: options.experienceTrustedContextRequired ?? false })),
@@ -105,6 +117,8 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
       trustedContextRequired: options.skillsTrustedContextRequired ?? false })),
     saveSkillsWithWorker: vi.fn(async (_resumeId: string, draft: SkillItem[]) => structuredClone(draft)),
     hasPendingSkillsWorkerSave: vi.fn(() => false), discardPendingSkillsSave: vi.fn(),
+    hasLegacyPendingSkillsSave: vi.fn(() => false),
+    hasUnverifiedSkillsPendingSave: vi.fn(() => false),
     loadAdminProjectsWriteState: vi.fn(async (targetResumeId = resumeId) => ({ resumeId: targetResumeId, domain: "projects" as const,
       activityLogEnabled: options.activityLogEnabled ?? options.projectsWriteMode === "rpc", writeMode: options.projectsWriteMode ?? "direct",
       trustedContextRequired: options.projectsTrustedContextRequired ?? false })),
@@ -132,6 +146,7 @@ function makeRepository(section: TestSection, options: { twoItems?: boolean; fai
     }),
   };
   const repository = { load, loadSiteMetadata, loadOverview: vi.fn().mockResolvedValue({ profileName: "Admin" }),
+    readPendingSaveState: (): PendingSaveState => ({ status: "clear", aggregatePending: false, uploadLocales: [] }),
     loadProfile: vi.fn().mockResolvedValue(fixtureSections.profile), loadIntroduction: vi.fn().mockResolvedValue(fixtureSections.introduction),
     loadEducation: vi.fn().mockResolvedValue(fixtureSections.education), loadExperience: vi.fn().mockResolvedValue(fixtureSections.experience),
     loadProjects: vi.fn().mockResolvedValue(fixtureSections.projects), loadSkills: vi.fn().mockResolvedValue(fixtureSections.skills),
@@ -208,8 +223,8 @@ describe("Batch 6A production repeatable CRUD", () => {
     { path: "/projects", label: "Chinese Section title", value: "Project section name", key: "projectHeading" },
     { path: "/skills", label: "Chinese Section title", value: "Skills section name", key: "skillsLabel" },
     { path: "/awards", label: "Chinese Section title", value: "Awards section name", key: "honorsLabel" },
-  ] as const)("relocates and saves $key on $path through the existing site-text writer", async ({ path, label, value, key }) => {
-    const setup = makeRepository("skills");
+  ] as const)("relocates and saves $key on $path through the audited Section Titles writer", async ({ path, label, value, key }) => {
+    const setup = makeRepository("skills", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     const repository = path === "/education" ? addEducationWriters(setup.repository) : setup.repository;
     open({ path }, repository);
     const title = await screen.findByLabelText(label) as HTMLInputElement;
@@ -233,11 +248,18 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     save();
     await screen.findByText("No unsaved changes");
-    expect(setup.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { [key]: value });
+    expect(setup.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    const titleColumns: Record<string, keyof SectionTitlesAggregate["translations"]["zh"]> = {
+      educationLabel: "education_label", experienceLabel: "experience_label", projectHeading: "project_heading",
+      skillsLabel: "skills_label", honorsLabel: "honors_label",
+    };
+    const titleColumn = titleColumns[key];
+    expect(setup.methods.saveSectionTitlesWithWorker.mock.calls[0]?.[1].translations.zh[titleColumn]).toBe(value);
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
   });
 
-  it("shows the global project link text only below a project URL and saves it through the existing site-text writer", async () => {
-    const { repository, methods } = makeRepository("projects");
+  it("shows the global project link text only below a project URL and saves it through the audited writer", async () => {
+    const { repository, methods } = makeRepository("projects", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     open({ path: "/projects" }, repository);
     const heading = await screen.findByLabelText("Chinese Section title") as HTMLInputElement;
     expect(screen.getByRole("heading", { name: "Section title", level: 2 })).toBeTruthy();
@@ -259,7 +281,9 @@ describe("Batch 6A production repeatable CRUD", () => {
     fireEvent.change(visibleLabel, { target: { value: "查看项目" } });
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Project area", kaggleLabel: "查看项目" });
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.saveSectionTitlesWithWorker.mock.calls[0]?.[1].translations.zh).toMatchObject({ project_heading: "Project area", kaggle_label: "查看项目" });
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
     expect(methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "https://example.test/project" }));
   });
@@ -506,7 +530,7 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("keeps the global link text when a project URL is cleared and saved", async () => {
-    const repo = makeRepository("projects");
+    const repo = makeRepository("projects", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
     for (const item of repo.items as ProjectItem[]) {
       item.translations.zh.href = "https://example.test/project";
       item.translations.en.href = "https://example.test/project";
@@ -518,9 +542,49 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(screen.queryByLabelText("Chinese Project link text")).toBeNull();
     save();
     await screen.findByText("No unsaved changes");
-    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { kaggleLabel: "查看项目" });
+    expect(repo.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateSiteText).not.toHaveBeenCalled();
     expect(repo.methods.updateEditableTranslation).toHaveBeenCalledWith("projects", resumeId, "project-1", "zh",
       expect.objectContaining({ href: "" }));
+  });
+
+  it("routes RPC-mode public title changes through one bilingual Section Titles request", async () => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
+    const [targetId, payload, baseline] = methods.saveSectionTitlesWithWorker.mock.calls[0] as unknown as [string, SectionTitlesAggregate, SectionTitlesAggregate];
+    expect(targetId).toBe(resumeId);
+    expect(payload.translations.zh.education_label).toBe("教育标题更新");
+    expect(payload.translations.en.education_label).toBe("Education");
+    expect(baseline.translations.zh.education_label).toBe("教育背景");
+  });
+
+  it("keeps a title dirty instead of saving it without history in direct mode", async () => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "direct" });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("Unsaved changes");
+    expect(methods.loadAdminSectionTitlesWriteState).toHaveBeenCalledWith(resumeId);
+    expect(methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Activity Log is disabled", { activityLogEnabled: false, sectionTitlesTrustedContextRequired: true }],
+    ["trusted context is not required", { activityLogEnabled: true, sectionTitlesTrustedContextRequired: false }],
+  ] as const)("does not fall back to direct title writes when RPC mode is unsafe because %s", async (_reason, state) => {
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", ...state });
+    open({ path: "/education" }, addEducationWriters(repository));
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "教育标题更新" } });
+    save();
+    await screen.findByText("Unsaved changes");
+    expect(methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
   });
 
   it("keeps relocated section text draft in Preview and restores it on Cancel", async () => {
@@ -537,19 +601,20 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("saves section text with existing content and keeps only failed text dirty for retry", async () => {
-    const { repository, methods } = makeRepository("experience");
-    methods.updateSiteText.mockRejectedValueOnce(new Error("temporary section text failure"));
+    const { repository, methods } = makeRepository("experience", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true });
+    methods.saveSectionTitlesWithWorker.mockRejectedValueOnce(new Error("temporary section text failure"));
     open({ path: "/experience" }, repository);
     fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "经历标题" } });
     fireEvent.change(screen.getByLabelText("Chinese Organization"), { target: { value: "更新后的组织" } });
     save();
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
-    expect(methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { experienceLabel: "经历标题" });
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(methods.updateSiteText).not.toHaveBeenCalled();
     expect(methods.updateEditableTranslation).toHaveBeenCalled();
     save();
     await screen.findByText("No unsaved changes");
-    expect(methods.updateSiteText).toHaveBeenCalledTimes(2);
+    expect(methods.saveSectionTitlesWithWorker).toHaveBeenCalledTimes(2);
     expect(methods.updateEditableTranslation).toHaveBeenCalledTimes(1);
   });
 
@@ -696,6 +761,27 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(page.classList.contains("production-save-tail")).toBe(false);
     expect(page.querySelector(".production-save-helper")).toBeNull();
     if (path === "/introduction" || path === "/experience") expect(screen.queryByRole("button", { name: "Save production changes" })).toBeNull();
+  });
+
+  it.each([
+    { path: "/awards", section: "awards" as const, key: "hasLegacyPendingAwardsSave", message: /older Awards save request.*identity cannot be verified/i,
+      field: "Chinese Award name", saveLabel: "Save award changes" },
+    { path: "/skills", section: "skills" as const, key: "hasLegacyPendingSkillsSave", message: /older Skills save request.*identity cannot be verified/i,
+      field: "Chinese Name", saveLabel: "Save skill changes" },
+  ])("shows and blocks an unbound legacy Pending on $path with clean and changed drafts", async ({ path, section, key, message, field, saveLabel }) => {
+    const { repository, methods } = makeRepository(section);
+    Object.assign(repository, { [key]: vi.fn(() => true) });
+    open({ path }, repository);
+
+    expect(message.test((await screen.findByRole("alert")).textContent ?? "")).toBe(true);
+    const saveButton = screen.getByRole("button", { name: saveLabel }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.change(await screen.findByLabelText(field), { target: { value: "A changed draft" } });
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.click(saveButton);
+    expect(methods.saveAwardsWithWorker).not.toHaveBeenCalled();
+    expect(methods.saveSkillsWithWorker).not.toHaveBeenCalled();
+    expect(methods.updateEditableTranslation).not.toHaveBeenCalled();
   });
 
   it("uses localized Introduction save copy without exposing production-environment wording", async () => {
@@ -1776,13 +1862,15 @@ describe("Batch 6A production repeatable CRUD", () => {
   });
 
   it("reports a separate locale-content success when the Projects aggregate RPC fails", async () => {
-    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true, activityLogEnabled: true, failProjectsRpc: true });
+    const repo = makeRepository("projects", { projectsWriteMode: "rpc", projectsTrustedContextRequired: true,
+      sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: true, activityLogEnabled: true, failProjectsRpc: true });
     open({ path: "/projects" }, repo.repository);
     fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Projects heading saved separately" } });
     fireEvent.change(await screen.findByLabelText("Chinese Title"), { target: { value: "Aggregate remains unsaved" } });
     save();
     await screen.findByText("Projects collection save did not complete. The section title or link text saved successfully; verify the collection before retrying.");
-    expect(repo.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { projectHeading: "Projects heading saved separately" });
+    expect(repo.methods.saveSectionTitlesWithWorker).toHaveBeenCalledOnce();
+    expect(repo.methods.updateSiteText).not.toHaveBeenCalled();
     expect(repo.methods.saveProjectsWithWorker).toHaveBeenCalledOnce();
     expect(repo.methods.updateEditableTranslation).not.toHaveBeenCalled();
     expect(repo.methods.insertEditableEntry).not.toHaveBeenCalled();
@@ -2776,15 +2864,14 @@ describe("Batch 6A production repeatable CRUD", () => {
     const setup = makeRepository("skills");
     const target = resumeId;
     const websiteRequestId = "11111111-1111-4111-8111-111111111111";
-    const originalCrypto = globalThis.crypto;
-    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: originalCrypto.subtle });
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => websiteRequestId), subtle: { digest: vi.fn(async () => new Uint8Array(32).buffer) } });
     const rpc = vi.fn(async (name: string) => {
       if (name === "load_admin_website_links_write_state") return { data: [{ resume_id: target,
         activity_log_enabled: true, website_links_write_mode: "rpc", website_links_trusted_context_required: true }], error: null };
       throw new Error(`Unexpected RPC ${name}`);
     });
     const realWebsiteRepository = createResumeRepository({
-      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) },
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) },
       rpc,
     } as unknown as import("@supabase/supabase-js").SupabaseClient, "https://storage.example.test");
     let resolveFirstRequest!: (response: Response) => void;
@@ -2947,6 +3034,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true,
       writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
     setup.methods.hasPendingFilesWorkerSave.mockReturnValue(true);
+    setup.repository.readPendingSaveState = (domain): PendingSaveState => ({ status: domain === "files" ? "pending" : "clear", aggregatePending: domain === "files", uploadLocales: [] });
     const links = structuredClone(fixtureSections.links);
     setup.repository.loadLinks = vi.fn().mockResolvedValue(links);
     openLinksAtResume(setup.repository, links, resumeId);
@@ -2970,7 +3058,7 @@ describe("Batch 6A production repeatable CRUD", () => {
     const rpc = vi.fn(async (name: string) => name === "load_admin_files_storage_state_v1"
       ? { data: [{ resume_id: target, activity_log_enabled: true, files_write_mode: "rpc", files_trusted_context_required: true, storage_protocol: "intent_v1" }], error: null }
       : { data: null, error: { message: "unexpected RPC" } });
-    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000 } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const client = { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "test-token", expires_at: 4_000_000_000, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) }, rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
     const realFilesRepository = createResumeRepository(client, "https://storage.example.test");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -3356,4 +3444,431 @@ describe("Batch 6A production repeatable CRUD", () => {
     expect(repo.methods.deleteEditableEntry).not.toHaveBeenCalled();
   });
 
+});
+
+describe("Files pending phase routing", () => {
+  it.each(["zh", "en"] as const)("routes %s upload-only recovery through upload instead of aggregate replay", async locale => {
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    setup.repository.readPendingSaveState = vi.fn((domain: PendingSaveDomain): PendingSaveState => ({ status: domain === "files" ? "pending" : "clear", aggregatePending: false, uploadLocales: domain === "files" ? [locale] : [] }));
+    setup.methods.hasPendingFilesWorkerSave.mockReturnValue(true);
+    setup.methods.uploadResumePdfWithWorker.mockResolvedValue({ reference: managedPdfUrl(resumeId, locale, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), uploadRequestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    fireEvent.change(await screen.findByLabelText(`${locale === "zh" ? "Chinese" : "English"} Resume PDF`), { target: { files: [pdfFile("%PDF retry", "retry.pdf")] } });
+    save();
+    await screen.findByText("Site & link changes saved.");
+    expect(setup.methods.uploadResumePdfWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.saveFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.retryPendingFilesWithWorker).not.toHaveBeenCalled();
+  });
+  it("requires all pending upload languages before saving", async () => {
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    setup.repository.readPendingSaveState = vi.fn((domain: PendingSaveDomain): PendingSaveState => ({ status: domain === "files" ? "pending" : "clear", aggregatePending: false, uploadLocales: domain === "files" ? ["zh", "en"] : [] }));
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    fireEvent.change(await screen.findByLabelText("Chinese Resume PDF"), { target: { files: [pdfFile("%PDF retry", "retry.pdf")] } });
+    save();
+    await screen.findByText(/exact original file for each pending language/);
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+  });
+  it.each([{ uploadLocales: [] }, { uploadLocales: ["zh", "en"] }] as { uploadLocales: Locale[] }[])("prioritizes aggregate replay with upload locales $uploadLocales", async ({ uploadLocales }) => {
+    const setup = makeRepository("skills");
+    setup.methods.loadAdminFilesWriteState.mockResolvedValue({ resumeId, domain: "files", activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true, storageProtocol: "intent_v1" });
+    setup.repository.readPendingSaveState = vi.fn((domain: PendingSaveDomain): PendingSaveState => ({ status: domain === "files" ? "pending" : "clear", aggregatePending: domain === "files", uploadLocales: domain === "files" ? uploadLocales : [] }));
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    await screen.findByLabelText("Chinese Resume PDF");
+    save();
+    await screen.findByText(/pending Files request was confirmed/i);
+    expect(setup.methods.retryPendingFilesWithWorker).toHaveBeenCalledOnce();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe("Section Titles direct compatibility", () => {
+  it.each([
+    ["/education", "educationLabel"], ["/experience", "experienceLabel"], ["/projects", "projectHeading"], ["/skills", "skillsLabel"], ["/awards", "honorsLabel"],
+  ] as const)("saves the direct title on %s without RPC baseline signing", async (path, key) => {
+    const setup = makeRepository("skills");
+    const repository = path === "/education" ? addEducationWriters(setup.repository) : setup.repository;
+    repository.loadSectionTitlesDirectWritePermission = vi.fn().mockResolvedValue(true);
+    setup.methods.loadAdminSectionTitlesWriteState.mockRejectedValue(new Error("signing unavailable"));
+    open({ path }, repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "New direct title" } });
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(setup.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { [key]: "New direct title" });
+    expect(setup.methods.loadAdminSectionTitlesWriteState).not.toHaveBeenCalled();
+    expect(setup.methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+  });
+  it("retains the unsaved locale after a partial direct save and retries only that locale", async () => {
+    const setup = makeRepository("skills");
+    setup.repository.loadSectionTitlesDirectWritePermission = vi.fn().mockResolvedValue(true);
+    setup.methods.updateSiteText.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("mode changed"));
+    open({ path: "/skills" }, setup.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "中文新标题" } });
+    fireEvent.change(screen.getByLabelText("English Section title"), { target: { value: "New English" } });
+    save();
+    await waitFor(() => expect(setup.methods.updateSiteText).toHaveBeenCalledTimes(2));
+    await screen.findByText(/section title remains unsaved|Some section text remains unsaved/i);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    save();
+    await screen.findByText("No unsaved changes");
+    expect(setup.methods.updateSiteText).toHaveBeenCalledTimes(3);
+    expect(setup.methods.updateSiteText.mock.calls[2]).toEqual([resumeId, "en", { skillsLabel: "New English" }]);
+  });
+  it.each(["permission", "prerequisite", "rpc-save"])("does not fall back to direct after %s failure", async failure => {
+    const setup = makeRepository("skills", { sectionTitlesWriteMode: "rpc", sectionTitlesTrustedContextRequired: failure !== "prerequisite", activityLogEnabled: true });
+    setup.repository.loadSectionTitlesDirectWritePermission = failure === "permission" ? vi.fn().mockRejectedValue(new Error("unknown")) : vi.fn().mockResolvedValue(false);
+    if (failure === "rpc-save") setup.methods.saveSectionTitlesWithWorker.mockRejectedValue(new Error("uncertain"));
+    open({ path: "/skills" }, setup.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Unconfirmed" } }); save();
+    await screen.findByText(/section title remains unsaved|Some section text remains unsaved/i);
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+});
+
+describe("legacy Pending notices on every affected editor", () => {
+  it.each([
+    ["introduction", "/introduction"], ["awards", "/awards"], ["experience", "/experience"], ["skills", "/skills"],
+    ["education", "/education"], ["projects", "/projects"], ["contact", "/contact"], ["profile", "/profile"],
+    ["website_links", "/links"], ["files", "/links"], ["section_titles", "/skills"],
+  ] as const)("keeps %s blocked and visible on a clean %s editor", async (domain, path) => {
+    const setup = makeRepository("skills");
+    const original = "unattributed-original-record";
+    const key = `admin-${domain}-rpc-pending-v1:${resumeId}`;
+    sessionStorage.setItem(key, original);
+    const real = createResumeRepository({} as unknown as import("@supabase/supabase-js").SupabaseClient);
+    setup.repository.readPendingSaveState = (d, target) => real.readPendingSaveState!(d, target, "10000000-0000-4000-8000-000000000002");
+    const repository = path === "/education" ? addEducationWriters(setup.repository) : setup.repository;
+    const view = open({ path }, repository);
+    expect(await screen.findByText(/An authorized administrator must check the original account/)).toBeTruthy();
+    expect(document.querySelector("main > fieldset")?.hasAttribute("disabled")).toBe(true);
+    expect(sessionStorage.getItem(key)).toBe(original);
+    view.unmount();
+    open({ path }, repository);
+    expect(await screen.findByText(/Any release requires separate explicit authorization/)).toBeTruthy();
+    expect(sessionStorage.getItem(key)).toBe(original);
+    expect(setup.methods.saveAwardsWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+  });
+});
+
+it("saves the direct project-link label without a Section Titles RPC", async () => {
+  const setup = makeRepository("projects");
+  setup.repository.loadSectionTitlesDirectWritePermission = vi.fn().mockResolvedValue(true);
+  open({ path: "/projects" }, setup.repository);
+  fireEvent.change(await screen.findByLabelText("Project URL"), { target: { value: "https://example.test/project" } });
+  fireEvent.change(await screen.findByLabelText("Chinese Project link text"), { target: { value: "直接保存链接标题" } });
+  save();
+  await screen.findByText("No unsaved changes");
+  expect(setup.methods.updateSiteText).toHaveBeenCalledWith(resumeId, "zh", { kaggleLabel: "直接保存链接标题" });
+  expect(setup.methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+});
+
+describe("Pending inspection contract and asynchronous direct-write boundary", () => {
+  const invalidStates: unknown[] = [undefined, null, {}, { status: "future" },
+    { status: "clear", aggregatePending: true, uploadLocales: [] },
+    { status: "clear", aggregatePending: false },
+    { status: "pending", aggregatePending: false, uploadLocales: [] },
+    { status: "pending", aggregatePending: false, uploadLocales: ["fr"] }];
+  it("blocks a missing repository or reader, including an empty domain list", () => {
+    expect(pendingSaveBlockReason(null, resumeId, null, [])).toContain("blocked");
+    expect(pendingSaveBlockReason({} as ResumeRepository, resumeId, null, ["skills"])).toContain("blocked");
+  });
+  it.each(invalidStates)("blocks invalid inspection state %j", state => {
+    const repository = { readPendingSaveState: () => state } as unknown as ResumeRepository;
+    expect(pendingSaveBlockReason(repository, resumeId, null, ["skills"])).toContain("blocked");
+  });
+  it("blocks a throwing reader but permits verified pending requests to reach exact replay", () => {
+    const repository = makeRepository("skills").repository;
+    repository.readPendingSaveState = vi.fn(() => { throw new Error("unreadable"); });
+    expect(pendingSaveBlockReason(repository, resumeId, null, ["skills"])).toContain("blocked");
+    repository.readPendingSaveState = vi.fn((): PendingSaveState => ({ status: "pending", aggregatePending: true, uploadLocales: [] }));
+    expect(pendingSaveBlockReason(repository, resumeId, null, ["skills"])).toBeNull();
+    expect(pendingSaveBlockReason(repository, resumeId, null, ["skills"], true)).toContain("blocked");
+  });
+  const blockedCases = ["missing", "throws", "legacy", "unavailable", "pending", "invalid", "null"] as const;
+  function block(repository: ResumeRepository, kind: typeof blockedCases[number]) {
+    if (kind === "missing") delete repository.readPendingSaveState;
+    else repository.readPendingSaveState = () => {
+      if (kind === "throws") throw new Error("unavailable");
+      return (kind === "null" ? null : { status: kind, aggregatePending: kind === "pending", uploadLocales: [] }) as PendingSaveState;
+    };
+  }
+  it.each(blockedCases)("blocks direct writes when inspection becomes %s during authorization", async kind => {
+    const setup = makeRepository("skills");
+    let grant!: (allowed: boolean) => void;
+    setup.repository.loadSectionTitlesDirectWritePermission = vi.fn(() => new Promise<boolean>(resolve => { grant = resolve; }));
+    open({ path: "/skills" }, setup.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Unconfirmed title" } });
+    save();
+    await waitFor(() => expect(setup.repository.loadSectionTitlesDirectWritePermission).toHaveBeenCalledOnce());
+    block(setup.repository, kind);
+    await act(async () => { grant(true); });
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(setup.methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+  it.each(blockedCases)("blocks the second locale when inspection becomes %s after the first write", async kind => {
+    const setup = makeRepository("skills");
+    setup.repository.loadSectionTitlesDirectWritePermission = vi.fn().mockResolvedValue(true);
+    setup.methods.updateSiteText.mockImplementationOnce(async () => { block(setup.repository, kind); });
+    open({ path: "/skills" }, setup.repository);
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Confirmed Chinese" } });
+    fireEvent.change(screen.getByLabelText("English Section title"), { target: { value: "Unconfirmed English" } });
+    save();
+    await waitFor(() => expect(setup.methods.updateSiteText).toHaveBeenCalledOnce());
+    await screen.findByText(/section title remains unsaved|Some section text remains unsaved/i);
+    expect(setup.methods.updateSiteText.mock.calls[0][1]).toBe("zh");
+    expect(setup.methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+  it.each(["zh", "en"] as const)("retains the legacy %s upload key and never enters aggregate replay", async locale => {
+    const key = `admin-files-upload-pending-v1:${resumeId}:${locale}`;
+    sessionStorage.setItem(key, "original-upload-record");
+    const setup = makeRepository("skills");
+    const real = createResumeRepository({} as import("@supabase/supabase-js").SupabaseClient);
+    setup.repository.readPendingSaveState = (domain, target) => real.readPendingSaveState!(domain, target, "10000000-0000-4000-8000-000000000002");
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    await screen.findByText(/An authorized administrator must check the original account/);
+    fireEvent.submit(screen.getByRole("button", { name: "Save site & link changes" }).closest("form")!);
+    expect(setup.methods.retryPendingFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(key)).toBe("original-upload-record");
+  });
+});
+
+describe("Links fail-closed rendered inspection", () => {
+  it.each(["missing", "undefined", "null", "unknown", "throws"] as const)("renders a manual blocker for %s without upload, replay or Restore", async kind => {
+    const setup = makeRepository("skills");
+    const key = `admin-files-rpc-pending-v1:${resumeId}`;
+    sessionStorage.setItem(key, "original-protected-record");
+    if (kind === "missing") delete setup.repository.readPendingSaveState;
+    else setup.repository.readPendingSaveState = () => {
+      if (kind === "throws") throw new Error("unreadable");
+      return (kind === "undefined" ? undefined : kind === "null" ? null : { status: "future" }) as unknown as PendingSaveState;
+    };
+    setup.repository.restoreDomain = vi.fn();
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    await screen.findByText(/An authorized administrator must check the original account/);
+    const button = screen.getByRole("button", { name: "Save site & link changes" });
+    expect(button.matches(":disabled")).toBe(true);
+    fireEvent.submit(button.closest("form")!);
+    expect(setup.methods.uploadResumePdfWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.retryPendingFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.saveFilesWithWorker).not.toHaveBeenCalled();
+    expect(setup.methods.updatePublicLinks).not.toHaveBeenCalled();
+    expect(setup.repository.restoreDomain).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(key)).toBe("original-protected-record");
+  });
+  it.each(["legacy", "unavailable", "pending"] as const)("blocks Website direct writes when %s appears during state authorization and retains the draft", async status => {
+    const setup = makeRepository("skills");
+    let release!: (value: Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminWebsiteLinksWriteState"]>>>) => void;
+    const repository: ResumeRepository = setup.repository;
+    repository.loadAdminWebsiteLinksWriteState = vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<ResumeRepository["loadAdminWebsiteLinksWriteState"]>>>>(resolve => { release = resolve; }));
+    openLinksAtResume(setup.repository, structuredClone(fixtureSections.links), resumeId);
+    const field = await waitForField("links-email-email");
+    fireEvent.change(field, { target: { value: "unsaved@example.test" } }); save();
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    setup.repository.readPendingSaveState = domain => ({ status: domain === "website_links" ? status : "clear", aggregatePending: domain === "website_links" && status === "pending", uploadLocales: [] });
+    await act(async () => release({ resumeId, domain: "website_links", activityLogEnabled: false, writeMode: "direct", trustedContextRequired: false }));
+    expect(setup.methods.updatePublicLinks).not.toHaveBeenCalled();
+    expect(setup.methods.updateSiteText).not.toHaveBeenCalled();
+    expect(setup.methods.updateNavigationLabel).not.toHaveBeenCalled();
+    expect((document.getElementById("links-email-email") as HTMLInputElement).value).toBe("unsaved@example.test");
+  });
+});
+
+it.each(["legacy", "unavailable", "pending"] as const)("keeps the mounted title draft when %s appears inside the real Repository authorization", async status => {
+  const actor = "10000000-0000-4000-8000-000000000002";
+  let release!: (value: { data: boolean; error: null }) => void;
+  const from = vi.fn();
+  const client = { from, rpc: vi.fn(() => new Promise(resolve => { release = resolve; })), auth: {
+    getSession: async () => ({ data: { session: { access_token: "synthetic", expires_at: 4_000_000_000, user: { id: actor } } }, error: null }),
+    getUser: async () => ({ data: { user: { id: actor } }, error: null }),
+  } } as unknown as import("@supabase/supabase-js").SupabaseClient;
+  const real = createResumeRepository(client); const setup = makeRepository("skills");
+  const repository: ResumeRepository = setup.repository;
+  repository.readPendingSaveState = real.readPendingSaveState;
+  repository.updateSiteText = real.updateSiteText!;
+  repository.loadSectionTitlesDirectWritePermission = vi.fn().mockResolvedValue(true);
+  const identity = auth(); identity.getIdentity = vi.fn().mockResolvedValue({ id: actor, email: "admin@example.test", sessionKey: "c1-test" });
+  render(<UiLocaleProvider><MemoryRouter initialEntries={["/skills"]}><AuthGate client={identity} resumeRepository={setup.repository} sectionStore={new ResumeSectionStore()} /></MemoryRouter></UiLocaleProvider>);
+  fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Protected title draft" } }); save();
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  const key = status === "legacy" ? `admin-section_titles-rpc-pending-v1:${resumeId}` : `admin-pending-save-v2:section_titles:${resumeId}:${actor}`;
+  const raw = status === "legacy" ? "protected original" : JSON.stringify({ actorUserId: actor, resumeId, domain: "section_titles", requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", payload: {}, payloadDigest: "a".repeat(64) });
+  sessionStorage.setItem(key, raw);
+  if (status === "unavailable") {
+    const read = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, name: string) {
+      if (name.startsWith("admin-")) throw new Error("blocked");
+      return read.call(this, name);
+    });
+  }
+  await act(async () => release({ data: true, error: null }));
+  expect(from).not.toHaveBeenCalled();
+  expect((screen.getByLabelText("Chinese Section title") as HTMLInputElement).value).toBe("Protected title draft");
+  expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  expect(setup.methods.saveSectionTitlesWithWorker).not.toHaveBeenCalled();
+  vi.restoreAllMocks(); expect(sessionStorage.getItem(key)).toBe(raw);
+});
+
+
+it.each((["contact", "profile"] as const).flatMap(domain => (["legacy", "unavailable", "pending", "missing", "throws", "actor"] as const).map(kind => ({ domain, kind }))))("keeps $domain draft and visibly blocks $kind introduced during real write-state lookup", async ({ domain, kind }) => {
+  const originalActor = "10000000-0000-4000-8000-000000000002"; let actor = originalActor;
+  let release!: () => void; const from = vi.fn();
+  const client = { from, rpc: vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); return { data: [{ resume_id: resumeId, activity_log_enabled: false, [`${domain}_write_mode`]: "direct", [`${domain}_trusted_context_required`]: false }], error: null }; }), auth: {
+    getSession: async () => ({ data: { session: { access_token: `synthetic-${actor}`, expires_at: 4_000_000_000, user: { id: actor } } }, error: null }),
+    getUser: async () => ({ data: { user: { id: actor } }, error: null }),
+  } } as unknown as import("@supabase/supabase-js").SupabaseClient;
+  const real = createResumeRepository(client); const setup = makeRepository("skills"); const repository: ResumeRepository = setup.repository;
+  repository.readPendingSaveState = real.readPendingSaveState;
+  if (domain === "profile") Object.assign(repository, { loadAdminProfileWriteState: real.loadAdminProfileWriteState, updateProfileSharedDetails: real.updateProfileSharedDetails, updateProfileTranslation: real.updateProfileTranslation });
+  else Object.assign(repository, { loadAdminContactWriteState: real.loadAdminContactWriteState, updateContactLabel: real.updateContactLabel });
+  const identity = auth(); identity.getIdentity = vi.fn().mockResolvedValue({ id: originalActor, email: "admin@example.test", sessionKey: "p1-test" });
+  render(<UiLocaleProvider><MemoryRouter initialEntries={[`/${domain}`]}><AuthGate client={identity} resumeRepository={repository} sectionStore={new ResumeSectionStore()} /></MemoryRouter></UiLocaleProvider>);
+  const label = domain === "profile" ? "Graduation value" : "Chinese Section label";
+  fireEvent.change(await screen.findByLabelText(label), { target: { value: "Protected draft" } }); save();
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  const key = kind === "legacy" ? `admin-${domain}-rpc-pending-v1:${resumeId}` : `admin-pending-save-v2:${domain}:${resumeId}:${originalActor}`;
+  const raw = kind === "legacy" ? "protected original" : JSON.stringify({ actorUserId: originalActor, resumeId, domain, requestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", payload: {}, payloadDigest: "a".repeat(64) });
+  sessionStorage.setItem(key, raw);
+  if (kind === "missing") delete repository.readPendingSaveState;
+  if (kind === "throws") repository.readPendingSaveState = () => { throw new Error("unreadable"); };
+  if (kind === "unavailable") {
+    const read = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, name: string) { if (name.startsWith("admin-")) throw new Error("blocked"); return read.call(this, name); });
+  }
+  if (kind === "actor") actor = "10000000-0000-4000-8000-000000000003";
+  await act(async () => release());
+  expect((await screen.findAllByText(/Saving and Restore are blocked/)).length).toBeGreaterThan(0);
+  expect(from).not.toHaveBeenCalled(); expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe("Protected draft");
+  vi.restoreAllMocks(); expect(sessionStorage.getItem(key)).toBe(raw);
+});
+
+describe("Section Titles manual recovery through the real Repository and remounted editor", () => {
+  const actorA = "10000000-0000-4000-8000-000000000002";
+  const actorB = "10000000-0000-4000-8000-000000000003";
+  const target = "20000000-0000-4000-8000-000000000002";
+  const targetB = "20000000-0000-4000-8000-000000000003";
+  const key = `admin-pending-save-v2:section_titles:${target}:${actorA}`;
+  const titleKeys = { educationLabel: "education_label", experienceLabel: "experience_label", skillsLabel: "skills_label", honorsLabel: "honors_label", projectHeading: "project_heading", kaggleLabel: "kaggle_label" } as const;
+  async function prepared() {
+    let actor = actorA; let digest = "1".repeat(64); let proof = "2".repeat(64);
+    let dbTitles: SectionTitlesAggregate = { translations: {
+      zh: Object.fromEntries(Object.entries(titleKeys).map(([ui, sql]) => [sql, fixtureSections.links.translations.zh[ui as keyof typeof titleKeys]])) as SectionTitlesAggregate["translations"]["zh"],
+      en: Object.fromEntries(Object.entries(titleKeys).map(([ui, sql]) => [sql, fixtureSections.links.translations.en[ui as keyof typeof titleKeys]])) as SectionTitlesAggregate["translations"]["en"],
+    } };
+    const client = { from: vi.fn(), auth: {
+      getSession: vi.fn(async () => ({ data: { session: { access_token: `synthetic-${actor}`, expires_at: 4_000_000_000, user: { id: actor } } }, error: null })),
+      getUser: vi.fn(async () => ({ data: { user: { id: actor } }, error: null })),
+    }, rpc: vi.fn(async (name: string) => name === "can_direct_write_section_titles" ? { data: false, error: null } : { data: [{ resume_id: target, activity_log_enabled: true, section_titles_write_mode: "rpc", section_titles_trusted_context_required: true, section_titles_snapshot: structuredClone(dbTitles), section_titles_baseline_digest: digest, section_titles_baseline_proof: proof }], error: null }) };
+    const real = createResumeRepository(client as unknown as import("@supabase/supabase-js").SupabaseClient);
+    // Only unrelated Skills routing is a fixture. All title inspection, save and retry methods are production code.
+    real.loadAdminSkillsWriteState = vi.fn().mockResolvedValue({ resumeId: target, writeMode: "direct", activityLogEnabled: false, trustedContextRequired: false });
+    const requests: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)); requests.push(body);
+      if (requests.length === 1) { dbTitles = structuredClone(body.section_titles); digest = "3".repeat(64); proof = "4".repeat(64); throw new Error("synthetic response lost after commit"); }
+      return Response.json({ section_titles: body.section_titles });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const siteTextChanged = vi.fn();
+    function tree(id = target, identity = actor) {
+      const sections = structuredClone(fixtureSections);
+      for (const locale of ["zh", "en"] as const) for (const [ui, sql] of Object.entries(titleKeys)) sections.links.translations[locale][ui as keyof typeof titleKeys] = dbTitles.translations[locale][sql];
+      const resume: LoadedResume = { resumeId: id, siteKey: "example-cv", isPublished: true, updatedAt: null, sections };
+      return <UiLocaleProvider><MemoryRouter initialEntries={["/skills"]}><App identityId={identity} identityEmail="admin@example.test" onSignOut={() => {}} signOutPending={false} signOutError="" resume={resume} additionalResumeId={id} repository={real} siteTextTranslations={sections.links.translations} siteTextResumeId={id} onSiteTextChanged={siteTextChanged} /></MemoryRouter></UiLocaleProvider>;
+    }
+    const first = render(tree());
+    fireEvent.change(await screen.findByLabelText("Chinese Section title"), { target: { value: "Committed original title" } }); save();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await screen.findByText(/section title remains unsaved|Some section text remains unsaved/i);
+    const raw = sessionStorage.getItem(key)!; expect(raw).not.toBeNull();
+    first.unmount();
+    const view = render(tree());
+    const button = await screen.findByRole("button", { name: "Retry exact Section Titles save" });
+    await waitFor(() => expect(button.matches(":disabled")).toBe(false));
+    expect(screen.getByText("No unsaved changes")).toBeTruthy();
+    expect((screen.getByLabelText("Chinese Section title") as HTMLInputElement).value).toBe("Committed original title");
+    expect(fetchMock).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBe(raw);
+    const refreshed = await real.loadAdminSectionTitlesWriteState!(target);
+    expect(refreshed.baselineDigest).toBe("3".repeat(64)); expect(refreshed.baselineProof).toBe("4".repeat(64));
+    return { real, client, fetchMock, requests, raw, view, tree, button, siteTextChanged, changeActor() { actor = actorB; },
+      changeDatabaseTitle() { dbTitles.translations.en.education_label = "Later database value"; } };
+  }
+  it("A-D/F: remounts clean without automatic replay, manually resends exact bytes, and preserves drafts edited before and during confirmation", async () => {
+    const s = await prepared(); const envelope = JSON.parse(s.raw);
+    s.changeDatabaseTitle();
+    fireEvent.change(screen.getByLabelText("English Section title"), { target: { value: "New unsaved English draft" } });
+    let release!: () => void; const originalFetch = s.fetchMock.getMockImplementation()!;
+    s.fetchMock.mockImplementation(async (url, init) => { await new Promise<void>(resolve => { release = resolve; }); return originalFetch(url, init); });
+    fireEvent.click(s.button); await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(sessionStorage.getItem(key)).toBe(s.raw);
+    fireEvent.change(screen.getByLabelText("Chinese Section title"), { target: { value: "New draft while replay is pending" } });
+    await act(async () => release());
+    await screen.findByText(/original Section Titles request was confirmed/);
+    expect(s.requests).toHaveLength(2); expect(s.requests[1]).toEqual(s.requests[0]);
+    expect(s.requests[1]).toMatchObject({ request_id: envelope.requestId, resume_id: target, section_titles: envelope.payload.titles,
+      expected_baseline_digest: envelope.payload.expectedBaselineDigest, baseline_proof: envelope.payload.baselineProof });
+    const bound = { actorUserId: envelope.actorUserId, domain: envelope.domain, resumeId: envelope.resumeId, requestId: envelope.requestId, payload: envelope.payload };
+    expect(Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(bound)))), byte => byte.toString(16).padStart(2, "0")).join("")).toBe(envelope.payloadDigest);
+    expect(envelope.actorUserId).toBe(actorA); expect(envelope.domain).toBe("section_titles");
+    expect(new Headers(s.fetchMock.mock.calls[1][1].headers).get("Authorization")).toBe(`Bearer synthetic-${actorA}`);
+    expect(sessionStorage.getItem(key)).toBeNull(); expect(s.siteTextChanged).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("English Section title") as HTMLInputElement).value).toBe("New unsaved English draft");
+    expect((screen.getByLabelText("Chinese Section title") as HTMLInputElement).value).toBe("New draft while replay is pending");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy(); expect(s.client.from).not.toHaveBeenCalled();
+  });
+  it.each(["baseline", "idempotency", "5xx", "network", "timeout", "malformed", "actor", "target", "replacement", "remove-throws"] as const)("E: retains uncertain recovery and never falls back to direct for %s", async kind => {
+    const s = await prepared(); let expected = s.raw;
+    const firstBody = s.requests[0];
+    s.fetchMock.mockImplementation(async () => {
+      if (kind === "actor") s.changeActor();
+      if (kind === "target") s.view.rerender(s.tree(targetB));
+      if (kind === "replacement") { const value = JSON.parse(s.raw); value.payload.titles.translations.en.skills_label = "protected replacement"; expected = JSON.stringify(value); sessionStorage.setItem(key, expected); }
+      if (kind === "network" || kind === "timeout") throw new Error(kind);
+      if (kind === "baseline" || kind === "idempotency") return Response.json({ error: { code: kind === "baseline" ? "section_titles_baseline_conflict" : "idempotency_conflict", message: "Rejected" } }, { status: 409 });
+      if (kind === "5xx") return new Response(null, { status: 503 });
+      if (kind === "malformed") return Response.json({ section_titles: [] });
+      return Response.json({ section_titles: firstBody.section_titles });
+    });
+    if (kind === "remove-throws") {
+      const remove = Storage.prototype.removeItem;
+      vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, name: string) {
+        if (name === key) throw new Error("blocked");
+        remove.call(this, name);
+      });
+    }
+    await act(async () => { fireEvent.click(s.button); });
+    await waitFor(() => expect(s.fetchMock).toHaveBeenCalledTimes(2));
+    if (kind === "target") await screen.findByText("No unsaved changes");
+    else await waitFor(() => expect(screen.queryByRole("button", { name: "Retrying original Section Titles request…" })).toBeNull());
+    expect(sessionStorage.getItem(key)).toBe(kind === "baseline" ? null : expected);
+    expect(s.fetchMock).toHaveBeenCalledTimes(2); expect(s.client.from).not.toHaveBeenCalled();
+    expect(s.siteTextChanged).not.toHaveBeenCalled();
+  });
+  it.each(["legacy", "unavailable", "missing", "throws", "undefined", "malformed", "digest", "proof", "replacement"] as const)("E: blocks manual replay without sending when inspection becomes %s", async kind => {
+    const s = await prepared(); let expected = s.raw;
+    if (kind === "legacy") sessionStorage.setItem(`admin-section_titles-rpc-pending-v1:${target}`, "protected legacy");
+    if (kind === "unavailable") s.real.readPendingSaveState = () => ({ status: "unavailable", aggregatePending: false, uploadLocales: [] });
+    if (kind === "missing") delete s.real.readPendingSaveState;
+    if (kind === "throws") s.real.readPendingSaveState = () => { throw new Error("blocked"); };
+    if (kind === "undefined" || kind === "malformed") s.real.readPendingSaveState = () => (kind === "undefined" ? undefined : { status: "future" }) as never;
+    if (["digest", "proof", "replacement"].includes(kind)) {
+      const value = JSON.parse(s.raw);
+      if (kind === "digest") value.payloadDigest = "f".repeat(64);
+      if (kind === "proof") value.payload.baselineProof = "invalid";
+      if (kind === "replacement") value.payload.titles.translations.zh.skills_label = "protected replacement";
+      expected = JSON.stringify(value); sessionStorage.setItem(key, expected);
+    }
+    await act(async () => { fireEvent.click(s.button); });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retrying original Section Titles request…" })).toBeNull());
+    expect(s.fetchMock).toHaveBeenCalledOnce(); expect(sessionStorage.getItem(key)).toBe(expected);
+    expect(s.client.from).not.toHaveBeenCalled();
+  });
 });

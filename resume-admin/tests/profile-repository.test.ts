@@ -5,19 +5,25 @@ import { profileAggregateFromSection } from "../src/data/profileAggregate";
 import { createResumeRepository } from "../src/data/resumeRepository";
 
 const resumeId = "ea111111-1111-4111-8111-111111111111";
+const actorId = "10000000-0000-4000-8000-000000000002";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); window.sessionStorage.clear(); });
 
 describe("Profile transactional repository", () => {
   it("decodes target-scoped write state and rejects an invalid direct/trusted combination", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, profile_write_mode: "rpc", profile_trusted_context_required: true }], error: null });
-    const repo = createResumeRepository({ rpc, from: vi.fn() } as unknown as SupabaseClient);
+    const repo = createResumeRepository({ rpc, from: vi.fn(), auth: {
+      getSession: async () => ({ data: { session: { access_token: "synthetic", expires_at: 4_000_000_000, user: { id: actorId } } }, error: null }),
+      getUser: async () => ({ data: { user: { id: actorId } }, error: null }),
+    } } as unknown as SupabaseClient);
     await expect(repo.loadAdminProfileWriteState!(resumeId)).resolves.toEqual({ resumeId, activityLogEnabled: true, profileWriteMode: "rpc", profileTrustedContextRequired: true });
+    rpc.mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, profile_write_mode: "direct", profile_trusted_context_required: true }], error: null });
+    await expect(repo.loadAdminProfileWriteState!(resumeId)).rejects.toThrow("Invalid Profile write state");
   });
 
   it("uses one Worker request and replays the exact pending request after an ambiguous response", async () => {
     const profile = profileAggregateFromSection(fixtureSections.profile);
-    const getSession = vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null }));
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession } };
+    const getSession = vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null }));
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession, getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) } };
     const repo = createResumeRepository(supabase as unknown as SupabaseClient);
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     let fail = true;
@@ -28,22 +34,22 @@ describe("Profile transactional repository", () => {
       return Response.json(profile);
     }));
     await expect(repo.saveProfileWithWorker!(resumeId, fixtureSections.profile, profile.shared.photo_url)).rejects.toThrow("uncertain");
-    expect(repo.hasPendingProfileWorkerSave!(resumeId)).toBe(true);
+    expect(repo.hasPendingProfileWorkerSave!(resumeId, actorId)).toBe(true);
     await expect(repo.saveProfileWithWorker!(resumeId, fixtureSections.profile, profile.shared.photo_url)).resolves.toEqual(fixtureSections.profile);
     expect(calls).toHaveLength(2);
     expect(calls[0]!.url).toBe("/api/admin/v1/profile/save");
     expect(calls[1]!.body).toEqual(calls[0]!.body);
-    expect(repo.hasPendingProfileWorkerSave!(resumeId)).toBe(false);
+    expect(repo.hasPendingProfileWorkerSave!(resumeId, actorId)).toBe(false);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 
   it("rejects a mismatched authoritative Worker result and retains the request for safe replay", async () => {
     const profile = profileAggregateFromSection(fixtureSections.profile);
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "x", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "x", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })), getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) } };
     const repo = createResumeRepository(supabase as unknown as SupabaseClient);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...profile, shared: { ...profile.shared, footer_name: "unexpected" } })));
     await expect(repo.saveProfileWithWorker!(resumeId, fixtureSections.profile, profile.shared.photo_url)).rejects.toThrow("did not match");
-    expect(repo.hasPendingProfileWorkerSave!(resumeId)).toBe(true);
+    expect(repo.hasPendingProfileWorkerSave!(resumeId, actorId)).toBe(true);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });

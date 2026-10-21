@@ -4,6 +4,11 @@ export type UiLocale = "en" | "zh";
 export const UI_LOCALE_KEY = "cms-ui-locale";
 
 const dictionary: Record<string, string> = {
+  "An unconfirmed Section Titles request is retained. Verify and retry the original request without changing the current draft.": "仍保留一条尚未确认的栏目标题请求。请核验并精确重试原请求，当前草稿不会被替换。",
+  "Retry exact Section Titles save": "精确重试原栏目标题请求",
+  "Retrying original Section Titles request…": "正在重试原栏目标题请求…",
+  "The original Section Titles request was confirmed. Current drafts were kept unchanged; refresh and review before a new save.": "原栏目标题请求已确认。当前草稿保持不变；请在新保存前刷新并核对。",
+  "A previous save cannot be safely verified. Saving and Restore are blocked. Keep this browser session. An authorized administrator must check the original account, target, request and time against current data and Activity Log; for Files, also check upload candidates and authoritative references. Matching data or missing logs do not prove success or failure. Refreshing or signing in again does not resolve this record. Any release requires separate explicit authorization.": "无法安全核实先前的保存。保存和恢复已阻止，请保留此浏览器会话。获授权的管理员须将原账号、目标、请求与时间和当前数据及活动日志核对；文件还须核对上传候选与正式引用。数据相同或缺少日志均不能证明成功或失败。刷新或重新登录不会解除记录，任何解除都需要另行明确授权。",
   "Resume CMS": "简历内容管理", "Welcome back": "欢迎回来", "Sign in to continue managing your resume.": "登录以继续管理你的简历内容。", "Enter your email": "请输入邮箱", "Enter your password": "请输入密码",
   "Profile photo": "个人照片", "Profile photo preview": "个人照片预览", "No profile photo": "尚未设置个人照片", "Choose profile photo": "选择个人照片", "Replace profile photo": "更换个人照片", "JPG, PNG, or WebP; maximum 5 MB. Saves with shared Profile details.": "仅支持 JPG、PNG 或 WebP，最大 5 MB。与共享个人资料一起保存。", "Profile photo must be a JPG, PNG, or WebP image.": "个人照片必须为 JPG、PNG 或 WebP 图片。", "Profile photo must be 5 MB or smaller.": "个人照片不能超过 5 MB。",
   "Example CV CMS": "示例简历 CMS", "Example Resume CMS": "示例简历 CMS", CONTENT: "内容", WEBSITE: "网站", "Admin workspace · production write": "管理员工作区 · 支持生产写入", "Admin workspace · demo": "管理员工作区 · 演示", Add: "添加", "Add item": "添加项目", Move: "移动", up: "上移", down: "下移", "Move up": "上移", "Move down": "下移", "Chinese method": "中文方法", "English method": "英文方法", "Close editor for": "关闭编辑器：", Close: "关闭", "New item": "新项目", "No items yet. Add one to start this section.": "暂无项目，添加一个开始编辑。", "Local draft only. Production writes are disabled for this section.": "仅为本地草稿，生产写入已禁用。", "Fixture saves stay in this browser session.": "演示保存仅存在于当前浏览器会话。",
@@ -64,6 +69,7 @@ Object.assign(dictionary, {
 
 Object.assign(dictionary, {
   "Activity Log": "活动记录", "Admin tools": "管理工具", "Review recorded changes to this resume.": "查看此简历的已记录修改。",
+  "Section titles": "板块标题", "Project link label": "项目链接文案", "Skills section title": "技能区标题",
   "Loading Activity Log…": "正在加载活动记录……", "Unable to load Activity Log.": "无法加载活动记录。",
   "No activity has been recorded yet.": "暂时没有活动记录。", Introduction: "个人简介",
   Created: "已创建", Updated: "已修改", Deleted: "已删除", Reordered: "顺序已调整", by: "操作人：",
@@ -84,6 +90,11 @@ Object.assign(dictionary, {
   "Project description": "项目描述", "Project method": "项目方法", "Project methods": "项目方法",
   "Award name": "荣誉名称", Year: "年份", "Retry exact Awards save": "重试同一荣誉奖项保存",
   "Awards may contain no more than 32 entries.": "荣誉奖项最多包含 32 项。",
+  "An older Awards save request is still stored in this browser, but its administrator identity cannot be verified. The request was not replayed, assigned to this account, converted, or deleted. Do not retry or resubmit Awards until an authorized administrator compares the current Awards data with Activity Log around the earlier save attempt. Keep this browser session and contact an administrator for a manual review.": "此浏览器仍保存着旧版荣誉奖项请求，但无法验证其管理员身份。系统没有重放、将请求分配给当前账号、转换或删除该请求。请勿重试或重新提交荣誉奖项；先联系获授权的管理员，核对当前荣誉奖项数据与此前保存时间附近的活动记录。请保留此浏览器会话，以便管理员人工核查。",
+  "An older Skills save request is still stored in this browser, but its administrator identity cannot be verified. The request was not replayed, assigned to this account, converted, or deleted. Do not retry or resubmit Skills until an authorized administrator compares the current Skills data with Activity Log around the earlier save attempt. Keep this browser session and contact an administrator for a manual review.": "此浏览器仍保存着旧版技能请求，但无法验证其管理员身份。系统没有重放、将请求分配给当前账号、转换或删除该请求。请勿重试或重新提交技能；先联系获授权的管理员，核对当前技能数据与此前保存时间附近的活动记录。请保留此浏览器会话，以便管理员人工核查。",
+  "This Skills request was saved by an older version that did not store a verifiable database baseline. It remains bound to its original account, but cannot be safely replayed under the current concurrency protection. The request was retained and not sent. Ask an administrator to compare current Skills data with Activity Log before taking further action.": "此技能请求由旧版本创建，当时没有保存可验证的数据库基线。请求仍绑定原账号，但无法在当前并发保护机制下安全重放。系统保留请求且未发送。请联系管理员核对当前技能数据与活动记录，再决定后续操作。",
+  "Skills changed after this request began. The stale request was not applied. Refresh Skills, compare the current data with Activity Log, and review the draft before saving it as a new request.": "此请求开始后技能数据已发生变化，旧基线请求未应用。请刷新技能数据并对照活动记录，检查草稿后再作为新请求保存。",
+  "This pending Skills request predates baseline protection. Its original database baseline cannot be verified, so it was retained and not sent. Refresh the current Skills data and ask an administrator to compare the Activity Log before creating a new request.": "此待处理技能请求早于基线保护协议，无法验证其原始数据库基线，因此系统保留请求且未发送。请刷新当前技能数据，并联系管理员核对活动记录后再创建新请求。",
   "Awards content could not be saved. The Awards section title also remains unsaved.": "荣誉奖项内容未能保存，荣誉奖项标题也仍未保存。",
   "The exact pending Awards request could not be stored safely. Do not retry with changed content; keep this page open and retry.": "无法安全保存待重试的荣誉奖项请求。请勿更改内容后重试；请保持页面打开并重试。",
   "The save result is uncertain. Retry the exact pending Awards request.": "保存结果尚未确认。请使用原有请求重试荣誉奖项保存。",

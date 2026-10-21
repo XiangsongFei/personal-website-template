@@ -27,6 +27,17 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("Version History repository typed read contract", () => {
+  it("accepts the exact Section Titles aggregate entity and before/after projection", async () => {
+    const before = { translations: { zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "项目链接" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "Project link" } } };
+    const after = structuredClone(before); after.translations.zh.education_label = "教育背景";
+    const rpc = vi.fn().mockResolvedValue({ data: [row({ domain_key: "section_titles", entity_type: "section_titles_settings", entity_id: null,
+      payload_version: 2, comparison_kind: "aggregate", comparison: { before, after } })], error: null });
+    const result = await repository(rpc).loadVersionHistoryPage!("qa-resume", 25);
+    expect(result.entries[0]).toMatchObject({ domain: "section_titles", entityType: "section_titles_settings",
+      comparison: { kind: "aggregate", before, after } });
+  });
+
   it("maps ID-free Introduction comparisons and legacy scalar changes", async () => {
     const paragraph = { state: "updated", fields: { text_en: { before: "Old", after: "New" }, position: { before: 0, after: 1.5 } } };
     const rpc = vi.fn().mockResolvedValue({ data: [

@@ -24,8 +24,10 @@ describe("Awards mode-aware save routing contract", () => {
     expect(awardsHandler).not.toContain("reportV13BFailure");
   });
   it("keeps ambiguous exact request state bounded in session storage and does not auto-submit it", () => {
-    expect(repository).toContain("admin-awards-rpc-pending-v1:");
-    expect(repository).toContain("new TextEncoder().encode(raw).byteLength > 8192");
+    expect(repository).toContain("admin-pending-save-v2:${domain}:${resumeId}:${actorUserId}");
+    expect(repository).toContain("new TextEncoder().encode(raw).byteLength > maxBytes");
+    expect(repository).toContain('await subtle.digest("SHA-256", bytes)');
+    expect(repository).toContain("}, 8192);");
     expect(repository).toContain("Retry the exact pending Awards request");
     expect(repository).not.toContain("globalThis.fetch(awardsStorageKey");
   });

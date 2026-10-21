@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createResumeRepository, type ActivityLogFilters, type ActivityLogV13CFilters } from "../src/data/resumeRepository";
 
+const testActorId = "10000000-0000-4000-8000-000000000002";
+
 function repository(rpc: ReturnType<typeof vi.fn>) {
   return createResumeRepository({ rpc, from: vi.fn() } as unknown as SupabaseClient);
 }
@@ -47,6 +49,21 @@ describe("Activity Log repository RPC boundary", () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: new Error("denied") });
     await expect(repository(rpc).loadAdminFilesRestoreCapability!("qa-target")).rejects.toThrow("Unable to load Files Restore capability");
   });
+  it("accepts a Section Titles V2 event only with the exact aggregate contract", async () => {
+    const aggregate = { translations: {
+      zh: { education_label: "教育", experience_label: "经历", skills_label: "技能", honors_label: "荣誉", project_heading: "项目", kaggle_label: "项目链接" },
+      en: { education_label: "Education", experience_label: "Experience", skills_label: "Skills", honors_label: "Awards", project_heading: "Projects", kaggle_label: "Project link" },
+    } };
+    const event = activityRow({ section_key: "section_titles", entity_type: "section_titles_settings", entity_id: null,
+      entity_snapshot: { section_titles: aggregate }, changes: { section_titles: { before: aggregate, after: aggregate } }, payload_version: 2 });
+    const rpc = vi.fn().mockResolvedValue({ data: [event], error: null });
+    const result = await repository(rpc).loadActivityLogPageV13C!("qa-resume", 50, v13cFilters);
+    expect(result[0]).toMatchObject({ section: "section_titles", entityType: "section_titles_settings", payloadVersion: 2 });
+    const invalid = activityRow({ ...event, entity_type: "resume_file_set" });
+    const invalidRpc = vi.fn().mockResolvedValue({ data: [invalid], error: null });
+    await expect(repository(invalidRpc).loadActivityLogPageV13C!("qa-resume", 50, v13cFilters)).rejects.toThrow("Invalid Activity Log response");
+  });
+
   it("loads target-scoped server-owned capability and Introduction mode", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ activity_log_enabled: true, introduction_write_mode: "rpc", introduction_trusted_context_required: false }], error: null });
     await expect(repository(rpc).loadAdminFeatureState!("qa-target")).resolves.toEqual({ resumeId: "qa-target", activityLogEnabled: true, introductionWriteMode: "rpc", introductionTrustedContextRequired: false });
@@ -302,18 +319,24 @@ describe("Activity Log repository RPC boundary", () => {
 
 describe("Awards repository signed write routing", () => {
   const resumeId = "ea111111-1111-4111-8111-111111111111";
+  const actorId = "10000000-0000-4000-8000-000000000002";
+  const baselineDigest = "1".repeat(64);
+  const baselineProof = "2".repeat(64);
   const draft = [{ id: "local-1-1", position: 0, sourceKey: null,
     translations: { zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } } }];
   it("loads only target-scoped server write state", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "rpc", awards_trusted_context_required: true }], error: null });
-    await expect(repository(rpc).loadAdminAwardsWriteState!(resumeId)).resolves.toEqual({ resumeId, activityLogEnabled: true, awardsWriteMode: "rpc", awardsTrustedContextRequired: true });
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "rpc", awards_trusted_context_required: true, awards_snapshot: [], awards_baseline_digest: baselineDigest, awards_baseline_proof: baselineProof }], error: null });
+    await expect(repository(rpc).loadAdminAwardsWriteState!(resumeId)).resolves.toEqual({ resumeId, activityLogEnabled: true, awardsWriteMode: "rpc", awardsTrustedContextRequired: true, baselineDigest, baselineProof });
     expect(rpc).toHaveBeenCalledWith("load_admin_awards_write_state", { target_resume_id: resumeId });
   });
 
   it("posts only to the Worker, returns canonical IDs, and retains the exact request for explicit retry after ambiguity", async () => {
     const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const response = [{ id, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }];
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const response = { awards: [{ id, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }], baseline_digest: baselineDigest, baseline_proof: baselineProof };
+    const supabase = { rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, awards_write_mode: "rpc", awards_trusted_context_required: true, awards_snapshot: [], awards_baseline_digest: baselineDigest, awards_baseline_proof: baselineProof }], error: null }), from: vi.fn(), auth: {
+      getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600, user: { id: actorId } } }, error: null })),
+      getUser: vi.fn(async () => ({ data: { user: { id: actorId } }, error: null })),
+    } };
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     let failOnce = true;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
@@ -322,16 +345,19 @@ describe("Awards repository signed write routing", () => {
       return Response.json(response);
     }));
     const repo = createResumeRepository(supabase as unknown as SupabaseClient);
+    await repo.loadAwards!(resumeId);
     await expect(repo.saveAwardsWithWorker!(resumeId, draft)).rejects.toThrow("save result is uncertain");
-    expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(true);
-    const changedDraft = [{ ...draft[0]!, translations: { ...draft[0]!.translations, zh: { name: "changed after ambiguity", year: "2025" } } }];
-    await expect(repo.saveAwardsWithWorker!(resumeId, changedDraft)).resolves.toMatchObject([{ id, position: 0 }]);
+    expect(repo.hasPendingAwardsWorkerSave!(resumeId, actorId)).toBe(true);
+    const refreshedDraft = [{ ...draft[0]!, id }];
+    await expect(repo.saveAwardsWithWorker!(resumeId, refreshedDraft)).resolves.toMatchObject([{ id, position: 0 }]);
     expect(calls).toHaveLength(2);
     expect(calls[0]!.url).toBe("/api/admin/v1/awards/save");
     expect(calls[0]!.body.request_id).toBe(calls[1]!.body.request_id);
     expect(calls[0]!.body.awards).toEqual(calls[1]!.body.awards);
+    expect(calls[0]!.body.expected_baseline_digest).toBe(calls[1]!.body.expected_baseline_digest);
+    expect(calls[0]!.body.baseline_proof).toBe(calls[1]!.body.baseline_proof);
     expect(calls[0]!.body.awards).toEqual([{ id: null, position: 0, zh: { name: "本地草稿", year: "2025" }, en: { name: "Local draft", year: "2025" } }]);
-    expect(repo.hasPendingAwardsWorkerSave!(resumeId)).toBe(false);
+    expect(repo.hasPendingAwardsWorkerSave!(resumeId, actorId)).toBe(false);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });
@@ -355,7 +381,11 @@ describe("Projects repository signed write routing", () => {
       methods: { zh: methodIds.map((id, position) => ({ id, position, value: `方法${position}` })), en: [] } }];
     const response = [{ id: parentId, position: 0, zh: draft[0]!.translations.zh, en: draft[0]!.translations.en,
       methods: { zh: methodIds.map((id, position) => ({ id, position: position === 2 ? 3 : position, value: `方法${position}` })), en: [] } }];
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+    const actorId = "10000000-0000-4000-8000-000000000002";
+    const supabase = { rpc: vi.fn(), from: vi.fn(), auth: {
+      getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600, user: { id: actorId } } }, error: null })),
+      getUser: vi.fn(async () => ({ data: { user: { id: actorId } }, error: null })),
+    } };
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
@@ -369,24 +399,27 @@ describe("Projects repository signed write routing", () => {
     expect(calls[0]!.url).toBe("/api/admin/v1/projects/save");
     expect(calls[0]!.body.projects).toEqual([{ id: null, position: 0, zh: draft[0]!.translations.zh, en: draft[0]!.translations.en,
       methods: { zh: methodIds.map((id, position) => ({ id, position, value: `方法${position}` })), en: [] } }]);
-    expect(repo.hasPendingProjectsWorkerSave!(resumeId)).toBe(false);
+    expect(repo.hasPendingProjectsWorkerSave!(resumeId, testActorId)).toBe(false);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 });
 
 describe("Experience and Skills repository signed write routing", () => {
   const resumeId = "ea111111-1111-4111-8111-111111111111";
-  const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) };
+  const auth = { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })),
+    getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) };
   it.each([
     ["experience", "load_admin_experience_write_state", "experience_write_mode", "experience_trusted_context_required"],
     ["skills", "load_admin_skills_write_state", "skills_write_mode", "skills_trusted_context_required"],
   ] as const)("loads target-scoped %s state and rejects mismatched target data", async (domain, rpcName, modeKey, requirementKey) => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    const rpc = vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true,
+      ...(domain === "skills" ? { skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) } : {}) }], error: null });
     const repo = repository(rpc);
     const load = domain === "experience" ? repo.loadAdminExperienceWriteState! : repo.loadAdminSkillsWriteState!;
     await expect(load(resumeId)).resolves.toMatchObject({ resumeId, domain, activityLogEnabled: true, writeMode: "rpc", trustedContextRequired: true });
     expect(rpc).toHaveBeenCalledWith(rpcName, { target_resume_id: resumeId });
-    const invalid = vi.fn().mockResolvedValue({ data: [{ resume_id: "other-target", activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true }], error: null });
+    const invalid = vi.fn().mockResolvedValue({ data: [{ resume_id: "other-target", activity_log_enabled: true, [modeKey]: "rpc", [requirementKey]: true,
+      ...(domain === "skills" ? { skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) } : {}) }], error: null });
     await expect((domain === "experience" ? repository(invalid).loadAdminExperienceWriteState! : repository(invalid).loadAdminSkillsWriteState!)(resumeId)).rejects.toThrow("Invalid");
   });
 
@@ -402,7 +435,9 @@ describe("Experience and Skills repository signed write routing", () => {
       ? [{ id, position: 0, en: { location: "", description: "Work", period: "2025", title: "Role", organization: "Org" },
           zh: { location: null, description: "描述", period: "2025", title: "职位", organization: "机构" } }]
       : [{ id, position: 0, en: { items: "English", title: "Languages" }, zh: { items: "中文", title: "语言" } }];
-    const supabase = { rpc: vi.fn(), from: vi.fn(), auth };
+    const supabase = { rpc: vi.fn(async () => ({ data: [{ resume_id: resumeId, activity_log_enabled: true,
+      skills_write_mode: "rpc", skills_trusted_context_required: true, skills_snapshot: [],
+      skills_baseline_digest: "1".repeat(64), skills_baseline_proof: "2".repeat(64) }], error: null })), from: vi.fn(), auth };
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
@@ -410,6 +445,7 @@ describe("Experience and Skills repository signed write routing", () => {
     }));
     const repo = createResumeRepository(supabase as unknown as SupabaseClient);
     const save = domain === "experience" ? repo.saveExperienceWithWorker! : repo.saveSkillsWithWorker!;
+    if (domain === "skills") await repo.loadSkills!(resumeId);
     const result = await save(resumeId, draft as never[]);
     expect(result).toMatchObject([{ id, position: 0 }]);
     expect(calls).toHaveLength(1);
@@ -439,7 +475,8 @@ describe("Contact repository typed writer and V2 decoder", () => {
       status: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", position: 0, status_type: "open", zh: { title: "开放", detail: "交流" }, en: { title: "Open", detail: "Discuss" } }] };
     const supabase = { rpc: vi.fn().mockResolvedValue({ data: [{ resume_id: resumeId, activity_log_enabled: true,
       contact_write_mode: "rpc", contact_trusted_context_required: true }], error: null }), from: vi.fn(),
-      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600 } }, error: null })) } };
+      auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "session-token", expires_at: Date.now() / 1000 + 3600, user: { id: "10000000-0000-4000-8000-000000000002" } } }, error: null })),
+        getUser: vi.fn(async () => ({ data: { user: { id: "10000000-0000-4000-8000-000000000002" } }, error: null })) } };
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     let failOnce = true;
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
@@ -458,7 +495,7 @@ describe("Contact repository typed writer and V2 decoder", () => {
     expect(calls[0]!.body.request_id).toBe(calls[1]!.body.request_id);
     expect(calls[0]!.body.contact).toEqual(calls[1]!.body.contact);
     expect(calls[0]!.body.contact).toMatchObject({ focus: [{ id: null, position: 0 }], status: [{ id: null, position: 0, status_type: "open" }] });
-    expect(repo.hasPendingContactWorkerSave!(resumeId)).toBe(false);
+    expect(repo.hasPendingContactWorkerSave!(resumeId, testActorId)).toBe(false);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 
