@@ -448,6 +448,43 @@ jobs:
           fi
           echo "docker_daemon_restore=done"
 
+  admin_candidate_compatibility:
+    name: Candidate database and Worker compatibility
+    needs: detect_changes
+    if: needs.detect_changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SUPABASE_USE_SLIM_IMAGES: "false"
+    steps:
+      - name: Check out fixed candidate history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+      - name: Install locked test dependencies
+        working-directory: resume-admin
+        run: npm ci
+      - name: Set up fixed Supabase CLI
+        uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359
+        with:
+          version: 2.119.0
+      - name: Verify compatibility and staging safety contracts
+        run: |
+          node --test resume-admin/tests/rls-runtime/compatibility-contract.self-test.mjs
+          node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+      # Child supervisor: 25 minutes; owned fallback cleanup: 2 minutes.
+      # Job has 11 minutes outside this step for dependency setup and VM teardown.
+      - name: Execute all four candidate combinations
+        timeout-minutes: 29
+        run: node resume-admin/tests/rls-runtime/run-postmerge-compatibility.mjs
+
   public_tests_build:
     name: Public tests and production build
     needs: detect_changes
@@ -479,6 +516,7 @@ jobs:
       - admin_frontend_worker_audit
       - admin_migration_consistency
       - admin_local_sql
+      - admin_candidate_compatibility
       - public_tests_build
     if: always()
     runs-on: ubuntu-latest
@@ -499,3 +537,17 @@ jobs:
           ADMIN_LOCAL_SQL_RESULT: ${{ needs.admin_local_sql.result }}
           PUBLIC_RESULT: ${{ needs.public_tests_build.result }}
         run: node .github/scripts/pr-validation-gate.mjs gate
+
+      - name: Require candidate compatibility result
+        if: always()
+        env:
+          ADMIN_APPLICABLE: ${{ needs.detect_changes.outputs.admin }}
+          MATRIX_RESULT: ${{ needs.admin_candidate_compatibility.result }}
+        run: |
+          if [[ "${ADMIN_APPLICABLE}" == "true" ]]; then
+            test "${MATRIX_RESULT}" = success
+          elif [[ "${ADMIN_APPLICABLE}" == "false" ]]; then
+            test "${MATRIX_RESULT}" = skipped
+          else
+            exit 1
+          fi
