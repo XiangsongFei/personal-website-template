@@ -96,6 +96,25 @@ export function assertDefaultSchemaTables(text) {
 }
 
 export function fallbackRequired(manifest, cleaned) { return !cleaned.has(manifest); }
+const roleDumpStatuses = Object.freeze(['cli-command-failed','artifact-missing','artifact-empty',
+  'artifact-not-regular','artifact-oversize','success','unverified']);
+export const safeRoleDumpStatus = status => roleDumpStatuses.includes(status) ? status : 'unverified';
+export function dumpRoles(stage, supabase, report = status => process.send?.({ kind: 'roles-dump-result', status: safeRoleDumpStatus(status) })) {
+  const file = join(stage.stagedRoot, 'roles.sql');
+  report('unverified');
+  try { supabase(['db','dump','--local','--role-only','-f',file]); }
+  catch (error) { report('cli-command-failed'); throw error; }
+  let stat;
+  try { stat=lstatSync(file); }
+  catch (error) { report(error?.code==='ENOENT'?'artifact-missing':'unverified'); throw error; }
+  const failure = !stat.isFile() || stat.isSymbolicLink() ? 'artifact-not-regular'
+    : stat.size===0 ? 'artifact-empty' : stat.size>=16*1024*1024 ? 'artifact-oversize' : null;
+  if(failure){ report(failure); throw new Error('synthetic-role-artifact-rejected'); }
+  let bytes;
+  try { bytes=readFileSync(file); assert.equal(bytes.length,stat.size,'synthetic-role-artifact-changed'); }
+  catch (error) { report('unverified'); throw error; }
+  report('success'); return bytes;
+}
 function passed(name) {
   assert(caseNames.includes(name) && !completed.has(name));
   completed.add(name); process.send?.({ kind: 'case', name, status: 'verified' });
@@ -177,6 +196,10 @@ async function snapshot(stage, token) {
 }
 function dump(stage, supabase, name, args) {
   assert(artifactNames.includes(name) || ['default-schema.sql','default-data.sql'].includes(name));
+  if(name==='roles.sql'){
+    assert.deepEqual(args,['--role-only']);
+    return dumpRoles(stage,supabase);
+  }
   const file = join(stage.stagedRoot, name);
   supabase(['db', 'dump', '--local', ...args, '-f', file]);
   const stat = lstatSync(file); assert(stat.isFile() && !stat.isSymbolicLink() && stat.size > 0 && stat.size < 16 * 1024 * 1024);
@@ -369,6 +392,11 @@ async function supervise() {
       const result=safeExportResult(m.stage,m.status);
       if(result.status==='failed')failed=true;
       console.log(`backup_export_stage=${result.stage} status=${result.status}`);
+    }
+    if(m?.kind==='roles-dump-result'){
+      const status=safeRoleDumpStatus(m.status);
+      if(status!=='success' && status!=='unverified')failed=true;
+      console.log(`backup_roles_dump=${status}`);
     }
     if(m?.kind==='case' && caseNames.includes(m.name) && m.status==='verified'){
       if(cases.has(m.name))failed=true;cases.add(m.name);console.log(`backup_case=${m.name} status=verified`);

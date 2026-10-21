@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, openSync, ftruncateSync, closeSync } from 'node:fs';
 // Explicit test-side interface for the ESM runners; no project-wide TS changes.
 const { artifactNames, caseNames, makeManifest, verifyArtifacts, restoreInputs, sealArtifacts, openArtifacts, sha256, assertConsistent } = await import(new URL('./rls-runtime/backup-recovery-contract.mjs', import.meta.url).href) as {
   artifactNames: readonly string[]; caseNames: readonly string[];
@@ -18,13 +19,15 @@ const { artifactNames, caseNames, makeManifest, verifyArtifacts, restoreInputs, 
   sha256: (bytes:string|Buffer) => string;
   assertConsistent: (before:Record<string,string>,after:Record<string,string>) => boolean;
 };
-const { validateStage, validManifestPath, failureSelfTest, assertDefaultSchemaTables, exportStep, safeExportResult, exportStages, fallbackRequired } = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
+const { validateStage, validManifestPath, failureSelfTest, assertDefaultSchemaTables, exportStep, safeExportResult, exportStages, fallbackRequired, dumpRoles, safeRoleDumpStatus } = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
   validateStage:(stage:unknown)=>void; validManifestPath:(path:unknown)=>boolean; failureSelfTest:()=>Promise<void>;
   assertDefaultSchemaTables:(sql:unknown)=>void;
   exportStages:readonly string[];
   safeExportResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
   exportStep:(stage:string,operation:()=>unknown,report:(result:{stage:string;status:string})=>void)=>unknown;
   fallbackRequired:(manifest:string,cleaned:Set<string>)=>boolean;
+  dumpRoles:(stage:{stagedRoot:string},supabase:(args:string[])=>void,report:(status:string)=>void)=>Buffer;
+  safeRoleDumpStatus:(status:unknown)=>string;
 };
 
 const fixtures = () => new Map(artifactNames.map((name: string) => [name,Buffer.from(`synthetic-only:${name}`)]));
@@ -59,6 +62,60 @@ describe('synthetic backup local contracts (no database)',()=>{
   });
   it('distinguishes callback failure, cleanup failure and timeout using synthetic failures',async()=>{
     await failureSelfTest();
+  });
+});
+describe('roles dump command versus artifact failures (synthetic filesystem, no database)',()=>{
+  it.each(['cli-command-failed','artifact-missing','artifact-empty','artifact-not-regular','symlink','artifact-oversize','success'])('classifies %s without exposing CLI output',(scenario)=>{
+    const stagedRoot=mkdtempSync(join(tmpdir(),'roles-dump-contract-'));
+    const file=join(stagedRoot,'roles.sql');const events:string[]=[];
+    const bytes=Buffer.from('CREATE ROLE "synthetic_backup_reader";\nRESET ALL;\n');
+    let calls=0;
+    try{
+      const command=(args:string[])=>{
+        calls++;
+        expect(args).toEqual(['db','dump','--local','--role-only','-f',file]);
+        if(scenario==='cli-command-failed'){
+          writeFileSync(file,bytes); // Even a partial output must not mask command failure.
+          throw new Error('SQL PASSWORD JWT /private/secret');
+        }
+        if(scenario==='artifact-empty')writeFileSync(file,'');
+        if(scenario==='artifact-not-regular')mkdirSync(file);
+        if(scenario==='symlink'){writeFileSync(join(stagedRoot,'other'),bytes);symlinkSync('other',file);}
+        if(scenario==='artifact-oversize'){
+          const fd=openSync(file,'wx');try{ftruncateSync(fd,16*1024*1024);}finally{closeSync(fd);}
+        }
+        if(scenario==='success')writeFileSync(file,bytes);
+      };
+      const run=()=>dumpRoles({stagedRoot},command,status=>events.push(status));
+      if(scenario==='success')expect(run()).toEqual(bytes);else expect(run).toThrow();
+      expect(calls).toBe(1);
+      expect(events).toEqual(['unverified',scenario==='symlink'?'artifact-not-regular':scenario]);
+      expect(JSON.stringify(events)).not.toMatch(/SQL|PASSWORD|JWT|secret|private|CREATE|reader/);
+    }finally{rmSync(stagedRoot,{recursive:true,force:true});}
+  });
+  it('sanitizes unknown statuses and preserves the outer first-failure contract',()=>{
+    expect(safeRoleDumpStatus('PASSWORD JWT')).toBe('unverified');
+    expect(safeRoleDumpStatus(undefined)).toBe('unverified');
+    const stagedRoot=mkdtempSync(join(tmpdir(),'roles-dump-contract-'));
+    const roles:string[]=[];const stages:{stage:string;status:string}[]=[];let continued=false;
+    try{
+      expect(()=>{
+        exportStep('roles-dump',()=>dumpRoles({stagedRoot},()=>{},s=>roles.push(s)),s=>stages.push(s));
+        continued=true;
+      }).toThrow();
+      expect(continued).toBe(false);
+      expect(roles).toEqual(['unverified','artifact-missing']);
+      expect(stages).toEqual([{stage:'roles-dump',status:'unverified'},{stage:'roles-dump',status:'failed'}]);
+    }finally{rmSync(stagedRoot,{recursive:true,force:true});}
+  });
+  it('does not misclassify an unexpected filesystem error as a missing artifact',()=>{
+    const root=mkdtempSync(join(tmpdir(),'roles-dump-contract-'));
+    const stagedRoot=join(root,'not-a-directory');const events:string[]=[];
+    try{
+      writeFileSync(stagedRoot,'synthetic-only');
+      expect(()=>dumpRoles({stagedRoot},()=>{},s=>events.push(s))).toThrow();
+      expect(events).toEqual(['unverified','unverified']);
+    }finally{rmSync(root,{recursive:true,force:true});}
   });
 });
 describe('fixed CLI dump format and bounded diagnostics (no database)',()=>{
