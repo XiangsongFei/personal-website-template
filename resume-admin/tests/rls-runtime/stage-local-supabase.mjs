@@ -909,36 +909,58 @@ function createLoopbackNetwork(projectId) {
   return { id: network.Id ?? createdId, name: network.Name ?? networkName };
 }
 
-function cleanupOwnedResources(resources, projectId, before) {
-  const current = identifyOwnedResources(projectId, before);
-  for (const kind of Object.keys(resources)) {
-    const recorded = new Set(resources[kind]);
-    for (const id of current[kind]) {
-      if (!recorded.has(id)) throw new Error(`Unrecorded ${kind} resource ${id} belongs to this run; leaving all resources untouched`);
-    }
-    for (const id of recorded) verifyOwnedResource(kind, id, projectId, before);
+const cleanupOperations = new Set(["container-stop", "container-remove", "volume-remove", "network-remove", "ownership-check", "manifest-check", "unknown"]);
+export function safeCleanupOperation(error) {
+  return cleanupOperations.has(error?.cleanupOperation) ? error.cleanupOperation : "unknown";
+}
+function cleanupStep(operation, action) {
+  try { return action(); }
+  catch {
+    const error = new Error("Ownership-checked cleanup failed; raw details suppressed.");
+    error.cleanupOperation = cleanupOperations.has(operation) ? operation : "unknown";
+    throw error;
   }
-
+}
+function appendContainerSummary(error, summary) {
+  // Keep callback identity: the runner distinguishes callback failure from cleanup failure.
+  if (error instanceof Error) { error.message = `${error.message}\n${summary}`; return error; }
+  return new Error(`Operation failed\n${summary}`);
+}
+function finalizeStageDirectory(stageRoot, cleanupFailure) {
+  if (cleanupFailure) return "retained";
+  cleanupStep("manifest-check", () => removeTemporaryStage(stageRoot));
+  return "removed";
+}
+function cleanupOwnedResources(resources, projectId, before) {
+  cleanupStep("ownership-check", () => {
+    const current = identifyOwnedResources(projectId, before);
+    for (const kind of Object.keys(resources)) {
+      const recorded = new Set(resources[kind]);
+      for (const id of current[kind]) {
+        if (!recorded.has(id)) throw new Error("Unrecorded owned resource");
+      }
+      for (const id of recorded) verifyOwnedResource(kind, id, projectId, before);
+    }
+  });
   for (const id of resources.containers) {
-    verifyOwnedResource("containers", id, projectId, before);
-    const state = dockerJson(["inspect", id])[0]?.State;
-    if (state?.Running) run("docker", ["stop", id]);
-    verifyOwnedResource("containers", id, projectId, before);
-    run("docker", ["rm", id]);
+    const resource = cleanupStep("ownership-check", () => verifyOwnedResource("containers", id, projectId, before));
+    if (resource.State?.Running) cleanupStep("container-stop", () => run("docker", ["stop", id]));
+    cleanupStep("ownership-check", () => verifyOwnedResource("containers", id, projectId, before));
+    cleanupStep("container-remove", () => run("docker", ["rm", id]));
   }
   for (const id of resources.volumes) {
-    verifyOwnedResource("volumes", id, projectId, before);
-    run("docker", ["volume", "rm", id]);
+    cleanupStep("ownership-check", () => verifyOwnedResource("volumes", id, projectId, before));
+    cleanupStep("volume-remove", () => run("docker", ["volume", "rm", id]));
   }
   for (const id of resources.networks) {
-    verifyOwnedResource("networks", id, projectId, before);
-    run("docker", ["network", "rm", id]);
+    cleanupStep("ownership-check", () => verifyOwnedResource("networks", id, projectId, before));
+    cleanupStep("network-remove", () => run("docker", ["network", "rm", id]));
   }
 }
 
 function cleanupFromManifest(manifestPath) {
   const absolutePath = resolve(manifestPath);
-  const manifest = JSON.parse(readFileSync(absolutePath, "utf8"));
+  const manifest = cleanupStep("manifest-check", () => JSON.parse(readFileSync(absolutePath, "utf8")));
   const stageRoot = resolve(manifest.stageRoot ?? "");
   const expectedManifest = join(stageRoot, "ownership.json");
   if (absolutePath !== expectedManifest || !stageRoot.startsWith(`${tmpdir()}/pr1-supabase-`)
@@ -949,11 +971,11 @@ function cleanupFromManifest(manifestPath) {
   if (!["containers", "volumes", "networks"].every((key) => before[key] instanceof Set)) {
     throw new Error("Cleanup refused: manifest lacks the original Docker resource snapshot");
   }
-  const resources = identifyOwnedResources(manifest.projectId, before);
-  writeFileSync(absolutePath, JSON.stringify({ ...manifest, created: resources }, null, 2));
+  const resources = cleanupStep("ownership-check", () => identifyOwnedResources(manifest.projectId, before));
+  cleanupStep("manifest-check", () => writeFileSync(absolutePath, JSON.stringify({ ...manifest, created: resources }, null, 2)));
   cleanupOwnedResources(resources, manifest.projectId, before);
-  rmSync(stageRoot, { recursive: true, force: true });
-  console.log(`Removed only ownership-verified resources for ${manifest.projectId}.`);
+  finalizeStageDirectory(stageRoot, null);
+  console.log("cleanup_status=success ownership=verified");
 }
 
 async function availablePort() {
@@ -1616,6 +1638,26 @@ if (delay > 0) setTimeout(finish, delay); else finish();
 }
 
 async function runSecuritySelfTests() {
+  const callbackFailure = new Error("synthetic callback failure");
+  assert.equal(appendContainerSummary(callbackFailure, "Docker container events: observation=incomplete"), callbackFailure);
+  const cleanupTestRoot = mkdtempSync(join(tmpdir(), "pr1-cleanup-lifecycle-selftest-"));
+  try {
+    const manifest = join(cleanupTestRoot, "ownership.json");
+    writeFileSync(manifest, "synthetic-private-manifest");
+    assert.equal(finalizeStageDirectory(cleanupTestRoot, new Error("synthetic-secret")), "retained");
+    assert.equal(readFileSync(manifest, "utf8"), "synthetic-private-manifest");
+    for (const operation of cleanupOperations) {
+      assert.throws(() => cleanupStep(operation, () => { throw new Error("synthetic-secret"); }), error => {
+        assert.equal(safeCleanupOperation(error), operation);
+        assert.equal(error.message.includes("synthetic-secret"), false);
+        return true;
+      });
+    }
+    assert.equal(safeCleanupOperation({ cleanupOperation: "synthetic-secret" }), "unknown");
+    assert.equal(finalizeStageDirectory(cleanupTestRoot, null), "removed");
+    assert.equal(existsSync(manifest), false);
+  } finally { rmSync(cleanupTestRoot, { recursive: true, force: true }); }
+
   // All assertions below expose only booleans or fixed enums on failure.
   const secret = "diagnostic-private-marker";
   const jsonError = (code, message = "address already in use", includeCode = true) => JSON.stringify({
@@ -2207,14 +2249,13 @@ export async function withStagedLocalSupabase(callback) {
     callbackError = error;
   } finally {
     try {
-      Object.assign(resources, identifyOwnedResources(projectId, before));
+      Object.assign(resources, cleanupStep("ownership-check", () => identifyOwnedResources(projectId, before)));
       if (started || resources.containers.length || resources.volumes.length || resources.networks.length) {
-        writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
+        cleanupStep("manifest-check", () => writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)));
         cleanupOwnedResources(resources, projectId, before);
       }
     } catch (error) {
-      console.error(`Local Supabase cleanup stopped because ownership or removal could not be verified. Resources were left untouched where verification failed. Ownership manifest: ${ownershipPath}`);
-      if (callbackError) console.error(`Test failure: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`);
+      console.error(`cleanup_operation=${safeCleanupOperation(error)} status=failed manifest=retained`);
       cleanupFailure = error;
     } finally {
       if (containerEventObserverAttempted) {
@@ -2222,10 +2263,10 @@ export async function withStagedLocalSupabase(callback) {
         try { summary = await stopDockerContainerEventObserver(containerEventObserver); }
         catch { summary = "Docker container events: observation=incomplete"; }
         console.log(summary);
-        if (callbackError) callbackError = new Error(`${callbackError.message}\n${summary}`);
-        if (cleanupFailure) cleanupFailure = new Error(`${cleanupFailure.message}\n${summary}`);
+        if (callbackError) callbackError = appendContainerSummary(callbackError, summary);
+        if (cleanupFailure) cleanupFailure = appendContainerSummary(cleanupFailure, summary);
       }
-      try { removeTemporaryStage(stageRoot); }
+      try { finalizeStageDirectory(stageRoot, cleanupFailure); }
       catch (error) { cleanupFailure ??= error; }
     }
   }
@@ -2244,7 +2285,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     try {
       cleanupFromManifest(process.argv[3]);
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+      console.error(`cleanup_operation=${safeCleanupOperation(error)} status=failed`);
       process.exitCode = 1;
     }
   } else if (options.size !== 1 || !options.has("--sql")) {

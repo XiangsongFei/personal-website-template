@@ -9,7 +9,7 @@ import { dirname, resolve, join } from "node:path";
 import { readFileSync, statSync } from "node:fs";
 import { setTimeout, clearTimeout } from "node:timers";
 import assert from "node:assert/strict";
-import { withStagedLocalSupabase } from "./rls-runtime/stage-local-supabase.mjs";
+import { withStagedLocalSupabase, safeCleanupOperation } from "./rls-runtime/stage-local-supabase.mjs";
 
 const adminRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const targetId = "ea111111-1111-4111-8111-111111111111";
@@ -36,6 +36,12 @@ const priorRequirement = psql(`SELECT COALESCE((SELECT enabled::text FROM cms_pr
 if (!new Set(["absent", "true", "false"]).has(priorRequirement)) throw new Error("Unexpected local V1.1 requirement state");
 const officialBaseline = psql(`SELECT cms_private.get_resume_write_mode('${officialId}'::uuid,'introduction') || ':' || COALESCE((SELECT enabled::text FROM cms_private.resume_capabilities WHERE resume_id='${officialId}'::uuid AND capability_key='activity_log'),'absent') || ':' || COALESCE((SELECT enabled::text FROM cms_private.resume_domain_requirements WHERE resume_id='${officialId}'::uuid AND domain_key='introduction' AND requirement_key='trusted_network_context_v11'),'absent')`);
 if (officialBaseline !== "direct:absent:absent" && officialBaseline !== "direct:false:absent") throw new Error("Official-like local fixture is not in the expected direct/off baseline");
+
+if (psql(`SELECT count(*) FROM public.resume_sites s JOIN public.cms_admins a ON a.resume_id=s.id
+  WHERE s.id='${targetId}'::uuid AND s.site_key='example-cv-qa-activity-log' AND s.is_published IS FALSE
+  AND a.user_id='10000000-0000-4000-8000-000000000002'::uuid AND a.role='qa'`) !== "1") {
+  throw new Error("Isolated QA fixture identity mismatch");
+}
 
 function token(claims) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -93,7 +99,7 @@ try {
       END AS input_case
     FROM cms_private.activity_log_events
     WHERE resume_id='${targetId}'::uuid
-      AND site_key_snapshot='example-cv-qa'
+      AND site_key_snapshot='example-cv-qa-activity-log'
       AND entity_type='introduction_paragraph'
       AND entity_id='introduction'
       AND (entity_snapshot @> '{"paragraphs":[{"text_zh":"D integration local item","text_en":"D integration local item"}]}'::jsonb
@@ -152,6 +158,7 @@ async function observeStaging(stageRunner, callback, emit = reportStage) {
     emit("resources", "success");
   } catch (error) {
     emit("resources", !callbackExited ? "unverified" : error === callbackError ? "success" : "failed");
+    if (error !== callbackError) process.send?.({ kind: "cleanup-operation", operation: safeCleanupOperation(error) });
     throw error;
   }
 }
@@ -239,6 +246,7 @@ async function supervise() {
     if (message?.kind === "phase" && phases.has(message.value)) { phase = message.value; console.log(`v11_phase=${phase}`); }
     if (message?.kind === "results") results = message.summary;
     captureStageStatus(stages, message);
+    if (message?.kind === "cleanup-operation") console.log(`v11_cleanup_operation=${safeCleanupOperation({ cleanupOperation: message.operation })}`);
   });
   // Twelve minutes includes staging/reset, five-minute Vitest and normal cleanup.
   // A forced stop has a separate two-minute ownership-checked cleanup budget.
@@ -330,7 +338,7 @@ if (process.argv.includes("--security-self-test")) {
       let error;
       try { await callback(); } catch (caught) { error = caught; }
       if (cleanupFails) throw new Error(secret);
-      if (error) throw error;
+      if (error) { error.message += "\nDocker container events: observation=incomplete"; throw error; }
     };
     try { await observeStaging(stageRunner, async () => { if (callbackFails) throw callbackError; }, (...args) => events.push(args)); }
     catch { assert(callbackFails || cleanupFails); }

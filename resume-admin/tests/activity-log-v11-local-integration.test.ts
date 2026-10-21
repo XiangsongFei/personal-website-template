@@ -32,6 +32,7 @@ let dropNextV13RecorderResponseAfterCommit = false;
 let dropNextAwardsRpcResponseAfterCommit = false;
 let lastAwardsRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
 let lastProfileRpcFailure: { status: number; code: string | null; message: string | null } | null = null;
+let lastIntroductionRpcFailure: { status: number; code: string | null } | null = null;
 let lastD7RpcFailure: { status: number; code: string | null } | null = null;
 let filesRestoreSourceRpcCalls = 0;
 let filesRestoreRpcCalls = 0;
@@ -56,6 +57,15 @@ if (enabled) {
       const mutate = mutateNextRpcPayload;
       mutateNextRpcPayload = undefined;
       forwardedInit = { ...init, body: JSON.stringify(mutate(JSON.parse(init.body) as Record<string, unknown>)) };
+    }
+    if (url.pathname === "/rest/v1/rpc/save_resume_introduction_v11") {
+      lastIntroductionRpcFailure = null;
+      const response = await originalFetch(url, forwardedInit);
+      if (!response.ok) {
+        const failure = await response.clone().json().catch(() => null) as { code?: unknown } | null;
+        lastIntroductionRpcFailure = { status: response.status, code: typeof failure?.code === "string" ? failure.code : null };
+      }
+      return response;
     }
     if ((url.pathname === "/rest/v1/rpc/save_resume_website_links_v1" || url.pathname === "/rest/v1/rpc/save_resume_files_v1") && typeof init?.body === "string") {
       const forwarded = mutateNextD7RpcPayload ? { ...init, body: JSON.stringify(mutateNextD7RpcPayload(JSON.parse(init.body) as Record<string, unknown>)) } : init;
@@ -893,28 +903,49 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     expect(afterSameRequestEvents.length).toBe(beforeSameRequestEvents + 1);
     expect(afterSameRequestEvents[0]).toMatchObject({ actor_user_id: actorId, resume_id: targetId, section_key: "introduction" });
 
-    // Request-id scope includes both actor and target. Owner and QA can both
-    // reach this local QA fixture; the same UUID with a different digest must
-    // therefore be independent for the two synthetic actors.
+    // Owner and QA have disjoint authorized targets. Same-actor cross-target
+    // success is not reachable under this policy and is not claimed here.
     const sharedActorRequest = localUuid();
     const qaMutation = (await readItems()).map(({ id, zh, en }) => ({ id, zh: `${zh} QA actor`, en }));
-    const ownerMutation = (await readItems()).map(({ id, zh, en }) => ({ id, zh, en: `${en} owner actor` }));
     const qaActorSave = await invoke(qaMutation, sharedActorRequest, userJwt!);
-    const ownerActorSave = await invoke(ownerMutation, sharedActorRequest, ownerJwt!);
     expect(qaActorSave.response.status).toBe(200);
-    expect(ownerActorSave.response.status).toBe(200);
-    expect((await readItems()).map(({ en }) => en)).toEqual(ownerMutation.map(({ en }) => en));
+    const qaBeforeDenied = await readItems();
+    const qaEventsBeforeDenied = await readEvents();
+    const qaIdempotencyBeforeDenied = localSql(`SELECT md5(COALESCE(jsonb_agg(to_jsonb(i) ORDER BY actor_user_id,request_id)::text,'[]'))
+      FROM cms_private.activity_log_idempotency i WHERE resume_id='${targetId}'::uuid`);
+    const ownerMutation = qaBeforeDenied.map(({ id, zh, en }) => ({ id, zh, en: `${en} owner actor` }));
+    for (const deniedId of [sharedActorRequest, localUuid()]) {
+      const denied = await invoke(ownerMutation, deniedId, ownerJwt!, targetId);
+      expect(denied.response.status).toBe(502);
+      expect(denied.body).toMatchObject({ error: { code: "upstream_failure" } });
+      expect(lastIntroductionRpcFailure).toMatchObject({ status: 403, code: "42501" });
+      expect(await readItems()).toEqual(qaBeforeDenied);
+      expect(await readEvents()).toEqual(qaEventsBeforeDenied);
+      expect(localSql(`SELECT md5(COALESCE(jsonb_agg(to_jsonb(i) ORDER BY actor_user_id,request_id)::text,'[]'))
+        FROM cms_private.activity_log_idempotency i WHERE resume_id='${targetId}'::uuid`)).toBe(qaIdempotencyBeforeDenied);
+    }
+    const qaReplay = await invoke(qaMutation, sharedActorRequest, userJwt!);
+    expect(qaReplay.response.status).toBe(200);
+    expect(qaReplay.body).toEqual(qaActorSave.body);
+    expect(await readEvents()).toEqual(qaEventsBeforeDenied);
 
-    // The same actor/request ID against the QA and official-like local target
-    // must not collide because target is another idempotency scope component.
-    const sharedTargetRequest = localUuid();
-    const ownerQaMutation = (await readItems()).map(({ id, zh, en }) => ({ id, zh: `${zh} owner QA`, en }));
+    // The same UUID remains independent for the two legal actor/target pairs.
     const ownerOfficialMutation = (await readItems(officialId, ownerJwt!)).map(({ id, zh, en }) => ({ id, zh, en: `${en} owner official` }));
-    const ownerQaSave = await invoke(ownerQaMutation, sharedTargetRequest, ownerJwt!);
-    const ownerOfficialSave = await invoke(ownerOfficialMutation, sharedTargetRequest, ownerJwt!, officialId);
-    expect(ownerQaSave.response.status).toBe(200);
+    const ownerEventsBefore = await readEvents(officialId, ownerJwt!);
+    const ownerOfficialSave = await invoke(ownerOfficialMutation, sharedActorRequest, ownerJwt!, officialId);
     expect(ownerOfficialSave.response.status).toBe(200);
-    expect((await readEvents(targetId, ownerJwt!)).some((row) => row.actor_user_id === ownerId)).toBe(true);
+    const ownerReplay = await invoke(ownerOfficialMutation, sharedActorRequest, ownerJwt!, officialId);
+    expect(ownerReplay.response.status).toBe(200);
+    expect(ownerReplay.body).toEqual(ownerOfficialSave.body);
+    expect((await readItems(officialId, ownerJwt!)).map(({ en }) => en)).toEqual(ownerOfficialMutation.map(({ en }) => en));
+    const ownerEventsAfter = await readEvents(officialId, ownerJwt!);
+    expect(ownerEventsAfter).toHaveLength(ownerEventsBefore.length + 1);
+    expect(ownerEventsAfter[0]).toMatchObject({ actor_user_id: ownerId, resume_id: officialId });
+    const changedOwnerPayload = ownerOfficialMutation.map(row => ({ ...row, en: `${row.en} conflict` }));
+    expect((await invoke(changedOwnerPayload, sharedActorRequest, ownerJwt!, officialId)).response.status).toBe(409);
+    expect(await readEvents(officialId, ownerJwt!)).toEqual(ownerEventsAfter);
+    expect(await readItems()).toEqual(qaBeforeDenied);
+
   });
 
   it("integrates Awards Worker saves with local PostgREST/RPC, replay, conflict, no-op, rollback, and RLS", async () => {
@@ -1364,6 +1395,21 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
     const candidateReference = `${workerUpstreamOrigin}/storage/v1/object/public/resume-files/${candidatePath}`;
     localSql(`UPDATE public.resume_locale_content SET portfolio_href='${legacyReference}' WHERE resume_id='${targetId}'::uuid AND locale='en'`);
     const uploadedPaths = [legacyPath, candidatePath];
+    const priorRestore = localSql(`SELECT COALESCE((SELECT enabled::text FROM cms_private.resume_capabilities
+      WHERE resume_id='${targetId}'::uuid AND capability_key='restore'),'absent')`);
+    expect(["absent", "false"]).toContain(priorRestore);
+    const ownerRestoreState = () => localSql(`SELECT COALESCE((SELECT enabled::text FROM cms_private.resume_capabilities
+      WHERE resume_id='${officialId}'::uuid AND capability_key='restore'),'absent')`);
+    const priorOwnerRestore = ownerRestoreState();
+    expect(["absent", "false"]).toContain(priorOwnerRestore);
+    const restoreCapabilityState = () => localSql(`SELECT COALESCE((SELECT enabled::text FROM cms_private.resume_capabilities
+      WHERE resume_id='${targetId}'::uuid AND capability_key='restore'),'absent')`);
+    const filesSafetySnapshot = () => localSql(`SELECT md5(jsonb_build_object(
+      'files',cms_private.files_aggregate('${targetId}'::uuid),
+      'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM cms_private.activity_log_events e WHERE resume_id='${targetId}'::uuid),
+      'idem',(SELECT jsonb_agg(to_jsonb(i) ORDER BY actor_user_id,request_id) FROM cms_private.activity_log_idempotency i WHERE resume_id='${targetId}'::uuid),
+      'storage',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM storage.objects o WHERE bucket_id='resume-files')
+    )::text)`);
     localSql(`UPDATE cms_private.resume_write_modes SET write_mode='rpc' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
       INSERT INTO cms_private.resume_domain_requirements(resume_id,domain_key,requirement_key,enabled)
       VALUES ('${targetId}'::uuid,'website_links','trusted_network_context_v11',true),('${targetId}'::uuid,'files','trusted_network_context_v11',true);
@@ -1464,6 +1510,36 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
 
       const saveEvent = (await readUnifiedEvents()).find(event => event.section_key === "files" && event.payload_version === 2);
       expect(saveEvent).toBeTruthy();
+      const disabledSnapshot = filesSafetySnapshot();
+      const disabledDeletes = workerStorageDeleteCalls;
+      const disabledRestore = await invokeFilesRestore(String(saveEvent!.id));
+      expect(disabledRestore.response.status).toBe(422);
+      expect(disabledRestore.body).toMatchObject({ error: { code: "restore_source_invalid" } });
+      expect(lastFilesRestoreSourceFailure).toMatchObject({ status: 403, code: "42501" });
+      expect(filesSafetySnapshot()).toBe(disabledSnapshot);
+      expect(workerStorageDeleteCalls).toBe(disabledDeletes);
+      // Only the disposable, unpublished, identity-bound QA fixture is enabled.
+      assertLocalConfiguration();
+      expect(localSql(`SELECT count(*) FROM public.resume_sites s JOIN public.cms_admins a ON a.resume_id=s.id
+        WHERE s.id='${targetId}'::uuid AND s.site_key='example-cv-qa-activity-log' AND s.is_published IS FALSE
+        AND a.user_id='${actorId}'::uuid AND a.role='qa'`)).toBe("1");
+      localSql(`INSERT INTO cms_private.resume_capabilities(resume_id,capability_key,enabled)
+        VALUES ('${targetId}'::uuid,'restore',true) ON CONFLICT(resume_id,capability_key) DO UPDATE SET enabled=true`);
+      expect(restoreCapabilityState()).toBe("true");
+      const unauthorizedSnapshot = filesSafetySnapshot();
+      expect((await invokeFilesRestore(String(saveEvent!.id), localUuid(), ownerJwt!, targetId)).response.status).toBe(422);
+      expect(lastFilesRestoreSourceFailure).toMatchObject({ status: 403, code: "42501" });
+      expect((await invokeFilesRestore(String(saveEvent!.id), localUuid(), userJwt!, officialId)).response.status).toBe(422);
+      expect(lastFilesRestoreSourceFailure).toMatchObject({ status: 403, code: "42501" });
+      expect((await invokeFilesRestore(localUuid())).response.status).toBe(422);
+      expect(lastFilesRestoreSourceFailure).toMatchObject({ status: 400, code: "22023" });
+      const invalidLocaleRequest = new Request("https://admin.local.test/api/admin/v1/files/restore", {
+        method: "POST", headers: { Authorization: `Bearer ${userJwt!}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: localUuid(), resume_id: targetId, source_event_id: saveEvent!.id, locale: "fr" }),
+      });
+      expect((await handleWorkerRequest(invalidLocaleRequest, workerEnv())).status).toBe(400);
+      expect(filesSafetySnapshot()).toBe(unauthorizedSnapshot);
+      expect(workerStorageDeleteCalls).toBe(disabledDeletes);
       const restoreRequestId = localUuid();
       const restored = await invokeFilesRestore(String(saveEvent!.id), restoreRequestId);
       expect(restored.response.status, JSON.stringify(restored.body)).toBe(200);
@@ -1507,7 +1583,7 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
       expect(sourceChanges.after).toEqual(sourceFixtureAfter);
       expect(localSql(`SELECT cms_private.activity_event_payload_v2_files_is_allowed(section_key,entity_type,entity_id,operation,entity_snapshot,changes)::text
         FROM cms_private.activity_log_events WHERE id='${String(persistedSourceEvent!.id)}'::uuid`)).toBe("true");
-      expect(localSql(`SELECT site_key FROM public.resume_sites WHERE id='${targetId}'::uuid`)).toBe("example-cv-qa");
+      expect(localSql(`SELECT site_key FROM public.resume_sites WHERE id='${targetId}'::uuid`)).toBe("example-cv-qa-activity-log");
 
       const qaFilesBeforeRejectedRestore = await readFiles();
       const qaEventsBeforeRejectedRestore = (await readUnifiedEvents()).filter(event => event.section_key === "files" && event.payload_version === 2).length;
@@ -1614,6 +1690,12 @@ describe.skipIf(!enabled)("Activity Log V1.1 local Worker/PostgREST integration"
         AND resume_id='${targetId}'::uuid AND domain_key='files' AND request_id='${restoreRequestIdConcurrent}'::uuid`)).toBe("0");
       expect(workerStorageDeleteCalls).toBe(storageDeleteCountBefore);
     } finally {
+      // Restore capability even when Storage cleanup fails; never enable Owner.
+      localSql(priorRestore === "absent"
+        ? `DELETE FROM cms_private.resume_capabilities WHERE resume_id='${targetId}'::uuid AND capability_key='restore'`
+        : `UPDATE cms_private.resume_capabilities SET enabled=false WHERE resume_id='${targetId}'::uuid AND capability_key='restore'`);
+      expect(restoreCapabilityState()).toBe(priorRestore);
+      expect(ownerRestoreState()).toBe(priorOwnerRestore);
       await deleteLocalResumePdfs(uploadedPaths);
       localSql(`UPDATE cms_private.resume_write_modes SET write_mode='direct' WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files');
         DELETE FROM cms_private.resume_domain_requirements WHERE resume_id='${targetId}'::uuid AND domain_key IN('website_links','files') AND requirement_key='trusted_network_context_v11';
