@@ -1002,9 +1002,13 @@ async function uniquePorts() {
 }
 
 function stageProject(stageRoot, projectId, ports, profile = "current") {
-  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
+  if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
   const stagedSupabase = join(stageRoot, "supabase");
-  cpSync(sourceProject, stagedSupabase, {
+  if (profile === "synthetic-recovery") {
+    mkdirSync(stagedSupabase);
+    cpSync(join(sourceProject, "config.toml"), join(stagedSupabase, "config.toml"));
+    mkdirSync(join(stagedSupabase, "migrations"));
+  } else cpSync(sourceProject, stagedSupabase, {
     recursive: true,
     filter: (source) => !source.includes("/.temp") && !source.includes("/node_modules")
       && !(profile === "candidate-pre-pr28" && source === join(sourceProject, "migrations")),
@@ -1013,7 +1017,7 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   const excluded = new Set(excludedMigrations);
   if (profile === "candidate-pre-pr28") {
     stageCandidateMigrations(join(sourceProject, "migrations"), migrationDir);
-  } else {
+  } else if (profile === "current") {
     for (const migration of excluded) rmSync(join(migrationDir, migration));
   }
 
@@ -1038,10 +1042,14 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   replaceSetting("analytics", "port", ports.analytics);
   replaceSetting("analytics", "vector_port", ports.vector);
   config = config.replaceAll("http://127.0.0.1:55421", `http://127.0.0.1:${ports.api}`);
+  if (profile === "synthetic-recovery") {
+    config = config.replace(/\[db\.seed\][\s\S]*?(?=\n\[)/, "[db.seed]\nenabled = false\nsql_paths = []\n");
+    if (!config.includes("[db.seed]\nenabled = false\nsql_paths = []")) throw new Error("Synthetic seed configuration rejected");
+  }
   writeFileSync(configPath, config);
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  const expected = profile === "candidate-pre-pr28"
+  const expected = profile === "synthetic-recovery" ? [] : profile === "candidate-pre-pr28"
     ? candidateBaselineMigrations.map(([name]) => name)
     : sourceMigrations.filter((name) => !excluded.has(name));
   const stagedMigrations = readdirSync(migrationDir).filter((name) => name.endsWith(".sql")).sort();
@@ -1654,9 +1662,39 @@ async function runSecuritySelfTests() {
   try {
     const ports = { api: 55421, db: 55422, shadow: 55420, analytics: 55427, vector: 55428 };
     const staged = stageProject(candidateTestRoot, "pr1-1-aabbccddeeff", ports, "candidate-pre-pr28");
+    assert.equal(candidateBaselineMigrations.length, 42);
     assert.deepEqual(staged.migrationManifest, candidateBaselineMigrations.map(([name]) => name));
     verifyCandidateMigrationFiles(staged.migrationManifest.map(name => [name, readFileSync(join(staged.stagedSupabase, "migrations", name))]));
   } finally { rmSync(candidateTestRoot, { recursive: true, force: true }); }
+
+  for (const profile of ["current", "synthetic-recovery"]) {
+    const root = mkdtempSync(join(tmpdir(), "pr1-profile-regression-"));
+    try {
+      const ports = { api: 55421, db: 55422, shadow: 55420, analytics: 55427, vector: 55428 };
+      const staged = stageProject(root, "pr1-1-aabbccddeeff", ports, profile);
+      const config = readFileSync(join(staged.stagedSupabase, "config.toml"), "utf8");
+      if (profile === "synthetic-recovery") {
+        assert.deepEqual(readdirSync(staged.stagedSupabase).sort(), ["config.toml", "migrations"]);
+        assert.deepEqual(staged.migrationManifest, []);
+        assert(config.includes("[db.seed]\nenabled = false\nsql_paths = []"));
+      } else {
+        assert.deepEqual(staged.migrationManifest, readdirSync(join(sourceProject, "migrations")).filter(n => n.endsWith(".sql") && !excludedMigrations.has(n)).sort());
+        for (const name of ["seed_qa_fixture.sql", "seed_membership.sql"]) {
+          assert(readFileSync(join(staged.stagedSupabase, name)).equals(readFileSync(join(sourceProject, name))));
+        }
+        const files = (directory) => readdirSync(directory, { withFileTypes: true })
+          .filter(entry => ![".temp", "node_modules"].includes(entry.name))
+          .flatMap(entry => entry.isDirectory() ? files(join(directory, entry.name)).map(name => `${entry.name}/${name}`) : [entry.name]).sort();
+        const expectedFiles = files(sourceProject).filter(name => ![...excludedMigrations].some(excluded => name === `migrations/${excluded}`));
+        assert.deepEqual(files(staged.stagedSupabase), expectedFiles);
+        for (const name of expectedFiles.filter(name => name !== "config.toml")) {
+          assert(readFileSync(join(sourceProject, name)).equals(readFileSync(join(staged.stagedSupabase, name))));
+        }
+        assert(config.includes('[db.seed]\nenabled = true'));
+      }
+      for (const section of ["auth", "storage"]) assert(config.includes(`[${section}]\nenabled = true`));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 
   const callbackFailure = new Error("synthetic callback failure");
   assert.equal(appendContainerSummary(callbackFailure, "Docker container events: observation=incomplete"), callbackFailure);
@@ -2209,7 +2247,7 @@ function verifyLocalStatus(context) {
 }
 
 export async function withStagedLocalSupabase(callback, profile = "current") {
-  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
+  if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
   const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
     .trim();
   verifyDockerHostBindingPlatform(dockerOperatingSystem);
@@ -2238,6 +2276,10 @@ export async function withStagedLocalSupabase(callback, profile = "current") {
   try {
     const preexisting = identifyOwnedResources(projectId, before);
     if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    if (profile === "synthetic-recovery") {
+      writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }), { mode: 0o600 });
+      process.send?.({ kind: "backup-manifest", path: ownershipPath });
+    }
     prefetchVerifiedSupabaseImages();
     const loopbackNetwork = createLoopbackNetwork(projectId);
     resources.networks.push(loopbackNetwork.id);
