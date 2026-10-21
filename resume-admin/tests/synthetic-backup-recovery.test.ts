@@ -18,8 +18,13 @@ const { artifactNames, caseNames, makeManifest, verifyArtifacts, restoreInputs, 
   sha256: (bytes:string|Buffer) => string;
   assertConsistent: (before:Record<string,string>,after:Record<string,string>) => boolean;
 };
-const { validateStage, validManifestPath, failureSelfTest } = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
+const { validateStage, validManifestPath, failureSelfTest, assertDefaultSchemaTables, exportStep, safeExportResult, exportStages, fallbackRequired } = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
   validateStage:(stage:unknown)=>void; validManifestPath:(path:unknown)=>boolean; failureSelfTest:()=>Promise<void>;
+  assertDefaultSchemaTables:(sql:unknown)=>void;
+  exportStages:readonly string[];
+  safeExportResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
+  exportStep:(stage:string,operation:()=>unknown,report:(result:{stage:string;status:string})=>void)=>unknown;
+  fallbackRequired:(manifest:string,cleaned:Set<string>)=>boolean;
 };
 
 const fixtures = () => new Map(artifactNames.map((name: string) => [name,Buffer.from(`synthetic-only:${name}`)]));
@@ -54,6 +59,64 @@ describe('synthetic backup local contracts (no database)',()=>{
   });
   it('distinguishes callback failure, cleanup failure and timeout using synthetic failures',async()=>{
     await failureSelfTest();
+  });
+});
+describe('fixed CLI dump format and bounded diagnostics (no database)',()=>{
+  const app='CREATE TABLE synthetic_backup.items (id integer);';
+  it.each([
+    app,
+    'create table SYNTHETIC_BACKUP.ITEMS (id integer);',
+    'CREATE TABLE IF NOT EXISTS "synthetic_backup"."items" ("id" integer);',
+    'CrEaTe\nTaBlE\tIf  NoT\nExIsTs "synthetic_backup" \n.\t"items" (id integer);',
+    'CREATE /* outer /* nested */ comment */ TABLE synthetic_backup . "items" (id integer);',
+  ])('recognizes application table variant %#',(sql)=>expect(()=>assertDefaultSchemaTables(sql)).not.toThrow());
+  for(const schema of ['auth','storage','vault','supabase_migrations']){
+    it.each([
+      `CREATE TABLE ${schema}.probe (id integer);`,
+      `CREATE TABLE IF NOT EXISTS "${schema}"."probe" (id integer);`,
+      `cReAtE\nTaBlE\tIF\nNOT EXISTS ${schema.toUpperCase()} . probe (id integer);`,
+      `CREATE /* comment */ TABLE IF NOT EXISTS "${schema}" . probe (id integer);`,
+    ])(`rejects managed schema ${schema} variant %#`,(ddl)=>expect(()=>assertDefaultSchemaTables(app+ddl)).toThrow());
+  }
+  it('does not mistake comments, quoted identifiers or function bodies for table declarations',()=>{
+    const embedded=`-- CREATE TABLE auth.fake (id integer);\n/* CREATE TABLE storage.fake (id integer); */
+      CREATE FUNCTION synthetic_backup.demo() RETURNS text LANGUAGE sql AS $fn$ SELECT 'CREATE TABLE vault.fake (id integer);' $fn$;
+      COMMENT ON SCHEMA synthetic_backup IS 'CREATE TABLE supabase_migrations.fake (id integer);';`;
+    expect(()=>assertDefaultSchemaTables(app+embedded)).not.toThrow();
+    expect(()=>assertDefaultSchemaTables(embedded+`SELECT 'CREATE TABLE synthetic_backup.items (id integer);';`)).toThrow();
+    expect(()=>assertDefaultSchemaTables('SELECT "create", "table", "synthetic_backup", "items";')).toThrow();
+  });
+  it.each([
+    '', 'CREATE TABLE items (id integer);', 'CREATE TABLE "Synthetic_Backup"."items" (id integer);',
+    'CREATE TABLE synthetic_backup.items AS SELECT 1;', 'CREATE TABLE synthetic_backup.items (id integer;',
+    'CREATE TABLE synthetic_backup.items (id integer)', app+'/* unterminated', app+"SELECT 'unterminated;",
+    app+'SELECT $fn$unterminated;', app+'CREATE TABLE "auth.probe" (id integer);',
+    app+'CREATE TEMP TABLE auth.probe (id integer);', app+'CREATE UNLOGGED TABLE auth.probe (id integer);',
+    app+'CREATE TABLE IF EXISTS auth.probe (id integer);', app+'CREATE TABLE U&"auth".probe (id integer);',
+    app+'\\include private.sql', app+'\0', app+app,
+  ])('fails closed on unsupported or malformed schema %#',(sql)=>expect(()=>assertDefaultSchemaTables(sql)).toThrow());
+  it('records only the first failed export substage and never emits payload or error text',()=>{
+    for(const failedStage of exportStages){
+      const events:{stage:string;status:string}[]=[];
+      expect(()=>{
+        for(const stage of exportStages)exportStep(stage,()=>{
+          if(stage===failedStage)throw new Error('PASSWORD JWT SECRET private.sql');
+          return 'private SQL';
+        },event=>events.push(event));
+      }).toThrow();
+      expect(events.filter(e=>e.status==='failed')).toEqual([{stage:failedStage,status:'failed'}]);
+      expect(events).toHaveLength(2*(exportStages.indexOf(failedStage)+1));
+      expect(JSON.stringify(events)).not.toMatch(/PASSWORD|JWT|SECRET|private|SQL/);
+    }
+    expect(safeExportResult('SECRET','PASSWORD')).toEqual({stage:'unknown',status:'unverified'});
+    expect(()=>exportStep('SECRET',()=>0,()=>{throw new Error('must not emit');})).toThrow('synthetic-export-stage-rejected');
+  });
+  it('reports fallback not needed only for an explicitly verified cleanup of that stage',()=>{
+    const cleaned=new Set<string>();
+    expect(fallbackRequired('source',cleaned)).toBe(true);
+    cleaned.add('source');
+    expect(fallbackRequired('source',cleaned)).toBe(false);
+    expect(fallbackRequired('target',cleaned)).toBe(true);
   });
 });
 it.skipIf(process.env.SYNTHETIC_BACKUP_INTEGRATION!=='1')('restores all required synthetic cases on an isolated GitHub Runner',()=>{

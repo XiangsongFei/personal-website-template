@@ -22,6 +22,80 @@ const objectNames = ['synthetic.pdf', 'synthetic.png'];
 const objects = [Buffer.from('%PDF-1.4\nsynthetic-backup-only\n%%EOF'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9foAAAAASUVORK5CYII=', 'base64')];
 const emit = (stage, status) => process.send?.({ kind: 'result', ...safeResult(stage, status) });
 const completed = new Set();
+export const exportStages = Object.freeze(['roles-dump','app-schema-dump','app-data-dump','auth-data-dump',
+  'migration-schema-dump','migration-data-dump','default-schema-dump','default-data-dump','filter-assertions']);
+export function safeExportResult(stage, status) {
+  return { stage: exportStages.includes(stage) ? stage : 'unknown',
+    status: ['success','failed','unverified'].includes(status) ? status : 'unverified' };
+}
+export function exportStep(stage, operation, report = result => process.send?.({ kind: 'export-result', ...result })) {
+  assert(exportStages.includes(stage), 'synthetic-export-stage-rejected');
+  report(safeExportResult(stage, 'unverified'));
+  try { const value = operation(); report(safeExportResult(stage, 'success')); return value; }
+  catch (error) { report(safeExportResult(stage, 'failed')); throw error; }
+}
+
+// A bounded lexer for the fixed CLI schema dump, not an SQL execution/parser API.
+// Skip literals/comments so embedded DDL cannot satisfy or defeat table checks.
+// Unsupported lexical/table forms fail closed; never include SQL in diagnostics.
+export function assertDefaultSchemaTables(text) {
+  const reject = () => { throw new Error('synthetic-schema-format-rejected'); };
+  if (typeof text !== 'string' || !text.length || text.length > 16 * 1024 * 1024 || text.includes('\0')) reject();
+  const tokens = [];
+  const lex = /\s+|--[^\r\n]*|\/\*|\$[A-Za-z_][A-Za-z_0-9]*\$|\$\$|"(?:[^"]|"")*"|'(?:[^'\\]|'')*'|[A-Za-z_][A-Za-z_0-9$]*|[0-9]+|[().,;:=+*/<>![\]%-]/y;
+  let position = 0;
+  while (position < text.length) {
+    lex.lastIndex = position;
+    const match = lex.exec(text); if (!match) reject();
+    const raw = match[0]; position = lex.lastIndex;
+    if (/^\s|^--/.test(raw)) continue;
+    if (raw === '/*') {
+      let depth = 1;
+      while (depth && position < text.length) {
+        if (text.startsWith('/*', position)) { depth++; position += 2; }
+        else if (text.startsWith('*/', position)) { depth--; position += 2; }
+        else position++;
+      }
+      if (depth) reject();
+      continue;
+    }
+    if (raw.startsWith('$')) {
+      const end = text.indexOf(raw, position); if (end < 0) reject();
+      position = end + raw.length; tokens.push({ literal: true });
+    } else if (raw.startsWith("'")) tokens.push({ literal: true });
+    else if (raw.startsWith('"')) tokens.push({ identifier: raw.slice(1,-1).replaceAll('""','"') });
+    else if (/^[A-Za-z_]/.test(raw)) tokens.push({ identifier: raw.toLowerCase(), keyword: raw.toLowerCase() });
+    else tokens.push({ punctuation: raw });
+    if (tokens.length > 500_000) reject();
+  }
+  let depth = 0;
+  for (const token of tokens) {
+    if (token.punctuation === '(') depth++;
+    if (token.punctuation === ')' && --depth < 0) reject();
+  }
+  if (depth || tokens.at(-1)?.punctuation !== ';') reject();
+  const tables = new Set();
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].keyword !== 'create') continue;
+    const next = tokens[i+1]?.keyword;
+    if (['global','local','temporary','temp','unlogged','foreign'].includes(next)) reject();
+    if (next !== 'table') continue;
+    let j = i + 2;
+    if (tokens[j]?.keyword === 'if') {
+      if (tokens[j+1]?.keyword !== 'not' || tokens[j+2]?.keyword !== 'exists') reject();
+      j += 3;
+    }
+    const schema = tokens[j]?.identifier, table = tokens[j+2]?.identifier;
+    if (!schema || !table || tokens[j+1]?.punctuation !== '.' || tokens[j+3]?.punctuation !== '(') reject();
+    if (['auth','storage','vault','supabase_migrations'].includes(schema)) reject();
+    const name = JSON.stringify([schema,table]);
+    if (tables.has(name)) reject();
+    tables.add(name);
+  }
+  if (!tables.has(JSON.stringify(['synthetic_backup','items']))) reject();
+}
+
+export function fallbackRequired(manifest, cleaned) { return !cleaned.has(manifest); }
 function passed(name) {
   assert(caseNames.includes(name) && !completed.has(name));
   completed.add(name); process.send?.({ kind: 'case', name, status: 'verified' });
@@ -156,20 +230,21 @@ async function rehearsal() {
       expectedRows=rows(source); expectedCatalog=catalog(source); expectedAuth=authRows(source); expectedStorage=storageRows(source);
       emit('export','unverified');
       const files = new Map();
-      files.set('roles.sql',dump(source,supabase,'roles.sql',['--role-only']));
-      files.set('schema.sql',dump(source,supabase,'schema.sql',['--schema','synthetic_backup']));
-      files.set('data.sql',dump(source,supabase,'data.sql',['--schema','synthetic_backup','--data-only','--use-copy']));
-      files.set('auth-data.sql',dump(source,supabase,'auth-data.sql',['--schema','auth','--data-only','--use-copy']));
-      files.set('history-schema.sql',dump(source,supabase,'history-schema.sql',['--schema','supabase_migrations']));
-      files.set('history-data.sql',dump(source,supabase,'history-data.sql',['--schema','supabase_migrations','--data-only','--use-copy']));
-      const defaultSchema = dump(source,supabase,'default-schema.sql',[]).toString();
-      const defaultData = dump(source,supabase,'default-data.sql',['--data-only','--use-copy']).toString();
-      assert(defaultSchema.includes('synthetic_backup.items'));
-      assert(!/CREATE TABLE (?:"?auth"?|"?storage"?|"?vault"?|"?supabase_migrations"?)\./i.test(defaultSchema));
-      assert(!defaultSchema.includes('synthetic_read')); // Storage policies need separate recovery.
-      assert(defaultData.includes('backup-synthetic@example.invalid') && defaultData.includes('synthetic.pdf'));
-      assert(!defaultData.includes('synthetic-vault-value') && !defaultData.includes('synthetic-vault-probe'));
-      assert(!defaultData.includes('19000101000000'));
+      files.set('roles.sql',exportStep('roles-dump',()=>dump(source,supabase,'roles.sql',['--role-only'])));
+      files.set('schema.sql',exportStep('app-schema-dump',()=>dump(source,supabase,'schema.sql',['--schema','synthetic_backup'])));
+      files.set('data.sql',exportStep('app-data-dump',()=>dump(source,supabase,'data.sql',['--schema','synthetic_backup','--data-only','--use-copy'])));
+      files.set('auth-data.sql',exportStep('auth-data-dump',()=>dump(source,supabase,'auth-data.sql',['--schema','auth','--data-only','--use-copy'])));
+      files.set('history-schema.sql',exportStep('migration-schema-dump',()=>dump(source,supabase,'history-schema.sql',['--schema','supabase_migrations'])));
+      files.set('history-data.sql',exportStep('migration-data-dump',()=>dump(source,supabase,'history-data.sql',['--schema','supabase_migrations','--data-only','--use-copy'])));
+      const defaultSchema = exportStep('default-schema-dump',()=>dump(source,supabase,'default-schema.sql',[]).toString());
+      const defaultData = exportStep('default-data-dump',()=>dump(source,supabase,'default-data.sql',['--data-only','--use-copy']).toString());
+      exportStep('filter-assertions',()=>{
+        assertDefaultSchemaTables(defaultSchema);
+        assert(!defaultSchema.includes('synthetic_read')); // Storage policies need separate recovery.
+        assert(defaultData.includes('backup-synthetic@example.invalid') && defaultData.includes('synthetic.pdf'));
+        assert(!defaultData.includes('synthetic-vault-value') && !defaultData.includes('synthetic-vault-probe'));
+        assert(!defaultData.includes('19000101000000'));
+      });
       files.set('security-catalog.json',Buffer.from(expectedCatalog));
       files.set('auth-coverage.json',Buffer.from(JSON.stringify({ data:true,managedSchema:false,vault:false,ledger:false })));
       files.set('storage-metadata.json',Buffer.from(expectedStorage));
@@ -239,6 +314,24 @@ async function rehearsal() {
 }
 
 export async function failureSelfTest(record = () => {}) {
+  for (const failedStage of exportStages) {
+    const events=[];
+    const error=new Error('synthetic-password=never-print SQL PRIVATE JWT');
+    assert.throws(()=>{
+      for(const stage of exportStages) exportStep(stage,()=>{
+        if(stage===failedStage)throw error;
+        return 'private-dump-content';
+      },result=>events.push(result));
+    },caught=>caught===error);
+    assert.deepEqual(events.filter(e=>e.status==='failed'),[{stage:failedStage,status:'failed'}]);
+    assert.equal(events.length,2*(exportStages.indexOf(failedStage)+1));
+    assert(events.every(e=>exportStages.includes(e.stage) && ['success','failed','unverified'].includes(e.status)));
+    assert(!/PRIVATE|JWT|password|dump-content/.test(JSON.stringify(events)));
+  }
+  assert.deepEqual(safeExportResult('private-secret','private-output'),{stage:'unknown',status:'unverified'});
+  const clean=new Set(['source']);
+  assert.equal(fallbackRequired('source',clean),false);
+  assert.equal(fallbackRequired('target',clean),true);
   for(const [callbackFails,cleanupFails] of [[true,false],[false,true],[true,true]]) {
     const events=[];const callbackError=new Error('synthetic-secret');
     await assert.rejects(()=>observeCompatibilityStaging(async cb=>{
@@ -266,16 +359,28 @@ async function supervise() {
   // Do not forward arbitrary repository/host environment secrets or Docker overrides.
   const childEnv=Object.fromEntries(['PATH','HOME','TMPDIR','TMP','TEMP','LANG','LC_ALL','SUPABASE_USE_SLIM_IMAGES'].filter(name=>typeof process.env[name]==='string').map(name=>[name,process.env[name]]));
   const child=spawn(process.execPath,[self,'--child'],{env:childEnv,detached:true,stdio:['ignore','ignore','ignore','ipc']});
-  const manifests=new Set(), cases=new Set();let resources=0;let failed=false;
+  const manifests=new Set(), cleaned=new Set(), cases=new Set();let resources=0;let failed=false;let activeManifest;
   child.on('message',m=>{
-    if(m?.kind==='backup-manifest' && validManifestPath(m.path))manifests.add(m.path);
+    if(m?.kind==='backup-manifest' && validManifestPath(m.path)){
+      if (activeManifest && !cleaned.has(activeManifest)) failed=true;
+      activeManifest=m.path; manifests.add(m.path);
+    }
+    if(m?.kind==='export-result'){
+      const result=safeExportResult(m.stage,m.status);
+      if(result.status==='failed')failed=true;
+      console.log(`backup_export_stage=${result.stage} status=${result.status}`);
+    }
     if(m?.kind==='case' && caseNames.includes(m.name) && m.status==='verified'){
       if(cases.has(m.name))failed=true;cases.add(m.name);console.log(`backup_case=${m.name} status=verified`);
       console.log(`backup_case_type=${['callback-failure','timeout','cleanup-failure'].includes(m.name)?'synthetic-failure-injection':'isolated-rehearsal'}`);
     }
     if(m?.kind==='result'){
       const result=safeResult(m.stage,m.status);
-      if(result.stage==='resources' && result.status==='verified')resources++;
+      if(result.stage==='resources' && result.status==='verified'){
+        resources++;
+        if(activeManifest && !cleaned.has(activeManifest))cleaned.add(activeManifest);
+        else failed=true;
+      }
       if(result.status==='failed')failed=true;
       console.log(`backup_stage=${result.stage} status=${result.status}`);
     }
@@ -285,6 +390,10 @@ async function supervise() {
   if(!success){
     try{process.kill(-child.pid,'SIGKILL');}catch{/* already exited */}
     for(const manifest of manifests){
+      if(!fallbackRequired(manifest,cleaned)){
+        console.log('backup_stage=fallback-cleanup status=not-needed');
+        continue;
+      }
       let status='unverified';
       // Missing manifest means normal cleanup may have completed; absence is not proof.
       try{
@@ -296,6 +405,7 @@ async function supervise() {
       console.log(`backup_stage=fallback-cleanup status=${status}`);
     }
   }
+  if(success)console.log('backup_stage=fallback-cleanup status=not-needed');
   console.log(`backup_total=${caseNames.length} verified=${cases.size} incomplete=${caseNames.length-cases.size} skipped=0`);
   console.log(`backup_acceptance=${success?'verified':'failed'} production_recoverability=unverified managed_schema_lossless=unverified vault_restore=unverified`);
   if(!success)process.exitCode=1;
