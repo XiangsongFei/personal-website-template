@@ -3,12 +3,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
 import { build } from "esbuild";
 import { withStagedLocalSupabase } from "./stage-local-supabase.mjs";
-import { candidateWorkerSha, migrations, combinations, verifiedResults, safeResults, waitBoundedChild } from "./compatibility-contract.mjs";
+import { candidateWorkerSha, migrations, combinations, verifiedResults, safeResults, waitBoundedChild, candidateStages, safeStageResult, candidateStep, observeCompatibilityStaging } from "./compatibility-contract.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const admin = resolve(here, "../..");
@@ -48,14 +49,25 @@ function metadata(stage, upgraded) {
     AND (r.rolname<>'postgres' OR NOT p.prosecdef OR NOT ('search_path=""'=ANY(COALESCE(p.proconfig,ARRAY[]::text[]))) OR has_function_privilege('anon',p.oid,'EXECUTE'))`), "0");
   send({ kind: "metadata", value: upgraded ? "new" : "old" });
 }
-async function candidateSource(stage) {
+const candidateResult = (result) => send({ kind: "candidate-result", ...result });
+async function candidateSource(stage, emit = candidateResult) {
   phase("candidate-source");
-  assert.equal(checked("git", ["rev-parse", `${candidateWorkerSha}^{commit}`], { cwd: admin }).trim(), candidateWorkerSha);
-  const dir = join(stage.stagedRoot, "candidate-source"); mkdirSync(dir);
-  const archive = checked("git", ["archive", "--format=tar", candidateWorkerSha, "resume-admin/src"], { cwd: admin, encoding: null });
-  checked("tar", ["-xf", "-", "-C", dir], { input: archive });
+  const repository = resolve(admin, "..");
+  await candidateStep("candidate-git", () => assert.equal(checked("git", ["rev-parse", `${candidateWorkerSha}^{commit}`], { cwd: repository }).trim(), candidateWorkerSha), emit);
+  const archive = await candidateStep("candidate-archive", () => checked("git", ["archive", "--format=tar", candidateWorkerSha, "resume-admin/src"], { cwd: repository, encoding: null }), emit);
+  const dir = join(stage.stagedRoot, "candidate-source");
+  const entry = join(dir, "resume-admin/src/worker/index.ts");
+  await candidateStep("candidate-extract", () => {
+    mkdirSync(dir);
+    checked("tar", ["-xf", "-", "-C", dir], { input: archive });
+    const original = checked("git", ["show", `${candidateWorkerSha}:resume-admin/src/worker/index.ts`], { cwd: repository, encoding: null });
+    assert(readFileSync(entry).equals(original));
+  }, emit);
   const outfile = join(stage.stagedRoot, "candidate-worker.mjs");
-  await build({ entryPoints: [join(dir, "resume-admin/src/worker/index.ts")], outfile, bundle: true, format: "esm", platform: "neutral", logLevel: "silent" });
+  await candidateStep("candidate-build", async () => {
+    await build({ entryPoints: [entry], outfile, bundle: true, format: "esm", platform: "neutral", logLevel: "silent" });
+    assert(statSync(outfile).size > 0);
+  }, emit);
   return pathToFileURL(outfile).href;
 }
 function runMatrixCase(stage, bundle, db, worker) {
@@ -76,9 +88,9 @@ function runMatrixCase(stage, bundle, db, worker) {
 }
 async function child() {
   phase("staging");
-  await withStagedLocalSupabase(async stage => {
+  await observeCompatibilityStaging(callback => withStagedLocalSupabase(callback, "candidate-pre-pr28"), async stage => {
     const bundle = await candidateSource(stage);
-    metadata(stage, false);
+    await candidateStep("candidate-metadata", () => metadata(stage, false), candidateResult);
     runMatrixCase(stage, bundle, "old", "old");
     runMatrixCase(stage, bundle, "old", "new");
     phase("upgrade");
@@ -95,7 +107,7 @@ async function child() {
       assert.equal(boundarySnapshot(stage), boundary, "structural migration changed protected settings");
       send({ kind: "migration", index: migrations.findIndex(([x]) => x === name) + 1 });
     }
-    metadata(stage, true);
+    await candidateStep("candidate-metadata", () => metadata(stage, true), candidateResult);
     sql(stage, "NOTIFY pgrst, 'reload schema';");
     runMatrixCase(stage, bundle, "new", "old"); // Deployment fails / rollback to the same candidate old Worker.
     runMatrixCase(stage, bundle, "new", "new");
@@ -108,14 +120,13 @@ async function child() {
     assert(results.success === true && results.numTotalTests > 0 && results.numPassedTests === results.numTotalTests && results.numFailedTests === 0 && results.numPendingTests === 0);
     send({ kind: "client", passed: true, count: results.numTotalTests });
     phase("cleanup");
-  }, "candidate-pre-pr28");
-  send({ kind: "cleanup", passed: true });
+  }, (stage, status) => send({ kind: "stage-result", stage, status }));
 }
 
 async function supervise() {
   console.log(`compat_candidate_worker=${candidateWorkerSha} production_provenance=unverified`);
   const childProcess = spawn(process.execPath, [self, "--child"], { cwd: admin, detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
-  let manifest, current = "staging", cleaned = false, clients = false;
+  let manifest, current = "staging", cleaned = false, cleanupStatus = "unverified", clients = false;
   const seen = new Set(); let migrationCount = 0; const meta = new Set();
   childProcess.on("message", m => {
     if (m?.kind === "compat-manifest" && typeof m.path === "string") manifest = m.path;
@@ -129,17 +140,24 @@ async function supervise() {
     if (m?.kind === "migration" && Number.isInteger(m.index) && m.index === migrationCount + 1 && m.index <= 7) { migrationCount++; console.log(`compat_migration=${migrationCount} status=passed`); }
     if (m?.kind === "metadata" && ["old", "new"].includes(m.value)) { meta.add(m.value); console.log(`compat_catalog=${m.value} status=passed`); }
     if (m?.kind === "client" && m.passed === true && Number.isInteger(m.count) && m.count > 0 && m.count <= 10000) { clients = true; console.log(`compat_client_tests=${m.count} type=mock status=passed`); }
-    if (m?.kind === "cleanup" && m.passed === true) cleaned = true;
+    if (m?.kind === "candidate-result") {
+      const result = safeStageResult(m.stage, m.status);
+      console.log(`compat_detail=${result.stage} status=${result.status}`);
+    }
+    if (m?.kind === "stage-result" && ["callback", "resources"].includes(m.stage) && ["success", "failed", "unverified"].includes(m.status)) {
+      if (m.stage === "resources") { cleanupStatus = m.status; cleaned = m.status === "success"; }
+      else console.log(`compat_callback=${m.status}`);
+    }
   });
   const { code, timedOut } = await waitBoundedChild(childProcess, 25 * 60_000, () => {
     try { process.kill(-childProcess.pid, "SIGKILL"); } catch { /* Already exited. */ }
   });
   const passed = code === 0 && !timedOut && seen.size === 4 && migrationCount === 7 && meta.size === 2 && clients && cleaned;
-  console.log(`compat_resources=${cleaned ? "success" : "unverified"}`);
+  console.log(`compat_resources=${cleanupStatus}`);
   if (!passed) {
     try { process.kill(-childProcess.pid, "SIGKILL"); } catch { /* No surviving group. */ }
-    let fallback = "unverified";
-    if (manifest) {
+    let fallback = cleaned ? "not_needed" : "unverified";
+    if (!cleaned && manifest) {
       const r = spawnSync(process.execPath, [join(here, "stage-local-supabase.mjs"), "--cleanup-manifest", manifest], { stdio: "ignore", timeout: 120_000, killSignal: "SIGKILL" });
       if (!r.error && !r.signal && r.status === 0) fallback = "ownership_verified";
     }
@@ -147,6 +165,17 @@ async function supervise() {
     console.log("compat_vm_disposal=required"); process.exitCode = 1;
   } else console.log("compat_outcome=passed production_compatibility=unverified");
 }
-if (process.argv[2] === "--child") child().catch(() => { send({ kind: "failed" }); process.exitCode = 1; });
+async function candidateSourceSelfTest() {
+  const root = mkdtempSync(join(tmpdir(), "candidate-source-self-test-"));
+  const results = [];
+  try {
+    await candidateSource({ stagedRoot: root }, result => results.push(result));
+    assert.deepEqual(results, candidateStages.slice(0, 4).map(stage => ({ stage, status: "success" })));
+    for (const result of results) console.log(`compat_detail=${result.stage} status=${result.status}`);
+  } catch { console.log("compat_source_self_test=failed"); process.exitCode = 1; }
+  finally { rmSync(root, { recursive: true, force: true }); }
+}
+if (process.argv.length === 3 && process.argv[2] === "--candidate-source-self-test") await candidateSourceSelfTest();
+else if (process.argv[2] === "--child") child().catch(() => { send({ kind: "failed" }); process.exitCode = 1; });
 else if (process.argv.length === 2) supervise().catch(() => { console.log("compat_outcome=failed"); process.exitCode = 1; });
 else { console.log("compat_outcome=invalid_arguments"); process.exitCode = 1; }

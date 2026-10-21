@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
-import { migrations, combinations, caseNames, verifiedResults, safeResults, waitBoundedChild } from "./compatibility-contract.mjs";
+import { migrations, combinations, caseNames, verifiedResults, safeResults, waitBoundedChild, candidateStep, safeStageResult, observeCompatibilityStaging } from "./compatibility-contract.mjs";
 const admin = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const valid = () => ({ success: true, numTotalTests: 5, numPassedTests: 5, numFailedTests: 0, numPendingTests: 0,
   testResults: [{ assertionResults: caseNames.map(title => ({ title, status: "passed" })) }] });
@@ -86,4 +86,41 @@ test("both fixture path guards accept staging suffixes and reject unsafe paths",
     ]) assert.equal(guard.test(invalid), false);
     assert.notEqual(guard.exec(path.replace(token, "1792530000001-aabbccddeeff"))?.[1], token);
   }
+});
+
+
+test("candidate diagnostics project only fixed stages and results", async () => {
+  const secret = "simulated-secret /private/path Bearer simulated-token";
+  for (const fails of [false, true]) {
+    const events = []; const error = new Error(secret);
+    try { await candidateStep("candidate-archive", () => { if (fails) throw error; return 7; }, e => events.push(e)); }
+    catch (caught) { assert(fails); assert.equal(caught, error); }
+    assert.deepEqual(events, [{ stage: "candidate-archive", status: fails ? "failed" : "success" }]);
+    assert(!JSON.stringify(events).includes(secret));
+  }
+  assert.deepEqual(safeStageResult(secret, secret), { stage: "unknown", status: "unverified" });
+  await assert.rejects(candidateStep("candidate-build", () => 1, () => { throw new Error(secret); }));
+});
+
+test("callback failures and verified cleanup have independent outcomes", async () => {
+  for (const callbackFails of [false, true]) for (const cleanupFails of [false, true]) {
+    const events = []; const callbackError = new Error("simulated callback secret");
+    const cleanupError = new Error("simulated cleanup secret");
+    const staging = async callback => {
+      let failure;
+      try { await callback(); } catch (error) { failure = error; }
+      if (cleanupFails) throw cleanupError;
+      if (failure) throw failure;
+    };
+    let caught;
+    try { await observeCompatibilityStaging(staging, async () => { if (callbackFails) throw callbackError; }, (stage, status) => events.push([stage, status])); }
+    catch (error) { caught = error; }
+    assert.equal(caught, cleanupFails ? cleanupError : callbackFails ? callbackError : undefined);
+    assert.deepEqual(events, [["callback", callbackFails ? "failed" : "success"], ["resources", cleanupFails ? "failed" : "success"]]);
+    assert(!JSON.stringify(events).includes("secret"));
+  }
+  const early = [];
+  await assert.rejects(observeCompatibilityStaging(async () => { throw new Error("startup secret"); }, () => assert.fail("not reached"), (s, r) => early.push([s, r])));
+  assert.deepEqual(early, [["callback", "unverified"], ["resources", "unverified"]]);
+  await assert.rejects(observeCompatibilityStaging(async callback => callback(), async () => {}, () => { throw new Error("observer secret"); }));
 });

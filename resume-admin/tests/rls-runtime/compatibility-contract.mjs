@@ -43,3 +43,31 @@ export function waitBoundedChild(child, timeoutMs, killGroup) {
     child.once("close", done);
   });
 }
+
+
+export const candidateStages = ["candidate-git", "candidate-archive", "candidate-extract", "candidate-build", "candidate-metadata", "unknown"];
+export function safeStageResult(stage, status) {
+  return candidateStages.includes(stage) && ["success", "failed", "unverified"].includes(status)
+    ? { stage, status } : { stage: "unknown", status: "unverified" };
+}
+export async function candidateStep(stage, operation, emit) {
+  try { const value = await operation(); emit(safeStageResult(stage, "success")); return value; }
+  catch (error) { emit(safeStageResult(stage, "failed")); throw error; }
+}
+
+// Staging preserves callback error identity only after verified resource cleanup.
+export async function observeCompatibilityStaging(stageRunner, callback, emit) {
+  let callbackError, callbackFailed = false, callbackExited = false;
+  try {
+    await stageRunner(async (...args) => {
+      try { const result = await callback(...args); emit("callback", "success"); return result; }
+      catch (error) { callbackError = error; callbackFailed = true; emit("callback", "failed"); throw error; }
+      finally { callbackExited = true; }
+    });
+    emit("resources", "success");
+  } catch (error) {
+    if (!callbackExited) emit("callback", "unverified");
+    emit("resources", !callbackExited ? "unverified" : callbackFailed && error === callbackError ? "success" : "failed");
+    throw error;
+  }
+}
