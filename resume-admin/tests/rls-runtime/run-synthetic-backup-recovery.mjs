@@ -127,7 +127,7 @@ function checked(command, args, options = {}) {
   return result.stdout;
 }
 const networkPaths = Object.freeze(['host-loopback','tool-host-gateway','tool-project-internal']);
-const networkStatuses = Object.freeze(['success','refused','timeout','name-resolution-failed','unknown','unverified']);
+const networkStatuses = Object.freeze(['success','refused','timeout','name-resolution-failed','command-unavailable','command-failed','unsupported-probe','unknown','unverified']);
 export function safeNetworkResult(path, status) {
   return { path: networkPaths.includes(path) ? path : 'unknown',
     status: networkStatuses.includes(status) ? status : 'unverified' };
@@ -153,27 +153,49 @@ export function loopbackProbe(port, connect = createConnection, deadline = 5000)
   });
 }
 // No SQL/authentication probe: each TCP connection runs once, with a hard timeout.
-// stderr stays inside the disposable container; only fixed enums reach stdout.
+// stderr is classified in shell memory and discarded; only fixed enums reach stdout.
 export const networkProbeScript = `
 set -eu
 export LC_ALL=C
-command -v timeout >/dev/null
+report_unavailable() {
+  printf 'tool-host-gateway=%s\\ntool-project-internal=%s\\n' "$1" "$1"
+}
+for tool in timeout bash; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    report_unavailable command-unavailable
+    exit 0
+  fi
+done
+# The short option works with both BusyBox and GNU timeout. This preflight makes
+# no connection; failure must not be misreported as a network failure.
+if ! timeout -s KILL 1 bash -c 'exit 0' >/dev/null 2>&1; then
+  report_unavailable command-failed
+  exit 0
+fi
 probe() {
   set +e
-  timeout --signal=KILL 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' -- "$2" "$3" 2>/tmp/probe-error
+  detail=$(timeout -s KILL 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' -- "$2" "$3" 2>&1)
   code=$?
   set -e
   result=unknown
-  if [ "$code" = 0 ]; then result=success
-  elif [ "$code" = 124 ] || [ "$code" = 137 ]; then result=timeout
-  elif grep -q 'Connection refused' /tmp/probe-error; then result=refused
-  elif grep -Eq 'Name or service not known|Temporary failure in name resolution' /tmp/probe-error; then result=name-resolution-failed
-  fi
+  case "$code" in
+    0) result=success ;;
+    124|137) result=timeout ;;
+    125) result=command-failed ;;
+    126|127) result=command-unavailable ;;
+    *) case "$detail" in
+      *'/dev/tcp/'*'No such file or directory'*) result=unsupported-probe ;;
+      *'Connection refused'*) result=refused ;;
+      *'Name or service not known'*|*'Temporary failure in name resolution'*) result=name-resolution-failed ;;
+    esac ;;
+  esac
+  unset detail
   printf '%s=%s\\n' "$1" "$result"
 }
 probe tool-host-gateway host.docker.internal "$1"
 probe tool-project-internal "$2" 5432
 `;
+
 export function parseNetworkProbeOutput(output) {
   assert(typeof output==='string' && output.length<256, 'network-output-rejected');
   const lines=output.trim().split('\n');

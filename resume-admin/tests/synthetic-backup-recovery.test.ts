@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, openSync, ftruncateSync, closeSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, symlinkSync, openSync, ftruncateSync, closeSync } from 'node:fs';
 // Explicit test-side interface for the ESM runners; no project-wide TS changes.
 const { artifactNames, caseNames, makeManifest, verifyArtifacts, restoreInputs, sealArtifacts, openArtifacts, sha256, assertConsistent } = await import(new URL('./rls-runtime/backup-recovery-contract.mjs', import.meta.url).href) as {
   artifactNames: readonly string[]; caseNames: readonly string[];
@@ -251,8 +251,77 @@ describe('bounded synthetic TCP diagnostic contracts',()=>{
   });
   it('uses bounded bash and no SQL or retry loop',()=>{
     expect(spawnSync('bash',['-n'],{input:netDiag.networkProbeScript,encoding:'utf8'}).status).toBe(0);
-    expect(netDiag.networkProbeScript).toContain('timeout --signal=KILL 5');
+    expect(netDiag.networkProbeScript).toContain('timeout -s KILL 5');
     expect(netDiag.networkProbeScript).not.toMatch(/PGPASSWORD|psql|pg_dump|while|until/);
     expect(netDiag.networkProbeScript.match(/^probe tool-/gm)).toHaveLength(2);
+  });
+});
+
+
+// Execute the production shell program with a synthetic timeout executable.
+// It models BusyBox's short-option contract and never opens a network connection.
+describe('network probe executable compatibility and failure isolation',()=>{
+  function execute(mode:string,script=netDiag.networkProbeScript){
+    const root=mkdtempSync(join(tmpdir(),'synthetic-probe-shell-'));
+    const trace=join(root,'trace');
+    try{
+      writeFileSync(join(root,'timeout'),`#!/bin/sh
+if [ "$1" != '-s' ] || [ "$2" != 'KILL' ]; then exit 1; fi
+printf '%s\\n' "$3" >> "$TRACE_FILE"
+if [ "$PROBE_MODE" = 'preflight-failed' ]; then exit 1; fi
+if [ "$3" = '1' ]; then exit 0; fi
+case "$PROBE_MODE" in
+  success) exit 0 ;;
+  refused) printf '%s' 'synthetic-secret: Connection refused' >&2; exit 1 ;;
+  timeout) exit 137 ;;
+  dns) printf '%s' 'synthetic-secret: Name or service not known' >&2; exit 1 ;;
+  missing) exit 127 ;;
+  cannot-execute) exit 126 ;;
+  timeout-failed) exit 125 ;;
+  unsupported) printf '%s' '/dev/tcp/synthetic-secret/1: No such file or directory' >&2; exit 1 ;;
+  *) printf '%s' 'synthetic-secret arbitrary error' >&2; exit 2 ;;
+esac
+`,{mode:0o700});
+      const result=spawnSync('/bin/bash',['-c',script,'--','54322','synthetic-db'],{
+        encoding:'utf8',timeout:2000,maxBuffer:4096,
+        env:{PATH:`${root}:/usr/bin:/bin`,PROBE_MODE:mode,TRACE_FILE:trace},
+      });
+      expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+      expect(result.stdout+result.stderr).not.toContain('synthetic-secret');
+      expect(result.stderr).toBe('');
+      const calls=existsSync(trace)?readFileSync(trace,'utf8').trim().split('\n'):[];
+      return {results:netDiag.parseNetworkProbeOutput(result.stdout),calls};
+    }finally{rmSync(root,{recursive:true,force:true});}
+  }
+  it.each([
+    ['success','success'],['refused','refused'],['timeout','timeout'],['dns','name-resolution-failed'],
+    ['missing','command-unavailable'],['cannot-execute','command-unavailable'],
+    ['timeout-failed','command-failed'],['unsupported','unsupported-probe'],['other','unknown'],
+  ])('classifies %s without raw output or retries',(mode,status)=>{
+    const r=execute(mode);
+    expect(r.results).toEqual([{path:'tool-host-gateway',status},{path:'tool-project-internal',status}]);
+    expect(r.calls).toEqual(['1','5','5']);
+  });
+  it('preflight failure reports command failure and makes no TCP attempt',()=>{
+    const r=execute('preflight-failed');
+    expect(r.results).toEqual([{path:'tool-host-gateway',status:'command-failed'},{path:'tool-project-internal',status:'command-failed'}]);
+    expect(r.calls).toEqual(['1']);
+  });
+  it('rejects GNU-only timeout flags in the BusyBox contract',()=>{
+    const r=execute('success',netDiag.networkProbeScript.replaceAll('-s KILL','--signal=KILL'));
+    expect(r.results).toEqual([{path:'tool-host-gateway',status:'command-failed'},{path:'tool-project-internal',status:'command-failed'}]);
+    expect(r.calls).toEqual([]);
+  });
+  it('missing command is not treated as a DNS or TCP failure',()=>{
+    const root=mkdtempSync(join(tmpdir(),'synthetic-probe-missing-'));
+    try{
+      const r=spawnSync('/bin/bash',['-c',netDiag.networkProbeScript,'--','54322','synthetic-db'],{
+        encoding:'utf8',timeout:2000,env:{PATH:root},
+      });
+      expect(r.status).toBe(0);expect(r.stderr).toBe('');
+      expect(netDiag.parseNetworkProbeOutput(r.stdout)).toEqual([
+        {path:'tool-host-gateway',status:'command-unavailable'},{path:'tool-project-internal',status:'command-unavailable'},
+      ]);
+    }finally{rmSync(root,{recursive:true,force:true});}
   });
 });
