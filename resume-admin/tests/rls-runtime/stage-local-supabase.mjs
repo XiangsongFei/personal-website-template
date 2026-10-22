@@ -14,7 +14,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { candidateBaselineMigrations, stageCandidateMigrations, verifyCandidateMigrationFiles } from "./compatibility-contract.mjs";
+import { createStagingDiagnostics, candidateBaselineMigrations, stageCandidateMigrations, verifyCandidateMigrationFiles } from "./compatibility-contract.mjs";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
 const sourceProject = resolve(utilityDir, "supabase");
@@ -2247,22 +2247,25 @@ function verifyLocalStatus(context) {
 }
 
 export async function withStagedLocalSupabase(callback, profile = "current") {
-  if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
-  const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
-    .trim();
-  verifyDockerHostBindingPlatform(dockerOperatingSystem);
+  const diagnostic = createStagingDiagnostics(record => process.send?.({ kind: "staging-diagnostic", ...record }, () => { /* IPC failure is not operation evidence. */ }));
+  diagnostic.step("environment-preflight", () => {
+    if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
+    const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
+      .trim();
+    verifyDockerHostBindingPlatform(dockerOperatingSystem);
+  });
   const token = `${Date.now()}-${randomBytes(6).toString("hex")}`;
   const projectId = `pr1-${token}`;
-  const stageRoot = mkdtempSync(join(tmpdir(), `pr1-supabase-${token}-`));
-  const ports = await uniquePorts();
+  const stageRoot = diagnostic.step("baseline-preparation", () => mkdtempSync(join(tmpdir(), `pr1-supabase-${token}-`)));
+  const ports = await diagnostic.stepAsync("port-reservation", () => uniquePorts());
   let context;
   try {
-    context = stageProject(stageRoot, projectId, ports, profile);
+    context = diagnostic.step("baseline-preparation", () => stageProject(stageRoot, projectId, ports, profile));
   } catch (error) {
     removeTemporaryStage(stageRoot);
     throw error;
   }
-  const before = snapshot();
+  const before = diagnostic.step("resource-snapshot", () => snapshot());
   const beforeManifest = Object.fromEntries(Object.entries(before).map(([key, value]) => [key, [...value]]));
   context.projectId = projectId;
   context.preexistingResources = before;
@@ -2274,50 +2277,69 @@ export async function withStagedLocalSupabase(callback, profile = "current") {
   let containerEventObserver;
   let containerEventObserverAttempted = false;
   try {
-    const preexisting = identifyOwnedResources(projectId, before);
-    if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    diagnostic.step("ownership-verification", () => {
+      const preexisting = identifyOwnedResources(projectId, before);
+      if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    });
     if (profile === "synthetic-recovery") {
-      writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }), { mode: 0o600 });
+      diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }), { mode: 0o600 }); diagnostic.manifestCreated(); });
+      diagnostic.mark("manifest-delivery", "unverified");
       process.send?.({ kind: "backup-manifest", path: ownershipPath });
     }
-    prefetchVerifiedSupabaseImages();
-    const loopbackNetwork = createLoopbackNetwork(projectId);
+    diagnostic.step("image-verification", () => prefetchVerifiedSupabaseImages());
+    diagnostic.resourceAttempt();
+    const loopbackNetwork = diagnostic.step("network-creation", () => {
+      const network = createLoopbackNetwork(projectId); diagnostic.resourceCreated(); return network;
+    });
     resources.networks.push(loopbackNetwork.id);
     context.dockerNetworkId = loopbackNetwork.id;
-    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
-    writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
-    if (profile === "candidate-pre-pr28") process.send?.({ kind: "compat-manifest", path: ownershipPath });
-    containerEventObserverAttempted = true;
-    const dockerApiVersion = verifyDockerEventsSocket();
-    containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
-    try { context.startupPullObserver = installDockerPullObserver(context); }
-    catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
-    if (!context.startupObserverError) {
-      context.cliVersionVerification = await probeCliVersion(supabaseCommandEnv(["start"], {}, context.startupPullObserver));
+    diagnostic.step("ownership-verification", () => verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId));
+    diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)); diagnostic.manifestCreated(); });
+    if (profile === "candidate-pre-pr28") {
+      diagnostic.mark("manifest-delivery", "unverified");
+      process.send?.({ kind: "compat-manifest", path: ownershipPath });
     }
-    runSupabase(context, ["start"]);
+    await diagnostic.stepAsync("startup-observation", async () => {
+      containerEventObserverAttempted = true;
+      const dockerApiVersion = verifyDockerEventsSocket();
+      containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
+      try { context.startupPullObserver = installDockerPullObserver(context); }
+      catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
+      if (!context.startupObserverError) {
+        context.cliVersionVerification = await probeCliVersion(supabaseCommandEnv(["start"], {}, context.startupPullObserver));
+      }
+    });
+    diagnostic.step("supabase-start", () => runSupabase(context, ["start"]));
     started = true;
-    Object.assign(resources, identifyOwnedResources(projectId, before));
-    writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
-    for (const id of resources.containers) validateLoopbackPublishedPorts(dockerJson(["inspect", id])[0]);
-    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
+    diagnostic.step("ownership-verification", () => Object.assign(resources, identifyOwnedResources(projectId, before)));
+    diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)); diagnostic.manifestCreated(); });
+    diagnostic.step("ownership-verification", () => {
+      for (const id of resources.containers) validateLoopbackPublishedPorts(dockerJson(["inspect", id])[0]);
+    });
+    diagnostic.step("ownership-verification", () => verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId));
     console.log("Supabase published ports are loopback-only.");
-    const status = verifyLocalStatus(context);
-    const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
-    const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
-    const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
-    if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    const resolved = { ...context, ...status, projectId, dbContainer, authContainer };
+    const status = diagnostic.step("endpoint-verification", () => verifyLocalStatus(context));
+    const resolved = diagnostic.step("endpoint-verification", () => {
+      const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
+      const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
+      const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
+      if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
+      return { ...context, ...status, projectId, dbContainer, authContainer };
+    });
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;
   } finally {
+    diagnostic.mark("cleanup", "unverified");
     try {
-      Object.assign(resources, cleanupStep("ownership-check", () => identifyOwnedResources(projectId, before)));
+      diagnostic.step("ownership-verification", () => {
+        Object.assign(resources, cleanupStep("ownership-check", () => identifyOwnedResources(projectId, before)));
+        if (Object.values(resources).some(items => items.length > 0)) diagnostic.resourceCreated();
+      });
       if (started || resources.containers.length || resources.volumes.length || resources.networks.length) {
-        cleanupStep("manifest-check", () => writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)));
-        cleanupOwnedResources(resources, projectId, before);
-      }
+        diagnostic.step("manifest-creation", () => { cleanupStep("manifest-check", () => writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2))); diagnostic.manifestCreated(); });
+        diagnostic.step("cleanup", () => cleanupOwnedResources(resources, projectId, before));
+      } else { diagnostic.mark("cleanup", "not-needed"); }
     } catch (error) {
       console.error(`cleanup_operation=${safeCleanupOperation(error)} status=failed manifest=retained`);
       cleanupFailure = error;
@@ -2330,7 +2352,7 @@ export async function withStagedLocalSupabase(callback, profile = "current") {
         if (callbackError) callbackError = appendContainerSummary(callbackError, summary);
         if (cleanupFailure) cleanupFailure = appendContainerSummary(cleanupFailure, summary);
       }
-      try { finalizeStageDirectory(stageRoot, cleanupFailure); }
+      try { diagnostic.step("directory-finalization", () => finalizeStageDirectory(stageRoot, cleanupFailure)); }
       catch (error) { cleanupFailure ??= error; }
     }
   }

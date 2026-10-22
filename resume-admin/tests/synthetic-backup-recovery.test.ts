@@ -423,8 +423,10 @@ describe('ownership-bound CLI dump transport (no Docker)',()=>{
 
 const restoreDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
   restoreStages:readonly string[];
+  classifyRestoreSqlState:(input:unknown)=>string;
+  safeRestoreErrorCategory:(input:unknown)=>string;
   safeRestoreResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
-  restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void)=>void;
+  restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void,reportError?:(category:string)=>void)=>void;
 };
 describe('single-transaction restore execution diagnostics (synthetic subprocess)',()=>{
   const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
@@ -433,8 +435,8 @@ describe('single-transaction restore execution diagnostics (synthetic subprocess
   it('uses one psql call with original SQL bytes/order and exactly one BEGIN/COMMIT',()=>{
     const files=sample(),events:{stage:string;status:string}[]=[];let calls=0;
     restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(cmd,args,o)=>{
-      calls++;expect(cmd).toBe('docker');expect(args).toEqual(['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres']);
-      expect(o.stdio).toEqual(['pipe','pipe','ignore']);expect(o.timeout).toBe(60000);expect(o.maxBuffer).toBe(65536);
+      calls++;expect(cmd).toBe('docker');expect(args).toEqual(['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres']);
+      expect(o.stdio).toEqual(['pipe','pipe','pipe']);expect(o.timeout).toBe(60000);expect(o.maxBuffer).toBe(65536);
       const sql=o.input.split('\n').filter(s=>!s.startsWith('\\echo ')).join('\n');
       expect(sql).toBe(`BEGIN;\n${files.get('roles.sql')}\n${files.get('schema.sql')}\nSET LOCAL session_replication_role=replica;\n${files.get('auth-data.sql')}\n${files.get('data.sql')}\nCOMMIT;\n`);
       expect(markerLines(o.input)).toHaveLength(10);
@@ -447,7 +449,7 @@ describe('single-transaction restore execution diagnostics (synthetic subprocess
     const files=sample(),events:{stage:string;status:string}[]=[];
     const index=restoreDiag.restoreStages.indexOf(name)-1;
     expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>({status:3,signal:null,
-      stdout:markerLines(o.input).slice(0,index*2+1).join('\n'),get stderr(){throw new Error('never read');}}),r=>events.push(r))).toThrow('synthetic-restore-process-failed');
+      stdout:markerLines(o.input).slice(0,index*2+1).join('\n'),stderr:'ERROR: 42501\n'}),r=>events.push(r))).toThrow('synthetic-restore-process-failed');
     expect(events.filter(r=>r.status==='failed')).toEqual([{stage:name,status:'failed'}]);
     expect(events.filter(r=>r.status==='success').map(r=>r.stage)).toEqual(restoreDiag.restoreStages.slice(0,index+1));
     expect(events).not.toContainEqual({stage:'restore-commit',status:'success'});
@@ -496,5 +498,35 @@ describe('single-transaction restore execution diagnostics (synthetic subprocess
     expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>({status:2,stdout:markerLines(o.input).join('\n')}),r=>events.push(r))).toThrow();
     expect(events).not.toContainEqual({stage:'restore-commit',status:'success'});
     expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'unknown',status:'failed'}]);
+  });
+});
+
+
+describe('restore SQLSTATE whitelist (synthetic input; no database)',()=>{
+  const codes=[['42501','insufficient-privilege'],['42710','duplicate-object'],['42704','undefined-object'],
+    ['42601','syntax-error'],['25001','transaction-restriction'],['0A000','unsupported-feature'],
+    ['55P03','lock-unavailable'],['57014','query-canceled']];
+  it.each(codes)('maps only exact %s diagnostics to %s',(code,category)=>{
+    for(const ending of ['', '\n','\r\n'])expect(restoreDiag.classifyRestoreSqlState(`ERROR:  ${code}${ending}`)).toBe(category);
+  });
+  it.each([null,undefined,{},'', 'ERROR: ZZ999', 'ERROR: 42501 simulated-secret',
+    'ERROR: 42710\nERROR: 42501', 'NOTICE: 42710', 'ERROR: 42501\nNOTICE: simulated-secret',
+    'ERROR: 00000', 'ERROR: 0a000',' ERROR: 42501','ERROR: 42501\n\n', 'x'.repeat(4097)])('rejects malformed or mixed input #%#',input=>{
+    expect(restoreDiag.classifyRestoreSqlState(input)).toBe('unknown');
+    expect(restoreDiag.safeRestoreErrorCategory(input)).toBe('unknown');
+  });
+  it.each(['valid','mixed','timeout','no-code','launch','out-of-order'])('binds error classification to entered stage and controlled exit: %s',mode=>{
+    const files=fixtures(),events:{stage:string;status:string}[]=[],errors:string[]=[];
+    const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,args,o)=>{
+      expect(args).toContain('VERBOSITY=sqlstate');expect(args).toContain('ON_ERROR_STOP=1');
+      const markers=o.input.split('\n').filter(x=>x.startsWith('\\echo backup_restore_')).map(x=>x.slice(6));
+      return {status:mode==='timeout'||mode==='launch'?null:3,signal:mode==='timeout'?'SIGKILL':null,
+        error:mode==='launch'?new Error('synthetic-secret'):undefined,
+        stdout:mode==='out-of-order'?markers[1]:markers[0],
+        stderr:mode==='no-code'?'':mode==='mixed'?'ERROR: 42501\nsynthetic-secret':'ERROR: 42501\n'};
+    },r=>events.push(r),c=>errors.push(c))).toThrow();
+    expect(errors.at(-1)).toBe(mode==='valid'?'insufficient-privilege':'unknown');
+    expect(JSON.stringify({events,errors})).not.toMatch(/synthetic-secret|ERROR:|42501/);
   });
 });

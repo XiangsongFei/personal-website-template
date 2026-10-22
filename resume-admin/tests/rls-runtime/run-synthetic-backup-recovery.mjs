@@ -400,11 +400,26 @@ export function safeRestoreResult(stage, status) {
   return { stage:restoreStages.includes(stage)?stage:'unknown',
     status:['success','failed','unverified'].includes(status)?status:'unverified' };
 }
+const restoreSqlStates = new Map([
+  ['42501','insufficient-privilege'], ['42710','duplicate-object'], ['42704','undefined-object'],
+  ['42601','syntax-error'], ['25001','transaction-restriction'], ['0A000','unsupported-feature'],
+  ['55P03','lock-unavailable'], ['57014','query-canceled'],
+]);
+export function safeRestoreErrorCategory(category) {
+  return [...restoreSqlStates.values()].includes(category) ? category : 'unknown';
+}
+export function classifyRestoreSqlState(stderr) {
+  if(typeof stderr!=='string' || Buffer.byteLength(stderr)>4096)return 'unknown';
+  const match=/^ERROR:[ \t]{1,8}([0-9A-Z]{5})(?:\r?\n)?$/.exec(stderr);
+  return match ? restoreSqlStates.get(match[1]) ?? 'unknown' : 'unknown';
+}
 // Markers acknowledge psql execution, not durable changes before COMMIT. Never
-// forward arbitrary stdout, and discard stderr at the subprocess boundary.
+// forward arbitrary stdout/stderr. Only a bounded SQLSTATE whitelist leaves this child.
 export function restoreInTransaction(stage, manifest, files, execute = spawnSync,
-  report = result => process.send?.({kind:'restore-result',...result})) {
+  report = result => process.send?.({kind:'restore-result',...result}),
+  reportError = category => process.send?.({kind:'restore-error',category:safeRestoreErrorCategory(category)}, () => { /* Do not alter restore on diagnostic IPC failure. */ })) {
   const emitRestore = (name,status) => report(safeRestoreResult(name,status));
+  reportError('unknown');
   for(const name of restoreStages)emitRestore(name,'unverified');
   let inputs;
   try { validateStage(stage); inputs=restoreInputs(manifest,files); }
@@ -421,8 +436,8 @@ export function restoreInTransaction(stage, manifest, files, execute = spawnSync
     `\\echo ${markers[i*2]}\n${body}\n\\echo ${markers[i*2+1]}\n`).join('');
   let result;
   try {
-    result=execute('docker',['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
-      {input,encoding:'utf8',stdio:['pipe','pipe','ignore'],timeout:60000,killSignal:'SIGKILL',maxBuffer:64*1024});
+    result=execute('docker',['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres'],
+      {input,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:60000,killSignal:'SIGKILL',maxBuffer:64*1024});
   } catch { emitRestore('unknown','failed'); throw new Error('synthetic-restore-process-failed'); }
   let seen=[];
   try {
@@ -439,7 +454,10 @@ export function restoreInTransaction(stage, manifest, files, execute = spawnSync
   // Exit 3 is psql ON_ERROR_STOP script failure. A started segment plus this
   // controlled return distinguishes a script failure from timeout/transport loss.
   const active=seen.length%2===1?phases[Math.floor(seen.length/2)]:undefined;
-  if(active && !result.error && !result.signal && result.status===3)emitRestore(active,'failed');
+  if(active && !result.error && !result.signal && result.status===3) {
+    reportError(classifyRestoreSqlState(result.stderr));
+    emitRestore(active,'failed');
+  }
   else emitRestore('unknown','failed');
   throw new Error('synthetic-restore-process-failed');
 }
@@ -693,6 +711,9 @@ async function supervise() {
     if(m?.kind==='backup-manifest' && validManifestPath(m.path)){
       if (activeManifest && !cleaned.has(activeManifest)) failed=true;
       activeManifest=m.path; manifests.add(m.path);
+    }
+    if(m?.kind==='restore-error'){
+      console.log(`backup_restore_error=${safeRestoreErrorCategory(m.category)}`);
     }
     if(m?.kind==='restore-result'){
       const result=safeRestoreResult(m.stage,m.status);
