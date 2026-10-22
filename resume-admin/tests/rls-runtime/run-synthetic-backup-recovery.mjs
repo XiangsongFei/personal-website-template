@@ -394,6 +394,55 @@ function sql(stage, input) {
   validateStage(stage);
   return checked('docker', ['exec', '-i', stage.dbContainer, 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres'], { input }).trim();
 }
+export const restoreStages = Object.freeze(['restore-input-validation','restore-roles','restore-schema',
+  'restore-auth-data','restore-app-data','restore-commit']);
+export function safeRestoreResult(stage, status) {
+  return { stage:restoreStages.includes(stage)?stage:'unknown',
+    status:['success','failed','unverified'].includes(status)?status:'unverified' };
+}
+// Markers acknowledge psql execution, not durable changes before COMMIT. Never
+// forward arbitrary stdout, and discard stderr at the subprocess boundary.
+export function restoreInTransaction(stage, manifest, files, execute = spawnSync,
+  report = result => process.send?.({kind:'restore-result',...result})) {
+  const emitRestore = (name,status) => report(safeRestoreResult(name,status));
+  for(const name of restoreStages)emitRestore(name,'unverified');
+  let inputs;
+  try { validateStage(stage); inputs=restoreInputs(manifest,files); }
+  catch { emitRestore('restore-input-validation','failed'); throw new Error('synthetic-restore-input-rejected'); }
+  emitRestore('restore-input-validation','success');
+  const token=randomBytes(16).toString('hex');
+  const phases=restoreStages.slice(1);
+  const bodies=[inputs[0].bytes,inputs[1].bytes,
+    `SET LOCAL session_replication_role=replica;\n${files.get('auth-data.sql')}`,
+    inputs[2].bytes,'COMMIT;'];
+  const markers=phases.flatMap(name=>['begin','end'].map(event=>`backup_restore_${token}:${name}:${event}`));
+  // One stdin stream, one session, original SQL order and transaction unchanged.
+  const input='BEGIN;\n'+bodies.map((body,i)=>
+    `\\echo ${markers[i*2]}\n${body}\n\\echo ${markers[i*2+1]}\n`).join('');
+  let result;
+  try {
+    result=execute('docker',['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
+      {input,encoding:'utf8',stdio:['pipe','pipe','ignore'],timeout:60000,killSignal:'SIGKILL',maxBuffer:64*1024});
+  } catch { emitRestore('unknown','failed'); throw new Error('synthetic-restore-process-failed'); }
+  let seen=[];
+  try {
+    assert(typeof result.stdout==='string' && Buffer.byteLength(result.stdout)<=64*1024);
+    // Only this invocation's exact nonce + ordered whitelist can establish position.
+    seen=result.stdout.split(/\r?\n/).filter(line=>line.startsWith(`backup_restore_${token}:`));
+    assert(seen.length<=markers.length && seen.every((line,i)=>line===markers[i]));
+  } catch { emitRestore('unknown','failed'); throw new Error('synthetic-restore-markers-rejected'); }
+  const cleanExit=!result.error && !result.signal && result.status===0;
+  for(let i=0;i<phases.length;i++) {
+    if(seen.length>i*2+1 && (phases[i]!=='restore-commit' || cleanExit))emitRestore(phases[i],'success');
+  }
+  if(cleanExit && seen.length===markers.length)return;
+  // Exit 3 is psql ON_ERROR_STOP script failure. A started segment plus this
+  // controlled return distinguishes a script failure from timeout/transport loss.
+  const active=seen.length%2===1?phases[Math.floor(seen.length/2)]:undefined;
+  if(active && !result.error && !result.signal && result.status===3)emitRestore(active,'failed');
+  else emitRestore('unknown','failed');
+  throw new Error('synthetic-restore-process-failed');
+}
 function emptyTarget(stage) {
   // Extensions/platform schemas are retained; no application schema is preinstalled.
   assert.equal(sql(stage, `SELECT count(*) FROM pg_namespace WHERE nspname IN ('synthetic_backup','cms_private')`), '0');
@@ -560,9 +609,7 @@ async function rehearsal() {
       const ledgerBefore=ledgerSnapshot(target);
       const opened=openArtifacts(readFileSync(join(disk,'backup.enc')),key);
       assert.deepEqual(opened.manifest,originalManifest); emit('integrity','verified');
-      const inputs=restoreInputs(opened.manifest,opened.files);
-      // Each SQL input is generated inside this invocation; no external archive accepted.
-      sql(target,`BEGIN;\n${inputs[0].bytes}\n${inputs[1].bytes}\nSET LOCAL session_replication_role=replica;\n${opened.files.get('auth-data.sql')}\n${inputs[2].bytes}\nCOMMIT;`);
+      restoreInTransaction(target,opened.manifest,opened.files);
       assert.equal(rows(target),expectedRows);passed('schema-data');
       assert.equal(catalog(target),expectedCatalog);
       assert.equal(sql(target,`BEGIN; SET LOCAL ROLE synthetic_backup_reader; SET LOCAL synthetic.actor='${user}'; SELECT count(*) FROM synthetic_backup.items; ROLLBACK;`),'2');
@@ -646,6 +693,11 @@ async function supervise() {
     if(m?.kind==='backup-manifest' && validManifestPath(m.path)){
       if (activeManifest && !cleaned.has(activeManifest)) failed=true;
       activeManifest=m.path; manifests.add(m.path);
+    }
+    if(m?.kind==='restore-result'){
+      const result=safeRestoreResult(m.stage,m.status);
+      if(result.status==='failed')failed=true;
+      console.log(`backup_restore_stage=${result.stage} status=${result.status}`);
     }
     if(m?.kind==='export-result'){
       const result=safeExportResult(m.stage,m.status);

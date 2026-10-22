@@ -420,3 +420,81 @@ describe('ownership-bound CLI dump transport (no Docker)',()=>{
     }finally{rmSync(dir,{recursive:true,force:true});}
   });
 });
+
+const restoreDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
+  restoreStages:readonly string[];
+  safeRestoreResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
+  restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void)=>void;
+};
+describe('single-transaction restore execution diagnostics (synthetic subprocess)',()=>{
+  const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
+  const markerLines=(input:string)=>input.split('\n').filter(s=>s.startsWith('\\echo backup_restore_')).map(s=>s.slice(6));
+  const sample=()=>{const f=fixtures();for(const name of ['roles.sql','schema.sql','auth-data.sql','data.sql'])f.set(name,Buffer.from(`-- synthetic-secret ${name}\nSELECT 1;\n`));return f;};
+  it('uses one psql call with original SQL bytes/order and exactly one BEGIN/COMMIT',()=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];let calls=0;
+    restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(cmd,args,o)=>{
+      calls++;expect(cmd).toBe('docker');expect(args).toEqual(['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres']);
+      expect(o.stdio).toEqual(['pipe','pipe','ignore']);expect(o.timeout).toBe(60000);expect(o.maxBuffer).toBe(65536);
+      const sql=o.input.split('\n').filter(s=>!s.startsWith('\\echo ')).join('\n');
+      expect(sql).toBe(`BEGIN;\n${files.get('roles.sql')}\n${files.get('schema.sql')}\nSET LOCAL session_replication_role=replica;\n${files.get('auth-data.sql')}\n${files.get('data.sql')}\nCOMMIT;\n`);
+      expect(markerLines(o.input)).toHaveLength(10);
+      return {status:0,signal:null,stdout:markerLines(o.input).join('\n'),get stderr(){throw new Error('stderr must never be read');}};
+    },r=>events.push(r));
+    expect(calls).toBe(1);expect(events.filter(r=>r.status==='success').map(r=>r.stage)).toEqual(restoreDiag.restoreStages);
+    expect(JSON.stringify(events)).not.toMatch(/synthetic-secret|SELECT|postgres|backup_restore_/);
+  });
+  it.each(['restore-roles','restore-schema','restore-auth-data','restore-app-data','restore-commit'])('identifies actual entered %s plus script exit 3',name=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];
+    const index=restoreDiag.restoreStages.indexOf(name)-1;
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>({status:3,signal:null,
+      stdout:markerLines(o.input).slice(0,index*2+1).join('\n'),get stderr(){throw new Error('never read');}}),r=>events.push(r))).toThrow('synthetic-restore-process-failed');
+    expect(events.filter(r=>r.status==='failed')).toEqual([{stage:name,status:'failed'}]);
+    expect(events.filter(r=>r.status==='success').map(r=>r.stage)).toEqual(restoreDiag.restoreStages.slice(0,index+1));
+    expect(events).not.toContainEqual({stage:'restore-commit',status:'success'});
+  });
+  it.each(['timeout','connection','launch','throw','zero-with-partial-markers','no-markers','failure-after-end'])('keeps %s unknown instead of guessing an SQL failure',mode=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>{
+      if(mode==='throw')throw new Error('synthetic-secret');
+      return {status:mode==='zero-with-partial-markers'?0:mode==='connection'?2:mode==='no-markers'||mode==='failure-after-end'?3:null,
+        signal:mode==='timeout'?'SIGKILL':null,error:mode==='launch'?new Error('synthetic-secret'):undefined,
+        stdout:mode==='no-markers'?'':markerLines(o.input).slice(0,mode==='failure-after-end'?2:1).join('\n')};
+    },r=>events.push(r))).toThrow('synthetic-restore-process-failed');
+    expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'unknown',status:'failed'}]);
+    expect(JSON.stringify(events)).not.toContain('synthetic-secret');
+  });
+  it.each(['duplicate','out-of-order','unknown-stage','truncated-marker','oversize','non-string'])('fails closed for %s output',mode=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>{
+      const m=markerLines(o.input);
+      const stdout=mode==='duplicate'?[m[0],m[0]].join('\n'):mode==='out-of-order'?m.reverse().join('\n'):
+        mode==='unknown-stage'?m[0].replace('restore-roles','synthetic-secret'):mode==='truncated-marker'?m[0].slice(0,-1):mode==='oversize'?'x'.repeat(65537):null;
+      return {status:0,stdout};
+    },r=>events.push(r))).toThrow('synthetic-restore-markers-rejected');
+    expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'unknown',status:'failed'}]);
+  });
+  it('does not accept markers from another invocation or reflect arbitrary data',()=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,()=>({status:0,stdout:'backup_restore_foreign:restore-roles:end\nsynthetic-secret JWT SQL path'}),r=>events.push(r))).toThrow();
+    expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'unknown',status:'failed'}]);
+    expect(JSON.stringify(events)).not.toMatch(/JWT|SQL|path|synthetic-secret|foreign/);
+    expect(restoreDiag.safeRestoreResult('synthetic-secret','JWT')).toEqual({stage:'unknown',status:'unverified'});
+  });
+  it('input validation failure invokes no Docker and never adds the migration ledger to restore',()=>{
+    const files=sample(),manifest=makeManifest(files),events:{stage:string;status:string}[]=[];let calls=0;
+    files.set('roles.sql',Buffer.from('changed'));
+    expect(()=>restoreDiag.restoreInTransaction(stage,manifest,files,()=>{calls++;return {};},r=>events.push(r))).toThrow('synthetic-restore-input-rejected');
+    expect(calls).toBe(0);expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'restore-input-validation',status:'failed'}]);
+    const valid=sample();restoreDiag.restoreInTransaction(stage,makeManifest(valid),valid,(_c,_a,o)=>{
+      expect(o.input).not.toContain(valid.get('history-data.sql')!.toString());
+      expect(o.input).not.toContain(valid.get('history-schema.sql')!.toString());
+      return {status:0,stdout:markerLines(o.input).join('\n')};
+    },()=>{});
+  });
+  it('late transport failure cannot confirm commit even with a complete marker transcript',()=>{
+    const files=sample(),events:{stage:string;status:string}[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>({status:2,stdout:markerLines(o.input).join('\n')}),r=>events.push(r))).toThrow();
+    expect(events).not.toContainEqual({stage:'restore-commit',status:'success'});
+    expect(events.filter(r=>r.status==='failed')).toEqual([{stage:'unknown',status:'failed'}]);
+  });
+});
