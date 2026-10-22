@@ -126,6 +126,95 @@ function checked(command, args, options = {}) {
   if (result.error || result.signal || result.status !== 0) throw new Error('synthetic-subprocess-failed');
   return result.stdout;
 }
+// CLI v2.119.0 rewrites --local loopback to host.docker.internal on a bridge.
+// An explicit, passwordless --db-url keeps the verified project container host;
+// libpq PGPASSWORD supplies only this disposable stage's synthetic credential.
+const dumpImage = 'ghcr.io/supabase/postgres@sha256:0450166354dc9c1d25f0322ac8b580774d4fb0184d2b087f6e4fe9499c66cf53';
+export function ownedDumpConnection(stage, manifest, db, network, image) {
+  try {
+    validateStage(stage);
+    assert.deepEqual(stage.migrationManifest, []);
+    assert(validManifestPath(join(stage.stagedRoot, 'ownership.json')));
+    assert.equal(manifest.projectId, stage.projectId);
+    assert.equal(manifest.stageRoot, stage.stagedRoot);
+    assert.deepEqual(manifest.ports, stage.ports);
+    for (const kind of ['containers','networks','volumes']) {
+      assert(Array.isArray(manifest.created[kind]) && Array.isArray(manifest.preexisting[kind]));
+      assert.deepEqual(new Set(manifest.preexisting[kind]), stage.preexistingResources[kind]);
+    }
+    assert.match(network.Id, /^[a-f0-9]{64}$/);
+    assert.equal(network.Id, stage.dockerNetworkId);
+    assert.equal(network.Driver, 'bridge');
+    assert.equal(network.Labels?.['com.docker.compose.project'], stage.projectId);
+    assert.equal(network.Options?.['com.docker.network.bridge.host_binding_ipv4'], '127.0.0.1');
+    assert(manifest.created.networks.includes(network.Id) && !stage.preexistingResources.networks.has(network.Id));
+    assert.match(db.Id, /^[a-f0-9]{64}$/);
+    assert.equal(db.Name, `/${stage.dbContainer}`);
+    assert.equal(db.Config?.Labels?.['com.docker.compose.project'], stage.projectId);
+    assert.equal(db.State?.Running, true);
+    assert.equal(db.HostConfig?.Privileged, false);
+    assert(!['host','none'].includes(db.HostConfig?.NetworkMode));
+    assert(manifest.created.containers.includes(db.Id) && !stage.preexistingResources.containers.has(db.Id));
+    assert.match(image.Id, /^sha256:[a-f0-9]{64}$/);
+    assert(image.RepoDigests.includes(dumpImage));
+    assert.equal(db.Image, image.Id);
+    const endpoints = Object.values(db.NetworkSettings.Networks);
+    assert.equal(endpoints.length, 1);
+    assert.equal(endpoints[0].NetworkID, network.Id);
+    assert.equal(network.Containers?.[db.Id]?.Name, stage.dbContainer);
+    const published = db.NetworkSettings.Ports;
+    assert.deepEqual(published['5432/tcp'], [{ HostIp:'127.0.0.1', HostPort:String(stage.ports.db) }]);
+    for (const bindings of Object.values(published)) {
+      assert(bindings === null || (Array.isArray(bindings) && bindings.every(x => x.HostIp === '127.0.0.1')));
+    }
+    // Credentials are taken from staging's verified status, never ambient PG* settings.
+    const local = new URL(stage.dbUrl);
+    assert.equal(local.protocol, 'postgresql:');
+    assert.equal(local.hostname, '127.0.0.1');
+    assert.equal(Number(local.port), stage.ports.db);
+    assert.equal(local.username, 'postgres');
+    assert.equal(local.pathname, '/postgres');
+    assert.equal(local.search + local.hash, '');
+    const password = decodeURIComponent(local.password);
+    assert(password.length > 0 && password.length <= 1024 && [...password].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127));
+    return { url:`postgresql://postgres@${db.Name.slice(1)}:5432/postgres`, password };
+  } catch { throw new Error('synthetic-dump-target-rejected'); }
+}
+export function runOwnedDump(stage, args, execute = checked) {
+  try {
+    validateStage(stage);
+    assert.match(stage.dockerNetworkId, /^[a-f0-9]{64}$/);
+    const flags = new Map([
+      ['roles.sql',['--role-only']], ['schema.sql',['--schema','synthetic_backup']],
+      ['data.sql',['--schema','synthetic_backup','--data-only','--use-copy']],
+      ['auth-data.sql',['--schema','auth','--data-only','--use-copy']],
+      ['history-schema.sql',['--schema','supabase_migrations']],
+      ['history-data.sql',['--schema','supabase_migrations','--data-only','--use-copy']],
+      ['default-schema.sql',[]], ['default-data.sql',['--data-only','--use-copy']],
+    ]);
+    assert([...flags].some(([name, options]) => JSON.stringify(args) ===
+      JSON.stringify(['db','dump','--local',...options,'-f',join(stage.stagedRoot,name)])));
+    const path = join(stage.stagedRoot, 'ownership.json');
+    assert(validManifestPath(path));
+    const stat = lstatSync(path);
+    assert(stat.isFile() && !stat.isSymbolicLink() && stat.size > 0 && stat.size < 4*1024*1024);
+    const manifest = JSON.parse(readFileSync(path,'utf8'));
+    const inspect = argv => {
+      const values = JSON.parse(execute('docker', argv, {timeout:10000,maxBuffer:1024*1024}));
+      assert(Array.isArray(values) && values.length === 1); return values[0];
+    };
+    const db = inspect(['inspect',stage.dbContainer]);
+    const network = inspect(['network','inspect',stage.dockerNetworkId]);
+    const image = inspect(['image','inspect',dumpImage]);
+    const connection = ownedDumpConnection(stage,manifest,db,network,image);
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('PG') && key !== 'SUPABASE_DB_PASSWORD'));
+    env.PGPASSWORD = connection.password;
+    env.SUPABASE_TELEMETRY_DISABLED = '1';
+    // No password in argv; checked captures and suppresses stdout/stderr on failure.
+    return execute('supabase', ['--workdir',stage.stagedRoot,'--network-id',network.Id,
+      'db','dump','--db-url',connection.url,...args.slice(3)], {env});
+  } catch { throw new Error('synthetic-dump-command-failed'); }
+}
 const networkPaths = Object.freeze(['host-loopback','tool-host-gateway','tool-project-internal']);
 const networkStatuses = Object.freeze(['success','refused','timeout','name-resolution-failed','command-unavailable','command-failed','unsupported-probe','unknown','unverified']);
 export function safeNetworkResult(path, status) {
@@ -422,14 +511,15 @@ async function rehearsal() {
       await networkDiagnostics(source);
       emit('export','unverified');
       const files = new Map();
-      files.set('roles.sql',exportStep('roles-dump',()=>dump(source,supabase,'roles.sql',['--role-only'])));
-      files.set('schema.sql',exportStep('app-schema-dump',()=>dump(source,supabase,'schema.sql',['--schema','synthetic_backup'])));
-      files.set('data.sql',exportStep('app-data-dump',()=>dump(source,supabase,'data.sql',['--schema','synthetic_backup','--data-only','--use-copy'])));
-      files.set('auth-data.sql',exportStep('auth-data-dump',()=>dump(source,supabase,'auth-data.sql',['--schema','auth','--data-only','--use-copy'])));
-      files.set('history-schema.sql',exportStep('migration-schema-dump',()=>dump(source,supabase,'history-schema.sql',['--schema','supabase_migrations'])));
-      files.set('history-data.sql',exportStep('migration-data-dump',()=>dump(source,supabase,'history-data.sql',['--schema','supabase_migrations','--data-only','--use-copy'])));
-      const defaultSchema = exportStep('default-schema-dump',()=>dump(source,supabase,'default-schema.sql',[]).toString());
-      const defaultData = exportStep('default-data-dump',()=>dump(source,supabase,'default-data.sql',['--data-only','--use-copy']).toString());
+      const dumpCli = args => runOwnedDump(source,args);
+      files.set('roles.sql',exportStep('roles-dump',()=>dump(source,dumpCli,'roles.sql',['--role-only'])));
+      files.set('schema.sql',exportStep('app-schema-dump',()=>dump(source,dumpCli,'schema.sql',['--schema','synthetic_backup'])));
+      files.set('data.sql',exportStep('app-data-dump',()=>dump(source,dumpCli,'data.sql',['--schema','synthetic_backup','--data-only','--use-copy'])));
+      files.set('auth-data.sql',exportStep('auth-data-dump',()=>dump(source,dumpCli,'auth-data.sql',['--schema','auth','--data-only','--use-copy'])));
+      files.set('history-schema.sql',exportStep('migration-schema-dump',()=>dump(source,dumpCli,'history-schema.sql',['--schema','supabase_migrations'])));
+      files.set('history-data.sql',exportStep('migration-data-dump',()=>dump(source,dumpCli,'history-data.sql',['--schema','supabase_migrations','--data-only','--use-copy'])));
+      const defaultSchema = exportStep('default-schema-dump',()=>dump(source,dumpCli,'default-schema.sql',[]).toString());
+      const defaultData = exportStep('default-data-dump',()=>dump(source,dumpCli,'default-data.sql',['--data-only','--use-copy']).toString());
       exportStep('filter-assertions',()=>{
         assertDefaultSchemaTables(defaultSchema);
         assert(!defaultSchema.includes('synthetic_read')); // Storage policies need separate recovery.

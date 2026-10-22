@@ -325,3 +325,98 @@ esac
     }finally{rmSync(root,{recursive:true,force:true});}
   });
 });
+
+const dumpTransport = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
+  ownedDumpConnection:(stage:unknown,manifest:unknown,db:unknown,network:unknown,image:unknown)=>{url:string;password:string};
+  runOwnedDump:(stage:unknown,args:string[],execute:(command:string,args:string[],options?:{env?:Record<string,string>;timeout?:number})=>string)=>string;
+};
+function dumpFixture(root:string){
+  const projectId='pr1-123456-123456789abc',id='a'.repeat(64),networkId='c'.repeat(64),imageId=`sha256:${'b'.repeat(64)}`;
+  const name=`supabase_db_${projectId}`;
+  const stage={projectId,stagedRoot:root,migrationManifest:[],dbContainer:name,authContainer:`supabase_auth_${projectId}`,
+    apiUrl:'http://127.0.0.1:54321',dbUrl:'postgresql://postgres:synthetic%3Apassword@127.0.0.1:54322/postgres',
+    ports:{api:54321,db:54322},dockerNetworkId:networkId,preexistingResources:{containers:new Set<string>(),networks:new Set<string>(),volumes:new Set<string>()}};
+  const manifest={projectId,stageRoot:root,ports:stage.ports,preexisting:{containers:[] as string[],networks:[] as string[],volumes:[]},created:{containers:[id],networks:[networkId],volumes:[]}};
+  const db={Id:id,Name:`/${name}`,Image:imageId,State:{Running:true},Config:{Labels:{'com.docker.compose.project':projectId}},HostConfig:{Privileged:false,NetworkMode:networkId},
+    NetworkSettings:{Networks:{isolated:{NetworkID:networkId}},Ports:{'5432/tcp':[{HostIp:'127.0.0.1',HostPort:'54322'}]}}};
+  const network={Id:networkId,Driver:'bridge',Labels:{'com.docker.compose.project':projectId},Options:{'com.docker.network.bridge.host_binding_ipv4':'127.0.0.1'},Containers:{[id]:{Name:name}}};
+  const image={Id:imageId,RepoDigests:['ghcr.io/supabase/postgres@sha256:0450166354dc9c1d25f0322ac8b580774d4fb0184d2b087f6e4fe9499c66cf53']};
+  return {stage,manifest,db,network,image};
+}
+describe('ownership-bound CLI dump transport (no Docker)',()=>{
+  const root=join(tmpdir(),'pr1-supabase-123456-123456789abc-Ab12Cd');
+  const connection=(f:ReturnType<typeof dumpFixture>)=>dumpTransport.ownedDumpConnection(f.stage,f.manifest,f.db,f.network,f.image);
+  it('selects inspected project container name and internal port without credentials in argv',()=>{
+    const f=dumpFixture(root),c=connection(f),url=new URL(c.url);
+    expect(url.hostname).toBe(f.db.Name.slice(1));expect(url.port).toBe('5432');
+    expect(url.username).toBe('postgres');expect(url.password).toBe('');expect(c.password).toBe('synthetic:password');
+  });
+  it.each(['foreign-project','wrong-name','preexisting-db','preexisting-network','unrecorded-db','unrecorded-network',
+    'network-label','network-member','wrong-network','host-network','public-port','stopped','privileged','image','digest','metadata',
+    'production-url','wrong-port','wrong-user','url-options','empty-password','application-migrations'])('rejects %s before dump',kind=>{
+    const f=dumpFixture(root);
+    if(kind==='foreign-project')f.db.Config.Labels['com.docker.compose.project']='other';
+    if(kind==='wrong-name')f.db.Name='/other';
+    if(kind==='preexisting-db'){f.stage.preexistingResources.containers.add(f.db.Id);f.manifest.preexisting.containers.push(f.db.Id);}
+    if(kind==='preexisting-network'){f.stage.preexistingResources.networks.add(f.network.Id);f.manifest.preexisting.networks.push(f.network.Id);}
+    if(kind==='unrecorded-db')f.manifest.created.containers=[];
+    if(kind==='unrecorded-network')f.manifest.created.networks=[];
+    if(kind==='network-label')f.network.Labels['com.docker.compose.project']='other';
+    if(kind==='network-member')f.network.Containers[f.db.Id].Name='other';
+    if(kind==='wrong-network')f.db.NetworkSettings.Networks.isolated.NetworkID='d'.repeat(64);
+    if(kind==='host-network')f.db.HostConfig.NetworkMode='host';
+    if(kind==='public-port')f.db.NetworkSettings.Ports['5432/tcp'][0].HostIp='0.0.0.0';
+    if(kind==='stopped')f.db.State.Running=false;
+    if(kind==='privileged')f.db.HostConfig.Privileged=true;
+    if(kind==='image')f.db.Image=`sha256:${'d'.repeat(64)}`;
+    if(kind==='digest')f.image.RepoDigests=[];
+    if(kind==='metadata')f.manifest.projectId='other';
+    if(kind==='production-url')f.stage.dbUrl=f.stage.dbUrl.replace('127.0.0.1','production.invalid');
+    if(kind==='wrong-port')f.stage.dbUrl=f.stage.dbUrl.replace('54322','54323');
+    if(kind==='wrong-user')f.stage.dbUrl=f.stage.dbUrl.replace('postgres:','other:');
+    if(kind==='url-options')f.stage.dbUrl+='?host=production.invalid';
+    if(kind==='empty-password')f.stage.dbUrl=f.stage.dbUrl.replace('synthetic%3Apassword','');
+    if(kind==='application-migrations')(f.stage.migrationManifest as string[]).push('application.sql');
+    expect(()=>connection(f)).toThrow('synthetic-dump-target-rejected');
+  });
+  it('runs the original CLI with a private password env and reinspects before every export',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'pr1-supabase-123456-123456789abc-')),f=dumpFixture(dir);
+    try{
+      writeFileSync(join(dir,'ownership.json'),JSON.stringify(f.manifest),{mode:0o600});
+      const calls:{command:string;args:string[];options?:{env?:Record<string,string>;timeout?:number}}[]=[];
+      const execute=(command:string,args:string[],options?:{env?:Record<string,string>;timeout?:number})=>{
+        calls.push({command,args,options});
+        if(command==='docker')return JSON.stringify([args[0]==='network'?f.network:args[0]==='image'?f.image:f.db]);
+        return '';
+      };
+      const args=['db','dump','--local','--role-only','-f',join(dir,'roles.sql')];
+      dumpTransport.runOwnedDump(f.stage,args,execute);
+      expect(calls.map(c=>c.command)).toEqual(['docker','docker','docker','supabase']);
+      const last=calls[3];
+      expect(last.args).toEqual(['--workdir',dir,'--network-id',f.network.Id,'db','dump','--db-url',connection(f).url,'--role-only','-f',join(dir,'roles.sql')]);
+      expect(last.args.join(' ')).not.toContain('synthetic:password');expect(last.options?.env?.PGPASSWORD).toBe('synthetic:password');
+      expect(Object.keys(last.options?.env??{}).filter(k=>k.startsWith('PG'))).toEqual(['PGPASSWORD']);
+      f.db.Config.Labels['com.docker.compose.project']='other';
+      expect(()=>dumpTransport.runOwnedDump(f.stage,args,execute)).toThrow('synthetic-dump-command-failed');
+      expect(calls.filter(c=>c.command==='supabase')).toHaveLength(1);
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  });
+  it.each(['cli','inspect','missing-manifest','symlink-manifest','extra-argument'])('keeps roles failure classification and suppresses raw %s errors',mode=>{
+    const dir=mkdtempSync(join(tmpdir(),'pr1-supabase-123456-123456789abc-')),f=dumpFixture(dir),statuses:string[]=[];
+    try{
+      const path=join(dir,'ownership.json');
+      if(mode==='symlink-manifest'){writeFileSync(join(dir,'other'),JSON.stringify(f.manifest));symlinkSync(join(dir,'other'),path);}
+      else if(mode!=='missing-manifest')writeFileSync(path,JSON.stringify(f.manifest));
+      let cliCalls=0;
+      const execute=(cmd:string,args:string[])=>{
+        if(cmd==='docker'){
+          if(mode==='inspect')throw new Error('synthetic-secret stderr');
+          return JSON.stringify([args[0]==='network'?f.network:args[0]==='image'?f.image:f.db]);
+        }
+        cliCalls++;throw new Error('synthetic-secret SQL and credentials');
+      };
+      expect(()=>dumpRoles(f.stage,args=>dumpTransport.runOwnedDump(f.stage,mode==='extra-argument'?[...args,'--linked']:args,execute),s=>statuses.push(s))).toThrow('synthetic-dump-command-failed');
+      expect(statuses).toEqual(['unverified','cli-command-failed']);expect(cliCalls).toBe(mode==='cli'?1:0);
+    }finally{rmSync(dir,{recursive:true,force:true});}
+  });
+});
