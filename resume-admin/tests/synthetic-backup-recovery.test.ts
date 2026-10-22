@@ -2,6 +2,7 @@
 // Local tests are contract/failure tests. The opt-in case invokes REAL isolated
 // Supabase stages; default skips must never be described as a restored database.
 import { describe, it, expect } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -184,3 +185,74 @@ it.skipIf(process.env.SYNTHETIC_BACKUP_INTEGRATION!=='1')('restores all required
   expect(result.stdout.includes(`backup_total=${caseNames.length} verified=${caseNames.length} incomplete=0 skipped=0`)).toBe(true);
   expect(result.stdout.includes('backup_acceptance=verified')).toBe(true);
 },49*60_000);
+
+
+// Pure contracts; no Docker or database reachability is claimed.
+const netDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
+  safeNetworkResult:(path:unknown,status:unknown)=>{path:string;status:string};
+  socketFailure:(code:unknown)=>string;
+  loopbackProbe:(port:number,connect:(options:unknown)=>unknown,deadline?:number)=>Promise<string>;
+  parseNetworkProbeOutput:(output:string)=>unknown[];
+  recordNetworkProbe:(manifest:unknown,stage:unknown,container:unknown,image:string)=>{created:{containers:string[]}};
+  networkProbeScript:string;
+};
+describe('bounded synthetic TCP diagnostic contracts',()=>{
+  it.each(['success','refused','timeout','name-resolution-failed','unknown'])('parses complete fixed result %s',status=>{
+    expect(netDiag.parseNetworkProbeOutput(`tool-host-gateway=${status}\ntool-project-internal=success\n`)).toHaveLength(2);
+  });
+  it.each(['secret','tool-project-internal=success\ntool-host-gateway=success',
+    'tool-host-gateway=success\ntool-project-internal=success\nsecret',
+    'tool-host-gateway=success=secret\ntool-project-internal=success','x'.repeat(256)])('rejects unsafe output',value=>{
+    expect(()=>netDiag.parseNetworkProbeOutput(value)).toThrow();
+    expect(netDiag.safeNetworkResult(value,value)).toEqual({path:'unknown',status:'unverified'});
+  });
+  it.each([['ECONNREFUSED','refused'],['ETIMEDOUT','timeout'],['ENOTFOUND','name-resolution-failed'],['secret','unknown']])('normalizes %s',(code,status)=>{
+    expect(netDiag.socketFailure(code)).toBe(status);
+  });
+  it.each(['connect','error','close','timeout','throw'])('bounded socket %s',async event=>{
+    const socket=Object.assign(new EventEmitter(),{destroyed:false,destroy(){this.destroyed=true;}});
+    const result=netDiag.loopbackProbe(54322,options=>{
+      expect(options).toEqual({host:'127.0.0.1',port:54322});
+      if(event==='throw')throw new Error('secret');
+      if(event!=='timeout')void Promise.resolve().then(()=>socket.emit(event,{code:'ECONNREFUSED'}));
+      return socket;
+    },10);
+    expect(await result).toBe(({connect:'success',error:'refused',close:'unknown',timeout:'timeout',throw:'unknown'} as Record<string,string>)[event]);
+    if(event!=='throw')expect(socket.destroyed).toBe(true);
+  });
+  const owned = ()=>{
+    const id='a'.repeat(64),projectId='pr1-123456-123456789abc',image=`sha256:${'b'.repeat(64)}`;
+    const stage={projectId,stagedRoot:'/tmp/synthetic',ports:{db:54322},dockerNetworkId:'c'.repeat(64),
+      preexistingResources:{containers:new Set(['original']),networks:new Set(),volumes:new Set()}};
+    const manifest={projectId,stageRoot:stage.stagedRoot,ports:stage.ports,
+      preexisting:{containers:['original'],networks:[],volumes:[]},created:{containers:[],networks:[],volumes:[]}};
+    const container={Id:id,Name:`/supabase_backup_probe_${projectId}`,Image:image,
+      Config:{Labels:{'com.docker.compose.project':projectId,'synthetic-backup-role':'tcp-probe'}},
+      HostConfig:{NetworkMode:stage.dockerNetworkId,ExtraHosts:['host.docker.internal:host-gateway'],Privileged:false,
+        ReadonlyRootfs:true,PublishAllPorts:false,PortBindings:{}},Mounts:[]};
+    return {stage,manifest,container,image,id};
+  };
+  it('records exact probe without discarding cleanup evidence',()=>{
+    const f=owned();const result=netDiag.recordNetworkProbe(f.manifest,f.stage,f.container,f.image);
+    expect(result.created.containers).toEqual([f.id]);expect(f.manifest.created.containers).toEqual([]);
+    expect(netDiag.recordNetworkProbe(result,f.stage,f.container,f.image).created.containers).toEqual([f.id]);
+  });
+  it.each(['project','image','network','preexisting','manifest','published','privileged','mount'])('rejects unsafe %s',kind=>{
+    const f=owned();
+    if(kind==='project')f.container.Config.Labels['com.docker.compose.project']='other';
+    if(kind==='image')f.container.Image=`sha256:${'d'.repeat(64)}`;
+    if(kind==='network')f.container.HostConfig.NetworkMode='host';
+    if(kind==='preexisting'){f.manifest.preexisting.containers.push(f.id);f.stage.preexistingResources.containers.add(f.id);}
+    if(kind==='manifest')f.manifest.projectId='other';
+    if(kind==='published')f.container.HostConfig.PublishAllPorts=true;
+    if(kind==='privileged')f.container.HostConfig.Privileged=true;
+    if(kind==='mount')(f.container.Mounts as unknown[]).push({Type:'bind'});
+    expect(()=>netDiag.recordNetworkProbe(f.manifest,f.stage,f.container,f.image)).toThrow();
+  });
+  it('uses bounded bash and no SQL or retry loop',()=>{
+    expect(spawnSync('bash',['-n'],{input:netDiag.networkProbeScript,encoding:'utf8'}).status).toBe(0);
+    expect(netDiag.networkProbeScript).toContain('timeout --signal=KILL 5');
+    expect(netDiag.networkProbeScript).not.toMatch(/PGPASSWORD|psql|pg_dump|while|until/);
+    expect(netDiag.networkProbeScript.match(/^probe tool-/gm)).toHaveLength(2);
+  });
+});

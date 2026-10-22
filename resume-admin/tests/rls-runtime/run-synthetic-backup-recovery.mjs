@@ -4,11 +4,13 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHmac, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, lstatSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, lstatSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
+import { createConnection } from 'node:net';
+import { setTimeout, clearTimeout } from 'node:timers';
 import { withStagedLocalSupabase } from './stage-local-supabase.mjs';
 import { observeCompatibilityStaging, waitBoundedChild } from './compatibility-contract.mjs';
 import { artifactNames, caseNames, cliVersion, sha256, makeManifest, verifyArtifacts, restoreInputs,
@@ -124,6 +126,150 @@ function checked(command, args, options = {}) {
   if (result.error || result.signal || result.status !== 0) throw new Error('synthetic-subprocess-failed');
   return result.stdout;
 }
+const networkPaths = Object.freeze(['host-loopback','tool-host-gateway','tool-project-internal']);
+const networkStatuses = Object.freeze(['success','refused','timeout','name-resolution-failed','unknown','unverified']);
+export function safeNetworkResult(path, status) {
+  return { path: networkPaths.includes(path) ? path : 'unknown',
+    status: networkStatuses.includes(status) ? status : 'unverified' };
+}
+export function socketFailure(code) {
+  return ({ ECONNREFUSED:'refused', ETIMEDOUT:'timeout', ENOTFOUND:'name-resolution-failed', EAI_AGAIN:'name-resolution-failed' })[code] ?? 'unknown';
+}
+export function loopbackProbe(port, connect = createConnection, deadline = 5000) {
+  assert(Number.isInteger(port) && port > 1024 && port < 65536);
+  assert(Number.isInteger(deadline) && deadline > 0 && deadline <= 5000);
+  return new Promise(resolveProbe => {
+    let socket, timer, done = false;
+    const finish = status => {
+      if(done)return; done=true; clearTimeout(timer); socket?.destroy(); resolveProbe(status);
+    };
+    timer=setTimeout(()=>finish('timeout'),deadline);
+    try {
+      socket=connect({ host:'127.0.0.1', port });
+      socket.once('connect',()=>finish('success'));
+      socket.once('error',error=>finish(socketFailure(error?.code)));
+      socket.once('close',()=>finish('unknown'));
+    } catch { finish('unknown'); }
+  });
+}
+// No SQL/authentication probe: each TCP connection runs once, with a hard timeout.
+// stderr stays inside the disposable container; only fixed enums reach stdout.
+export const networkProbeScript = `
+set -eu
+export LC_ALL=C
+command -v timeout >/dev/null
+probe() {
+  set +e
+  timeout --signal=KILL 5 bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' -- "$2" "$3" 2>/tmp/probe-error
+  code=$?
+  set -e
+  result=unknown
+  if [ "$code" = 0 ]; then result=success
+  elif [ "$code" = 124 ] || [ "$code" = 137 ]; then result=timeout
+  elif grep -q 'Connection refused' /tmp/probe-error; then result=refused
+  elif grep -Eq 'Name or service not known|Temporary failure in name resolution' /tmp/probe-error; then result=name-resolution-failed
+  fi
+  printf '%s=%s\\n' "$1" "$result"
+}
+probe tool-host-gateway host.docker.internal "$1"
+probe tool-project-internal "$2" 5432
+`;
+export function parseNetworkProbeOutput(output) {
+  assert(typeof output==='string' && output.length<256, 'network-output-rejected');
+  const lines=output.trim().split('\n');
+  assert.equal(lines.length,2,'network-output-rejected');
+  return networkPaths.slice(1).map((path,index)=>{
+    const [actual,status,...extra]=lines[index].split('=');
+    assert.equal(actual,path,'network-output-rejected');
+    assert.equal(extra.length,0,'network-output-rejected');
+    assert(networkStatuses.includes(status) && status!=='unverified','network-output-rejected');
+    return {path,status};
+  });
+}
+export function recordNetworkProbe(manifest, stage, container, imageId) {
+  assert.equal(manifest.projectId,stage.projectId);
+  assert.equal(manifest.stageRoot,stage.stagedRoot);
+  assert.deepEqual(manifest.ports,stage.ports);
+  assert.match(container.Id,/^[a-f0-9]{64}$/);
+  assert.equal(container.Name,`/supabase_backup_probe_${stage.projectId}`);
+  assert.equal(container.Config?.Labels?.['com.docker.compose.project'],stage.projectId);
+  assert.equal(container.Config?.Labels?.['synthetic-backup-role'],'tcp-probe');
+  assert.equal(container.Image,imageId);
+  assert.equal(container.HostConfig?.NetworkMode,stage.dockerNetworkId);
+  assert.deepEqual(container.HostConfig?.ExtraHosts,['host.docker.internal:host-gateway']);
+  assert.equal(container.HostConfig?.Privileged,false);
+  assert.equal(container.HostConfig?.ReadonlyRootfs,true);
+  assert.equal(container.HostConfig?.PublishAllPorts,false);
+  assert.equal(Object.keys(container.HostConfig?.PortBindings ?? {}).length,0);
+  assert.equal((container.Mounts ?? []).filter(m=>m.Type!=='tmpfs').length,0);
+  for(const kind of ['containers','volumes','networks']) {
+    assert(Array.isArray(manifest.preexisting?.[kind]) && Array.isArray(manifest.created?.[kind]));
+    assert.deepEqual(new Set(manifest.preexisting[kind]),stage.preexistingResources[kind]);
+  }
+  assert(!manifest.preexisting.containers.includes(container.Id));
+  return {...manifest,created:{...manifest.created,containers:[...new Set([...manifest.created.containers,container.Id])]}};
+}
+async function networkDiagnostics(stage) {
+  validateStage(stage);
+  const report=(path,status)=>process.send?.({kind:'backup-network',...safeNetworkResult(path,status)});
+  const lifecycle=(operation,status)=>process.send?.({kind:'backup-network-container',operation,status});
+  for(const path of networkPaths)report(path,'unverified');
+  for(const operation of ['create','start','exit'])lifecycle(operation,'unverified');
+  // Validate the already-owned network/database and pinned cache before any new resource.
+  const inspect=args=>JSON.parse(checked('docker',args,{timeout:10000,maxBuffer:1024*1024}))[0];
+  const network=inspect(['network','inspect',stage.dockerNetworkId]);
+  assert.equal(network.Id,stage.dockerNetworkId);
+  assert.equal(network.Driver,'bridge');
+  assert.equal(network.Labels?.['com.docker.compose.project'],stage.projectId);
+  assert.equal(network.Options?.['com.docker.network.bridge.host_binding_ipv4'],'127.0.0.1');
+  const db=inspect(['inspect',stage.dbContainer]);
+  assert.equal(db.Config?.Labels?.['com.docker.compose.project'],stage.projectId);
+  assert(!stage.preexistingResources.containers.has(db.Id));
+  assert(Object.values(db.NetworkSettings.Networks).some(n=>n.NetworkID===stage.dockerNetworkId));
+  const reference='ghcr.io/supabase/postgres@sha256:0450166354dc9c1d25f0322ac8b580774d4fb0184d2b087f6e4fe9499c66cf53';
+  const image=inspect(['image','inspect',reference]);
+  assert.match(image.Id,/^sha256:[a-f0-9]{64}$/);
+  assert(image.RepoDigests.includes(reference));
+  assert.equal(db.Image,image.Id);
+  // Prevent Docker image VOLUME declarations from creating unlabelled anonymous volumes.
+  assert(Object.keys(image.Config?.Volumes ?? {}).every(path=>path==='/var/lib/postgresql/data'));
+  const manifestPath=join(stage.stagedRoot,'ownership.json');
+  assert(validManifestPath(manifestPath));
+  const stat=lstatSync(manifestPath); assert(stat.isFile() && !stat.isSymbolicLink() && stat.size<4*1024*1024);
+  const manifest=JSON.parse(readFileSync(manifestPath,'utf8'));
+  assert.equal(manifest.projectId,stage.projectId);
+  report('host-loopback',await loopbackProbe(stage.ports.db));
+  let operation='create';
+  try {
+    const id=checked('docker',['create','--pull=never','--name',`supabase_backup_probe_${stage.projectId}`,
+      '--label',`com.docker.compose.project=${stage.projectId}`,'--label','synthetic-backup-role=tcp-probe',
+      '--network',stage.dockerNetworkId,'--add-host','host.docker.internal:host-gateway',
+      '--read-only','--cap-drop=ALL','--security-opt','no-new-privileges','--pids-limit','32',
+      '--memory','128m','--cpus','0.5','--tmpfs','/tmp:rw,noexec,nosuid,size=1m',
+      '--tmpfs','/var/lib/postgresql/data:rw,noexec,nosuid,size=1m',
+      '--entrypoint','bash',image.Id,'-c',networkProbeScript,'--',String(stage.ports.db),stage.dbContainer],
+    {timeout:10000,maxBuffer:4096}).trim();
+    assert.match(id,/^[a-f0-9]{64}$/);
+    const container=inspect(['inspect',id]);
+    const recorded=recordNetworkProbe(manifest,stage,container,image.Id);
+    // Existing fallback also rediscovers labelled resources if creation/recording is interrupted.
+    const pendingManifest=join(stage.stagedRoot,'ownership-network-pending.json');
+    writeFileSync(pendingManifest,JSON.stringify(recorded),{mode:0o600,flag:'wx'});
+    renameSync(pendingManifest,manifestPath);
+    lifecycle('create','success'); operation='start';
+    checked('docker',['start',id],{timeout:10000,maxBuffer:4096});
+    lifecycle('start','success'); operation='exit';
+    const exit=checked('docker',['wait',id],{timeout:15000,maxBuffer:4096}).trim();
+    assert.equal(exit,'0','network-tool-exit-failed');
+    const ended=inspect(['inspect',id]);
+    recordNetworkProbe(recorded,stage,ended,image.Id);
+    assert.equal(ended.State.Running,false); assert.equal(ended.State.ExitCode,0);
+    lifecycle('exit','success');
+    for(const result of parseNetworkProbeOutput(checked('docker',['logs',id],{timeout:5000,maxBuffer:4096})))report(result.path,result.status);
+    // Do not auto-remove: staging owns verification/removal, including timeout/failure paths.
+  } catch { lifecycle(operation,'failed'); throw new Error('synthetic-network-diagnostic-failed'); }
+}
+
 export function validateStage(stage) {
   assert.match(stage.projectId, /^pr1-\d+-[a-f0-9]{12}$/);
   assert.equal(stage.dbContainer, `supabase_db_${stage.projectId}`);
@@ -251,6 +397,7 @@ async function rehearsal() {
       sql(source, "SELECT vault.create_secret('synthetic-vault-value','synthetic-vault-probe')");
       before = await snapshot(source,token);
       expectedRows=rows(source); expectedCatalog=catalog(source); expectedAuth=authRows(source); expectedStorage=storageRows(source);
+      await networkDiagnostics(source);
       emit('export','unverified');
       const files = new Map();
       files.set('roles.sql',exportStep('roles-dump',()=>dump(source,supabase,'roles.sql',['--role-only'])));
@@ -392,6 +539,15 @@ async function supervise() {
       const result=safeExportResult(m.stage,m.status);
       if(result.status==='failed')failed=true;
       console.log(`backup_export_stage=${result.stage} status=${result.status}`);
+    }
+    if(m?.kind==='backup-network'){
+      const result=safeNetworkResult(m.path,m.status);
+      console.log(`backup_network=${result.path} tcp=${result.status} authentication=unverified`);
+    }
+    if(m?.kind==='backup-network-container'){
+      const operation=['create','start','exit'].includes(m.operation)?m.operation:'unknown';
+      const status=['success','failed','unverified'].includes(m.status)?m.status:'unverified';
+      console.log(`backup_network_container=${operation} status=${status}`);
     }
     if(m?.kind==='roles-dump-result'){
       const status=safeRoleDumpStatus(m.status);
