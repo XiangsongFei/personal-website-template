@@ -426,7 +426,7 @@ const restoreDiag = await import(new URL('./rls-runtime/run-synthetic-backup-rec
   classifyRestoreSqlState:(input:unknown)=>string;
   safeRestoreErrorCategory:(input:unknown)=>string;
   safeRestoreResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
-  restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void,reportError?:(category:string)=>void,reportRole?:(value:unknown)=>void)=>void;
+  restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void,reportError?:(category:string)=>void,reportRole?:(value:unknown)=>void,reportInput?:(value:{step:string;status:string;reason:string})=>void)=>void;
 };
 describe('single-transaction restore execution diagnostics (synthetic subprocess)',()=>{
   const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
@@ -665,5 +665,117 @@ describe('first failing role operation and permission observations (mock psql)',
     const files=fixtures();files.set('roles.sql',Buffer.from('\\! secret'));let calls=0;
     expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,()=>{calls++;return {};},()=>{})).toThrow('synthetic-restore-input-rejected');
     expect(calls).toBe(0);expect(files.get('roles.sql')!.toString()).toBe('\\! secret');
+  });
+});
+
+
+const inputDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs',import.meta.url).href) as {
+  safeRestoreInputDiagnostic:(step:unknown,status:unknown,reason:unknown)=>{step:string;status:string;reason:string};
+  formatRestoreInputDiagnostic:(value:unknown)=>string;
+};
+describe('restore input rejection boundaries (synthetic; no database)',()=>{
+  const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
+  const steps=['validate-stage','restore-inputs','parse-role-operations'];
+  const reject=(input:Buffer,change?:'stage'|'manifest'|'throw')=>{
+    const files=fixtures();files.set('roles.sql',Buffer.from(input));const manifest=makeManifest(files);
+    const original=Buffer.from(input);const events:{step:string;status:string;reason:string}[]=[];
+    const phases:{stage:string;status:string}[]=[];let calls=0;
+    const target=change==='stage'?{...stage,apiUrl:'http://invalid.example.invalid/'}:change==='throw'
+      ?{get projectId(){throw Object.assign(new Error('JWT synthetic-secret SQL /private/path'),{reason:'input-limit'});}}:stage;
+    if(change==='manifest')files.set('schema.sql',Buffer.from('synthetic-secret corrupted'));
+    expect(()=>restoreDiag.restoreInTransaction(target,manifest,files,()=>{calls++;},r=>phases.push(r),()=>{},()=>{},r=>events.push(r))).toThrow('synthetic-restore-input-rejected');
+    expect(calls).toBe(0);expect(files.get('roles.sql')).toEqual(original);
+    expect(phases.at(-1)).toEqual({stage:'restore-input-validation',status:'failed'});
+    expect(phases.filter(x=>x.status==='success')).toEqual([]);
+    expect(events.slice(0,3)).toEqual(steps.map(step=>({step,status:'unverified',reason:'unknown'})));
+    expect(events.filter(x=>x.status==='failed')).toHaveLength(1);
+    expect(events.map(inputDiag.formatRestoreInputDiagnostic).join('\n')).not.toMatch(/JWT|synthetic-secret|private|corrupted|SELECT|CREATE|ROLE/);
+    return events;
+  };
+  it.each(['stage','manifest','throw'] as const)('separates %s rejection from the parser and execution',mode=>{
+    const events=reject(Buffer.from('unsupported SQL synthetic-secret'),mode);
+    const step=mode==='manifest'?'restore-inputs':'validate-stage';
+    expect(events.at(-1)).toEqual({step,status:'failed',reason:'unknown'});
+    expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(mode==='manifest'?['validate-stage']:[]);
+  });
+  it.each([
+    ['session-name',Buffer.from('SET transaction_timeout = 0;'),'unsupported-session-setting'],
+    ['session-value',Buffer.from('SET standard_conforming_strings = off;'),'unsupported-session-setting'],
+    ['psql-restrict',Buffer.from('\\restrict syntheticKey\n'),'unsupported-psql-command'],
+    ['psql-shell',Buffer.from('\\! synthetic-secret\n'),'unsupported-psql-command'],
+    ['unsupported-select',Buffer.from('SELECT synthetic_secret;'),'unsupported-role-operation'],
+    ['parameter-acl',Buffer.from('GRANT SET ON PARAMETER "synthetic.parameter" TO "synthetic_reader";'),'unsupported-role-operation'],
+    ['list-config',Buffer.from('ALTER ROLE "synthetic_reader" SET "search_path" TO "public", "extensions";'),'unsupported-role-operation'],
+    ['dollar-quote',Buffer.from('ALTER ROLE a SET x TO $$synthetic-secret$$;'),'unsupported-lexical-form'],
+    ['variable',Buffer.from('CREATE ROLE :synthetic_secret;'),'unsupported-lexical-form'],
+    ['quoted-newline',Buffer.from('CREATE ROLE "a\nb";'),'unsupported-lexical-form'],
+    ['unterminated-quote',Buffer.from('CREATE ROLE "synthetic-secret'),'malformed-input'],
+    ['unterminated-comment',Buffer.from('/* synthetic-secret'),'malformed-input'],
+    ['missing-semicolon',Buffer.from('CREATE ROLE a'),'malformed-input'],
+    ['invalid-utf8',Buffer.from([255]),'malformed-input'],
+    ['nul',Buffer.from('CREATE ROLE a;\0'),'malformed-input'],
+    ['operation-limit',Buffer.from('CREATE ROLE a;'.repeat(129)),'input-limit'],
+    ['byte-limit',Buffer.alloc(128*1024+1,32),'input-limit'],
+    ['token-limit',Buffer.from('ALTER ROLE a WITH '+'LOGIN '.repeat(513)+';'),'input-limit'],
+    ['comment-limit',Buffer.from('/*'.repeat(33)),'input-limit'],
+    ['quote-limit',Buffer.from('CREATE ROLE "'+'a'.repeat(4097)+'";'),'input-limit'],
+  ])('reports fixed reason for %s without exposing input',(_name,bytes,reason)=>{
+    const events=reject(bytes as Buffer);
+    expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(steps.slice(0,2));
+    expect(events.at(-1)).toEqual({step:steps[2],status:'failed',reason});
+  });
+  it('filters malformed IPC independently, including fake successful reasons',()=>{
+    for(const value of [null,undefined,{}, {step:'JWT',status:'password',reason:'SQL'},
+      {step:'parse-role-operations',status:'failed',reason:'synthetic-secret'},
+      {step:'restore-inputs',status:'failed',reason:'input-limit'},
+      {step:'parse-role-operations',status:'success',reason:'input-limit'}]){
+      const line=inputDiag.formatRestoreInputDiagnostic(value);
+      expect(line).toMatch(/^backup_restore_input=(validate-stage|restore-inputs|parse-role-operations|unknown) status=(success|failed|unverified) reason=unknown$/);
+    }
+  });
+  // Complete synthetic CLI-output shape, derived from fixed upstream sources:
+  // postgres/postgres REL_17_11 src/bin/pg_dump/pg_dumpall.c (header, dumpRoles,
+  // dumpRoleMembership, footer) and supabase/cli v2.119.0
+  // apps/cli/src/command-internal/pg-dump.scripts.ts + pg-dump.env.ts.
+  // CLI comments/removes restrict/unrestrict and reserved-role DDL, retains safe
+  // reserved-role config, and appends RESET ALL. This is NOT a live pg_dump.
+  const cliFixture=[
+    '-- PostgreSQL database cluster dump', '-- \\restrict SyntheticOnlyKey',
+    'SET default_transaction_read_only = off;', "SET client_encoding = 'UTF8';",
+    'SET standard_conforming_strings = on;',
+    '-- CREATE ROLE "postgres";', '-- ALTER ROLE "postgres" WITH SUPERUSER;',
+    'CREATE ROLE "synthetic_backup_reader";',
+    'ALTER ROLE "synthetic_backup_reader" WITH INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOBYPASSRLS;',
+    'ALTER ROLE "anon" SET "statement_timeout" TO \'3s\';',
+    'ALTER ROLE "authenticator" SET "pgrst.db_schemas" TO \'public, storage\';',
+    'ALTER ROLE "authenticator" SET "pgrst.db_pre_request" TO \'public.synthetic_probe\';',
+    'GRANT "synthetic_backup_reader" TO "synthetic_client" WITH INHERIT TRUE, SET FALSE GRANTED BY "postgres";',
+    'GRANT "synthetic_backup_reader" TO "synthetic_auditor" WITH ADMIN OPTION, INHERIT FALSE GRANTED BY "postgres";',
+    '-- \\unrestrict SyntheticOnlyKey', '-- PostgreSQL database cluster dump complete',
+    'RESET ALL;', '',
+  ].join('\n');
+  it.each([true,false])('accepts the source-derived full CLI fixture with comments=%s and preserves bytes',comments=>{
+    const sql=comments?cliFixture:cliFixture.split('\n').filter(x=>!x.startsWith('--')).join('\n');
+    const parsed=roleDiag.parseRoleOperations(Buffer.from(sql));
+    expect(parsed).toHaveLength(11);expect(parsed.map(x=>x.sql).join('')).toBe(sql);
+    expect(parsed.map(x=>x.index)).toEqual(Array.from({length:11},(_,i)=>i+1));
+  });
+  it('reports all three checks successful before the original one-session execution',()=>{
+    const files=fixtures();files.set('roles.sql',Buffer.from(cliFixture));const events:{step:string;status:string;reason:string}[]=[];
+    let calls=0;
+    restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_cmd,args,o)=>{
+      calls++;expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(steps);
+      expect(args).toContain('ON_ERROR_STOP=1');expect(o.input.match(/^BEGIN;$/gm)).toHaveLength(1);
+      expect(o.input.match(/^COMMIT;$/gm)).toHaveLength(1);
+      let cursor=-1;for(const op of roleDiag.parseRoleOperations(Buffer.from(cliFixture))){
+        const offset=o.input.indexOf(op.sql,cursor+1);expect(offset).toBeGreaterThan(cursor);cursor=offset;
+      }
+      const stdout=o.input.split('\n').flatMap(line=>{
+        if(line.startsWith('\\echo backup_'))return [line.slice(6)];
+        const m=/^SELECT '(backup_role_[a-f0-9]{32}:\d+:before:)'/.exec(line);
+        return m?[m[1]+'t:f:'+(line.includes("|| 'u' FROM")?'u':'f')]:[];
+      }).join('\n');return {status:0,stdout,stderr:''};
+    },()=>{},()=>{},()=>{},r=>events.push(r));
+    expect(calls).toBe(1);expect(events.filter(x=>x.status==='failed')).toEqual([]);
   });
 });

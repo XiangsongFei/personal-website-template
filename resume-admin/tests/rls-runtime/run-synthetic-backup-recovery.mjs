@@ -415,17 +415,38 @@ export function classifyRestoreSqlState(stderr) {
 }
 const roleOperationKinds = ['create-role','alter-role','role-configuration','grant-membership',
   'revoke-membership','session-setting','other','unknown'];
-const roleParseFailure = () => { throw new Error('synthetic-role-input-rejected'); };
+const restoreInputSteps = Object.freeze(['validate-stage','restore-inputs','parse-role-operations']);
+const roleRejectionReasons = Object.freeze(['unsupported-session-setting','unsupported-psql-command',
+  'unsupported-role-operation','unsupported-lexical-form','malformed-input','input-limit','unknown']);
+// Only errors created by this parser carry a trusted reason; arbitrary thrown
+// properties/messages never become diagnostic output.
+const roleRejections = new WeakMap();
+const roleParseFailure = (reason='unsupported-role-operation') => {
+  const error=new Error('synthetic-role-input-rejected');
+  roleRejections.set(error,roleRejectionReasons.includes(reason)?reason:'unknown');
+  throw error;
+};
+export function safeRestoreInputDiagnostic(step, status, reason) {
+  const safeStep=restoreInputSteps.includes(step)?step:'unknown';
+  const safeStatus=['success','failed','unverified'].includes(status)?status:'unverified';
+  return {step:safeStep,status:safeStatus,reason:safeStep==='parse-role-operations' && safeStatus==='failed'
+    && roleRejectionReasons.includes(reason)?reason:'unknown'};
+}
+export function formatRestoreInputDiagnostic(value) {
+  const d=safeRestoreInputDiagnostic(value?.step,value?.status,value?.reason);
+  return `backup_restore_input=${d.step} status=${d.status} reason=${d.reason}`;
+}
 // This is deliberately a subset of pg_dumpall output, not a general SQL parser.
 // Unsupported lexical/grammar forms are rejected BEFORE any database command.
 // Keep byte ranges intact; never split on semicolons inside quotes/comments.
 export function parseRoleOperations(bytes) {
-  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > 128 * 1024) roleParseFailure();
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0) roleParseFailure('malformed-input');
+  if (bytes.length > 128 * 1024) roleParseFailure('input-limit');
   const s=bytes.toString('utf8');
-  if (!Buffer.from(s).equals(bytes) || /[\0\r]/.test(s)) roleParseFailure();
+  if (!Buffer.from(s).equals(bytes) || /[\0\r]/.test(s)) roleParseFailure('malformed-input');
   let i=0,start=0,tokens=[];
   const operations=[];
-  const add=(type,value)=>{ if(tokens.length>=512)roleParseFailure(); tokens.push({type,value}); };
+  const add=(type,value)=>{ if(tokens.length>=512)roleParseFailure('input-limit'); tokens.push({type,value}); };
   while(i<s.length) {
     const c=s[i];
     if (/\s/.test(c)) { i++; continue; }
@@ -433,43 +454,45 @@ export function parseRoleOperations(bytes) {
     if(s.startsWith('/*',i)) {
       let depth=1;i+=2;
       while(depth && i<s.length){
-        if(s.startsWith('/*',i)){if(++depth>32)roleParseFailure();i+=2;}
+        if(s.startsWith('/*',i)){if(++depth>32)roleParseFailure('input-limit');i+=2;}
         else if(s.startsWith('*/',i)){depth--;i+=2;}else i++;
       }
-      if(depth)roleParseFailure();continue;
+      if(depth)roleParseFailure('malformed-input');continue;
     }
     // Active psql commands, variable substitution and dollar quoting are outside
     // the CLI role grammar. Reject rather than guess where their statement ends.
-    if(c==='\\' || c===':' || c==='$')roleParseFailure();
+    if(c==='\\')roleParseFailure('unsupported-psql-command');
+    if(c===':' || c==='$')roleParseFailure('unsupported-lexical-form');
     if(c==='"' || c==="'") {
       const quote=c;let value='';let closed=false;i++;
       while(i<s.length){
         if(s[i]===quote){if(s[i+1]===quote){value+=quote;i+=2;continue;}i++;closed=true;break;}
         // Backslash escape modes and quoted newlines are unnecessary for the
         // fixed synthetic fixture; refusing them avoids session-mode ambiguity.
-        if(s[i]==='\\' || s[i]==='\n')roleParseFailure();
+        if(s[i]==='\\' || s[i]==='\n')roleParseFailure('unsupported-lexical-form');
         value+=s[i++];
       }
-      if(!closed || value.length>4096)roleParseFailure();
+      if(!closed)roleParseFailure('malformed-input');
+      if(value.length>4096)roleParseFailure('input-limit');
       add(quote==='"'?'id':'string',value);continue;
     }
     if(/[A-Za-z_]/.test(c)) {
       const m=/^[A-Za-z_][A-Za-z_0-9$]*/.exec(s.slice(i))[0];i+=m.length;add('word',m.toLowerCase());continue;
     }
     if(/[0-9-]/.test(c)) {
-      const m=/^-?[0-9]+/.exec(s.slice(i));if(!m)roleParseFailure();i+=m[0].length;add('number',m[0]);continue;
+      const m=/^-?[0-9]+/.exec(s.slice(i));if(!m)roleParseFailure('unsupported-lexical-form');i+=m[0].length;add('number',m[0]);continue;
     }
     if(c===',' || c==='='){add('punct',c);i++;continue;}
     if(c===';') {
-      i++;if(!tokens.length)roleParseFailure();
+      i++;if(!tokens.length)roleParseFailure('malformed-input');
       const classified=classifyRoleTokens(tokens);
       operations.push({...classified,index:operations.length+1,sql:s.slice(start,i)});
-      if(operations.length>128)roleParseFailure();
+      if(operations.length>128)roleParseFailure('input-limit');
       start=i;tokens=[];continue;
     }
-    roleParseFailure();
+    roleParseFailure('unsupported-lexical-form');
   }
-  if(tokens.length || !operations.length)roleParseFailure();
+  if(tokens.length || !operations.length)roleParseFailure('malformed-input');
   // Preserve trailing comments/whitespace too.
   operations.at(-1).sql+=s.slice(start);
   return operations;
@@ -528,9 +551,9 @@ function classifyRoleTokens(t) {
     take('set');const setting=id();
     // Do not allow role/session authorization changes or lexical-mode changes.
     const values={default_transaction_read_only:['off'],client_encoding:['UTF8'],standard_conforming_strings:['on']};
-    if(!Object.hasOwn(values,setting))roleParseFailure();
+    if(!Object.hasOwn(values,setting))roleParseFailure('unsupported-session-setting');
     if(punct('=') || word('to'))p++;else roleParseFailure();
-    const value=t[p++];if(!value || !['word','string'].includes(value.type) || !values[setting].includes(value.value))roleParseFailure();
+    const value=t[p++];if(!value || !['word','string'].includes(value.type) || !values[setting].includes(value.value))roleParseFailure('unsupported-session-setting');
     return done('session-setting');
   }
   roleParseFailure();
@@ -574,12 +597,23 @@ export function inspectRoleTranscript(stdout,token,specs) {
 export function restoreInTransaction(stage, manifest, files, execute = spawnSync,
   report = result => process.send?.({kind:'restore-result',...result}),
   reportError = category => process.send?.({kind:'restore-error',category:safeRestoreErrorCategory(category)}, () => { /* Do not alter restore on diagnostic IPC failure. */ }),
-  reportRole = value => process.send?.({kind:'restore-role-failure',...safeRoleFailure(value)})) {
+  reportRole = value => process.send?.({kind:'restore-role-failure',...safeRoleFailure(value)}),
+  reportInput = value => process.send?.({kind:'restore-input',...value})) {
   const emitRestore = (name,status) => report(safeRestoreResult(name,status));
   reportError('unknown');
   for(const name of restoreStages)emitRestore(name,'unverified');
+  const emitInput=(step,status,reason)=>reportInput(safeRestoreInputDiagnostic(step,status,reason));
+  for(const step of restoreInputSteps)emitInput(step,'unverified');
+  const checkInput=(step,check)=>{
+    try { const value=check(); emitInput(step,'success'); return value; }
+    catch(error) { emitInput(step,'failed',roleRejections.get(error)); throw error; }
+  };
   let inputs,operations;
-  try { validateStage(stage); inputs=restoreInputs(manifest,files); operations=parseRoleOperations(inputs[0].bytes); }
+  try {
+    checkInput('validate-stage',()=>validateStage(stage));
+    inputs=checkInput('restore-inputs',()=>restoreInputs(manifest,files));
+    operations=checkInput('parse-role-operations',()=>parseRoleOperations(inputs[0].bytes));
+  }
   catch { emitRestore('restore-input-validation','failed'); throw new Error('synthetic-restore-input-rejected'); }
   emitRestore('restore-input-validation','success');
   const token=randomBytes(16).toString('hex');
@@ -876,6 +910,9 @@ async function supervise() {
     if(m?.kind==='backup-manifest' && validManifestPath(m.path)){
       if (activeManifest && !cleaned.has(activeManifest)) failed=true;
       activeManifest=m.path; manifests.add(m.path);
+    }
+    if(m?.kind==='restore-input'){
+      console.log(formatRestoreInputDiagnostic(m));
     }
     if(m?.kind==='restore-error'){
       console.log(`backup_restore_error=${safeRestoreErrorCategory(m.category)}`);
