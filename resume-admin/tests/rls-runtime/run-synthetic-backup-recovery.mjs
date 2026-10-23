@@ -12,6 +12,8 @@ import { EventEmitter } from 'node:events';
 import { createConnection } from 'node:net';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { withStagedLocalSupabase } from './stage-local-supabase.mjs';
+import { collectParameterAcl, bindParameterExport, summarizeParameterAcl,
+  formatParameterAclDiagnostic } from './parameter-acl-observation.mjs';
 import { observeCompatibilityStaging, waitBoundedChild } from './compatibility-contract.mjs';
 import { artifactNames, caseNames, cliVersion, sha256, makeManifest, verifyArtifacts, restoreInputs,
   assertConsistent, sealArtifacts, openArtifacts, safeResult } from './backup-recovery-contract.mjs';
@@ -394,6 +396,44 @@ function sql(stage, input) {
   validateStage(stage);
   return checked('docker', ['exec', '-i', stage.dbContainer, 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres'], { input }).trim();
 }
+// Used only inside the ownership-verified synthetic-recovery callback. Inspect
+// and bind to the immutable container ID again before this read-only session.
+export function collectOwnedParameterAcl(stage, execute = checked) {
+  return collectParameterAcl(input => {
+    validateStage(stage);
+    assert.deepEqual(stage.migrationManifest,[]);
+    const path=join(stage.stagedRoot,'ownership.json');
+    assert(validManifestPath(path));
+    const stat=lstatSync(path);
+    assert(stat.isFile() && !stat.isSymbolicLink() && stat.size>0 && stat.size<4*1024*1024);
+    const manifest=JSON.parse(readFileSync(path,'utf8'));
+    assert.equal(manifest.projectId,stage.projectId);
+    assert.equal(manifest.stageRoot,stage.stagedRoot);
+    assert.deepEqual(manifest.ports,stage.ports);
+    assert.deepEqual(new Set(manifest.preexisting.containers),stage.preexistingResources.containers);
+    assert.match(stage.dockerNetworkId,/^[a-f0-9]{64}$/);
+    assert.deepEqual(new Set(manifest.preexisting.networks),stage.preexistingResources.networks);
+    assert(manifest.created.networks.includes(stage.dockerNetworkId)
+      && !stage.preexistingResources.networks.has(stage.dockerNetworkId));
+    const values=JSON.parse(execute('docker',['inspect',stage.dbContainer],{timeout:5000,maxBuffer:1024*1024}));
+    assert(Array.isArray(values) && values.length===1);
+    const db=values[0];
+    assert.match(db.Id,/^[a-f0-9]{64}$/);
+    assert.equal(db.Name,`/${stage.dbContainer}`);
+    assert.equal(db.Config?.Labels?.['com.docker.compose.project'],stage.projectId);
+    assert.equal(db.State?.Running,true);
+    assert.equal(db.HostConfig?.Privileged,false);
+    assert(!['host','none'].includes(db.HostConfig?.NetworkMode));
+    assert(manifest.created.containers.includes(db.Id) && !stage.preexistingResources.containers.has(db.Id));
+    const endpoints=Object.values(db.NetworkSettings?.Networks ?? {});
+    assert.equal(endpoints.length,1);
+    assert.equal(endpoints[0].NetworkID,stage.dockerNetworkId);
+    assert.deepEqual(db.NetworkSettings?.Ports?.['5432/tcp'],[{HostIp:'127.0.0.1',HostPort:String(stage.ports.db)}]);
+    return execute('docker',['exec','-i','-e','LC_ALL=C',db.Id,'psql','-XqAt',
+      '-v','ON_ERROR_STOP=1','-U','postgres','-d','postgres'],
+    {input,timeout:10000,killSignal:'SIGKILL',maxBuffer:2*1024*1024});
+  });
+}
 export const restoreStages = Object.freeze(['restore-input-validation','restore-roles','restore-schema',
   'restore-auth-data','restore-app-data','restore-commit']);
 export function safeRestoreResult(stage, status) {
@@ -672,6 +712,7 @@ async function rehearsal() {
   assert.equal(checked('supabase', ['--version']).trim(), cliVersion);
   const key = randomBytes(32); const password = randomBytes(24).toString('hex');
   let sealed, originalManifest, before, expectedRows, expectedCatalog, expectedAuth, expectedStorage, sourceId;
+  let parameterInitial, parameterExport;
   const disk = mkdtempSync(join(tmpdir(), 'synthetic-backup-encrypted-'));
   try {
     await observed(async (source, supabase) => {
@@ -681,6 +722,7 @@ async function rehearsal() {
       source.syntheticAnonKey=sourceStatus.ANON_KEY;
       emptyTarget(source); sourceId = source.projectId; emit('source','verified');
       assert.equal(sql(source, "SELECT current_setting('server_version_num')::int / 10000"), '17');
+      parameterInitial=collectOwnedParameterAcl(source);
       const service = jwt(source,'service_role'); const token = jwt(source,'authenticated',user);
       const created = JSON.parse((await request(source,'/auth/v1/admin/users',service,'POST',JSON.stringify({ id:user,email:'backup-synthetic@example.invalid',password,email_confirm:true }))).toString());
       assert.equal(created.id ?? created.user?.id,user);
@@ -695,7 +737,9 @@ async function rehearsal() {
       emit('export','unverified');
       const files = new Map();
       const dumpCli = args => runOwnedDump(source,args);
+      const parameterBefore=collectOwnedParameterAcl(source);
       files.set('roles.sql',exportStep('roles-dump',()=>dump(source,dumpCli,'roles.sql',['--role-only'])));
+      parameterExport=bindParameterExport(parameterBefore,collectOwnedParameterAcl(source),files.get('roles.sql'));
       files.set('schema.sql',exportStep('app-schema-dump',()=>dump(source,dumpCli,'schema.sql',['--schema','synthetic_backup'])));
       files.set('data.sql',exportStep('app-data-dump',()=>dump(source,dumpCli,'data.sql',['--schema','synthetic_backup','--data-only','--use-copy'])));
       files.set('auth-data.sql',exportStep('auth-data-dump',()=>dump(source,dumpCli,'auth-data.sql',['--schema','auth','--data-only','--use-copy'])));
@@ -743,8 +787,13 @@ async function rehearsal() {
       const ledgerBefore=ledgerSnapshot(target);
       const opened=openArtifacts(readFileSync(join(disk,'backup.enc')),key);
       assert.deepEqual(opened.manifest,originalManifest); emit('integrity','verified');
+      const parameterTarget=collectOwnedParameterAcl(target);
       verifyNativeRestoreGuards(target);
       emptyTarget(target);
+      const parameterEvidence=summarizeParameterAcl(parameterInitial,parameterExport,parameterTarget,
+        collectOwnedParameterAcl(target),opened.files.get('roles.sql'));
+      for (const [field,status] of Object.entries(parameterEvidence))
+        process.send?.({kind:'parameter-acl',field,status});
       restoreInTransaction(target,opened.manifest,opened.files);
       assert.equal(rows(target),expectedRows);passed('schema-data');
       assert.equal(catalog(target),expectedCatalog);
@@ -826,6 +875,7 @@ async function supervise() {
   const child=spawn(process.execPath,[self,'--child'],{env:childEnv,detached:true,stdio:['ignore','ignore','ignore','ipc']});
   const manifests=new Set(), cleaned=new Set(), cases=new Set();let resources=0;let failed=false;let activeManifest;
   child.on('message',m=>{
+    if(m?.kind==='parameter-acl')console.log(formatParameterAclDiagnostic(m.field,m.status));
     if(m?.kind==='backup-manifest' && validManifestPath(m.path)){
       if (activeManifest && !cleaned.has(activeManifest)) failed=true;
       activeManifest=m.path; manifests.add(m.path);
