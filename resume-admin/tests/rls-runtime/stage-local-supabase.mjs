@@ -14,7 +14,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { candidateBaselineMigrations, stageCandidateMigrations, verifyCandidateMigrationFiles } from "./compatibility-contract.mjs";
+import { createStagingDiagnostics, candidateBaselineMigrations, stageCandidateMigrations, verifyCandidateMigrationFiles } from "./compatibility-contract.mjs";
 
 const utilityDir = dirname(fileURLToPath(import.meta.url));
 const sourceProject = resolve(utilityDir, "supabase");
@@ -1002,9 +1002,13 @@ async function uniquePorts() {
 }
 
 function stageProject(stageRoot, projectId, ports, profile = "current") {
-  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
+  if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
   const stagedSupabase = join(stageRoot, "supabase");
-  cpSync(sourceProject, stagedSupabase, {
+  if (profile === "synthetic-recovery") {
+    mkdirSync(stagedSupabase);
+    cpSync(join(sourceProject, "config.toml"), join(stagedSupabase, "config.toml"));
+    mkdirSync(join(stagedSupabase, "migrations"));
+  } else cpSync(sourceProject, stagedSupabase, {
     recursive: true,
     filter: (source) => !source.includes("/.temp") && !source.includes("/node_modules")
       && !(profile === "candidate-pre-pr28" && source === join(sourceProject, "migrations")),
@@ -1013,7 +1017,7 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   const excluded = new Set(excludedMigrations);
   if (profile === "candidate-pre-pr28") {
     stageCandidateMigrations(join(sourceProject, "migrations"), migrationDir);
-  } else {
+  } else if (profile === "current") {
     for (const migration of excluded) rmSync(join(migrationDir, migration));
   }
 
@@ -1038,10 +1042,14 @@ function stageProject(stageRoot, projectId, ports, profile = "current") {
   replaceSetting("analytics", "port", ports.analytics);
   replaceSetting("analytics", "vector_port", ports.vector);
   config = config.replaceAll("http://127.0.0.1:55421", `http://127.0.0.1:${ports.api}`);
+  if (profile === "synthetic-recovery") {
+    config = config.replace(/\[db\.seed\][\s\S]*?(?=\n\[)/, "[db.seed]\nenabled = false\nsql_paths = []\n");
+    if (!config.includes("[db.seed]\nenabled = false\nsql_paths = []")) throw new Error("Synthetic seed configuration rejected");
+  }
   writeFileSync(configPath, config);
 
   const sourceMigrations = readdirSync(join(sourceProject, "migrations")).filter((name) => name.endsWith(".sql")).sort();
-  const expected = profile === "candidate-pre-pr28"
+  const expected = profile === "synthetic-recovery" ? [] : profile === "candidate-pre-pr28"
     ? candidateBaselineMigrations.map(([name]) => name)
     : sourceMigrations.filter((name) => !excluded.has(name));
   const stagedMigrations = readdirSync(migrationDir).filter((name) => name.endsWith(".sql")).sort();
@@ -1654,9 +1662,39 @@ async function runSecuritySelfTests() {
   try {
     const ports = { api: 55421, db: 55422, shadow: 55420, analytics: 55427, vector: 55428 };
     const staged = stageProject(candidateTestRoot, "pr1-1-aabbccddeeff", ports, "candidate-pre-pr28");
+    assert.equal(candidateBaselineMigrations.length, 42);
     assert.deepEqual(staged.migrationManifest, candidateBaselineMigrations.map(([name]) => name));
     verifyCandidateMigrationFiles(staged.migrationManifest.map(name => [name, readFileSync(join(staged.stagedSupabase, "migrations", name))]));
   } finally { rmSync(candidateTestRoot, { recursive: true, force: true }); }
+
+  for (const profile of ["current", "synthetic-recovery"]) {
+    const root = mkdtempSync(join(tmpdir(), "pr1-profile-regression-"));
+    try {
+      const ports = { api: 55421, db: 55422, shadow: 55420, analytics: 55427, vector: 55428 };
+      const staged = stageProject(root, "pr1-1-aabbccddeeff", ports, profile);
+      const config = readFileSync(join(staged.stagedSupabase, "config.toml"), "utf8");
+      if (profile === "synthetic-recovery") {
+        assert.deepEqual(readdirSync(staged.stagedSupabase).sort(), ["config.toml", "migrations"]);
+        assert.deepEqual(staged.migrationManifest, []);
+        assert(config.includes("[db.seed]\nenabled = false\nsql_paths = []"));
+      } else {
+        assert.deepEqual(staged.migrationManifest, readdirSync(join(sourceProject, "migrations")).filter(n => n.endsWith(".sql") && !excludedMigrations.has(n)).sort());
+        for (const name of ["seed_qa_fixture.sql", "seed_membership.sql"]) {
+          assert(readFileSync(join(staged.stagedSupabase, name)).equals(readFileSync(join(sourceProject, name))));
+        }
+        const files = (directory) => readdirSync(directory, { withFileTypes: true })
+          .filter(entry => ![".temp", "node_modules"].includes(entry.name))
+          .flatMap(entry => entry.isDirectory() ? files(join(directory, entry.name)).map(name => `${entry.name}/${name}`) : [entry.name]).sort();
+        const expectedFiles = files(sourceProject).filter(name => ![...excludedMigrations].some(excluded => name === `migrations/${excluded}`));
+        assert.deepEqual(files(staged.stagedSupabase), expectedFiles);
+        for (const name of expectedFiles.filter(name => name !== "config.toml")) {
+          assert(readFileSync(join(sourceProject, name)).equals(readFileSync(join(staged.stagedSupabase, name))));
+        }
+        assert(config.includes('[db.seed]\nenabled = true'));
+      }
+      for (const section of ["auth", "storage"]) assert(config.includes(`[${section}]\nenabled = true`));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 
   const callbackFailure = new Error("synthetic callback failure");
   assert.equal(appendContainerSummary(callbackFailure, "Docker container events: observation=incomplete"), callbackFailure);
@@ -2209,22 +2247,25 @@ function verifyLocalStatus(context) {
 }
 
 export async function withStagedLocalSupabase(callback, profile = "current") {
-  if (!["current", "candidate-pre-pr28"].includes(profile)) throw new Error("Unknown staging profile");
-  const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
-    .trim();
-  verifyDockerHostBindingPlatform(dockerOperatingSystem);
+  const diagnostic = createStagingDiagnostics(record => process.send?.({ kind: "staging-diagnostic", ...record }, () => { /* IPC failure is not operation evidence. */ }));
+  diagnostic.step("environment-preflight", () => {
+    if (!["current", "candidate-pre-pr28", "synthetic-recovery"].includes(profile)) throw new Error("Unknown staging profile");
+    const dockerOperatingSystem = run("docker", ["info", "--format", "{{.OperatingSystem}}"])
+      .trim();
+    verifyDockerHostBindingPlatform(dockerOperatingSystem);
+  });
   const token = `${Date.now()}-${randomBytes(6).toString("hex")}`;
   const projectId = `pr1-${token}`;
-  const stageRoot = mkdtempSync(join(tmpdir(), `pr1-supabase-${token}-`));
-  const ports = await uniquePorts();
+  const stageRoot = diagnostic.step("baseline-preparation", () => mkdtempSync(join(tmpdir(), `pr1-supabase-${token}-`)));
+  const ports = await diagnostic.stepAsync("port-reservation", () => uniquePorts());
   let context;
   try {
-    context = stageProject(stageRoot, projectId, ports, profile);
+    context = diagnostic.step("baseline-preparation", () => stageProject(stageRoot, projectId, ports, profile));
   } catch (error) {
     removeTemporaryStage(stageRoot);
     throw error;
   }
-  const before = snapshot();
+  const before = diagnostic.step("resource-snapshot", () => snapshot());
   const beforeManifest = Object.fromEntries(Object.entries(before).map(([key, value]) => [key, [...value]]));
   context.projectId = projectId;
   context.preexistingResources = before;
@@ -2236,46 +2277,69 @@ export async function withStagedLocalSupabase(callback, profile = "current") {
   let containerEventObserver;
   let containerEventObserverAttempted = false;
   try {
-    const preexisting = identifyOwnedResources(projectId, before);
-    if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
-    prefetchVerifiedSupabaseImages();
-    const loopbackNetwork = createLoopbackNetwork(projectId);
+    diagnostic.step("ownership-verification", () => {
+      const preexisting = identifyOwnedResources(projectId, before);
+      if (Object.values(preexisting).some((items) => items.length > 0)) throw new Error("Generated project identity already exists; refusing startup");
+    });
+    if (profile === "synthetic-recovery") {
+      diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }), { mode: 0o600 }); diagnostic.manifestCreated(); });
+      diagnostic.mark("manifest-delivery", "unverified");
+      process.send?.({ kind: "backup-manifest", path: ownershipPath });
+    }
+    diagnostic.step("image-verification", () => prefetchVerifiedSupabaseImages());
+    diagnostic.resourceAttempt();
+    const loopbackNetwork = diagnostic.step("network-creation", () => {
+      const network = createLoopbackNetwork(projectId); diagnostic.resourceCreated(); return network;
+    });
     resources.networks.push(loopbackNetwork.id);
     context.dockerNetworkId = loopbackNetwork.id;
-    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
-    writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
-    if (profile === "candidate-pre-pr28") process.send?.({ kind: "compat-manifest", path: ownershipPath });
-    containerEventObserverAttempted = true;
-    const dockerApiVersion = verifyDockerEventsSocket();
-    containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
-    try { context.startupPullObserver = installDockerPullObserver(context); }
-    catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
-    if (!context.startupObserverError) {
-      context.cliVersionVerification = await probeCliVersion(supabaseCommandEnv(["start"], {}, context.startupPullObserver));
+    diagnostic.step("ownership-verification", () => verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId));
+    diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)); diagnostic.manifestCreated(); });
+    if (profile === "candidate-pre-pr28") {
+      diagnostic.mark("manifest-delivery", "unverified");
+      process.send?.({ kind: "compat-manifest", path: ownershipPath });
     }
-    runSupabase(context, ["start"]);
+    await diagnostic.stepAsync("startup-observation", async () => {
+      containerEventObserverAttempted = true;
+      const dockerApiVersion = verifyDockerEventsSocket();
+      containerEventObserver = await startDockerContainerEventObserver(projectId, { apiVersion: dockerApiVersion });
+      try { context.startupPullObserver = installDockerPullObserver(context); }
+      catch (error) { context.startupObserverError = error; } // Preserve runSupabase's existing failure handling.
+      if (!context.startupObserverError) {
+        context.cliVersionVerification = await probeCliVersion(supabaseCommandEnv(["start"], {}, context.startupPullObserver));
+      }
+    });
+    diagnostic.step("supabase-start", () => runSupabase(context, ["start"]));
     started = true;
-    Object.assign(resources, identifyOwnedResources(projectId, before));
-    writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2));
-    for (const id of resources.containers) validateLoopbackPublishedPorts(dockerJson(["inspect", id])[0]);
-    verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId);
+    diagnostic.step("ownership-verification", () => Object.assign(resources, identifyOwnedResources(projectId, before)));
+    diagnostic.step("manifest-creation", () => { writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)); diagnostic.manifestCreated(); });
+    diagnostic.step("ownership-verification", () => {
+      for (const id of resources.containers) validateLoopbackPublishedPorts(dockerJson(["inspect", id])[0]);
+    });
+    diagnostic.step("ownership-verification", () => verifyLoopbackNetwork(dockerJson(["network", "inspect", loopbackNetwork.id])[0], projectId));
     console.log("Supabase published ports are loopback-only.");
-    const status = verifyLocalStatus(context);
-    const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
-    const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
-    const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
-    if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
-    const resolved = { ...context, ...status, projectId, dbContainer, authContainer };
+    const status = diagnostic.step("endpoint-verification", () => verifyLocalStatus(context));
+    const resolved = diagnostic.step("endpoint-verification", () => {
+      const containerNames = resources.containers.map((id) => dockerJson(["inspect", id])[0]?.Name?.replace(/^\//, ""));
+      const dbContainer = containerNames.find((name) => name?.startsWith(`supabase_db_${projectId}`));
+      const authContainer = containerNames.find((name) => name?.startsWith(`supabase_auth_${projectId}`));
+      if (!dbContainer || !authContainer) throw new Error("Could not identify this run's uniquely labelled database and Auth containers");
+      return { ...context, ...status, projectId, dbContainer, authContainer };
+    });
     await callback(resolved, (args) => runSupabase(resolved, args));
   } catch (error) {
     callbackError = error;
   } finally {
+    diagnostic.mark("cleanup", "unverified");
     try {
-      Object.assign(resources, cleanupStep("ownership-check", () => identifyOwnedResources(projectId, before)));
+      diagnostic.step("ownership-verification", () => {
+        Object.assign(resources, cleanupStep("ownership-check", () => identifyOwnedResources(projectId, before)));
+        if (Object.values(resources).some(items => items.length > 0)) diagnostic.resourceCreated();
+      });
       if (started || resources.containers.length || resources.volumes.length || resources.networks.length) {
-        cleanupStep("manifest-check", () => writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2)));
-        cleanupOwnedResources(resources, projectId, before);
-      }
+        diagnostic.step("manifest-creation", () => { cleanupStep("manifest-check", () => writeFileSync(ownershipPath, JSON.stringify({ projectId, stageRoot, ports, preexisting: beforeManifest, created: resources }, null, 2))); diagnostic.manifestCreated(); });
+        diagnostic.step("cleanup", () => cleanupOwnedResources(resources, projectId, before));
+      } else { diagnostic.mark("cleanup", "not-needed"); }
     } catch (error) {
       console.error(`cleanup_operation=${safeCleanupOperation(error)} status=failed manifest=retained`);
       cleanupFailure = error;
@@ -2288,7 +2352,7 @@ export async function withStagedLocalSupabase(callback, profile = "current") {
         if (callbackError) callbackError = appendContainerSummary(callbackError, summary);
         if (cleanupFailure) cleanupFailure = appendContainerSummary(cleanupFailure, summary);
       }
-      try { finalizeStageDirectory(stageRoot, cleanupFailure); }
+      try { diagnostic.step("directory-finalization", () => finalizeStageDirectory(stageRoot, cleanupFailure)); }
       catch (error) { cleanupFailure ??= error; }
     }
   }

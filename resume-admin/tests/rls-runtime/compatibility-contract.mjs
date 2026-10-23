@@ -141,3 +141,44 @@ export async function observeCompatibilityStaging(stageRunner, callback, emit) {
     throw error;
   }
 }
+
+// Diagnostic-only observer: exceptions and return values are preserved verbatim.
+export const stagingDiagnosticPhases = Object.freeze([
+  "environment-preflight", "baseline-preparation", "port-reservation", "resource-snapshot",
+  "image-verification", "network-creation", "manifest-creation", "manifest-delivery",
+  "startup-observation", "supabase-start", "ownership-verification", "endpoint-verification",
+  "cleanup", "directory-finalization",
+]);
+export function safeStagingDiagnostic(record = {}) {
+  const value = record && typeof record === "object" ? record : {};
+  return {
+    phase: stagingDiagnosticPhases.includes(value.phase) ? value.phase : "unknown",
+    status: ["success", "failed", "unverified", "not-needed"].includes(value.status) ? value.status : "unverified",
+    resources: ["not-created", "created", "unverified"].includes(value.resources) ? value.resources : "unverified",
+    manifest: ["not-created", "created", "unverified"].includes(value.manifest) ? value.manifest : "unverified",
+  };
+}
+export function createStagingDiagnostics(report) {
+  let resources = "not-created", manifest = "not-created";
+  const mark = (phase, status) => {
+    // Diagnostics must not alter startup, errors or cleanup when IPC is unavailable.
+    try { report(safeStagingDiagnostic({ phase, status, resources, manifest })); } catch { /* no evidence delivered */ }
+  };
+  const failed = (phase, error) => { mark(phase, "failed"); throw error; };
+  return {
+    mark,
+    resourceAttempt() { resources = "unverified"; },
+    resourceCreated() { resources = "created"; },
+    manifestCreated() { manifest = "created"; },
+    step(phase, operation) {
+      mark(phase, "unverified");
+      try { const result = operation(); mark(phase, "success"); return result; }
+      catch (error) { return failed(phase, error); }
+    },
+    async stepAsync(phase, operation) {
+      mark(phase, "unverified");
+      try { const result = await operation(); mark(phase, "success"); return result; }
+      catch (error) { return failed(phase, error); }
+    },
+  };
+}
