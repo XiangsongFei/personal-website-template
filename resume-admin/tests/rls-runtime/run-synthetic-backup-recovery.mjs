@@ -408,257 +408,174 @@ const restoreSqlStates = new Map([
 export function safeRestoreErrorCategory(category) {
   return [...restoreSqlStates.values()].includes(category) ? category : 'unknown';
 }
-export function classifyRestoreSqlState(stderr) {
-  if(typeof stderr!=='string' || Buffer.byteLength(stderr)>4096)return 'unknown';
-  const match=/^ERROR:[ \t]{1,8}([0-9A-Z]{5})(?:\r?\n)?$/.exec(stderr);
-  return match ? restoreSqlStates.get(match[1]) ?? 'unknown' : 'unknown';
-}
-const roleOperationKinds = ['create-role','alter-role','role-configuration','grant-membership',
-  'revoke-membership','session-setting','other','unknown'];
-const restoreInputSteps = Object.freeze(['validate-stage','restore-inputs','parse-role-operations']);
-const roleRejectionReasons = Object.freeze(['unsupported-session-setting','unsupported-psql-command',
-  'unsupported-role-operation','unsupported-lexical-form','malformed-input','input-limit','unknown']);
-// Only errors created by this parser carry a trusted reason; arbitrary thrown
-// properties/messages never become diagnostic output.
-const roleRejections = new WeakMap();
-const roleParseFailure = (reason='unsupported-role-operation') => {
-  const error=new Error('synthetic-role-input-rejected');
-  roleRejections.set(error,roleRejectionReasons.includes(reason)?reason:'unknown');
-  throw error;
-};
-export function safeRestoreInputDiagnostic(step, status, reason) {
-  const safeStep=restoreInputSteps.includes(step)?step:'unknown';
-  const safeStatus=['success','failed','unverified'].includes(status)?status:'unverified';
-  return {step:safeStep,status:safeStatus,reason:safeStep==='parse-role-operations' && safeStatus==='failed'
-    && roleRejectionReasons.includes(reason)?reason:'unknown'};
+const restoreInputSteps = Object.freeze(['validate-stage','restore-inputs']);
+export function safeRestoreInputDiagnostic(step, status) {
+  return {step:restoreInputSteps.includes(step)?step:'unknown',
+    status:['success','failed','unverified'].includes(status)?status:'unverified'};
 }
 export function formatRestoreInputDiagnostic(value) {
-  const d=safeRestoreInputDiagnostic(value?.step,value?.status,value?.reason);
-  return `backup_restore_input=${d.step} status=${d.status} reason=${d.reason}`;
+  const d=safeRestoreInputDiagnostic(value?.step,value?.status);
+  return `backup_restore_input=${d.step} status=${d.status}`;
 }
-// This is deliberately a subset of pg_dumpall output, not a general SQL parser.
-// Unsupported lexical/grammar forms are rejected BEFORE any database command.
-// Keep byte ranges intact; never split on semicolons inside quotes/comments.
-export function parseRoleOperations(bytes) {
-  if (!Buffer.isBuffer(bytes) || bytes.length === 0) roleParseFailure('malformed-input');
-  if (bytes.length > 128 * 1024) roleParseFailure('input-limit');
-  const s=bytes.toString('utf8');
-  if (!Buffer.from(s).equals(bytes) || /[\0\r]/.test(s)) roleParseFailure('malformed-input');
-  let i=0,start=0,tokens=[];
-  const operations=[];
-  const add=(type,value)=>{ if(tokens.length>=512)roleParseFailure('input-limit'); tokens.push({type,value}); };
-  while(i<s.length) {
-    const c=s[i];
-    if (/\s/.test(c)) { i++; continue; }
-    if(s.startsWith('--',i)){ const end=s.indexOf('\n',i+2);i=end<0?s.length:end+1;continue; }
-    if(s.startsWith('/*',i)) {
-      let depth=1;i+=2;
-      while(depth && i<s.length){
-        if(s.startsWith('/*',i)){if(++depth>32)roleParseFailure('input-limit');i+=2;}
-        else if(s.startsWith('*/',i)){depth--;i+=2;}else i++;
-      }
-      if(depth)roleParseFailure('malformed-input');continue;
-    }
-    // Active psql commands, variable substitution and dollar quoting are outside
-    // the CLI role grammar. Reject rather than guess where their statement ends.
-    if(c==='\\')roleParseFailure('unsupported-psql-command');
-    if(c===':' || c==='$')roleParseFailure('unsupported-lexical-form');
-    if(c==='"' || c==="'") {
-      const quote=c;let value='';let closed=false;i++;
-      while(i<s.length){
-        if(s[i]===quote){if(s[i+1]===quote){value+=quote;i+=2;continue;}i++;closed=true;break;}
-        // Backslash escape modes and quoted newlines are unnecessary for the
-        // fixed synthetic fixture; refusing them avoids session-mode ambiguity.
-        if(s[i]==='\\' || s[i]==='\n')roleParseFailure('unsupported-lexical-form');
-        value+=s[i++];
-      }
-      if(!closed)roleParseFailure('malformed-input');
-      if(value.length>4096)roleParseFailure('input-limit');
-      add(quote==='"'?'id':'string',value);continue;
-    }
-    if(/[A-Za-z_]/.test(c)) {
-      const m=/^[A-Za-z_][A-Za-z_0-9$]*/.exec(s.slice(i))[0];i+=m.length;add('word',m.toLowerCase());continue;
-    }
-    if(/[0-9-]/.test(c)) {
-      const m=/^-?[0-9]+/.exec(s.slice(i));if(!m)roleParseFailure('unsupported-lexical-form');i+=m[0].length;add('number',m[0]);continue;
-    }
-    if(c===',' || c==='='){add('punct',c);i++;continue;}
-    if(c===';') {
-      i++;if(!tokens.length)roleParseFailure('malformed-input');
-      const classified=classifyRoleTokens(tokens);
-      operations.push({...classified,index:operations.length+1,sql:s.slice(start,i)});
-      if(operations.length>128)roleParseFailure('input-limit');
-      start=i;tokens=[];continue;
-    }
-    roleParseFailure('unsupported-lexical-form');
+const restoreArtifacts = ['roles.sql','schema.sql','auth-data.sql','data.sql'];
+const roleLineTemplates = ['create-role','alter-role','role-configuration','grant-membership','parameter-grant'];
+export function safeRestoreLocation(value={}) {
+  const artifact=restoreArtifacts.includes(value?.artifact)?value.artifact:'unavailable';
+  const line=artifact!=='unavailable' && Number.isSafeInteger(value?.line)
+    && value.line>=1 && value.line<=16*1024*1024?value.line:'unavailable';
+  return {artifact,line,lineTemplate:artifact==='roles.sql' && line!=='unavailable'
+    && roleLineTemplates.includes(value?.lineTemplate)?value.lineTemplate:'unknown'};
+}
+export function formatRestoreLocation(value) {
+  const d=safeRestoreLocation(value);
+  return `backup_restore_artifact=${d.artifact} line=${d.line} line_template=${d.lineTemplate}`;
+}
+// A post-error hint for complete canonical pg_dump lines, NEVER an execution
+// gate or SQL parser. A matched line is not proof of a statement's full context.
+function roleLineTemplate(line) {
+  if(typeof line!=='string' || line.length>4096)return 'unknown';
+  const id='"[A-Za-z_][A-Za-z_0-9.]*"';
+  const flag='(?:NO)?(?:SUPERUSER|INHERIT|CREATEROLE|CREATEDB|LOGIN|REPLICATION|BYPASSRLS)';
+  const patterns=[
+    ['create-role',`CREATE ROLE ${id};`],
+    ['alter-role',`ALTER ROLE ${id} WITH ${flag}(?: ${flag})*;`],
+    ['role-configuration',`ALTER ROLE ${id} SET ${id} TO '[^'\\\\\\r\\n]*';`],
+    ['grant-membership',`GRANT ${id} TO ${id}(?: WITH (?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE))(?:, (?:ADMIN OPTION|INHERIT (?:TRUE|FALSE)|SET (?:TRUE|FALSE)))*)?(?: GRANTED BY ${id})?;`],
+    ['parameter-grant',`GRANT (?:SET|ALTER SYSTEM|ALL)(?:, (?:SET|ALTER SYSTEM))? ON PARAMETER ${id} TO ${id}(?: WITH GRANT OPTION)?;`],
+  ];
+  return patterns.find(([,pattern])=>new RegExp(`^${pattern}$`).test(line))?.[0] ?? 'unknown';
+}
+function nativeRestoreError(stderr,ranges,active) {
+  const unknown={category:'unknown',location:safeRestoreLocation()};
+  if(typeof stderr!=='string' || Buffer.byteLength(stderr)>4096)return unknown;
+  // -f - supplies this fixed filename. Never accept arbitrary paths/messages.
+  const match=/^psql:<stdin>:([1-9][0-9]{0,7}): ERROR:[ \t]{1,8}([0-9A-Z]{5})(?:\r?\n)?$/.exec(stderr);
+  if(!match || !restoreSqlStates.has(match[2]))return unknown;
+  const nativeLine=Number(match[1]);
+  const range=ranges.find(r=>nativeLine>=r.start && nativeLine<=r.end && r.stage===active);
+  if(!range)return unknown;
+  const line=nativeLine-range.start+1;
+  return {category:restoreSqlStates.get(match[2]),location:safeRestoreLocation({artifact:range.artifact,line,
+    lineTemplate:range.artifact==='roles.sql'?roleLineTemplate(range.lines[line-1]):'unknown'})};
+}
+function restoreProgram(inputs,files) {
+  const originals=[inputs[0].bytes,inputs[1].bytes,files.get('auth-data.sql'),inputs[2].bytes];
+  // Keep transport/encoding bounds, not a hand-written SQL dialect whitelist.
+  for(const bytes of originals) {
+    assert(Buffer.isBuffer(bytes) && bytes.length>0 && Buffer.from(bytes.toString('utf8')).equals(bytes)
+      && !bytes.includes(0),'synthetic-restore-input-rejected');
   }
-  if(tokens.length || !operations.length)roleParseFailure('malformed-input');
-  // Preserve trailing comments/whitespace too.
-  operations.at(-1).sql+=s.slice(start);
-  return operations;
-}
-function classifyRoleTokens(t) {
-  let p=0;
-  const word=v=>t[p]?.type==='word' && t[p]?.value===v;
-  const punct=v=>t[p]?.type==='punct' && t[p]?.value===v;
-  const take=v=>{if(!word(v))roleParseFailure();p++;};
-  const id=()=>{const x=t[p++];if(!x || !['word','id'].includes(x.type) || !x.value || Buffer.byteLength(x.value)>63
-    || (x.type==='word' && ['current_user','current_role','session_user','public','all'].includes(x.value)))roleParseFailure();return x.value;};
-  const done=(kind,target=null)=>{if(p!==t.length)roleParseFailure();return {kind,target};};
-  if(word('create')) {take('create');take('role');const target=id();return done('create-role',target);}
-  if(word('alter')) {
-    take('alter');take('role');const target=id();
-    if(word('set') || word('reset')) {
-      const reset=word('reset');p++;id();
-      if(!reset) {
-        if(word('to') || punct('='))p++;else roleParseFailure();
-        if(!t[p] || !['word','string','number'].includes(t[p].type))roleParseFailure();p++;
-      }
-      return done('role-configuration',target);
-    }
-    take('with');let count=0;
-    const flags=new Set(['superuser','nosuperuser','inherit','noinherit','createrole','nocreaterole',
-      'createdb','nocreatedb','login','nologin','replication','noreplication','bypassrls','nobypassrls']);
-    while(p<t.length) {
-      if(t[p].type==='word' && flags.has(t[p].value)){p++;count++;}
-      else if(word('connection')){take('connection');take('limit');if(t[p++]?.type!=='number')roleParseFailure();count++;}
-      else if(word('valid')){take('valid');take('until');if(t[p++]?.type!=='string')roleParseFailure();count++;}
-      else roleParseFailure(); // CLI --no-role-passwords must not contain passwords.
-    }
-    if(!count)roleParseFailure();return done('alter-role',target);
+  assert(originals[0].length<=128*1024,'synthetic-restore-input-rejected');
+  const token=randomBytes(16).toString('hex'), key=randomBytes(32).toString('hex');
+  assert(originals.every(b=>!b.includes(Buffer.from(token)) && !b.includes(Buffer.from(key))),
+    'synthetic-restore-input-rejected');
+  const phases=restoreStages.slice(1);
+  const markers=phases.flatMap(name=>['begin','end'].map(event=>`backup_restore_${token}:${name}:${event}`));
+  const chunks=[],ranges=[];let nextLine=1;
+  const append=bytes=>{const b=Buffer.isBuffer(bytes)?bytes:Buffer.from(bytes);chunks.push(b);for(const x of b)if(x===10)nextLine++;};
+  append('BEGIN;\n');
+  for(let i=0;i<phases.length;i++) {
+    append(`\\echo ${markers[i*2]}\n`);
+    if(i===0)append(`\\restrict ${key}\n`);
+    if(i===2)append('SET LOCAL session_replication_role=replica;\n');
+    if(i<4) {
+      const bytes=originals[i],lines=bytes.toString('utf8').split('\n');
+      if(lines.at(-1)==='')lines.pop();
+      ranges.push({stage:phases[i],artifact:restoreArtifacts[i],start:nextLine,end:nextLine+lines.length-1,lines});
+      append(bytes);append('\n');
+    } else append('COMMIT;\n');
+    if(i===0)append(`\\unrestrict ${key}\n`);
+    append(`\\echo ${markers[i*2+1]}\n`);
   }
-  if(word('grant') || word('revoke')) {
-    const grant=word('grant');p++;
-    if(!grant && ['admin','inherit','set'].some(word)){p++;take('option');take('for');}
-    id();while(punct(',')){p++;id();}
-    take(grant?'to':'from');id();while(punct(',')){p++;id();}
-    if(grant && word('with')) {
-      p++;
-      do {
-        if(punct(','))p++;
-        if(!['admin','inherit','set'].some(word))roleParseFailure();p++;
-        if(!['option','true','false'].some(word))roleParseFailure();p++;
-      } while(punct(','));
-    }
-    if(word('granted')){take('granted');take('by');id();}
-    if(!grant && ['cascade','restrict'].some(word))p++;
-    // Membership can name several roles, grantees and an explicit grantor.
-    // Do not misrepresent one role's existence as proof about the whole grant.
-    return done(grant?'grant-membership':'revoke-membership');
-  }
-  if(word('reset')){take('reset');take('all');return done('session-setting');}
-  if(word('set')) {
-    take('set');const setting=id();
-    // Do not allow role/session authorization changes or lexical-mode changes.
-    const values={default_transaction_read_only:['off'],client_encoding:['UTF8'],standard_conforming_strings:['on']};
-    if(!Object.hasOwn(values,setting))roleParseFailure('unsupported-session-setting');
-    if(punct('=') || word('to'))p++;else roleParseFailure();
-    const value=t[p++];if(!value || !['word','string'].includes(value.type) || !values[setting].includes(value.value))roleParseFailure('unsupported-session-setting');
-    return done('session-setting');
-  }
-  roleParseFailure();
+  return {input:Buffer.concat(chunks).toString('utf8'),markers,ranges,token,phases};
 }
-export function safeRoleFailure(value={}) {
-  const truth=x=>x===true || x===false ? x : 'unverified';
-  return {operation:roleOperationKinds.includes(value?.operation)?value.operation:'unknown',
-    index:Number.isInteger(value?.index) && value.index>=1 && value.index<=128?value.index:'unverified',
-    createrole:truth(value?.createrole),superuser:truth(value?.superuser),targetExists:truth(value?.targetExists),
-    // Membership authorization also depends on grantor, ADMIN chains, target
-    // attributes and Supabase hooks. CREATEROLE alone never establishes it.
-    adminOption:'unverified'};
-}
-function instrumentRoleOperations(operations,token) {
-  const specs=[];
-  const sql=operations.map(op=>{
-    const prefix=`backup_role_${token}:${op.index}:`;
-    specs.push({prefix:`${prefix}before:`,op}, {exact:`${prefix}end`,op});
-    const target=op.target===null ? "'u'" : `(CASE WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=pg_catalog.convert_from(pg_catalog.decode('${Buffer.from(op.target).toString('hex')}','hex'),'UTF8')) THEN 't' ELSE 'f' END)`;
-    const probe=`SELECT '${prefix}before:' || CASE WHEN rolcreaterole THEN 't' ELSE 'f' END || ':' || CASE WHEN rolsuper THEN 't' ELSE 'f' END || ':' || ${target} FROM pg_catalog.pg_roles WHERE rolname=current_user;`;
-    return `${probe}\n${op.sql}\n\\echo ${prefix}end\n`;
-  }).join('');
-  return {sql,specs};
-}
-export function inspectRoleTranscript(stdout,token,specs) {
-  const lines=stdout.split(/\r?\n/).filter(x=>x.startsWith(`backup_role_${token}:`));
-  if(lines.length>specs.length)roleParseFailure();
-  for(let i=0;i<lines.length;i++){
-    const spec=specs[i];
-    if(spec.exact ? lines[i]!==spec.exact : !lines[i].startsWith(spec.prefix) || !/^[tf]:[tf]:[tfu]$/.test(lines[i].slice(spec.prefix.length)))roleParseFailure();
-    if(spec.prefix && (spec.op.target===null)!==(lines[i].slice(spec.prefix.length).split(':')[2]==='u'))roleParseFailure();
-  }
-  if(!lines.length || lines.length%2===0)return {count:lines.length,failure:safeRoleFailure()};
-  const spec=specs[lines.length-1];const flags=lines.at(-1).slice(spec.prefix.length).split(':');
-  if((spec.op.target===null)!==(flags[2]==='u'))roleParseFailure();
-  return {count:lines.length,failure:safeRoleFailure({operation:spec.op.kind,index:spec.op.index,
-    createrole:flags[0]==='t',superuser:flags[1]==='t',targetExists:flags[2]==='u'?'unverified':flags[2]==='t'})};
-}
-// Markers acknowledge psql execution, not durable changes before COMMIT. Never
-// forward arbitrary stdout/stderr. Only a bounded SQLSTATE whitelist leaves this child.
+const psqlArgs=stage=>['exec','-i','-e','LC_ALL=C',stage.dbContainer,'psql','-XqAt',
+  '-v','ON_ERROR_STOP=1','-v','ON_ERROR_ROLLBACK=off','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres','-f','-'];
+// Only rehearsal() supplies these inputs: verified export -> authenticated
+// archive -> comparison with separately retained manifest -> owned empty target.
+// This is NOT a safe API for arbitrary caller-supplied SQL or Production backups.
 export function restoreInTransaction(stage, manifest, files, execute = spawnSync,
   report = result => process.send?.({kind:'restore-result',...result}),
-  reportError = category => process.send?.({kind:'restore-error',category:safeRestoreErrorCategory(category)}, () => { /* Do not alter restore on diagnostic IPC failure. */ }),
-  reportRole = value => process.send?.({kind:'restore-role-failure',...safeRoleFailure(value)}),
+  reportError = category => process.send?.({kind:'restore-error',category:safeRestoreErrorCategory(category)}),
+  reportLocation = value => process.send?.({kind:'restore-location',...safeRestoreLocation(value)}),
   reportInput = value => process.send?.({kind:'restore-input',...value})) {
-  const emitRestore = (name,status) => report(safeRestoreResult(name,status));
+  const emitRestore=(name,status)=>report(safeRestoreResult(name,status));
   reportError('unknown');
   for(const name of restoreStages)emitRestore(name,'unverified');
-  const emitInput=(step,status,reason)=>reportInput(safeRestoreInputDiagnostic(step,status,reason));
+  const emitInput=(step,status)=>reportInput(safeRestoreInputDiagnostic(step,status));
   for(const step of restoreInputSteps)emitInput(step,'unverified');
-  const checkInput=(step,check)=>{
-    try { const value=check(); emitInput(step,'success'); return value; }
-    catch(error) { emitInput(step,'failed',roleRejections.get(error)); throw error; }
-  };
-  let inputs,operations;
+  let program,step='validate-stage';
   try {
-    checkInput('validate-stage',()=>validateStage(stage));
-    inputs=checkInput('restore-inputs',()=>restoreInputs(manifest,files));
-    operations=checkInput('parse-role-operations',()=>parseRoleOperations(inputs[0].bytes));
-  }
-  catch { emitRestore('restore-input-validation','failed'); throw new Error('synthetic-restore-input-rejected'); }
+    validateStage(stage);emitInput(step,'success');step='restore-inputs';
+    program=restoreProgram(restoreInputs(manifest,files),files);emitInput(step,'success');
+  } catch {emitInput(step,'failed');emitRestore('restore-input-validation','failed');throw new Error('synthetic-restore-input-rejected');}
   emitRestore('restore-input-validation','success');
-  const token=randomBytes(16).toString('hex');
-  const rolePlan=instrumentRoleOperations(operations,token);
-  const phases=restoreStages.slice(1);
-  const bodies=[rolePlan.sql,inputs[1].bytes,
-    `SET LOCAL session_replication_role=replica;\n${files.get('auth-data.sql')}`,
-    inputs[2].bytes,'COMMIT;'];
-  const markers=phases.flatMap(name=>['begin','end'].map(event=>`backup_restore_${token}:${name}:${event}`));
-  // One stdin stream, one session, original SQL order and transaction unchanged.
-  const input='BEGIN;\n'+bodies.map((body,i)=>
-    `\\echo ${markers[i*2]}\n${body}\n\\echo ${markers[i*2+1]}\n`).join('');
+  const {input,markers,ranges,token,phases}=program;
   let result;
   try {
-    result=execute('docker',['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres'],
-      {input,encoding:'utf8',stdio:['pipe','pipe','pipe'],timeout:60000,killSignal:'SIGKILL',maxBuffer:64*1024});
-  } catch { emitRestore('unknown','failed'); throw new Error('synthetic-restore-process-failed'); }
-  let seen=[],roleTranscript;
+    result=execute('docker',psqlArgs(stage),{input,encoding:'utf8',stdio:['pipe','pipe','pipe'],
+      timeout:60000,killSignal:'SIGKILL',maxBuffer:64*1024});
+  } catch {emitRestore('unknown','failed');throw new Error('synthetic-restore-process-failed');}
+  let seen=[];
   try {
     assert(typeof result.stdout==='string' && Buffer.byteLength(result.stdout)<=64*1024);
-    // Only this invocation's exact nonce + ordered whitelist can establish position.
     seen=result.stdout.split(/\r?\n/).filter(line=>line.startsWith(`backup_restore_${token}:`));
     assert(seen.length<=markers.length && seen.every((line,i)=>line===markers[i]));
-    roleTranscript=inspectRoleTranscript(result.stdout,token,rolePlan.specs);
-    const ordered=result.stdout.split(/\r?\n/).filter(line=>line.startsWith(`backup_restore_${token}:`) || line.startsWith(`backup_role_${token}:`));
-    const roles=ordered.filter(line=>line.startsWith(`backup_role_${token}:`));
-    assert.deepEqual(ordered,[...seen.slice(0,1),...roles,...seen.slice(1)]);
-    if(seen.length>=2)assert.equal(roleTranscript.count,rolePlan.specs.length);
-  } catch { emitRestore('unknown','failed'); throw new Error('synthetic-restore-markers-rejected'); }
+  } catch {emitRestore('unknown','failed');throw new Error('synthetic-restore-markers-rejected');}
   const cleanExit=!result.error && !result.signal && result.status===0;
   for(let i=0;i<phases.length;i++) {
+    // Stage completion is not a durable commit acknowledgement.
     if(seen.length>i*2+1 && (phases[i]!=='restore-commit' || cleanExit))emitRestore(phases[i],'success');
   }
   if(cleanExit && seen.length===markers.length)return;
-  // Exit 3 is psql ON_ERROR_STOP script failure. A started segment plus this
-  // controlled return distinguishes a script failure from timeout/transport loss.
   const active=seen.length%2===1?phases[Math.floor(seen.length/2)]:undefined;
   if(active && !result.error && !result.signal && result.status===3) {
-    const category=classifyRestoreSqlState(result.stderr);
-    reportError(category);
-    if(active==='restore-roles')reportRole(category==='unknown'?safeRoleFailure():roleTranscript.failure);
-    emitRestore(active,'failed');
-  }
-  else emitRestore('unknown','failed');
+    const d=nativeRestoreError(result.stderr,ranges,active);
+    reportError(d.category);reportLocation(d.location);emitRestore(active,'failed');
+  } else emitRestore('unknown','failed');
   throw new Error('synthetic-restore-process-failed');
+}
+const nativeGuardChecks=['version','restriction','rollback'];
+export function safeNativeGuard(check,status) {
+  return {check:nativeGuardChecks.includes(check)?check:'unknown',status:['success','failed','unverified'].includes(status)?status:'unverified'};
+}
+// Real psql checks run ONLY inside the already-owned, empty synthetic target.
+// They verify native behavior, not a JavaScript emulation. All probe DDL rolls
+// back; any failure aborts rehearsal and leaves ownership cleanup in charge.
+export function verifyNativeRestoreGuards(stage, execute=spawnSync,
+  report=value=>process.send?.({kind:'restore-native-guard',...value})) {
+  const deadline=Date.now()+60000;let check='version';
+  const run=(args,input)=>{
+    const remaining=deadline-Date.now();assert(remaining>0);
+    return execute('docker',args,{input,encoding:'utf8',stdio:['pipe','pipe','pipe'],
+      timeout:Math.min(5000,remaining),killSignal:'SIGKILL',maxBuffer:4096});
+  };
+  const exited=(r,code)=>!r.error && !r.signal && r.status===code;
+  for(const name of nativeGuardChecks)report(safeNativeGuard(name,'unverified'));
+  try {
+    validateStage(stage);
+    const version=run(['exec',stage.dbContainer,'psql','--version']);
+    assert(exited(version,0) && /^psql \(PostgreSQL\) 17\.11(?: \([^\r\n]{1,128}\))?\r?\n?$/.test(version.stdout));
+    report(safeNativeGuard(check,'success'));check='restriction';
+    const key=randomBytes(32).toString('hex');
+    const positive=run(psqlArgs(stage),`BEGIN;\n\\restrict ${key}\nSELECT 1;\n\\unrestrict ${key}\nROLLBACK;\n`);
+    assert(exited(positive,0) && positive.stdout==='1\n' && positive.stderr==='');
+    const name=`synthetic_restore_probe_${randomBytes(12).toString('hex')}`;
+    const commands=['\\! /bin/false','\\include /dev/null','\\connect postgres','\\set ON_ERROR_STOP off','\\unrestrict wrongKey'];
+    for(const command of commands) {
+      const r=run(psqlArgs(stage),`BEGIN;\nCREATE SCHEMA ${name};\n\\restrict ${key}\n${command}\n\\unrestrict ${key}\nCOMMIT;\n`);
+      const message=command.startsWith('\\unrestrict')?'\\unrestrict: wrong key':'backslash commands are restricted; only \\unrestrict is allowed';
+      assert(exited(r,3) && r.stdout==='' && r.stderr===`psql:<stdin>:4: error: ${message}\n`);
+      const absent=run(psqlArgs(stage),`SELECT count(*) FROM pg_namespace WHERE nspname='${name}';\n`);
+      assert(exited(absent,0) && absent.stdout==='0\n' && absent.stderr==='');
+    }
+    report(safeNativeGuard(check,'success'));check='rollback';
+    const r=run(psqlArgs(stage),`BEGIN;\nCREATE SCHEMA ${name};\nSELECT 1/0;\nCOMMIT;\n`);
+    assert(exited(r,3) && r.stdout==='' && r.stderr==='psql:<stdin>:3: ERROR:  22012\n');
+    const absent=run(psqlArgs(stage),`SELECT count(*) FROM pg_namespace WHERE nspname='${name}';\n`);
+    assert(exited(absent,0) && absent.stdout==='0\n' && absent.stderr==='');
+    report(safeNativeGuard(check,'success'));
+  } catch {report(safeNativeGuard(check,'failed'));throw new Error('synthetic-native-guard-failed');}
 }
 function emptyTarget(stage) {
   // Extensions/platform schemas are retained; no application schema is preinstalled.
@@ -826,6 +743,8 @@ async function rehearsal() {
       const ledgerBefore=ledgerSnapshot(target);
       const opened=openArtifacts(readFileSync(join(disk,'backup.enc')),key);
       assert.deepEqual(opened.manifest,originalManifest); emit('integrity','verified');
+      verifyNativeRestoreGuards(target);
+      emptyTarget(target);
       restoreInTransaction(target,opened.manifest,opened.files);
       assert.equal(rows(target),expectedRows);passed('schema-data');
       assert.equal(catalog(target),expectedCatalog);
@@ -917,9 +836,11 @@ async function supervise() {
     if(m?.kind==='restore-error'){
       console.log(`backup_restore_error=${safeRestoreErrorCategory(m.category)}`);
     }
-    if(m?.kind==='restore-role-failure'){
-      const d=safeRoleFailure(m);
-      console.log(`backup_restore_role=${d.operation} index=${d.index} createrole=${d.createrole} superuser=${d.superuser} target_exists=${d.targetExists} admin_option=${d.adminOption}`);
+    if(m?.kind==='restore-location')console.log(formatRestoreLocation(m));
+    if(m?.kind==='restore-native-guard'){
+      const d=safeNativeGuard(m.check,m.status);
+      if(d.status==='failed')failed=true;
+      console.log(`backup_restore_native=${d.check} status=${d.status}`);
     }
     if(m?.kind==='restore-result'){
       const result=safeRestoreResult(m.stage,m.status);

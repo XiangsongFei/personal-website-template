@@ -423,7 +423,9 @@ describe('ownership-bound CLI dump transport (no Docker)',()=>{
 
 const restoreDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs', import.meta.url).href) as {
   restoreStages:readonly string[];
-  classifyRestoreSqlState:(input:unknown)=>string;
+  formatRestoreLocation:(input:unknown)=>string;
+  safeNativeGuard:(check:unknown,status:unknown)=>{check:string;status:string};
+  verifyNativeRestoreGuards:(stage:unknown,execute:(cmd:string,args:string[],options:{input?:string;timeout:number;maxBuffer:number})=>unknown,report:(value:{check:string;status:string})=>void)=>void;
   safeRestoreErrorCategory:(input:unknown)=>string;
   safeRestoreResult:(stage:unknown,status:unknown)=>{stage:string;status:string};
   restoreInTransaction:(stage:unknown,manifest:unknown,files:Map<string,Buffer>,execute:(cmd:string,args:string[],options:{input:string;stdio:string[];timeout:number;maxBuffer:number})=>unknown,report:(r:{stage:string;status:string})=>void,reportError?:(category:string)=>void,reportRole?:(value:unknown)=>void,reportInput?:(value:{step:string;status:string;reason:string})=>void)=>void;
@@ -431,21 +433,18 @@ const restoreDiag = await import(new URL('./rls-runtime/run-synthetic-backup-rec
 describe('single-transaction restore execution diagnostics (synthetic subprocess)',()=>{
   const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
   const markerLines=(input:string)=>input.split('\n').filter(s=>s.startsWith('\\echo backup_restore_')).map(s=>s.slice(6));
-  const transcript=(input:string)=>input.split('\n').flatMap(line=>{
-    if(line.startsWith('\\echo backup_'))return [line.slice(6)];
-    const probe=/^SELECT '(backup_role_[a-f0-9]{32}:[0-9]+:before:)'/.exec(line);
-    return probe?[probe[1]+'t:f:'+(line.includes("|| 'u' FROM")?'u':'f')]:[];
-  });
+  const transcript=markerLines;
   const throughStage=(input:string,index:number)=>{const all=transcript(input);const end=all.indexOf(markerLines(input)[index]);return all.slice(0,end+1);};
   const sample=()=>{const f=fixtures();for(const name of ['roles.sql','schema.sql','auth-data.sql','data.sql'])f.set(name,Buffer.from(`-- synthetic-secret ${name}\nSELECT 1;\n`));f.set('roles.sql',Buffer.from('-- synthetic-secret roles.sql\nCREATE ROLE "synthetic_backup_reader";\n'));return f;};
   it('uses one psql call with original SQL bytes/order and exactly one BEGIN/COMMIT',()=>{
     const files=sample(),events:{stage:string;status:string}[]=[];let calls=0;
     restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(cmd,args,o)=>{
-      calls++;expect(cmd).toBe('docker');expect(args).toEqual(['exec','-i',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres']);
+      calls++;expect(cmd).toBe('docker');expect(args).toEqual(['exec','-i','-e','LC_ALL=C',stage.dbContainer,'psql','-XqAt','-v','ON_ERROR_STOP=1','-v','ON_ERROR_ROLLBACK=off','-v','VERBOSITY=sqlstate','-U','postgres','-d','postgres','-f','-']);
       expect(o.stdio).toEqual(['pipe','pipe','pipe']);expect(o.timeout).toBe(60000);expect(o.maxBuffer).toBe(65536);
-      const sql=o.input.replace(/^SELECT 'backup_role_[a-f0-9]{32}:.*\n/gm,'')
-        .replace(/\n\\echo backup_role_[a-f0-9]{32}:\d+:end\n/g,'')
-        .split('\n').filter(s=>!s.startsWith('\\echo ')).join('\n');
+      const key=o.input.match(/^\\restrict ([a-f0-9]{64})$/m)![1];
+      expect(o.input).toContain(`\\restrict ${key}\n${files.get('roles.sql')}\n\\unrestrict ${key}\n`);
+      expect([...files.values()].every(b=>!b.includes(key))).toBe(true);
+      const sql=o.input.split('\n').filter(s=>!/^\\(?:echo|restrict|unrestrict) /.test(s)).join('\n');
       expect(sql).toBe(`BEGIN;\n${files.get('roles.sql')}\n${files.get('schema.sql')}\nSET LOCAL session_replication_role=replica;\n${files.get('auth-data.sql')}\n${files.get('data.sql')}\nCOMMIT;\n`);
       expect(markerLines(o.input)).toHaveLength(10);
       return {status:0,signal:null,stdout:transcript(o.input).join('\n'),get stderr(){throw new Error('stderr must never be read');}};
@@ -514,14 +513,11 @@ describe('restore SQLSTATE whitelist (synthetic input; no database)',()=>{
   const codes=[['42501','insufficient-privilege'],['42710','duplicate-object'],['42704','undefined-object'],
     ['42601','syntax-error'],['25001','transaction-restriction'],['0A000','unsupported-feature'],
     ['55P03','lock-unavailable'],['57014','query-canceled']];
-  it.each(codes)('maps only exact %s diagnostics to %s',(code,category)=>{
-    for(const ending of ['', '\n','\r\n'])expect(restoreDiag.classifyRestoreSqlState(`ERROR:  ${code}${ending}`)).toBe(category);
-  });
-  it.each([null,undefined,{},'', 'ERROR: ZZ999', 'ERROR: 42501 simulated-secret',
-    'ERROR: 42710\nERROR: 42501', 'NOTICE: 42710', 'ERROR: 42501\nNOTICE: simulated-secret',
-    'ERROR: 00000', 'ERROR: 0a000',' ERROR: 42501','ERROR: 42501\n\n', 'x'.repeat(4097)])('rejects malformed or mixed input #%#',input=>{
-    expect(restoreDiag.classifyRestoreSqlState(input)).toBe('unknown');
-    expect(restoreDiag.safeRestoreErrorCategory(input)).toBe('unknown');
+  it.each(codes)('maps native %s diagnostics to %s',(code,category)=>{
+    const line='CREATE ROLE "synthetic_reader";',files=nativeFiles(line+'\n'),errors:string[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(nativeStage,makeManifest(files),files,(_c,_a,o)=>({status:3,
+      stdout:nativeMarkers(o.input)[0],stderr:nativeError(o.input,line,code)}),()=>{},x=>errors.push(x))).toThrow();
+    expect(errors.at(-1)).toBe(category);
   });
   it.each(['valid','mixed','timeout','no-code','launch','out-of-order'])('binds error classification to entered stage and controlled exit: %s',mode=>{
     const files=fixtures(),events:{stage:string;status:string}[]=[],errors:string[]=[];files.set('roles.sql',Buffer.from('CREATE ROLE synthetic_backup_reader;\n'));
@@ -532,250 +528,144 @@ describe('restore SQLSTATE whitelist (synthetic input; no database)',()=>{
       return {status:mode==='timeout'||mode==='launch'?null:3,signal:mode==='timeout'?'SIGKILL':null,
         error:mode==='launch'?new Error('synthetic-secret'):undefined,
         stdout:mode==='out-of-order'?markers[1]:markers[0],
-        stderr:mode==='no-code'?'':mode==='mixed'?'ERROR: 42501\nsynthetic-secret':'ERROR: 42501\n'};
+        stderr:mode==='no-code'?'':mode==='mixed'?'ERROR: 42501\nsynthetic-secret':`psql:<stdin>:${o.input.split('\n').indexOf('CREATE ROLE synthetic_backup_reader;')+1}: ERROR: 42501\n`};
     },r=>events.push(r),c=>errors.push(c))).toThrow();
     expect(errors.at(-1)).toBe(mode==='valid'?'insufficient-privilege':'unknown');
     expect(JSON.stringify({events,errors})).not.toMatch(/synthetic-secret|ERROR:|42501/);
   });
 });
 
-const roleDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs',import.meta.url).href) as {
-  parseRoleOperations:(bytes:Buffer)=>{kind:string;target:string|null;index:number;sql:string}[];
-  safeRoleFailure:(value?:unknown)=>{operation:string;index:number|string;createrole:boolean|string;superuser:boolean|string;targetExists:boolean|string;adminOption:string};
-};
-describe('bounded role-operation lexer and grammar (synthetic; no PostgreSQL)',()=>{
-  it.each([
-    ['CREATE ROLE "synthetic_backup_reader";','create-role'],
-    ['create\n role synthetic_backup_reader;','create-role'],
-    ['ALTER ROLE "synthetic_backup_reader" WITH INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOBYPASSRLS;','alter-role'],
-    ['ALTER ROLE "synthetic_backup_reader" WITH CONNECTION LIMIT -1 VALID UNTIL \'infinity\';','alter-role'],
-    ['ALTER ROLE "anon" SET "statement_timeout" TO \'3s\';','role-configuration'],
-    ['ALTER ROLE "authenticator" SET "pgrst.db_schemas" TO \'public, storage\';','role-configuration'],
-    ['ALTER ROLE "synthetic_backup_reader" RESET "statement_timeout";','role-configuration'],
-    ['GRANT "synthetic_backup_reader" TO "postgres" WITH ADMIN OPTION GRANTED BY "postgres";','grant-membership'],
-    ['GRANT "synthetic_backup_reader" TO "postgres" WITH ADMIN TRUE, INHERIT FALSE, SET TRUE;','grant-membership'],
-    ['GRANT first, second TO third, fourth;','grant-membership'],
-    ['REVOKE ADMIN OPTION FOR first FROM second GRANTED BY third CASCADE;','revoke-membership'],
-    ['REVOKE first FROM second RESTRICT;','revoke-membership'],
-    ["SET client_encoding = 'UTF8';",'session-setting'],
-    ['SET standard_conforming_strings = on;','session-setting'],
-    ['SET default_transaction_read_only = off;','session-setting'],
-    ['RESET ALL;','session-setting'],
-  ])('classifies supported operation #%#', (sql,kind)=>{
-    const parsed=roleDiag.parseRoleOperations(Buffer.from(sql));
-    expect(parsed).toHaveLength(1);expect(parsed[0]).toMatchObject({kind,index:1,sql});
-  });
-  it('preserves all bytes and order across quotes, doubled quotes, line and nested comments',()=>{
-    const sql='-- ignored ; \\! secret\n/* outer ; /* inner */ */\nCREATE ROLE "a;""b";\n'+
-      'ALTER ROLE "a;""b" SET "statement_timeout" TO \'a;\'\'b\'; -- tail ;\n';
-    const parsed=roleDiag.parseRoleOperations(Buffer.from(sql));
-    expect(parsed.map(x=>x.sql).join('')).toBe(sql);expect(parsed.map(x=>x.index)).toEqual([1,2]);
-    expect(parsed.map(x=>x.target)).toEqual(['a;"b','a;"b']);
-  });
-  it.each([
-    '', 'CREATE ROLE a', 'CREATE ROLE a;;', 'CREATE ROLE "a;', "ALTER ROLE a SET x TO 'unterminated;",
-    '/* unterminated', '/* /* */', 'CREATE ROLE a; SELECT secret;',
-    "ALTER ROLE a SET x TO $$secret; CREATE ROLE bad;$$;",
-    "DO $body$ BEGIN RAISE NOTICE 'secret'; END $body$;",
-    "ALTER ROLE a SET x TO E'secret\\n';", 'CREATE ROLE U&"secret";',
-    'CREATE ROLE :variable;', '\\i /sensitive/path\n', '\\gexec\n', '\\restrict nonce\n', '\\unrestrict nonce\n',
-    'CREATE ROLE a; \\! secret\n', "CREATE ROLE a; SET standard_conforming_strings=off;",
-    'SET ROLE postgres;', 'SET SESSION AUTHORIZATION postgres;', 'BEGIN;', 'COMMIT;', 'ROLLBACK;',
-    'ALTER ROLE current_user WITH LOGIN;', 'ALTER ROLE a WITH PASSWORD \'secret\';',
-    'GRANT SELECT ON table_name TO a;', 'CREATE ROLE "a\\b";', 'CREATE ROLE "a\nb";',
-    'CREATE ROLE a;\0', 'CREATE ROLE a;\r\n', 'CREATE ROLE '+ 'a'.repeat(64)+';',
-    'CREATE ROLE a;'.repeat(129), ' '.repeat(128*1024+1),
-    'ALTER ROLE a SET x "=" \'3s\';', 'GRANT a "," b TO c;',
-  ])('rejects unsupported or ambiguous format #%# before execution',sql=>{
-    expect(()=>roleDiag.parseRoleOperations(Buffer.from(sql))).toThrow('synthetic-role-input-rejected');
-  });
-  it('rejects invalid UTF8, excessive nesting and token counts without reflecting input',()=>{
-    for(const input of [Buffer.from([0xff]),Buffer.from('/*'.repeat(33)),Buffer.from('ALTER ROLE a WITH '+'LOGIN '.repeat(513)+';')]){
-      expect(()=>roleDiag.parseRoleOperations(input)).toThrow('synthetic-role-input-rejected');
-    }
-  });
-  it('sanitizes IPC independently and never infers membership permission',()=>{
-    expect(roleDiag.safeRoleFailure({operation:'secret',index:129,createrole:'JWT',superuser:1,targetExists:null,adminOption:true})).toEqual({operation:'unknown',index:'unverified',createrole:'unverified',superuser:'unverified',targetExists:'unverified',adminOption:'unverified'});
-    expect(roleDiag.safeRoleFailure({operation:'grant-membership',index:1,createrole:true,superuser:false,targetExists:true,adminOption:true}).adminOption).toBe('unverified');
-  });
-});
 
-describe('first failing role operation and permission observations (mock psql)',()=>{
-  const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
-  const roleSql='-- secret must not escape\nCREATE ROLE "synthetic_backup_reader";\nALTER ROLE "synthetic_backup_reader" WITH NOLOGIN NOBYPASSRLS;\nALTER ROLE "anon" SET "statement_timeout" TO \'3s\';\n';
-  const transcript=(input:string)=>input.split('\n').flatMap(line=>{
-    if(line.startsWith('\\echo backup_'))return [line.slice(6)];
-    const m=/^SELECT '(backup_role_[a-f0-9]{32}:(\d+):before:)'/.exec(line);
-    return m?[m[1]+`t:f:${m[2]==='1'?'f':'t'}`]:[];
-  });
-  it.each([1,2,3])('locates first failure at operation %i with matching observation',index=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(roleSql));const observed:unknown[]=[];const errors:string[]=[];let calls=0;
-    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,args,o)=>{
-      calls++;expect(args).toContain('ON_ERROR_STOP=1');expect(args).toContain('VERBOSITY=sqlstate');
-      const all=transcript(o.input);const stop=all.findIndex(x=>x.includes(`:${index}:before:`));
-      return {status:3,signal:null,stdout:all.slice(0,stop+1).join('\n'),stderr:'ERROR: 42501\n'};
-    },()=>{},c=>errors.push(c),v=>observed.push(v))).toThrow('synthetic-restore-process-failed');
-    expect(calls).toBe(1);expect(errors.at(-1)).toBe('insufficient-privilege');
-    expect(observed).toEqual([{operation:['create-role','alter-role','role-configuration'][index-1],index,createrole:true,superuser:false,targetExists:index!==1,adminOption:'unverified'}]);
-    expect(JSON.stringify(observed)).not.toMatch(/secret|synthetic_backup_reader|anon|statement_timeout|42501|backup_role_/);
-  });
-  it('preserves every original role byte in order and commits only once in one session',()=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(roleSql));let calls=0;
-    restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>{
-      calls++;
-      const original=roleDiag.parseRoleOperations(Buffer.from(roleSql));let previous=-1;
-      for(const op of original){const at=o.input.indexOf(op.sql);expect(at).toBeGreaterThan(previous);previous=at;}
-      expect(o.input.match(/^BEGIN;$/gm)).toHaveLength(1);expect(o.input.match(/^COMMIT;$/gm)).toHaveLength(1);
-      expect(o.input).not.toContain('SAVEPOINT');expect(o.input).not.toContain('SET ROLE');
-      expect(o.input.match(/^SELECT 'backup_role_/gm)).toHaveLength(3);
-      return {status:0,stdout:transcript(o.input).join('\n')};
+const nativeStage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
+const nativeMarkers=(s:string)=>s.split('\n').filter(x=>x.startsWith('\\echo backup_restore_')).map(x=>x.slice(6));
+const nativeFiles=(roles:string)=>{const files=fixtures();files.set('roles.sql',Buffer.from(roles));return files;};
+const nativeError=(s:string,line:string,code='42501')=>`psql:<stdin>:${s.split('\n').indexOf(line)+1}: ERROR:  ${code}\n`;
+
+describe('native role SQL input and diagnostic mapping (mock; not PostgreSQL evidence)',()=>{
+  it.each([
+    'GRANT SET ON PARAMETER "synthetic.parameter" TO "synthetic_reader";',
+    'ALTER ROLE "synthetic_reader" SET "search_path" TO "public", "extensions";',
+    '-- ;\n/* outer /* ; */ comment */\nCREATE ROLE "a;""b";',
+    'create\n role "synthetic_backup_reader";', 'CREATE ROLE "多语言";\r\n',
+    'SET default_transaction_read_only = off;\nSET client_encoding = \'UTF8\';\nSET standard_conforming_strings = on;\n'+
+    'CREATE ROLE "synthetic_backup_reader";\nALTER ROLE "synthetic_backup_reader" WITH INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOBYPASSRLS;\n'+
+    'ALTER ROLE "anon" SET "statement_timeout" TO \'3s\';\nGRANT "synthetic_backup_reader" TO "postgres" WITH ADMIN OPTION GRANTED BY "postgres";\nRESET ALL;',
+  ])('preserves source-bound CLI format #%# without imposing a SQL grammar',input=>{
+    const files=nativeFiles(input);let calls=0;
+    restoreDiag.restoreInTransaction(nativeStage,makeManifest(files),files,(_c,_a,o)=>{
+      calls++;expect(Buffer.from(o.input).includes(files.get('roles.sql')!)).toBe(true);
+      expect(o.input).not.toContain('backup_role_');expect(o.input.match(/^BEGIN;$/gm)).toHaveLength(1);
+      expect(o.input.match(/^COMMIT;$/gm)).toHaveLength(1);
+      return {status:0,stdout:nativeMarkers(o.input).join('\n')};
     },()=>{});expect(calls).toBe(1);
   });
-  it.each([['GRANT a TO b;','grant-membership'],['REVOKE a FROM b;','revoke-membership'],['RESET ALL;','session-setting']])('does not infer membership or nonexistent single-target evidence for %s',(sql,kind)=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(sql));const observed:unknown[]=[];
-    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>{
-      const stageMarker=o.input.match(/\\echo (backup_restore_[a-f0-9]{32}:restore-roles:begin)/)![1];
-      const probe=o.input.match(/SELECT '(backup_role_[a-f0-9]{32}:1:before:)'/)![1];
-      expect(o.input).toContain("|| 'u' FROM pg_catalog.pg_roles");
-      return {status:3,stdout:stageMarker+'\n'+probe+'f:f:u',stderr:'ERROR: 42501\n'};
-    },()=>{},()=>{},x=>observed.push(x))).toThrow();
-    expect(observed).toEqual([{operation:kind,index:1,createrole:false,superuser:false,targetExists:'unverified',adminOption:'unverified'}]);
+  it.each([
+    ['CREATE ROLE "synthetic_reader";','create-role'],
+    ['ALTER ROLE "synthetic_reader" WITH NOLOGIN NOCREATEROLE;','alter-role'],
+    ['ALTER ROLE "anon" SET "statement_timeout" TO \'3s\';','role-configuration'],
+    ['GRANT "synthetic_reader" TO "postgres" WITH ADMIN OPTION GRANTED BY "postgres";','grant-membership'],
+    ['GRANT SET ON PARAMETER "synthetic.parameter" TO "synthetic_reader";','parameter-grant'],
+    ['"synthetic_reader";','unknown'],['SELECT 1;','unknown'],
+    ['ALTER ROLE "synthetic_reader" SET "search_path" TO "public", "extensions";','unknown'],
+  ])('maps original line with a non-blocking template hint #%#', (line,kind)=>{
+    const files=nativeFiles('-- secret\n\n'+line+'\n'),locations:unknown[]=[],errors:string[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(nativeStage,makeManifest(files),files,(_c,_a,o)=>({status:3,
+      stdout:nativeMarkers(o.input)[0],stderr:nativeError(o.input,line)}),()=>{},x=>errors.push(x),x=>locations.push(x))).toThrow();
+    expect(errors.at(-1)).toBe('insufficient-privilege');
+    expect(locations).toEqual([{artifact:'roles.sql',line:3,lineTemplate:kind}]);
+    expect(JSON.stringify({locations,errors})).not.toMatch(/secret|synthetic_reader|anon|statement_timeout|42501/);
   });
-  it.each(['unknown-code','multiple-errors','sensitive-error','timeout','disconnect','probe-failed','reordered','duplicate','forged-index','forged-flag','stage-before-role-end'])('fails closed for %s',mode=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(roleSql));const observed:unknown[]=[];const errors:string[]=[];
-    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_c,_a,o)=>{
-      const all=transcript(o.input);let lines=all.slice(0,2);
-      if(mode==='probe-failed')lines=all.slice(0,1);
-      if(mode==='reordered')lines=lines.reverse();
-      if(mode==='duplicate')lines.push(lines[1]);
-      if(mode==='forged-index')lines[1]=lines[1].replace(':1:before:',':2:before:');
-      if(mode==='forged-flag')lines[1]=lines[1].replace('t:f:f','secret:f:f');
-      if(mode==='stage-before-role-end')lines.push(all.find(x=>x.includes(':restore-roles:end'))!);
-      return {status:mode==='timeout'?null:mode==='disconnect'?2:3,signal:mode==='timeout'?'SIGKILL':null,
-        stdout:lines.join('\n'),stderr:mode==='unknown-code'?'ERROR: ZZ999\n':mode==='multiple-errors'?'ERROR: 42501\nERROR: 42501\n':mode==='sensitive-error'?'ERROR: 42501 password JWT secret\n':'ERROR: 42501\n'};
-    },()=>{},c=>errors.push(c),v=>observed.push(v))).toThrow();
-    if(['unknown-code','multiple-errors','sensitive-error'].includes(mode)){
-      expect(errors.at(-1)).toBe('unknown');expect(observed).toEqual([roleDiag.safeRoleFailure()]);
-    }
-    if(['timeout','disconnect','reordered','duplicate','forged-index','forged-flag','stage-before-role-end'].includes(mode))expect(observed).toEqual([]);
-    if(mode==='probe-failed')expect(observed).toEqual([roleDiag.safeRoleFailure()]);
-    expect(JSON.stringify({observed,errors})).not.toMatch(/secret|password|JWT|ZZ999|42501/);
+  it('reports the last line of multiline SQL without claiming a statement start',()=>{
+    const files=nativeFiles('CREATE\n ROLE\n "synthetic_reader";\n'),locations:unknown[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(nativeStage,makeManifest(files),files,(_c,_a,o)=>({status:3,
+      stdout:nativeMarkers(o.input)[0],stderr:nativeError(o.input,' "synthetic_reader";')}),()=>{},()=>{},x=>locations.push(x))).toThrow();
+    expect(locations).toEqual([{artifact:'roles.sql',line:3,lineTemplate:'unknown'}]);
   });
-  it('rejects malformed roles before invoking Docker or changing cleanup inputs',()=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from('\\! secret'));let calls=0;
-    expect(()=>restoreDiag.restoreInTransaction(stage,makeManifest(files),files,()=>{calls++;return {};},()=>{})).toThrow('synthetic-restore-input-rejected');
-    expect(calls).toBe(0);expect(files.get('roles.sql')!.toString()).toBe('\\! secret');
+  it.each(['path','negative','zero','oversize-line','outside','other-phase','wrapper','unknown-code','multiple','raw-message','huge','bare'])('rejects %s diagnostic evidence safely',mode=>{
+    const line='CREATE ROLE "synthetic_reader";',files=nativeFiles(line+'\n'),locations:unknown[]=[],errors:string[]=[];
+    files.set('schema.sql',Buffer.from('SELECT 42;\n'));
+    expect(()=>restoreDiag.restoreInTransaction(nativeStage,makeManifest(files),files,(_c,_a,o)=>{
+      let stderr=nativeError(o.input,line);
+      if(mode==='path')stderr=stderr.replace('<stdin>','/secret/path');
+      if(['negative','zero','oversize-line','outside'].includes(mode))stderr=stderr.replace(/:[0-9]+:/,`:${mode==='negative'?'-1':mode==='zero'?'0':mode==='oversize-line'?'99999999999':'99999'}:`);
+      if(mode==='other-phase')stderr=nativeError(o.input,'SELECT 42;');
+      if(mode==='wrapper')stderr=nativeError(o.input,'BEGIN;');
+      if(mode==='unknown-code')stderr=stderr.replace('42501','ZZ999');
+      if(mode==='multiple')stderr+=stderr;
+      if(mode==='raw-message')stderr+='JWT password SQL secret\n';
+      if(mode==='huge')stderr='s'.repeat(4097);
+      if(mode==='bare')stderr='ERROR: 42501\n';
+      return {status:3,stdout:nativeMarkers(o.input)[0],stderr};
+    },()=>{},x=>errors.push(x),x=>locations.push(x))).toThrow();
+    expect(errors.at(-1)).toBe('unknown');
+    expect(locations).toEqual([{artifact:'unavailable',line:'unavailable',lineTemplate:'unknown'}]);
+    expect(JSON.stringify({locations,errors})).not.toMatch(/JWT|password|SQL|secret|ZZ999|42501/);
+  });
+  it('sanitizes location IPC independently',()=>{
+    for(const v of [null,undefined,{}, {artifact:'secret',line:-1,lineTemplate:'JWT'}, {artifact:'roles.sql',line:Infinity,lineTemplate:'secret'}])
+      expect(restoreDiag.formatRestoreLocation(v)).not.toMatch(/secret|JWT|Infinity/);
+  });
+  it.each(['stage','target','manifest','missing','extra','scope','utf8','nul','roles-size','artifact-size','exception'])('rejects %s before Docker',mode=>{
+    const files=nativeFiles('CREATE ROLE a;');
+    if(mode==='utf8')files.set('roles.sql',Buffer.from([255]));
+    if(mode==='nul')files.set('roles.sql',Buffer.from('CREATE ROLE a;\0'));
+    if(mode==='roles-size')files.set('roles.sql',Buffer.alloc(128*1024+1,32));
+    const manifest=makeManifest(files);
+    if(mode==='artifact-size')files.set('schema.sql',Buffer.alloc(16*1024*1024+1));
+    if(mode==='manifest')files.set('roles.sql',Buffer.from('changed'));
+    if(mode==='missing')files.delete('data.sql');
+    if(mode==='extra')files.set('outside.sql',Buffer.from('SELECT 1;'));
+    if(mode==='scope')(manifest as {scope:string}).scope='production';
+    const stage=mode==='stage'?{...nativeStage,apiUrl:'https://production.invalid'}:mode==='target'?{...nativeStage,dbContainer:'supabase_db_other'}:
+      mode==='exception'?{get projectId(){throw new Error('JWT private');}}:nativeStage;
+    let calls=0;const phases:PhaseResult[]=[];
+    expect(()=>restoreDiag.restoreInTransaction(stage,manifest,files,()=>{calls++;return {};},r=>phases.push(r))).toThrow('synthetic-restore-input-rejected');
+    expect(calls).toBe(0);expect(phases.at(-1)).toEqual({stage:'restore-input-validation',status:'failed'});
+    expect(phases.filter(x=>x.status==='success')).toEqual([]);
   });
 });
+type PhaseResult={stage:string;status:string};
 
-
-const inputDiag = await import(new URL('./rls-runtime/run-synthetic-backup-recovery.mjs',import.meta.url).href) as {
-  safeRestoreInputDiagnostic:(step:unknown,status:unknown,reason:unknown)=>{step:string;status:string;reason:string};
-  formatRestoreInputDiagnostic:(value:unknown)=>string;
-};
-describe('restore input rejection boundaries (synthetic; no database)',()=>{
-  const stage={projectId:'pr1-123-123456789abc',dbContainer:'supabase_db_pr1-123-123456789abc',authContainer:'supabase_auth_pr1-123-123456789abc',apiUrl:'http://127.0.0.1:54321',ports:{api:54321}};
-  const steps=['validate-stage','restore-inputs','parse-role-operations'];
-  const reject=(input:Buffer,change?:'stage'|'manifest'|'throw')=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(input));const manifest=makeManifest(files);
-    const original=Buffer.from(input);const events:{step:string;status:string;reason:string}[]=[];
-    const phases:{stage:string;status:string}[]=[];let calls=0;
-    const target=change==='stage'?{...stage,apiUrl:'http://invalid.example.invalid/'}:change==='throw'
-      ?{get projectId(){throw Object.assign(new Error('JWT synthetic-secret SQL /private/path'),{reason:'input-limit'});}}:stage;
-    if(change==='manifest')files.set('schema.sql',Buffer.from('synthetic-secret corrupted'));
-    expect(()=>restoreDiag.restoreInTransaction(target,manifest,files,()=>{calls++;},r=>phases.push(r),()=>{},()=>{},r=>events.push(r))).toThrow('synthetic-restore-input-rejected');
-    expect(calls).toBe(0);expect(files.get('roles.sql')).toEqual(original);
-    expect(phases.at(-1)).toEqual({stage:'restore-input-validation',status:'failed'});
-    expect(phases.filter(x=>x.status==='success')).toEqual([]);
-    expect(events.slice(0,3)).toEqual(steps.map(step=>({step,status:'unverified',reason:'unknown'})));
-    expect(events.filter(x=>x.status==='failed')).toHaveLength(1);
-    expect(events.map(inputDiag.formatRestoreInputDiagnostic).join('\n')).not.toMatch(/JWT|synthetic-secret|private|corrupted|SELECT|CREATE|ROLE/);
-    return events;
+describe('native guard orchestration (mock only; real psql checks deferred to CI)',()=>{
+  const mock=(args:string[],input='')=>{
+    if(args.at(-1)==='--version')return {status:0,stdout:'psql (PostgreSQL) 17.11\n',stderr:''};
+    if(input.includes('SELECT count(*)'))return {status:0,stdout:'0\n',stderr:''};
+    if(input.includes('SELECT 1/0;'))return {status:3,stdout:'',stderr:'psql:<stdin>:3: ERROR:  22012\n'};
+    if(!input.includes('CREATE SCHEMA'))return {status:0,stdout:'1\n',stderr:''};
+    const message=input.includes('\\unrestrict wrongKey')?'\\unrestrict: wrong key':'backslash commands are restricted; only \\unrestrict is allowed';
+    return {status:3,stdout:'',stderr:`psql:<stdin>:4: error: ${message}\n`};
   };
-  it.each(['stage','manifest','throw'] as const)('separates %s rejection from the parser and execution',mode=>{
-    const events=reject(Buffer.from('unsupported SQL synthetic-secret'),mode);
-    const step=mode==='manifest'?'restore-inputs':'validate-stage';
-    expect(events.at(-1)).toEqual({step,status:'failed',reason:'unknown'});
-    expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(mode==='manifest'?['validate-stage']:[]);
+  it('requires version, positive restriction, all five denials and independent rollback checks',()=>{
+    const events:{check:string;status:string}[]=[],inputs:string[]=[];
+    restoreDiag.verifyNativeRestoreGuards(nativeStage,(cmd,args,o)=>{
+      expect(cmd).toBe('docker');expect(o.timeout).toBeGreaterThan(0);expect(o.timeout).toBeLessThanOrEqual(5000);
+      expect(o.maxBuffer).toBe(4096);inputs.push(o.input??'');return mock(args,o.input);
+    },v=>events.push(v));
+    expect(events.filter(e=>e.status==='success').map(e=>e.check)).toEqual(['version','restriction','rollback']);
+    for(const command of ['\\! /bin/false','\\include /dev/null','\\connect postgres','\\set ON_ERROR_STOP off','\\unrestrict wrongKey'])expect(inputs.some(x=>x.includes(command))).toBe(true);
+    expect(inputs.filter(x=>x.includes('SELECT count(*)'))).toHaveLength(6);
+    expect(inputs.filter(x=>x.includes('CREATE SCHEMA'))).toHaveLength(6);
+    expect(inputs.every(x=>!x.includes('DROP SCHEMA') && !x.includes('SUPERUSER'))).toBe(true);
   });
-  it.each([
-    ['session-name',Buffer.from('SET transaction_timeout = 0;'),'unsupported-session-setting'],
-    ['session-value',Buffer.from('SET standard_conforming_strings = off;'),'unsupported-session-setting'],
-    ['psql-restrict',Buffer.from('\\restrict syntheticKey\n'),'unsupported-psql-command'],
-    ['psql-shell',Buffer.from('\\! synthetic-secret\n'),'unsupported-psql-command'],
-    ['unsupported-select',Buffer.from('SELECT synthetic_secret;'),'unsupported-role-operation'],
-    ['parameter-acl',Buffer.from('GRANT SET ON PARAMETER "synthetic.parameter" TO "synthetic_reader";'),'unsupported-role-operation'],
-    ['list-config',Buffer.from('ALTER ROLE "synthetic_reader" SET "search_path" TO "public", "extensions";'),'unsupported-role-operation'],
-    ['dollar-quote',Buffer.from('ALTER ROLE a SET x TO $$synthetic-secret$$;'),'unsupported-lexical-form'],
-    ['variable',Buffer.from('CREATE ROLE :synthetic_secret;'),'unsupported-lexical-form'],
-    ['quoted-newline',Buffer.from('CREATE ROLE "a\nb";'),'unsupported-lexical-form'],
-    ['unterminated-quote',Buffer.from('CREATE ROLE "synthetic-secret'),'malformed-input'],
-    ['unterminated-comment',Buffer.from('/* synthetic-secret'),'malformed-input'],
-    ['missing-semicolon',Buffer.from('CREATE ROLE a'),'malformed-input'],
-    ['invalid-utf8',Buffer.from([255]),'malformed-input'],
-    ['nul',Buffer.from('CREATE ROLE a;\0'),'malformed-input'],
-    ['operation-limit',Buffer.from('CREATE ROLE a;'.repeat(129)),'input-limit'],
-    ['byte-limit',Buffer.alloc(128*1024+1,32),'input-limit'],
-    ['token-limit',Buffer.from('ALTER ROLE a WITH '+'LOGIN '.repeat(513)+';'),'input-limit'],
-    ['comment-limit',Buffer.from('/*'.repeat(33)),'input-limit'],
-    ['quote-limit',Buffer.from('CREATE ROLE "'+'a'.repeat(4097)+'";'),'input-limit'],
-  ])('reports fixed reason for %s without exposing input',(_name,bytes,reason)=>{
-    const events=reject(bytes as Buffer);
-    expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(steps.slice(0,2));
-    expect(events.at(-1)).toEqual({step:steps[2],status:'failed',reason});
+  it.each(['wrong-version','missing-feature','denial-succeeded','wrong-error','rollback-missing','division-succeeded','timeout','throw'])('stops on %s with safe output',mode=>{
+    const events:{check:string;status:string}[]=[];
+    expect(()=>restoreDiag.verifyNativeRestoreGuards(nativeStage,(_cmd,args,o)=>{
+      const input=o.input??'';
+      if(mode==='throw')throw new Error('password secret SQL');
+      if(mode==='timeout')return {status:null,signal:'SIGKILL',stdout:'secret'};
+      if(mode==='wrong-version' && args.at(-1)==='--version')return {status:0,stdout:'psql (PostgreSQL) 17.5\n'};
+      if(mode==='missing-feature' && input.includes('SELECT 1;'))return {status:3,stdout:'',stderr:'unknown command'};
+      if(mode==='denial-succeeded' && input.includes('\\!'))return {status:0,stdout:''};
+      if(mode==='wrong-error' && input.includes('\\!'))return {status:3,stdout:'',stderr:'secret SQL password'};
+      if(mode==='rollback-missing' && input.includes('SELECT count(*)'))return {status:0,stdout:'1\n',stderr:''};
+      if(mode==='division-succeeded' && input.includes('SELECT 1/0;'))return {status:0,stdout:'',stderr:''};
+      return mock(args,input);
+    },v=>events.push(v))).toThrow('synthetic-native-guard-failed');
+    expect(events.filter(e=>e.status==='failed')).toHaveLength(1);
+    expect(events).not.toContainEqual({check:'rollback',status:'success'});
+    expect(JSON.stringify(events)).not.toMatch(/password|secret|SQL/);
   });
-  it('filters malformed IPC independently, including fake successful reasons',()=>{
-    for(const value of [null,undefined,{}, {step:'JWT',status:'password',reason:'SQL'},
-      {step:'parse-role-operations',status:'failed',reason:'synthetic-secret'},
-      {step:'restore-inputs',status:'failed',reason:'input-limit'},
-      {step:'parse-role-operations',status:'success',reason:'input-limit'}]){
-      const line=inputDiag.formatRestoreInputDiagnostic(value);
-      expect(line).toMatch(/^backup_restore_input=(validate-stage|restore-inputs|parse-role-operations|unknown) status=(success|failed|unverified) reason=unknown$/);
-    }
-  });
-  // Complete synthetic CLI-output shape, derived from fixed upstream sources:
-  // postgres/postgres REL_17_11 src/bin/pg_dump/pg_dumpall.c (header, dumpRoles,
-  // dumpRoleMembership, footer) and supabase/cli v2.119.0
-  // apps/cli/src/command-internal/pg-dump.scripts.ts + pg-dump.env.ts.
-  // CLI comments/removes restrict/unrestrict and reserved-role DDL, retains safe
-  // reserved-role config, and appends RESET ALL. This is NOT a live pg_dump.
-  const cliFixture=[
-    '-- PostgreSQL database cluster dump', '-- \\restrict SyntheticOnlyKey',
-    'SET default_transaction_read_only = off;', "SET client_encoding = 'UTF8';",
-    'SET standard_conforming_strings = on;',
-    '-- CREATE ROLE "postgres";', '-- ALTER ROLE "postgres" WITH SUPERUSER;',
-    'CREATE ROLE "synthetic_backup_reader";',
-    'ALTER ROLE "synthetic_backup_reader" WITH INHERIT NOCREATEROLE NOCREATEDB NOLOGIN NOBYPASSRLS;',
-    'ALTER ROLE "anon" SET "statement_timeout" TO \'3s\';',
-    'ALTER ROLE "authenticator" SET "pgrst.db_schemas" TO \'public, storage\';',
-    'ALTER ROLE "authenticator" SET "pgrst.db_pre_request" TO \'public.synthetic_probe\';',
-    'GRANT "synthetic_backup_reader" TO "synthetic_client" WITH INHERIT TRUE, SET FALSE GRANTED BY "postgres";',
-    'GRANT "synthetic_backup_reader" TO "synthetic_auditor" WITH ADMIN OPTION, INHERIT FALSE GRANTED BY "postgres";',
-    '-- \\unrestrict SyntheticOnlyKey', '-- PostgreSQL database cluster dump complete',
-    'RESET ALL;', '',
-  ].join('\n');
-  it.each([true,false])('accepts the source-derived full CLI fixture with comments=%s and preserves bytes',comments=>{
-    const sql=comments?cliFixture:cliFixture.split('\n').filter(x=>!x.startsWith('--')).join('\n');
-    const parsed=roleDiag.parseRoleOperations(Buffer.from(sql));
-    expect(parsed).toHaveLength(11);expect(parsed.map(x=>x.sql).join('')).toBe(sql);
-    expect(parsed.map(x=>x.index)).toEqual(Array.from({length:11},(_,i)=>i+1));
-  });
-  it('reports all three checks successful before the original one-session execution',()=>{
-    const files=fixtures();files.set('roles.sql',Buffer.from(cliFixture));const events:{step:string;status:string;reason:string}[]=[];
-    let calls=0;
-    restoreDiag.restoreInTransaction(stage,makeManifest(files),files,(_cmd,args,o)=>{
-      calls++;expect(events.filter(x=>x.status==='success').map(x=>x.step)).toEqual(steps);
-      expect(args).toContain('ON_ERROR_STOP=1');expect(o.input.match(/^BEGIN;$/gm)).toHaveLength(1);
-      expect(o.input.match(/^COMMIT;$/gm)).toHaveLength(1);
-      let cursor=-1;for(const op of roleDiag.parseRoleOperations(Buffer.from(cliFixture))){
-        const offset=o.input.indexOf(op.sql,cursor+1);expect(offset).toBeGreaterThan(cursor);cursor=offset;
-      }
-      const stdout=o.input.split('\n').flatMap(line=>{
-        if(line.startsWith('\\echo backup_'))return [line.slice(6)];
-        const m=/^SELECT '(backup_role_[a-f0-9]{32}:\d+:before:)'/.exec(line);
-        return m?[m[1]+'t:f:'+(line.includes("|| 'u' FROM")?'u':'f')]:[];
-      }).join('\n');return {status:0,stdout,stderr:''};
-    },()=>{},()=>{},()=>{},r=>events.push(r));
-    expect(calls).toBe(1);expect(events.filter(x=>x.status==='failed')).toEqual([]);
+  it('filters native guard IPC separately',()=>{
+    expect(restoreDiag.safeNativeGuard('secret','JWT')).toEqual({check:'unknown',status:'unverified'});
   });
 });
