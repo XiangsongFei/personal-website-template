@@ -1,0 +1,16 @@
+# 发布前清单（尚未执行）
+
+S2本地开发及核心真实验收已完成，见[结项摘要](docs/S2-CLOSEOUT.md)。以下是Git交付后需单独批准的发布工作，不能把未部署写成本地S2失败，也不能将本机PASS直接视为线上通过。
+
+1. 完成本地整理验证与脱敏清单审查，取得统一Git提交/上传批准。仅选定example-cv-users文件，不混入旧CMS或公站的既有修改，不整仓git add。
+2. 新鲜核对当前已部署旧CMS Worker的域名、Routes、DNS、TLS、Access、回调与允许来源。先为旧Worker建立并验证cms-admin.example-cv.com；不得因本地脏工作区而自动重部署旧CMS。
+3. 验证旧CMS新主机的登录、刷新、退出、Owner/Test、静态资源、Activity Log、Version History及原API，保留原数据库和回退绑定。需要兼容修改时单列文件申请。
+4. 定向处理旧admin来源下已核实的旧认证存储、缓存与可能的Service Worker，并关闭旧标签页；不读取/复制旧凭据，不全盘Clear-Site-Data误清新会话或其他网站数据。
+5. 批准创建独立Users Worker及SQLite DO绑定/迁移，核对资源费用、状态保留、清理策略与独立USERS配置。先保持disabled；声明迁移不等于云端资源已经存在。不得使用远程本地开发或旧CMS变量代替Users配置。
+6. 只读复核目标Auth当前策略：注册确认、当前密码要求、重新认证、OTP6/120秒、应用/SMTP60秒、限流、JWT/刷新、Password changed、Site URL/回调；发生漂移先停止，不关闭防护。确认后才设置部署声明CURRENT_PASSWORD_POLICY=ON。
+7. 旧CMS新入口和回退就绪后，批准把admin.example-cv.com根入口绑定到新Worker。检查Custom Domain/Routes/DNS/TLS/Access与缓存冲突、HTTP→HTTPS、精确来源和网关等待余量；旧管理API明确拒绝，不转发旧凭据。
+8. 单独批准数字码恢复入口与Reset password正文配套启用：备份当时黑白链接稿和主题→仅切Body→独立回读全文一致→再开启production。其他模板、通知、SMTP和会话期限保持原策略。当前链接版是发布前正常状态，不能直接公开不配套的恢复页。
+9. 在正式主机/托管Worker/DO做另行批准的有限发布后集成验收；本机真实结果不覆盖托管绑定、网络、持久化或多地域。真实自然到期自动续期另记，不把主动刷新混写为已等待一小时。
+10. 回退时先停止新恢复业务进入，再恢复当时准确的模板、域名绑定与配置；独立回读确认。已领取授权不能因回滚重新放行；退出不声称所有Access Token立即失效。
+
+发布前不要携带controlled-real服务绑定、批次白名单、测试上游或本机信任状态进入正式环境。证书和本机测试授权需在未来执行前重新核对，不继承历史过期批准。
