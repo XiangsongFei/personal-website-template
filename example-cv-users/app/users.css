@@ -1,0 +1,73 @@
+:root{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#222;background:#fff;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;line-height:1.65;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;min-width:0}
+button,input{font:inherit}
+a{color:inherit;text-underline-offset:4px}
+a:hover{color:#111}
+button{cursor:pointer}
+button:disabled{opacity:.55;cursor:not-allowed}
+:focus-visible{outline:2px solid #666;outline-offset:3px}
+.auth-screen{display:grid;place-items:start center;min-height:100vh;min-height:100svh;min-height:100dvh;padding:max(40px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(40px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#fff}
+.auth-content{width:min(100%,380px);min-width:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.auth-header{display:flex;align-items:center;justify-content:space-between;gap:18px;min-width:0;margin-bottom:44px}
+.auth-brand{display:grid;gap:5px;min-width:0;text-decoration:none;color:#222;line-height:1.5}
+.auth-brand span:first-child{font-size:11px;font-weight:600;letter-spacing:.16em}
+.auth-brand span:last-child{color:#737373;font-size:12px;font-weight:500;letter-spacing:.04em}
+.ui-locale-switch{display:flex;align-items:center;flex:0 0 auto;gap:8px;white-space:nowrap}
+.ui-locale-switch button{width:auto;min-width:32px;min-height:44px;height:auto;margin:0;padding:4px 0;border:0;border-radius:0;background:transparent;color:#737373;font-size:13px;font-weight:450}
+.ui-locale-switch button[aria-pressed="true"]{color:#222;font-weight:600}
+.ui-locale-switch>span{color:#aaa;font-size:12px}
+h1{margin:0 0 10px;color:#202020;font-size:30px;font-weight:650;line-height:1.25;overflow-wrap:anywhere}
+.account-description{margin:0;color:#737373;font-size:15px;line-height:1.65}
+p{color:#666}
+.account-form{margin-top:30px}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+.form-field+.form-field{margin-top:20px}
+label{display:block;margin:0 0 8px;color:#444;font-size:13px;font-weight:550}
+input{display:block;width:100%;min-width:0;height:48px;min-height:48px;margin:0;padding:10px 14px;border:1px solid #deddd9;border-radius:4px;background:#fff;color:#222;font-size:16px;box-shadow:none}
+input:focus-visible{border-color:#666;outline:1px solid #666;outline-offset:0}
+input[aria-invalid="true"]{border-color:#9a4949}
+input::placeholder{color:#949494;opacity:1}
+input:disabled{background:#fafafa;color:#737373}
+input:-webkit-autofill{-webkit-text-fill-color:#222;transition:background-color 9999s ease-out 0s}
+button,.button-link{display:block;width:100%;min-height:48px;margin-top:26px;padding:11px 15px;border:1px solid #222;border-radius:4px;background:#222;color:#fff;font-size:14px;font-weight:600;line-height:1.6;text-align:center;text-decoration:none}
+button:hover:not(:disabled),.button-link:hover{background:#111;color:#fff}
+.ui-locale-switch button:hover{background:transparent;color:#111}
+.password-control{position:relative}
+.password-control input{padding-right:54px}
+.password-toggle{position:absolute;inset:2px 2px auto auto;display:grid;place-items:center;width:44px;min-height:44px;height:44px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#737373}
+.password-toggle:hover:not(:disabled){background:#f5f5f5;color:#222}
+.password-toggle:focus-visible{outline-offset:-3px}
+.secondary{width:auto;min-height:44px;margin:0;padding:10px 0;border:0;background:transparent;color:#666;font-size:13px;font-weight:400;text-align:left;text-decoration:underline;text-underline-offset:3px}
+.secondary:hover:not(:disabled){background:transparent;color:#222}
+.secondary:disabled{cursor:not-allowed;text-decoration:none}
+.hint{margin:8px 0 0;color:#737373;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
+.feedback,.success{margin:18px 0 0;padding:0;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.feedback{color:#984747}
+.success{color:#444;font-weight:550}
+.feedback:empty,.success:empty{display:none}
+.account-links{display:flex;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin-top:14px;font-size:13px}
+.account-links a{display:inline-flex;align-items:center;min-height:44px;text-decoration:none}
+.account-links a:hover{text-decoration:underline}
+.text-link{display:block;width:fit-content;max-width:100%;min-height:44px;margin:8px auto 0;padding:10px 0;text-align:center;font-size:13px}
+.footnote{margin:20px 0 0;text-align:center;font-size:13px}
+.footnote a{display:inline-block;min-height:44px;padding:10px 4px}
+.otp-input{font-size:26px;font-weight:500;letter-spacing:.42em;font-variant-numeric:tabular-nums;text-align:center;padding-left:calc(14px + .42em)}
+.otp-input::placeholder{color:#b0b0b0}
+.identity-title{margin:0;color:#222;font-size:17px;font-weight:600}
+.account-identity{margin-top:30px;padding:0 0 22px;border-bottom:1px solid #e8e8e8}
+.session-status{display:flex;align-items:center;gap:7px;margin:7px 0 0;color:#666;font-size:13px}
+.session-status span{width:5px;height:5px;border-radius:50%;background:#555}
+.identity-details,.diagnostic-details{margin-top:14px;font-size:12px;color:#737373}
+summary{width:fit-content;max-width:100%;min-height:44px;padding:10px 0;cursor:pointer}
+.user-id{display:block;padding:8px 0;color:#666;font-size:12px;overflow-wrap:anywhere}
+.outline-button{margin-top:12px;border-color:#deddd9;background:#fff;color:#444}
+.outline-button:hover:not(:disabled){border-color:#888;background:#fafafa;color:#222}
+footer{margin-top:8px;color:#737373;font-size:11px;line-height:1.6}
+@media(min-width:641px){.auth-screen{padding-top:clamp(100px,calc(23.66vh - 70px),160px)}}
+@media(max-width:640px){.auth-header{gap:12px;margin-bottom:36px}h1{font-size:28px}.account-form{margin-top:26px}}
+@media(max-width:359px){.auth-screen{padding-left:20px;padding-right:20px}.auth-header{gap:8px}.ui-locale-switch{gap:6px}}
+.recovery-state{margin-top:30px}
+.recovery-state h2{margin:0 0 10px;font-size:20px;font-weight:600;line-height:1.4}
+.recovery-state>p{margin:0;font-size:14px;line-height:1.75;overflow-wrap:anywhere}
+.recovery-state>.hint{margin-top:12px;font-size:12px}

@@ -1,0 +1,547 @@
+{
+  "schema": 1,
+  "status": "suggested only; no files staged",
+  "files": [
+    {
+      "path": ".gitignore",
+      "group": "documentation-and-ignore",
+      "bytes": 386,
+      "sha256": "d9531252c4083ff6c55e2e4d6455cd9aad0b10ebfd56eb448984c9cd8a7ecb0f"
+    },
+    {
+      "path": "LOCAL-HTTPS.md",
+      "group": "documentation-and-ignore",
+      "bytes": 559,
+      "sha256": "ce41d8b6b946d6b364fb962fb838265d24f1ce55074cf73dd86c35b490ab543b"
+    },
+    {
+      "path": "README.md",
+      "group": "documentation-and-ignore",
+      "bytes": 3044,
+      "sha256": "51a91555bb4a295d80e1e0cc0ca07050ce0b0d26689048c34cb3ea8d640fe522"
+    },
+    {
+      "path": "RELEASE-CHECKLIST.md",
+      "group": "documentation-and-ignore",
+      "bytes": 2902,
+      "sha256": "4df9bb3869d137ad7ef89e3fd5db574da862b68d52f8cfd7d4e0f0c897f32037"
+    },
+    {
+      "path": "app/_components/account-actions.tsx",
+      "group": "app-and-config",
+      "bytes": 2205,
+      "sha256": "240896566723168e133764cf04f93dcc1d3eb993187ceb27ef1ca30af27f36cf"
+    },
+    {
+      "path": "app/_components/account-form.tsx",
+      "group": "app-and-config",
+      "bytes": 5813,
+      "sha256": "d82a3cd77701250ecae596d550b59def3108a4f8f5c87774ca733fd032d9b6ad"
+    },
+    {
+      "path": "app/_components/account-home.tsx",
+      "group": "app-and-config",
+      "bytes": 2608,
+      "sha256": "34240c55f83d82ffd3fc53d62f42f60b1b003920687b322132a8e3708471f987"
+    },
+    {
+      "path": "app/_components/account-ui.tsx",
+      "group": "app-and-config",
+      "bytes": 609,
+      "sha256": "bdc27612a36b34827bc65884b541f14fb7a033bd6200b52c0f8c5c939b201cde"
+    },
+    {
+      "path": "app/_components/change-password-form.tsx",
+      "group": "app-and-config",
+      "bytes": 3550,
+      "sha256": "399d6f54d4652ebd5a163340c79ddb085ca2ed5934086854078a5f0257244158"
+    },
+    {
+      "path": "app/_components/form-fields.tsx",
+      "group": "app-and-config",
+      "bytes": 2390,
+      "sha256": "9d17b549ca5ce5adc8763521e3d648464f492174f1046ba99d6b7be8e87bc899"
+    },
+    {
+      "path": "app/_components/recovery-otp-form.tsx",
+      "group": "app-and-config",
+      "bytes": 4912,
+      "sha256": "98977bfa73a21c986ab805ec77b9616e21f71f3251b2548edbcf803dda926fea"
+    },
+    {
+      "path": "app/_components/reset-password-form.tsx",
+      "group": "app-and-config",
+      "bytes": 4217,
+      "sha256": "51f5f03afce4c02fbd9bc5683c500a8ce4df8fbb268a4c58cf40351429a1bd63"
+    },
+    {
+      "path": "app/_components/ui-locale.tsx",
+      "group": "app-and-config",
+      "bytes": 2593,
+      "sha256": "ed738676e7ff71f1d82734b45502597322f524258595ea3b25c61beb0d3feae2"
+    },
+    {
+      "path": "app/account/page.tsx",
+      "group": "app-and-config",
+      "bytes": 506,
+      "sha256": "9299b2b473ef927faa4ace3af505b989fb98df730cc1869c3b6babd913aff402"
+    },
+    {
+      "path": "app/api/account/[action]/route.ts",
+      "group": "app-and-config",
+      "bytes": 389,
+      "sha256": "6ab09a7b8a79d4895e15f52095d3288be457c06dee60b2098db522c00f563d68"
+    },
+    {
+      "path": "app/auth/callback/page.tsx",
+      "group": "app-and-config",
+      "bytes": 393,
+      "sha256": "37b9fd5e8e8b4ff8d1b3e3acaab8add59a22481267673f3dbc95cc57bba184d4"
+    },
+    {
+      "path": "app/change-password/page.tsx",
+      "group": "app-and-config",
+      "bytes": 609,
+      "sha256": "f55ea64335186c458472f9bf06a54342736593376e867b8623331fa5089cf2d4"
+    },
+    {
+      "path": "app/forgot-password/page.tsx",
+      "group": "app-and-config",
+      "bytes": 443,
+      "sha256": "78a01ea3aed25e9dd513f2743132d390db9cf2e41437efe34f5c3f3d2f46db5c"
+    },
+    {
+      "path": "app/layout.tsx",
+      "group": "app-and-config",
+      "bytes": 506,
+      "sha256": "1728310b1e09af97eea4df0113d28e92057b31f23c1055090783943888c6a98d"
+    },
+    {
+      "path": "app/login/page.tsx",
+      "group": "app-and-config",
+      "bytes": 461,
+      "sha256": "51e3ff55e0cbf294bef475f7c2c147092cc0cc2cbbf024f1dcc7557654052b68"
+    },
+    {
+      "path": "app/page.tsx",
+      "group": "app-and-config",
+      "bytes": 107,
+      "sha256": "6f3660b2df0b4f9ea19a3e85ac69c678b7458236ec3a8ae34c5d6702f5a93a17"
+    },
+    {
+      "path": "app/register/page.tsx",
+      "group": "app-and-config",
+      "bytes": 432,
+      "sha256": "c74500005d743ef1d421ff10769115d06018bb25a995018d452923b242033edc"
+    },
+    {
+      "path": "app/reset-password/page.tsx",
+      "group": "app-and-config",
+      "bytes": 339,
+      "sha256": "9bd79a3b6b1c0e3bd65506b81c1807c59e52f2fe71a367f39eb3c168734cf070"
+    },
+    {
+      "path": "app/users.css",
+      "group": "app-and-config",
+      "bytes": 6187,
+      "sha256": "64fdaa35f6b7188971d6ffddc5cded1b25d27b84ba69dd36b486df945acc18b3"
+    },
+    {
+      "path": "app/verify-email/page.tsx",
+      "group": "app-and-config",
+      "bytes": 447,
+      "sha256": "ee0f33c6b8bb8df073f4df4b80512df2e2d80109b59621c7dd3a2f4339608cb9"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "group": "documentation-and-ignore",
+      "bytes": 3802,
+      "sha256": "f4fc6f20c9b477c693253e44376b2aeb352e2602f0a34d8c49cefeac05f2d077"
+    },
+    {
+      "path": "docs/CONFIGURATION.md",
+      "group": "documentation-and-ignore",
+      "bytes": 4371,
+      "sha256": "9b19a7b10281f524930bcc88f6f6b02e3ec81d52c8e2772fb46ca81b64d2c6bd"
+    },
+    {
+      "path": "docs/DELIVERY.md",
+      "group": "documentation-and-ignore",
+      "bytes": 9202,
+      "sha256": "8456aaee6de72adb90b201d9fbcfd7029135d5191cd5ab674e827ab05cf7be43"
+    },
+    {
+      "path": "docs/S2-CLOSEOUT.md",
+      "group": "documentation-and-ignore",
+      "bytes": 4592,
+      "sha256": "7c27df2d16a53777cc2a67cd3d845a563504ec2717fa8261b8a86c979a45e933"
+    },
+    {
+      "path": "docs/TESTING.md",
+      "group": "documentation-and-ignore",
+      "bytes": 5753,
+      "sha256": "f3446a1ee3f39cb13b5fbcbc3dbf453689dd4026bfd3455999affa40d2e6613f"
+    },
+    {
+      "path": "docs/evidence/build-manifest.json",
+      "group": "documentation-and-ignore",
+      "bytes": 25378,
+      "sha256": "548ccb6f2b3a4f0d61c4bc8946139876f9f3221f921f551ac34c25a7d8c6293e"
+    },
+    {
+      "path": "docs/evidence/delivery-verification.json",
+      "group": "documentation-and-ignore",
+      "bytes": 4185,
+      "sha256": "a2d9dca711b749a1ccf02eec0b505edde4c5db89351586d1f9ed076c931c434c"
+    },
+    {
+      "path": "docs/evidence/github-files.json",
+      "group": "documentation-and-ignore",
+      "note": "this inventory; self hash intentionally omitted"
+    },
+    {
+      "path": "docs/evidence/real-acceptance-summary.json",
+      "group": "documentation-and-ignore",
+      "bytes": 10003,
+      "sha256": "eb997a6e2813292562fa29f4d5c1552bf9817bc1d31b60221d643ac3ab996b02"
+    },
+    {
+      "path": "lib/account/api.ts",
+      "group": "app-and-config",
+      "bytes": 22705,
+      "sha256": "7a20ef1bb283b8bc2b9668b610ed8f00afb3eb3bff8a5408d4731815f726c510"
+    },
+    {
+      "path": "lib/account/client.ts",
+      "group": "app-and-config",
+      "bytes": 2637,
+      "sha256": "69c82023df95ce9f25d32bf68c59660af91e8b61c0e95b63734ac19503224e0c"
+    },
+    {
+      "path": "lib/account/messages.ts",
+      "group": "app-and-config",
+      "bytes": 10254,
+      "sha256": "fa9b56e0355035e1dbebb5e011f146bcdab6164fa9873b49e6e29200254014d4"
+    },
+    {
+      "path": "lib/account/policy.ts",
+      "group": "app-and-config",
+      "bytes": 2310,
+      "sha256": "ee1115c8f493b064ef553c4c1d4cfcf19cd23e2815d1f9c583bf525bb3807a67"
+    },
+    {
+      "path": "lib/account/recovery-copy.ts",
+      "group": "app-and-config",
+      "bytes": 1761,
+      "sha256": "85ef3a7cf665e88b79fe50c1c71f84310e444225e0a724eef49a34df640e5b5e"
+    },
+    {
+      "path": "lib/auth/error-code.ts",
+      "group": "app-and-config",
+      "bytes": 759,
+      "sha256": "f36cb22907574e13106ad749c12e9381e2c719e4ed6a6543772bf32a08dda6b7"
+    },
+    {
+      "path": "lib/auth/session.ts",
+      "group": "app-and-config",
+      "bytes": 9227,
+      "sha256": "1e83855cabf6c7255cfdd00bc5a724d0178fe9346275a66d64d786836e003343"
+    },
+    {
+      "path": "lib/config.ts",
+      "group": "app-and-config",
+      "bytes": 3431,
+      "sha256": "94c974115a67bb583b42392978b20cd23074ea44bdfa0f9924c130085f68c667"
+    },
+    {
+      "path": "lib/context.ts",
+      "group": "app-and-config",
+      "bytes": 230,
+      "sha256": "afc549c5bd562241ebc9de01cba1e28d8d02182565c0bb83866899789f51f551"
+    },
+    {
+      "path": "next-env.d.ts",
+      "group": "app-and-config",
+      "bytes": 189,
+      "sha256": "a291a6b60536fec0a3b9d4ffd6d51179b463e9bc20281d7499d756813b4c07d5"
+    },
+    {
+      "path": "next.config.ts",
+      "group": "app-and-config",
+      "bytes": 74,
+      "sha256": "6d0a3451d2e4db5ce115f6f098bdb993c801cf8bddf7047fc302fcd129097edc"
+    },
+    {
+      "path": "package-lock.json",
+      "group": "app-and-config",
+      "bytes": 144517,
+      "sha256": "2c09be786bbe36078c2c48dc73e3e178d02ecf0e4f7dc9f2a52c0245a47a8579"
+    },
+    {
+      "path": "package.json",
+      "group": "app-and-config",
+      "bytes": 1028,
+      "sha256": "f512583470e2432a9d86fa21049f82b1a4ff82ca145ab33a2ba424a00e292471"
+    },
+    {
+      "path": "scripts/controlled-https.mjs",
+      "group": "tools-and-tests",
+      "bytes": 7478,
+      "sha256": "876dffbb9492ae6f2b11ce4fabadbcfadffd8646c27a7f63f7fc046eec30b3ad"
+    },
+    {
+      "path": "scripts/controlled-real.mjs",
+      "group": "tools-and-tests",
+      "bytes": 29828,
+      "sha256": "0541d82e4ac0971ce5e6be9c804ad16c960a9219c4a1497b1df25f9d98ccd17d"
+    },
+    {
+      "path": "scripts/fingerprint.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1879,
+      "sha256": "24f2151570df97ecb615a1e45fb38758beaffebdc03e316cea898ca9a688ec10"
+    },
+    {
+      "path": "scripts/https/identity.mjs",
+      "group": "tools-and-tests",
+      "bytes": 4149,
+      "sha256": "d7418a12f27fc6d98dbe9f178bfb242c85dc8bb6406327ac911ca3a7f2d78613"
+    },
+    {
+      "path": "scripts/https/leaf-trust-control.py",
+      "group": "tools-and-tests",
+      "bytes": 10258,
+      "sha256": "138aabb0cb72fb04a750e7fc2f18de10e48fc621128b8692573762862ec6ab23"
+    },
+    {
+      "path": "scripts/https/node-identity.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1048,
+      "sha256": "4d0b53817ecbdc121dfef949c81cd6a1af9d2b5bd358acddd012e2d7e78b3230"
+    },
+    {
+      "path": "scripts/https/policy.json",
+      "group": "tools-and-tests",
+      "bytes": 511,
+      "sha256": "36a558493693aa82f212c185f5aa41cdd96ad52cf0e1d955a6a9853757d360af"
+    },
+    {
+      "path": "scripts/https/preflight.mjs",
+      "group": "tools-and-tests",
+      "bytes": 995,
+      "sha256": "012c4ca675987b1b5f62568910b19fde2dfb10c152227e8cc7c3e62b95a9f571"
+    },
+    {
+      "path": "scripts/https/read-leaf-effective.py",
+      "group": "tools-and-tests",
+      "bytes": 8263,
+      "sha256": "169fe62ab8110689856a9cbd082412d78ae1e4d0da8e3f4c0c965c9acf75fa97"
+    },
+    {
+      "path": "scripts/local-https-boundary.mjs",
+      "group": "tools-and-tests",
+      "bytes": 4445,
+      "sha256": "a2d84a594a3dfc358c36d2b179a68ac7972e84afd0fb2e0eedf54b47f226a3ba"
+    },
+    {
+      "path": "scripts/local-https.mjs",
+      "group": "tools-and-tests",
+      "bytes": 7967,
+      "sha256": "d29d2a3c41742c6369d1f583109951446af16ce3dcb4b679778a16d37d8e7faf"
+    },
+    {
+      "path": "scripts/local.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1270,
+      "sha256": "129ca60bfa59cb0dfc6bd422e6395e56e09f18286b1148b98decf0ef3df6faf9"
+    },
+    {
+      "path": "scripts/run.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1472,
+      "sha256": "012386a2467b336dc67777e0267c2517f474412f9131d0971778658dec3a691a"
+    },
+    {
+      "path": "scripts/transport-diagnostics.mjs",
+      "group": "tools-and-tests",
+      "bytes": 994,
+      "sha256": "25453c5c608899013a05b919fb5fc3775fbc07d86dccc669356742fa38235a4a"
+    },
+    {
+      "path": "tests/account.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 4993,
+      "sha256": "f13dfb8d4ef65721901c6bcc79f6f7b43609ad684363bd74d7ea98cd7b3c0736"
+    },
+    {
+      "path": "tests/auth-fixture.mjs",
+      "group": "tools-and-tests",
+      "bytes": 8759,
+      "sha256": "1971413838990a1727544985d6d352e28167a892dca382e17106a56dfd1836ef"
+    },
+    {
+      "path": "tests/controlled-real.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 19621,
+      "sha256": "09d97dfc46af4c6f7fdd9ded0dc971f95c6cee6f75c6a8d9059196a8f3b15547"
+    },
+    {
+      "path": "tests/durability.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 7566,
+      "sha256": "d689f50a88961c7da9cab2213d822d9f88085effe62f7b6fa275339cfa3a41c5"
+    },
+    {
+      "path": "tests/failure.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 4383,
+      "sha256": "ee316211ef31a24467f074b03f3d45531c5e1a5b11c1f67b7e894837eb2eceb0"
+    },
+    {
+      "path": "tests/fixtures/stop-health-only.mjs",
+      "group": "tools-and-tests",
+      "bytes": 2311,
+      "sha256": "034e1b81032c6c4ef3ca8ecef8e0263655a07fe336155f18ce86a2a795763996"
+    },
+    {
+      "path": "tests/fixtures/tls-policy-offline.py",
+      "group": "tools-and-tests",
+      "bytes": 3107,
+      "sha256": "f89325634118636ca8d13923416e0184ec4eefd917c625f3628f5d0e46a3c8b5"
+    },
+    {
+      "path": "tests/helpers.mjs",
+      "group": "tools-and-tests",
+      "bytes": 2052,
+      "sha256": "07de0a009cea3fcab12dcb57af8f03338492302a41585c1f84adc52bffb5270c"
+    },
+    {
+      "path": "tests/local-https.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 3141,
+      "sha256": "4f7baabfb9abb8a2c9e8275cc471737eef373b34cea97fa351fd7e1e73353163"
+    },
+    {
+      "path": "tests/local-stop-invocation.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 5763,
+      "sha256": "5621559288a23b7b9a68dd1bce2827b22dfef760a13543d1800762e0627b1e4d"
+    },
+    {
+      "path": "tests/mutation-mini.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 13662,
+      "sha256": "e04161aa62a46d1c3b6b49e7e4c2488ec164913cdf895358496a8103b71ed281"
+    },
+    {
+      "path": "tests/parity.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 10719,
+      "sha256": "44df9e2d07213d5fe18e72a3045cb037a92c86ba6d314c2735c67cee511ea2d7"
+    },
+    {
+      "path": "tests/real-preflight-config.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1599,
+      "sha256": "1fd7ea52b3a27b69ec299eb5b55fbe085c5161df6cb23b9c4873a49a2e3c0cd9"
+    },
+    {
+      "path": "tests/registration-mini.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 9135,
+      "sha256": "0c7313ccc5359df27427cdeb9eef6f7114588e3dd61dbb554bcb7c25be79e061"
+    },
+    {
+      "path": "tests/routes.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1829,
+      "sha256": "3022c1289dec141389e7bbab9a2a3603d8c4afb5a1e1575b02ac30a65198b665"
+    },
+    {
+      "path": "tests/runtime.mjs",
+      "group": "tools-and-tests",
+      "bytes": 1265,
+      "sha256": "893eae111d254822a0edd0b7317b17f9149738fdbe2cfff412116b8e4f7c65a8"
+    },
+    {
+      "path": "tests/session-mini.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 10982,
+      "sha256": "fe03dfc38dc3a959f160ea38c1328dbd1c03de25c302725b17411715a1f32737"
+    },
+    {
+      "path": "tests/session.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 3858,
+      "sha256": "996cfaa04430711ecc9f012c1a95601810150cc065f89f1e575f721b852a2cf4"
+    },
+    {
+      "path": "tests/tls-tools.test.mjs",
+      "group": "tools-and-tests",
+      "bytes": 3960,
+      "sha256": "45d5fd9571b30f000c0e8cc356378c17368f5e36a0213ba3b6c03ff45b9f72c3"
+    },
+    {
+      "path": "tsconfig.json",
+      "group": "app-and-config",
+      "bytes": 685,
+      "sha256": "42495ad47b52f65c29790649aba308a64e0a56c7617430d8fe0606498207f78d"
+    },
+    {
+      "path": "vite.config.ts",
+      "group": "app-and-config",
+      "bytes": 705,
+      "sha256": "a6ed47569e14b0bdf140f38c03388c14e5292e8b2cf351d2d3bcb704b6aba6e8"
+    },
+    {
+      "path": "worker-configuration.d.ts",
+      "group": "app-and-config",
+      "bytes": 574371,
+      "sha256": "4cb1e2358b0c8a72918f97c6cc651c469c784ed95e03d7c0fd1fdecec351ea1d"
+    },
+    {
+      "path": "worker/index.ts",
+      "group": "app-and-config",
+      "bytes": 3388,
+      "sha256": "6dbcd5eeeacff3a5cf40341140628a616502bb9cc9e967675bff9e9bb36079b7"
+    },
+    {
+      "path": "worker/recovery-state.ts",
+      "group": "app-and-config",
+      "bytes": 9731,
+      "sha256": "7345673aaad1e8e76cf430c9f63dc5c6029727386c00f2a2e6d4fff4a7a24321"
+    },
+    {
+      "path": "wrangler.jsonc",
+      "group": "app-and-config",
+      "bytes": 969,
+      "sha256": "991b8f1989c4866f497442b49f0da7203a8d58628bb4839a166191419b619027"
+    }
+  ],
+  "excluded": [
+    ".runtime/",
+    "evidence/",
+    "LOCAL-RESULT.md",
+    "node_modules/",
+    "dist/",
+    ".wrangler/",
+    ".next/",
+    ".vite/",
+    ".vinext/",
+    "output/",
+    ".playwright-cli/",
+    ".env*",
+    ".dev.vars*",
+    "*.pem",
+    "*.key",
+    "*.crt",
+    "*.cer",
+    "*.der",
+    "*.p12",
+    "*.pfx",
+    "*.sqlite*",
+    "*.db",
+    "*.har",
+    "all resume-admin and public-site changes"
+  ]
+}

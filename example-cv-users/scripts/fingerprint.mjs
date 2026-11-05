@@ -1,0 +1,14 @@
+import {createHash} from 'node:crypto';
+import {readdirSync,readFileSync,writeFileSync,mkdirSync,lstatSync} from 'node:fs';
+import {resolve} from 'node:path';
+const roots=['app','lib','worker'];
+const files=roots.flatMap(root=>readdirSync(root,{recursive:true}).filter(p=>/\.(ts|tsx|css|mjs)$/.test(p)).map(p=>root+'/'+p)).concat(['package.json','package-lock.json','next.config.ts','vite.config.ts','wrangler.jsonc','tsconfig.json','worker-configuration.d.ts','next-env.d.ts']).sort();
+const tools=['scripts','tests'].flatMap(root=>readdirSync(root,{recursive:true}).filter(p=>/\.(ts|tsx|mjs|py|json)$/.test(p)).map(p=>root+'/'+p)).sort();
+const built=['dist/server','dist/client'].flatMap(root=>readdirSync(root,{recursive:true}).filter(p=>lstatSync(resolve(root,p)).isFile()).map(p=>root+'/'+p)).sort();
+const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const manifest=list=>list.map(path=>({path,sha256:sha(readFileSync(resolve(path)))}));
+const source=manifest(files),tooling=manifest(tools),artifacts=manifest(built);
+const record={schema:1,project:'example-cv-users',target:'makwjnbubmrmopjhzror',sourceSha256:sha(JSON.stringify(source)),toolingSha256:sha(JSON.stringify(tooling)),artifactSha256:sha(JSON.stringify(artifacts)),source,tooling,artifacts,scope:'Business source/config/locked dependencies + independent tooling + generated artifacts. Documentation, evidence, node_modules and local state are not executable build inputs and are excluded.'};
+const destination = process.argv[2] ?? `evidence/builds/${record.sourceSha256.slice(0,12)}-${record.artifactSha256.slice(0,12)}`;
+mkdirSync(destination,{recursive:true});writeFileSync(resolve(destination,'build-manifest.json'),JSON.stringify(record,null,2)+'\n');
+console.log(JSON.stringify({sourceSha256:record.sourceSha256,toolingSha256:record.toolingSha256,artifactSha256:record.artifactSha256}));
