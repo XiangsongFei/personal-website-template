@@ -171,7 +171,7 @@ test('workflow wires Users and conditional Admin audit into required gate', asyn
   const workflow=readFileSync(new URL('../workflows/pr-validation.yml',import.meta.url),'utf8');
   const users=workflow.split('  users_tests_build:\n')[1].split('  required-pr-validation-gate:')[0];
   assert.match(users,/if: needs\.detect_changes\.outputs\.users == 'true'/);
-  assert.match(users,/node-version: '24\.13\.0'/);
+  assert.match(users,/node-version: '24\.22\.1'/);
   assert.match(users,/working-directory: example-cv-users/);
   for (const command of ['npm ci','npm run build','npm run typecheck','npm test','npm audit']) assert.ok(users.includes(`run: ${command}`));
   assert.doesNotMatch(users,/secrets\.|remote: true|continue-on-error/);

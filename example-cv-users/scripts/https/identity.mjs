@@ -2,7 +2,7 @@
 import {constants,lstatSync,realpathSync,readFileSync,openSync,fstatSync,closeSync} from 'node:fs';
 import {resolve,dirname,relative,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {X509Certificate} from 'node:crypto';
+import {X509Certificate,createPrivateKey} from 'node:crypto';
 import {types} from 'node:util';
 export const ROOT=realpathSync(resolve(dirname(fileURLToPath(import.meta.url)),'../..'));
 export const PIN=Object.freeze(JSON.parse(readFileSync(new URL('./policy.json',import.meta.url),'utf8')));
@@ -61,7 +61,7 @@ export function loadServerIdentity(role, consume, onStage = () => {}) {
     const privateKey = createPrivateKey(key);
     onStage('key_certificate_match');
     if (!certificate.checkPrivateKey(privateKey)) fail('key_certificate_mismatch');
-    // Node 24.13.0 https.createServer accepts PEM bytes, not PrivateKeyObject.
+    // Node 24 https.createServer accepts PEM bytes, not PrivateKeyObject.
     // Keep the KeyObject only for the certificate-match check above.
     const result = consume({ cert: certificate.toString(), key });
     if (result && typeof result.then === 'function') fail('synchronous_tls_consumer_required');

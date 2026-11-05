@@ -8,7 +8,7 @@ import {PIN,ROOT,CERT,KEY,checked,validateCertificate,loadServerIdentity} from '
 import {assertCurrentNode} from '../scripts/https/node-identity.mjs';
 const node=process.execPath;
 test('macOS Node identity verifies this PID and the pinned executable bytes; wrong digest is rejected',{skip:process.platform!=='darwin' && 'macOS-specific executable and Keychain tool; other offline TLS tests still run'},()=>{
-  const actual=assertCurrentNode();assert.equal(actual.pid,process.pid);assert.equal(actual.version,'24.13.0');assert.equal(actual.executableSha256,PIN.nodeExecutableSha256);
+  const actual=assertCurrentNode();assert.equal(actual.pid,process.pid);assert.equal(actual.version,'24.22.1');assert.equal(actual.executableSha256,PIN.nodeExecutableSha256);
   const dir=mkdtempSync(resolve(tmpdir(),'s2-node-pin-'));
   try{const code=resolve(dir,'scripts/https');mkdirSync(code,{recursive:true});for(const name of ['identity.mjs','node-identity.mjs'])copyFileSync(resolve(ROOT,'scripts/https',name),resolve(code,name));writeFileSync(resolve(code,'policy.json'),JSON.stringify({...PIN,nodeExecutableSha256:'0'.repeat(64)}));
     const r=spawnSync(node,['--input-type=module','-e',`import {assertCurrentNode} from ${JSON.stringify(new URL('file://'+resolve(code,'node-identity.mjs')).href)};assertCurrentNode();`],{encoding:'utf8'});assert.notEqual(r.status,0);assert.match(r.stderr,/node_identity_digest_denied/);

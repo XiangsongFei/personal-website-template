@@ -6,7 +6,7 @@ S2 普通用户账户应用，与同仓库的 `resume-admin/` 并列。独立使
 
 ## 本地启动
 
-使用已锁定的 Node **24.13.0**，不升级依赖。进入本包，确认 `node --version`，按锁文件安装依赖后运行：
+使用已锁定的 Node **24.22.1**，不升级依赖。进入本包，确认 `node --version`，按锁文件安装依赖后运行：
 
 ```sh
 npm ci
@@ -45,3 +45,7 @@ npm test
 固定业务构建：`676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df`。历史真实 PASS 继续绑定当时各批工具和实际配置；本轮工具迁移的版本独立记录，不给新工具补写真实 PASS。
 
 证书、私钥、真实账户资料、环境凭据及 `.runtime/` 原始记录不随仓库交付。HTTPS 工具只使用本包固定的 `.runtime/tls/` 材料，不导入历史探针；没有证书或系统未信任时安全拒绝启动，不自动安装或放宽信任。
+
+本轮 S2 专用 Node 并存于 `$HOME/.nvm/s2-users/versions/node/v24.22.1/bin/node`，不改变 nvm 动态默认别名 `24` 的原解析。启动本包命令时仅在当前 shell 设置 `export PATH="$HOME/.nvm/s2-users/versions/node/v24.22.1/bin:$PATH"`，并先核对实际可执行文件与公开 pin。历史 24.13.0 及旧验收记录保留；不要用旧构建真实 PASS 代替新候选结果。
+
+最新安全修复候选及后续双浏览器 HTTPS 证据见[交付状态](docs/FINAL-DELIVERY-CANDIDATE.md)；历史构建与真实验收结论保持各自版本绑定。

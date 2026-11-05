@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "date": "2026-11-06",
+  "businessSha256": "65c3afe790ece8f5616e873fd8870803d4bef0e89cdeeec528c5439a054e37fd",
+  "toolingSha256": "ca13d8df89daa6a8da4bcac0b10396c6384a2a2885763ae9884d6799d3630b74",
+  "lockSha256": "c8cc8a0b96c76e8eec73b7c0eb17621b1580dc8488d93f09523f859073779057",
+  "nodeVersion": "24.22.1",
+  "bundledUndici": "7.30.1",
+  "nodeBinarySha256": "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329",
+  "originalLocalReportSha256": "16987142d33fbf105f17584abfac8e749b7879eef0da5d5861e11ff19c53dd13",
+  "rawEvidencePublished": false,
+  "browserResults": {
+    "Chrome": {
+      "windowMode": "incognito",
+      "httpsNoWarning": "PASS - actual browser confirmed by user",
+      "login": "PASS",
+      "reloadProtectedNavigation": "PASS",
+      "proactiveRefreshViaAppAndSyntheticUpstream": "PASS",
+      "cookieWriteAndSubsequentIdentity": "PASS",
+      "postScopedLogout": "PASS",
+      "privatePageDeniedAfterLogout": "PASS",
+      "redactedEventReferences": {
+        "loginSeq": 26,
+        "refreshSeq": 68,
+        "logoutSeq": 79,
+        "deniedAccountSeq": 91,
+        "requests": 12,
+        "allResponsesPrivateNoStore": true
+      }
+    },
+    "Safari": {
+      "windowMode": "private",
+      "httpsNoWarning": "PASS - actual browser confirmed by user",
+      "login": "PASS",
+      "reloadProtectedNavigation": "PASS",
+      "proactiveRefreshViaAppAndSyntheticUpstream": "PASS",
+      "cookieWriteAndSubsequentIdentity": "PASS",
+      "postScopedLogout": "PASS",
+      "privatePageDeniedAfterLogout": "PASS",
+      "redactedEventReferences": {
+        "loginSeq": 103,
+        "refreshSeq": 115,
+        "logoutSeq": 118,
+        "deniedAccountSeq": 122,
+        "requests": 12,
+        "allResponsesPrivateNoStore": true
+      }
+    }
+  },
+  "syntheticUpstreamCounts": {
+    "token_password": 2,
+    "jwks.json": 1,
+    "user": 14,
+    "token_refresh_token": 2,
+    "logout": 2
+  },
+  "realAuthenticationOrMailOrCloudCalls": 0,
+  "rscWorkersRuntime": "PASS - current built assets and local workerd",
+  "sqliteDo": "PASS - actual local binding and state tables; not a new recovery or concurrency test",
+  "cleanup": {
+    "sessions": "PASS - scoped logout and no-cookie private requests rejected",
+    "testPagesClosed": "user confirmed both",
+    "ownedProcessesExited": true,
+    "ownedPortsReleased": [
+      "8787",
+      "50080",
+      "50077"
+    ],
+    "batchTemporaryStateRemoved": true,
+    "leafExplicitSettingsRestored": true,
+    "leafPublicPresenceRestored": true,
+    "effectiveSslBaselineRestored": true,
+    "effectiveSslErrorCode": -67843,
+    "certificateStillValidAtEvaluation": true,
+    "caTrustModified": false
+  },
+  "limitations": {
+    "newCandidateRealSupabaseRegression": "NOT TESTED",
+    "naturalExpiryOneHourRefresh": "NOT TESTED",
+    "hostedWorkerDoOrProductionDomain": "NOT DEPLOYED / NOT TESTED"
+  },
+  "historicalOutcomes": "Original real PASS remains bound to 676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df; historical UNKNOWN and aborted runs are unchanged."
+}

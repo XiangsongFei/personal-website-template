@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { existsSync, lstatSync, mkdirSync, rmSync } from 'node:fs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const task = process.argv[2];
-if(process.versions.node!=='24.13.0')throw Error('Use the existing Node v24.13.0 executable');
+if(process.versions.node!=='24.22.1')throw Error('Use the existing Node v24.22.1 executable');
 const commands = { build: ['node_modules/vite/bin/vite.js', 'build'], dev: ['scripts/local.mjs'], https: ['scripts/local-https.mjs'], types: ['node_modules/wrangler/bin/wrangler.js', 'types'] };
 if (!Object.hasOwn(commands, task)) throw Error('unsupported_local_task');
 mkdirSync(resolve(root,'.runtime'),{recursive:true});

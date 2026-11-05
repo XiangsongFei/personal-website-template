@@ -550,7 +550,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24.13.0'
+          node-version: '24.22.1'
           cache: npm
           cache-dependency-path: example-cv-users/package-lock.json
       - run: npm ci

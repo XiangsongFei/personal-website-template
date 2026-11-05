@@ -2,7 +2,7 @@
 
 ## 默认隔离测试
 
-使用锁定 Node 24.13.0，在本包中运行 `npm run build`、`npm run typecheck`、`npm test`。测试默认真实 workerd、本机 SQLite DO、合成上游，禁止远程资源与真实认证回退。部分超时测试等待18秒或30秒；不要因等待时间而重试写操作。
+使用锁定 Node 24.22.1，在本包中运行 `npm run build`、`npm run typecheck`、`npm test`。测试默认真实 workerd、本机 SQLite DO、合成上游，禁止远程资源与真实认证回退。部分超时测试等待18秒或30秒；不要因等待时间而重试写操作。
 
 - routes/account/session/parity：根入口、所有页面/API/静态资源、字段、双语错误、Cookie/刷新/退出、来源与缓存。
 - durability/failure：SQLite文件落盘；销毁并重建workerd；并发只消费一次；领取后中断、过期、丢失回执及UNKNOWN不重放。
@@ -19,7 +19,7 @@
 选择已核实的Node后，用其完整实际路径启动，不用个人路径写入公共配置：
 
 ```sh
-# node必须为已经核实且匹配pin的24.13.0可执行文件。
+# node必须为已经核实且匹配pin的24.22.1可执行文件。
 node scripts/https/preflight.mjs --certificate-only
 node scripts/https/preflight.mjs
 ```
@@ -65,3 +65,7 @@ restore先核对当前记录确属本次唯一SSL leaf信任，再remove-trusted
 ## 证据范围
 
 脱敏真实摘要见[S2结项](S2-CLOSEOUT.md)。实际主动刷新通过不等于已真实等一小时；本地SQLite并发/重建不等于云端攻击或多地域测试。真实密码、验证码、Cookie、Token、邮箱和UID不进入公开日志/摘要；合成fixture明确使用example.invalid，不是用户凭据。
+
+本轮 S2 专用 Node 并存于 `$HOME/.nvm/s2-users/versions/node/v24.22.1/bin/node`，不改变 nvm 动态默认别名 `24` 的原解析。启动本包命令时仅在当前 shell 设置 `export PATH="$HOME/.nvm/s2-users/versions/node/v24.22.1/bin:$PATH"`，并先核对实际可执行文件与公开 pin。历史 24.13.0 及旧验收记录保留；不要用旧构建真实 PASS 代替新候选结果。
+
+最新安全修复候选及后续双浏览器 HTTPS 证据见[交付状态](FINAL-DELIVERY-CANDIDATE.md)；历史构建与真实验收结论保持各自版本绑定。
