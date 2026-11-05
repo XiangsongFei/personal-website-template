@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "status": "PASS",
+  "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+  "acceptedArtifactSha256": "b268ae32fc9b494136911ee7d1bf3a36e49c138a3dca219bd31bee0204568cc2",
+  "toolingSha256": "22dc75d57b994a5e0b82b30639f1d86a77708999c31399365001a7251b98b0bf",
+  "independentBuild": {
+    "exit": 0,
+    "businessInputsEqual": true,
+    "artifactSha256": "757ea81bc1ee7e9732aed4a2f034c27ef565ea240681d4f1664b5ff6b70771e1",
+    "historyDirectoryPresent": false,
+    "tlsMaterialCopied": false,
+    "lockedDependenciesReused": true,
+    "freshDependencyInstallation": "NOT_PERFORMED"
+  },
+  "typecheck": {
+    "exit": 0,
+    "emit": false
+  },
+  "regression": {
+    "pass": 79,
+    "fail": 0,
+    "skip": 0,
+    "toolFinalRecheck": {
+      "pass": 4,
+      "overlapsRegression": true
+    }
+  },
+  "predicateEquivalence": {
+    "originalFileSha256": "6ab678da833a407294ca6ad5142546954f8a892c738cf010227eb8719a8d5fbb",
+    "originalMatchedStart": true,
+    "cases": 60,
+    "differences": [],
+    "authenticationRequests": 0,
+    "kind": "pure in-memory validation against original approved config; no executor created"
+  },
+  "secretsScan": {
+    "scope": "Git-visible app candidates; no matched values printed",
+    "credentialPatternHits": [],
+    "nonSyntheticEmailHits": [],
+    "personalAbsolutePathHits": [],
+    "candidateFilesAtScan": 84
+  },
+  "ignoreChecks": {
+    ".runtime/probe.json": true,
+    "evidence/test.json": true,
+    "LOCAL-RESULT.md": true,
+    ".env.local": true,
+    ".dev.vars": true,
+    "server.key": true,
+    "server.crt": true,
+    "chain.pem": true,
+    "synthetic.sqlite-wal": true,
+    "dist/server/index.js": true,
+    "node_modules/x": true
+  },
+  "protection": {
+    "existingOutsideAppFilesChecked": 3537,
+    "outsideAppChanged": [],
+    "historicalFilesChecked": 131,
+    "historicalFilesChanged": [],
+    "businessInputsUnchanged": true,
+    "acceptedArtifactsUnchanged": true,
+    "trackedDiffUnchanged": true,
+    "HEADUnchanged": true,
+    "stagedDiffBytes": 0
+  },
+  "cleanup": {
+    "manualHttpsServiceStarted": false,
+    "portsFree": {
+      "8787": true,
+      "8795": true
+    },
+    "testServices": "finally dispose and per-test port release assertions passed; no global process termination",
+    "independentTemporaryTreeRemoved": true,
+    "syntheticStatesInThatTreeRemoved": true
+  },
+  "operationCountsThisRound": {
+    "realAuthentication": 0,
+    "realMail": 0,
+    "realPasswordChanges": 0,
+    "cloudWrites": 0,
+    "keychainReads": 0,
+    "keychainWrites": 0,
+    "gitMutations": 0,
+    "deployments": 0
+  },
+  "logsLocalOnly": [
+    {
+      "name": "independent-build.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "independent-typecheck.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "independent-tests.txt",
+      "sha256": "47568e145625a871fe89e43ae5c35ce0c99abb72cc6b1515007b75ddd3aee013"
+    },
+    {
+      "name": "tls-final-tests.txt",
+      "sha256": "bbc602c353f78007c8a9eaa090c8fc9c7facc198f87ae1ce724a71e63cb37656"
+    },
+    {
+      "name": "missing-materials-preflight.txt",
+      "sha256": "8505ca1642818e0d755a26a45c8eb8dea3881afe7d23fa270faad06f94a3da56"
+    }
+  ],
+  "toolSourceEquivalence": {
+    "functions": {
+      "readPublicCertificate": {
+        "sameFunctionBody": true,
+        "sha256": "8973cb56c70ac1d1baef01512abac0c5f73d15e09897df14e4a71ddcaf55da0a"
+      },
+      "validateCertificate": {
+        "sameFunctionBody": true,
+        "sha256": "20c3510c5b60b8f649f9e41b6004ff81d6f28161234c85de4ddbad53ff57d3a8"
+      },
+      "loadServerIdentity": {
+        "sameFunctionBody": true,
+        "sha256": "6de76801385acdbb12fcfc307b0b97fdcd9fa435317bf9faed9a937656c0e374"
+      },
+      "checked": {
+        "sameExceptErrorLabel": true
+      }
+    },
+    "runners": {
+      "local-https.mjs": {
+        "unchangedExceptImportsAndNodeCheck": true
+      },
+      "controlled-https.mjs": {
+        "unchangedExceptImportsAndNodeCheck": true
+      }
+    },
+    "privateKeyReads": 0,
+    "keychainOperations": 0
+  }
+}
