@@ -20,6 +20,8 @@ jobs:
     outputs:
       admin: ${{ steps.classify.outputs.admin }}
       public: ${{ steps.classify.outputs.public }}
+      users: ${{ steps.classify.outputs.users }}
+      admin_dependencies: ${{ steps.classify.outputs.admin_dependencies }}
     steps:
       - name: Check out PR for path classification
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +39,7 @@ jobs:
         run: node .github/scripts/pr-validation-gate.mjs classify
 
   admin_frontend_worker_audit:
-    name: Admin frontend, Worker, build, and audit
+    name: Admin frontend, Worker, and build
     needs: detect_changes
     if: needs.detect_changes.outputs.admin == 'true'
     runs-on: ubuntu-latest
@@ -73,8 +75,6 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
         run: npm run build
 
-      - name: Audit dependencies
-        run: npm audit
 
   admin_migration_consistency:
     name: Verify production migration staging
@@ -509,6 +509,57 @@ jobs:
       - name: Run Public tests and production build
         run: npm test
 
+  # Keep audit failures visible and required for Admin dependency changes only.
+  admin_dependencies_audit:
+    name: Admin dependency audit
+    needs: detect_changes
+    if: needs.detect_changes.outputs.admin_dependencies == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: resume-admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: resume-admin/package-lock.json
+      - run: npm ci
+      - run: npm audit
+
+  users_tests_build:
+    name: Users build, typecheck, and local Workers tests
+    needs: detect_changes
+    if: needs.detect_changes.outputs.users == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: example-cv-users
+    env:
+      CI: 'true'
+      WRANGLER_SEND_METRICS: 'false'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.13.0'
+          cache: npm
+          cache-dependency-path: example-cv-users/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Audit Users dependencies
+        run: npm audit
+
   required-pr-validation-gate:
     name: Required PR validation gate
     needs:
@@ -518,6 +569,8 @@ jobs:
       - admin_local_sql
       - admin_candidate_compatibility
       - public_tests_build
+      - users_tests_build
+      - admin_dependencies_audit
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -532,6 +585,10 @@ jobs:
           DETECTOR_RESULT: ${{ needs.detect_changes.result }}
           ADMIN_APPLICABLE: ${{ needs.detect_changes.outputs.admin }}
           PUBLIC_APPLICABLE: ${{ needs.detect_changes.outputs.public }}
+          USERS_APPLICABLE: ${{ needs.detect_changes.outputs.users }}
+          ADMIN_DEPENDENCIES_APPLICABLE: ${{ needs.detect_changes.outputs.admin_dependencies }}
+          USERS_RESULT: ${{ needs.users_tests_build.result }}
+          ADMIN_AUDIT_RESULT: ${{ needs.admin_dependencies_audit.result }}
           ADMIN_FRONTEND_RESULT: ${{ needs.admin_frontend_worker_audit.result }}
           ADMIN_MIGRATION_RESULT: ${{ needs.admin_migration_consistency.result }}
           ADMIN_LOCAL_SQL_RESULT: ${{ needs.admin_local_sql.result }}

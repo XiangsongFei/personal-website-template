@@ -64,20 +64,41 @@ mode,run_id=sys.argv[1:]
 BASE=bound_run(run_id)
 CERT=ROOT/'.runtime/tls/server.crt'
 KEYCHAIN=str(Path.home()/'Library/Keychains/login.keychain-db')
-assert hashlib.sha256(ssl.PEM_cert_to_DER_cert(CERT.read_text())).hexdigest().upper()==EXPECTED
-# Snapshot and mutations must follow the same non-CA/SAN/EKU/date/Node checks as the server.
-node=Path(os.environ.get('S2_VERIFIED_NODE','/invalid-not-configured')).resolve()
-assert node.is_file() and node.stat().st_uid==os.getuid() and hashlib.sha256(node.read_bytes()).hexdigest()==POLICY['nodeExecutableSha256'],'node_identity_digest_denied'
-preflight=subprocess.run([str(node),str(ROOT/'scripts/https/preflight.mjs'),'--certificate-only'],capture_output=True,text=True,timeout=10)
-if preflight.returncode:raise SystemExit('bound_certificate_preflight_failed')
+# Rollback is bound to saved PUBLIC bytes, never to a live private key or date.
+def owned_file(path):
+ st=path.lstat()
+ assert not path.is_symlink() and path.is_file() and st.st_uid==os.getuid() and st.st_nlink==1 and st.st_mode & 0o077==0,'unsafe_snapshot_file'
+ return path.read_bytes()
+def strict_preflight():
+ node=Path(os.environ.get('S2_VERIFIED_NODE','/invalid-not-configured')).resolve()
+ assert node.is_file() and node.stat().st_uid==os.getuid() and hashlib.sha256(node.read_bytes()).hexdigest()==POLICY['nodeExecutableSha256'],'node_identity_digest_denied'
+ preflight=subprocess.run([str(node),str(ROOT/'scripts/https/preflight.mjs'),'--certificate-only'],capture_output=True,text=True,timeout=10)
+ if preflight.returncode:raise SystemExit('bound_certificate_preflight_failed')
+def save_public(name,content):
+ with (BASE/name).open('xb') as f:f.write(content)
+ os.chmod(BASE/name,0o600)
+if mode not in ('snapshot','plan','install','inspect','restore','verify-restored'):raise SystemExit('unsupported_mode')
+if mode in ('snapshot','plan','install'):strict_preflight()
 if mode=='snapshot':
  if BASE.exists():raise SystemExit('run_already_exists')
+ der=ssl.PEM_cert_to_DER_cert(CERT.read_text())
+ assert hashlib.sha256(der).hexdigest().upper()==EXPECTED,'certificate_fingerprint_mismatch'
  BASE.mkdir(parents=True,mode=0o700)
  os.chmod(BASE.parent,0o700)
- binding={'schema':1,'uid':os.getuid(),'leafSha256':EXPECTED,'caSha256':POLICY['issuerCertificateSha256'],'publicLeafCountInLoginKeychain':0}
+ # The strict Node preflight above proves non-CA, SAN, EKU, validity and private-key file protections.
+ save_public('server.pem',ssl.DER_cert_to_PEM_cert(der).encode('ascii'))
+ save_public('server.der',der)
+ binding={'schema':2,'uid':os.getuid(),'leafSha256':EXPECTED,'caSha256':POLICY['issuerCertificateSha256'],'publicLeafCountInLoginKeychain':0,'originalDomains':{n:{'status':-25300,'settings':None} for n in ('user','admin','system')},'snapshotVerifiedNonCA':True,'scope':'current-user SSL exact-leaf'}
 else:
- binding=json.loads((BASE/'before.json').read_text())
- assert binding['uid']==os.getuid() and binding['leafSha256']==EXPECTED and binding['caSha256']==POLICY['issuerCertificateSha256']
+ binding=json.loads(owned_file(BASE/'before.json'))
+ assert binding['schema']==2 and binding['uid']==os.getuid() and binding['leafSha256']==EXPECTED and binding['caSha256']==POLICY['issuerCertificateSha256'],'snapshot_binding_mismatch'
+ assert binding['snapshotVerifiedNonCA'] is True and binding['scope']=='current-user SSL exact-leaf','snapshot_scope_denied'
+ assert binding['publicLeafCountInLoginKeychain']==0 and binding['originalDomains']=={n:{'status':-25300,'settings':None} for n in ('user','admin','system')},'unsupported_original_state'
+ der=owned_file(BASE/'server.der')
+ assert hashlib.sha256(der).hexdigest().upper()==EXPECTED and ssl.PEM_cert_to_DER_cert(owned_file(BASE/'server.pem').decode('ascii'))==der,'snapshot_fingerprint_mismatch'
+ if mode in ('plan','install'):
+  assert ssl.PEM_cert_to_DER_cert(CERT.read_text())==der,'live_certificate_changed'
+CERT=BASE/'server.pem'
 copysettings=fn(sec,'SecTrustSettingsCopyTrustSettings',I,[V,C.c_uint32,C.POINTER(V)])
 def inspect():
  der=ssl.PEM_cert_to_DER_cert(CERT.read_text())
@@ -108,11 +129,13 @@ def public_count():
  blocks=re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----',r.stdout,re.S)
  return sum(hashlib.sha256(ssl.PEM_cert_to_DER_cert(x)).hexdigest().upper()==EXPECTED for x in blocks)
 def record(name,obj):
- (BASE/(name+'.json')).write_text(json.dumps(obj,ensure_ascii=False,indent=2)+'\n')
+ path=BASE/(name+'.json')
+ with path.open('x') as f:f.write(json.dumps(obj,ensure_ascii=False,indent=2)+'\n')
+ os.chmod(path,0o600)
 def native_once(label,args):
  ledger=BASE/(label+'-attempt.json')
  fd=os.open(ledger,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
- with os.fdopen(fd,'w') as f:json.dump({'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'operation':label,'fingerprint':EXPECTED,'scope':'current-user SSL exact-leaf'},f,indent=2)
+ with os.fdopen(fd,'w') as f:json.dump({'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'operation':label,'fingerprint':EXPECTED,'scope':'current-user SSL exact-leaf','uid':os.getuid(),'beforeSha256':hashlib.sha256(owned_file(BASE/'before.json')).hexdigest()},f,indent=2)
  try:
   r=subprocess.run(['/usr/bin/sandbox-exec','-p','(version 1)(allow default)(deny network*)',*args],capture_output=True,text=True,timeout=240)
  except subprocess.TimeoutExpired:
@@ -143,7 +166,13 @@ elif mode=='install':
 elif mode=='inspect':
  print(json.dumps({'fingerprint':EXPECTED,'domains':current,'publicCertificateCount':public_count()}))
 elif mode in ('restore','verify-restored'):
- assert (BASE/'install-attempt.json').exists(),'not_this_batch'
+ attempt=json.loads(owned_file(BASE/'install-attempt.json'))
+ assert attempt['operation']=='install' and attempt['fingerprint']==EXPECTED and attempt['uid']==os.getuid() and attempt['scope']=='current-user SSL exact-leaf' and attempt['beforeSha256']==hashlib.sha256(owned_file(BASE/'before.json')).hexdigest(),'not_this_batch'
+ # UNKNOWN is immutable; read-only verification may still establish current state.
+ if mode=='restore':
+  for label in ('install','remove-trust','remove-new-public-certificate'):
+   result=BASE/(label+'-result.json')
+   if (BASE/(label+'-attempt.json')).exists() and (not result.exists() or json.loads(owned_file(result)).get('status')!='RETURNED' or json.loads(owned_file(result)).get('exitCode')!=0):raise SystemExit('UNKNOWN: inspect only; no automatic retry')
  if current!=BASELINE:
   require_planned(current)
   if mode=='verify-restored':raise SystemExit('UNCONFIRMED: target settings still present')
@@ -155,6 +184,6 @@ elif mode in ('restore','verify-restored'):
   if mode=='verify-restored':raise SystemExit('UNCONFIRMED: new public certificate item still present')
   native_once('remove-new-public-certificate',['/usr/bin/security','delete-certificate','-Z',EXPECTED,KEYCHAIN])
  assert inspect()==BASELINE and public_count()==0,'baseline_not_restored'
- record('explicit-restored',{'settingsRestored':True,'publicPresenceRestored':True,'existingCertificatesDeleted':0,'newPublicLeafRemoved':True,'privateKeysTouched':False,'effectiveValidation':'SEPARATE_CHECK_REQUIRED'})
+ if not (BASE/'explicit-restored.json').exists():record('explicit-restored',{'settingsRestored':True,'publicPresenceRestored':True,'existingCertificatesDeleted':0,'newPublicLeafRemoved':True,'privateKeysTouched':False,'effectiveValidation':'SEPARATE_CHECK_REQUIRED'})
  print(json.dumps({'explicitSettingsRestored':True,'publicPresenceRestored':True,'effectiveValidation':'SEPARATE_CHECK_REQUIRED'}))
 else:raise SystemExit('unsupported_mode')

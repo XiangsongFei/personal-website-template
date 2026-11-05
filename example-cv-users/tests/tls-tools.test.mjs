@@ -7,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {PIN,ROOT,CERT,KEY,checked,validateCertificate,loadServerIdentity} from '../scripts/https/identity.mjs';
 import {assertCurrentNode} from '../scripts/https/node-identity.mjs';
 const node=process.execPath;
-test('portable Node identity verifies this PID and the pinned executable bytes; wrong digest is rejected',()=>{
+test('macOS Node identity verifies this PID and the pinned executable bytes; wrong digest is rejected',{skip:process.platform!=='darwin' && 'macOS-specific executable and Keychain tool; other offline TLS tests still run'},()=>{
   const actual=assertCurrentNode();assert.equal(actual.pid,process.pid);assert.equal(actual.version,'24.13.0');assert.equal(actual.executableSha256,PIN.nodeExecutableSha256);
   const dir=mkdtempSync(resolve(tmpdir(),'s2-node-pin-'));
   try{const code=resolve(dir,'scripts/https');mkdirSync(code,{recursive:true});for(const name of ['identity.mjs','node-identity.mjs'])copyFileSync(resolve(ROOT,'scripts/https',name),resolve(code,name));writeFileSync(resolve(code,'policy.json'),JSON.stringify({...PIN,nodeExecutableSha256:'0'.repeat(64)}));
@@ -26,5 +26,7 @@ test('loader keeps owner, symlink, hardlink and key-mode boundaries without read
 });
 test('tool sources have package-local imports and no historical absolute path; trust policy tests are offline',()=>{
  for(const name of ['local-https.mjs','controlled-https.mjs']){const s=readFileSync(resolve(ROOT,'scripts',name),'utf8');assert.doesNotMatch(s,/users-session-probe|\/Users\//);assert.match(s,/assertCurrentNode\(\)/);assert.match(s,/\.\/https\/identity.mjs/);}
+ const effective=readFileSync(resolve(ROOT,'scripts/https/read-leaf-effective.py'),'utf8');
+ assert.doesNotMatch(effective,/S2_VERIFIED_NODE|preflight\.mjs/);assert.match(effective,/server\.pem/);assert.match(effective,/certificate validity changed; not evidence of trust restoration/);
  const r=spawnSync('/usr/bin/python3',[resolve(ROOT,'tests/fixtures/tls-policy-offline.py')],{encoding:'utf8'});assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/offline trust tests passed/);
 });

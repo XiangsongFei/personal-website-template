@@ -1,5 +1,5 @@
 """Exercise only extracted policy/command functions; no Security framework or Keychain calls."""
-import ast,datetime,json,os,subprocess,tempfile,types
+import ast,datetime,hashlib,json,os,subprocess,tempfile,types
 from pathlib import Path
 root=Path(__file__).resolve().parents[2]
 source=(root/'scripts/https/leaf-trust-control.py').read_text()
@@ -20,7 +20,7 @@ class Native:
   return types.SimpleNamespace(returncode=0,stdout='',stderr='')
 fail_timeout=[False]
 with tempfile.TemporaryDirectory(prefix='s2-trust-offline-') as d:
- g={'BASELINE':baseline,'V':Value,'sec':object(),'decode':decode,'BASE':Path(d),'os':os,'json':json,'datetime':datetime,'subprocess':Native(),'EXPECTED':'public-pin'}
+ g={'BASELINE':baseline,'V':Value,'sec':object(),'decode':decode,'BASE':Path(d),'os':os,'json':json,'datetime':datetime,'subprocess':Native(),'EXPECTED':'public-pin','owned_file':lambda p:b'before','hashlib':hashlib}
  exec(compile(functions,'extracted-existing-policy','exec'),g)
  valid={'kSecTrustSettingsPolicy':{'policyProperties':{'oid':'ssl'}},'kSecTrustSettingsResult':2,'kSecTrustSettingsPolicyName':'sslServer'}
  def domains(entry):return {**baseline,'user':{'status':0,'settings':[entry]}}

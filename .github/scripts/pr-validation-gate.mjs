@@ -29,7 +29,7 @@ const publicFiles = new Set([
 ]);
 
 const suiteResults = [
-  ['admin frontend/Worker/build/audit', 'ADMIN_FRONTEND_RESULT'],
+  ['Admin frontend/Worker/build', 'ADMIN_FRONTEND_RESULT'],
   ['Admin migration consistency', 'ADMIN_MIGRATION_RESULT'],
   ['Admin local SQL', 'ADMIN_LOCAL_SQL_RESULT'],
   ['Public tests/build', 'PUBLIC_RESULT'],
@@ -55,24 +55,30 @@ export function classifyPaths(paths) {
 
   let admin = false;
   let publicSite = false;
+  let users = false;
+  let adminDependencies = false;
 
   for (const path of paths) {
-    if (path.startsWith('.github/workflows/')) {
+    if (path.startsWith('.github/workflows/') || path.startsWith('.github/scripts/')) {
       admin = true;
       publicSite = true;
+      users = true;
       continue;
     }
 
+    if (path.startsWith('example-cv-users/')) { users = true; continue; }
+    if (['resume-admin/package.json', 'resume-admin/package-lock.json'].includes(path)) adminDependencies = true;
     if (path.startsWith('resume-admin/')) admin = true;
     if (isPublicPath(path)) publicSite = true;
 
     if (!path.startsWith('resume-admin/') && !isPublicPath(path) && !isDocumentationPath(path)) {
       admin = true;
       publicSite = true;
+      users = true;
     }
   }
 
-  return { admin, public: publicSite };
+  return { admin, public: publicSite, users, admin_dependencies: adminDependencies };
 }
 
 function parseApplicability(value, name, failures) {
@@ -100,12 +106,18 @@ export function evaluateGate(input) {
 
   const adminApplicable = parseApplicability(input.adminApplicable, 'Admin', failures);
   const publicApplicable = parseApplicability(input.publicApplicable, 'Public', failures);
+  const usersApplicable = parseApplicability(input.usersApplicable, 'Users', failures);
+  const adminDependenciesApplicable = parseApplicability(input.adminDependenciesApplicable, 'Admin dependencies', failures);
+
+  if (adminDependenciesApplicable && adminApplicable !== true) failures.push('Admin dependency changes must also run Admin validation.');
 
   for (const [name, key] of suiteResults.slice(0, 3)) {
     checkJobResult(name, adminApplicable, input[key], failures);
   }
   checkJobResult(suiteResults[3][0], publicApplicable, input[suiteResults[3][1]], failures);
 
+  checkJobResult('Users build/typecheck/tests', usersApplicable, input.USERS_RESULT, failures);
+  checkJobResult('Admin dependency audit', adminDependenciesApplicable, input.ADMIN_AUDIT_RESULT, failures);
   return { passed: failures.length === 0, failures };
 }
 
@@ -135,8 +147,8 @@ function writeClassification() {
   if (paths.length === 0) throw new Error('The pull request diff is empty; refusing to skip validation.');
 
   const classification = classifyPaths(paths);
-  appendFileSync(outputPath, `admin=${classification.admin}\npublic=${classification.public}\n`);
-  console.log(`Classified ${paths.length} changed path(s): Admin=${classification.admin}, Public=${classification.public}.`);
+  appendFileSync(outputPath, `admin=${classification.admin}\npublic=${classification.public}\nusers=${classification.users}\nadmin_dependencies=${classification.admin_dependencies}\n`);
+  console.log(`Classified ${paths.length} changed path(s): Admin=${classification.admin}, Public=${classification.public}, Users=${classification.users}, Admin dependencies=${classification.admin_dependencies}.`);
 }
 
 function runGate() {
@@ -144,6 +156,10 @@ function runGate() {
     detectorResult: process.env.DETECTOR_RESULT,
     adminApplicable: process.env.ADMIN_APPLICABLE,
     publicApplicable: process.env.PUBLIC_APPLICABLE,
+    usersApplicable: process.env.USERS_APPLICABLE,
+    adminDependenciesApplicable: process.env.ADMIN_DEPENDENCIES_APPLICABLE,
+    USERS_RESULT: process.env.USERS_RESULT,
+    ADMIN_AUDIT_RESULT: process.env.ADMIN_AUDIT_RESULT,
     ADMIN_FRONTEND_RESULT: process.env.ADMIN_FRONTEND_RESULT,
     ADMIN_MIGRATION_RESULT: process.env.ADMIN_MIGRATION_RESULT,
     ADMIN_LOCAL_SQL_RESULT: process.env.ADMIN_LOCAL_SQL_RESULT,

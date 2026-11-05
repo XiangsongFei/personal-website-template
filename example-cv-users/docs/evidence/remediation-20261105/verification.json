@@ -1,0 +1,335 @@
+{
+  "schema": 1,
+  "baseMain": "a0a82f30b3e5129f7a68d9e6dfe2693fb7eaa8a2",
+  "originalS2Commit": "17f99e3d9e1a42166257cc18aceb31d302d27dee",
+  "cherryPickCommit": "bea1bb75d139416ea604e354fa2a81d18fd8b70f",
+  "branch": "codex/s2-users-remediation-20261105",
+  "businessSha256": "439bbc1e421461e893a10e45bebdfbc71304c410351340b0a900217888f4d6b6",
+  "toolingSha256": "d2231ed3f373c897e9ed47657968856c2b2e70d081b5678ce8538f91eabb149a",
+  "artifactSha256": "a5148534c49c351e2b9cd74f57c7a9c2a323e8d825a33a5a950c1f2499b4e32c",
+  "packageLockSha256": "1aa8075cc646c8ee2d57c478d58de697b2e0e393039b09eb25954f1e150b9a07",
+  "ciFiles": [
+    {
+      "path": ".github/scripts/pr-validation-gate.mjs",
+      "sha256": "48ba42ee71f3a12a94bb2ea0461f268bf17c1a33515ab8eee912da426112e4bd"
+    },
+    {
+      "path": ".github/scripts/pr-validation-gate.test.mjs",
+      "sha256": "2439b28fc54afbffd8522ad4f85336ca5d85ff580e99312d6197d18ad6668936"
+    },
+    {
+      "path": ".github/workflows/pr-validation.yml",
+      "sha256": "c5e54b18ddefcea25f8e35d32ca3e92fe8b93e600e7f7d49972881cece7b345d"
+    }
+  ],
+  "ciSha256": "60b88008464ab5d37c5439379c7f731729a1a42a9d94818f6e2d41273b738b6a",
+  "reactVersions": {
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "react-server-dom-webpack": "19.2.9"
+  },
+  "usersAudit": {
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 2,
+      "high": 8,
+      "critical": 0,
+      "total": 10
+    },
+    "exitCode": 1,
+    "issues": [
+      {
+        "package": "@cloudflare/vite-plugin",
+        "severity": "high",
+        "installedRange": "<=0.0.0-7ae5dd357 || 1.2.3 - 1.54.6",
+        "viaPackages": [
+          "miniflare",
+          "wrangler"
+        ],
+        "advisories": []
+      },
+      {
+        "package": "@vercel/og",
+        "severity": "moderate",
+        "installedRange": "0.0.12-beta.0 - 1.0.2",
+        "viaPackages": [
+          "satori"
+        ],
+        "advisories": []
+      },
+      {
+        "package": "image-size",
+        "severity": "high",
+        "installedRange": "0.6.3 - 2.0.2",
+        "viaPackages": [],
+        "advisories": [
+          {
+            "title": "image-size: JXL and HEIF parsers allow denial of service through infinite loops",
+            "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq",
+            "severity": "high"
+          },
+          {
+            "title": "image-size: ICNS parser allows denial of service through an infinite loop",
+            "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr",
+            "severity": "high"
+          }
+        ]
+      },
+      {
+        "package": "miniflare",
+        "severity": "high",
+        "installedRange": "<=0.0.0-fec45ed61 || 4.20250508.3 - 5.20260926.0-alpha",
+        "viaPackages": [
+          "sharp",
+          "undici"
+        ],
+        "advisories": []
+      },
+      {
+        "package": "satori",
+        "severity": "moderate",
+        "installedRange": "0.0.27 - 0.33.4",
+        "viaPackages": [],
+        "advisories": [
+          {
+            "title": "Satori-generated SVG has improper escaping",
+            "url": "https://github.com/advisories/GHSA-wx4j-mvgx-mqwp",
+            "severity": "moderate"
+          }
+        ]
+      },
+      {
+        "package": "sharp",
+        "severity": "high",
+        "installedRange": "<=0.35.5-rc.1",
+        "viaPackages": [],
+        "advisories": [
+          {
+            "title": "sharp: Vulnerabilities in libheif: GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545",
+            "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+            "severity": "high"
+          },
+          {
+            "title": "sharp : Vulnerability in librsvg dependency CVE-2026-96889",
+            "url": "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
+            "severity": "high"
+          }
+        ]
+      },
+      {
+        "package": "undici",
+        "severity": "high",
+        "installedRange": "7.0.0 - 7.30.0",
+        "viaPackages": [],
+        "advisories": [
+          {
+            "title": "undici vulnerable to Denial of Service via unhandled error in WebSocket permessage-deflate decompression",
+            "url": "https://github.com/advisories/GHSA-3wwx-pv8p-q78v",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via orphaned RetryHandler response body",
+            "url": "https://github.com/advisories/GHSA-pmjh-fq2x-6v4x",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to downstream response splitting via retry interceptor",
+            "url": "https://github.com/advisories/GHSA-r53p-7pc4-xj5r",
+            "severity": "low"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via unrequested WebSocket subprotocol",
+            "url": "https://github.com/advisories/GHSA-rfgv-xxqx-mfg5",
+            "severity": "high"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via unbounded decompression of compressed responses",
+            "url": "https://github.com/advisories/GHSA-3xpg-4rpp-hhhm",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to cross-user cookie disclosure via Set-Cookie caching in shared caches",
+            "url": "https://github.com/advisories/GHSA-2jfj-6hjv-fm6j",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to response truncation via oversized chunked responses in the dump interceptor",
+            "url": "https://github.com/advisories/GHSA-2gqq-gqf2-x968",
+            "severity": "low"
+          },
+          {
+            "title": "undici vulnerable to TLS certificate validation bypass via dropped connect options in BalancedPool",
+            "url": "https://github.com/advisories/GHSA-w293-vg96-wgc3",
+            "severity": "high"
+          },
+          {
+            "title": "undici vulnerable to caching and replay of unsafe HTTP method responses",
+            "url": "https://github.com/advisories/GHSA-8436-99hf-9mmv",
+            "severity": "low"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via WebSocketStream unclean close",
+            "url": "https://github.com/advisories/GHSA-rx4f-c7p8-82vq",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via unbounded memory in the EventSource parser",
+            "url": "https://github.com/advisories/GHSA-4qv8-2p9j-2685",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to Subresource Integrity bypass via non-lowercase algorithm tokens",
+            "url": "https://github.com/advisories/GHSA-f72v-6w45-q472",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via unhandled error on excessive content-encodings",
+            "url": "https://github.com/advisories/GHSA-xjj6-f33q-929c",
+            "severity": "high"
+          },
+          {
+            "title": "undici vulnerable to cache poisoning and cross-user disclosure via cross-origin redirects",
+            "url": "https://github.com/advisories/GHSA-4w7w-5xrc-9h26",
+            "severity": "high"
+          },
+          {
+            "title": "undici vulnerable to TLS certificate validation bypass via dropped tls options in Agent",
+            "url": "https://github.com/advisories/GHSA-2m5v-pch6-74hx",
+            "severity": "high"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via TLS 1.2 certificate-changing renegotiation",
+            "url": "https://github.com/advisories/GHSA-qrxm-fqhp-jwvm",
+            "severity": "high"
+          },
+          {
+            "title": "undici WebSocket client vulnerable to Denial of Service via unbounded automatic PONG buffering",
+            "url": "https://github.com/advisories/GHSA-9fm3-97px-rjf6",
+            "severity": "moderate"
+          },
+          {
+            "title": "undici vulnerable to Denial of Service via unhandled exception in the decompress interceptor",
+            "url": "https://github.com/advisories/GHSA-55wc-3pg8-jfw6",
+            "severity": "moderate"
+          }
+        ]
+      },
+      {
+        "package": "vinext",
+        "severity": "high",
+        "installedRange": "0.0.1 - 1.0.0-beta.13",
+        "viaPackages": [
+          "@vercel/og",
+          "image-size"
+        ],
+        "advisories": []
+      },
+      {
+        "package": "vite",
+        "severity": "high",
+        "installedRange": "8.0.0 - 8.1.5",
+        "viaPackages": [],
+        "advisories": [
+          {
+            "title": "launch-editor: NTLMv2 hash disclosure via UNC path handling on Windows",
+            "url": "https://github.com/advisories/GHSA-v6wh-96g9-6wx3",
+            "severity": "moderate"
+          },
+          {
+            "title": "launch-editor: escapeCmdArgs() omits % escaping on Windows",
+            "url": "https://github.com/advisories/GHSA-698v-4r3x-3vcv",
+            "severity": "moderate"
+          },
+          {
+            "title": "launch-editor: Editor CLI flag misinterpretation causing arbitrary command execution for some editors",
+            "url": "https://github.com/advisories/GHSA-r825-w8mm-5pxw",
+            "severity": "moderate"
+          },
+          {
+            "title": "launch-editor: `fs.existsSync()` existence check can be bypassed on Windows",
+            "url": "https://github.com/advisories/GHSA-587h-7wmj-h5pm",
+            "severity": "high"
+          },
+          {
+            "title": "Vite: Cross origin script execution through Vite custom middleware",
+            "url": "https://github.com/advisories/GHSA-9jrq-w75r-8gcw",
+            "severity": "low"
+          },
+          {
+            "title": "Vite: Files outside `server.fs.allow` could be served when project paths match system paths on non-Windows machine",
+            "url": "https://github.com/advisories/GHSA-rq7h-c2jc-7f22",
+            "severity": "moderate"
+          },
+          {
+            "title": "vite: `server.fs.deny` bypass on Windows alternate paths",
+            "url": "https://github.com/advisories/GHSA-fx2h-pf6j-xcff",
+            "severity": "moderate"
+          }
+        ]
+      },
+      {
+        "package": "wrangler",
+        "severity": "high",
+        "installedRange": "<=0.0.0-7ae5dd357 || 4.16.0 - 4.130.0",
+        "viaPackages": [
+          "miniflare"
+        ],
+        "advisories": []
+      }
+    ]
+  },
+  "adminAudit": {
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 9,
+      "high": 0,
+      "critical": 0,
+      "total": 9
+    },
+    "lockChanged": false
+  },
+  "checks": {
+    "npmCi": "PASS",
+    "build": "PASS",
+    "typecheck": "PASS",
+    "nodeTests": {
+      "pass": 80,
+      "fail": 0,
+      "skipped": 0
+    },
+    "offlineRollbackCases": {
+      "pass": 12,
+      "keychainWrites": 0
+    },
+    "classifierAndRequiredGate": {
+      "pass": 28,
+      "fail": 0
+    },
+    "workflowYaml": "PASS",
+    "browserSyntheticSmoke": "PASS",
+    "githubUsersJob": "NOT RUN - no push authorized",
+    "ubuntuExecution": "NOT RUN - macOS local validation only; macOS binary-pin case explicitly skips on Linux",
+    "newCandidateRealAuth": "NOT TESTED"
+  },
+  "scan": {
+    "fileCount": 94,
+    "literalPatternHits": [],
+    "forbiddenArtifacts": [],
+    "scope": "Complete candidate source/docs/CI; literal private-key, live secret-prefix, JWT and personal test email patterns plus file exclusions; not a proof that every possible secret encoding is absent."
+  },
+  "protection": {
+    "primaryFileHashesChecked": 3621,
+    "historicalFileHashesChecked": 172,
+    "mismatches": 0,
+    "mainAndOriginalBranchUnchanged": true,
+    "pr31DraftOpen": true,
+    "remoteWrites": 0,
+    "keychainWrites": 0,
+    "realAuthRequests": 0,
+    "mailRequests": 0,
+    "businessPasswordUpdates": 0,
+    "ownedPort8795Released": true
+  }
+}

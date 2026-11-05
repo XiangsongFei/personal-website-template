@@ -38,7 +38,7 @@ python3 scripts/https/read-leaf-effective.py RUN_ID --baseline
 python3 scripts/https/leaf-trust-control.py plan RUN_ID
 ```
 
-RUN_ID必须8–80位字母数字/连字符。snapshot只读取指定leaf的三域显式设置及当前用户公共证书存在情况，写本地`.runtime/https-trust/RUN_ID/before.json`；不修改Keychain。当前实现仅支持三域均无显式记录且指定leaf原公共项为0的已验证基线。已有设置、记录读取失败（包括权限错误）、证书已存在或无法解释的有效结果，都停止；不覆盖或删除既有项。
+RUN_ID必须8–80位字母数字/连字符。snapshot只读取指定leaf的三域显式设置及当前用户公共证书存在情况，写本地`.runtime/https-trust/RUN_ID/before.json`（schema 2）及公开`server.pem`、`server.der`快照和完整指纹；不复制私钥，不修改Keychain。当前实现仅支持三域均无显式记录且指定leaf原公共项为0的已验证基线。已有设置、记录读取失败（包括权限错误）、证书已存在或无法解释的有效结果，都停止；不覆盖或删除既有项。
 
 在新增信任之前，保存下面不依赖运行服务的撤销步骤以及首次有效SSL评估到本地记录，核对相同证书/链/主机/用途/日期条件。经批准才可以执行 `install RUN_ID`：仅当前用户、精确非CA服务器证书、SSL用途，无PolicyString、无CA信任、无admin/system写入。信任不按端口或标签页限制，也不会因关闭浏览器自动消失。
 
@@ -50,7 +50,9 @@ python3 scripts/https/leaf-trust-control.py verify-restored RUN_ID
 python3 scripts/https/read-leaf-effective.py RUN_ID --compare
 ```
 
-restore先核对当前记录确属本次唯一SSL leaf信任，再remove-trusted-cert；只可删除本批新加且原数量0、当前数量1的公共证书项，不操作既有证书或私钥。显式恢复与相同条件有效SSL恢复要分别确认；不能仅删文件或用到期失败代替撤销证明。每条系统写命令先建立排他attempt记录，超时保留UNKNOWN且不重试；之后只读回查，不用另一个RUN_ID重复删除。出现差异或权限读取受阻，保留未确认并交用户处理，不清空信任缓存、不重启系统服务。
+snapshot、plan、install仍要求原有严格Node、当前证书有效期和私钥文件安全预检。restore及verify-restored只读本批公开证书快照，核对完整指纹、文件属主/权限、原状态、当前UID和绑定安装账本；即使原证书过期、原材料或私钥丢失，也可精确撤销。旧schema 1批次不能由新工具自动迁移或重放。
+
+restore先核对当前记录确属本次唯一SSL leaf信任，再remove-trusted-cert；只可删除本批新加且原数量0、当前数量1的公共证书项，不操作既有证书或私钥。重复成功撤销只读确认，不重复系统写入。read-leaf-effective也使用公开leaf快照而不依赖私钥，但有效SSL比较仍拒绝把到期/尚未生效当作恢复；到期时显式撤销可以完成，有效状态应保留未确认。显式恢复与相同条件有效SSL恢复要分别确认；不能仅删文件或用到期失败代替撤销证明。每条系统写命令先建立排他attempt记录，超时保留UNKNOWN且不重试；之后只读回查，不用另一个RUN_ID重复删除。出现差异或权限读取受阻，保留未确认并交用户处理，不清空信任缓存、不重启系统服务。
 
 ### 启动与停止
 

@@ -72,13 +72,23 @@ def bound_run(value):
 import subprocess,sys
 if len(sys.argv) not in (2,3) or len(sys.argv)==3 and sys.argv[2] not in ('--baseline','--compare'):raise SystemExit('usage: read-leaf-effective.py RUN_ID [--baseline|--compare]')
 base=bound_run(sys.argv[1])
-binding=json.loads((base/'before.json').read_text())
+bound_file=base/'before.json'
+st=bound_file.lstat()
+assert not bound_file.is_symlink() and bound_file.is_file() and st.st_uid==os.getuid() and st.st_nlink==1 and st.st_mode & 0o077==0,'unsafe_snapshot_file'
+binding=json.loads(bound_file.read_text())
 assert binding['uid']==os.getuid() and binding['leafSha256']==EXPECTED
-node=Path(os.environ.get('S2_VERIFIED_NODE','/invalid-not-configured')).resolve()
-assert node.is_file() and node.stat().st_uid==os.getuid() and hashlib.sha256(node.read_bytes()).hexdigest()==POLICY['nodeExecutableSha256'],'node_identity_digest_denied'
-preflight=subprocess.run([str(node),str(ROOT/'scripts/https/preflight.mjs'),'--certificate-only'],capture_output=True,text=True,timeout=10)
-if preflight.returncode:raise SystemExit('bound_certificate_preflight_failed_do_not_treat_expiry_as_restoration')
-previous={'serverCertPath':str(ROOT/'.runtime/tls/server.crt'),'serverSha256':EXPECTED,'caPath':str(ROOT/'.runtime/tls/ca.crt'),'caSha256':POLICY['issuerCertificateSha256']}
+# Rollback evaluation reads the saved public leaf; no private key is needed.
+leaf=base/'server.pem'
+for file in (base/'before.json',leaf,base/'server.der'):
+ st=file.lstat()
+ assert not file.is_symlink() and file.is_file() and st.st_uid==os.getuid() and st.st_nlink==1 and st.st_mode & 0o077==0,'unsafe_snapshot_file'
+assert binding['schema']==2 and binding['snapshotVerifiedNonCA'] is True
+assert hashlib.sha256((base/'server.der').read_bytes()).hexdigest().upper()==EXPECTED
+assert ssl.PEM_cert_to_DER_cert(leaf.read_text())==(base/'server.der').read_bytes()
+validity=ssl._ssl._test_decode_cert(str(leaf))
+now=datetime.datetime.now(datetime.timezone.utc).timestamp()
+assert ssl.cert_time_to_seconds(validity['notBefore'])<=now<ssl.cert_time_to_seconds(validity['notAfter']),'UNCONFIRMED: certificate validity changed; not evidence of trust restoration'
+previous={'serverCertPath':str(leaf),'serverSha256':EXPECTED,'caPath':str(ROOT/'.runtime/tls/ca.crt'),'caSha256':POLICY['issuerCertificateSha256']}
 assert binding['caSha256']==previous['caSha256']
 certs = {}
 result = {'at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
