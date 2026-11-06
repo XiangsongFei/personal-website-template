@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation, useNavigationType } from "react-router-dom";
 import { AuthGate } from "../src/auth/AuthGate";
 import type { AdminAuthClient, AdminIdentity } from "../src/auth/supabase";
@@ -360,5 +360,49 @@ describe("Stage 4C auth gate", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
     expect((await screen.findByText("Unable to sign out. Please try again.")).getAttribute("role")).toBe("alert");
     expect(screen.getByRole("navigation", { name: "CMS sections" })).toBeTruthy();
+  });
+
+  it("blocks repeat clicks while sign-out is pending", async () => {
+    const auth = mockClient(admin, true);
+    const pending = deferred<void>();
+    vi.mocked(auth.client.signOut).mockReturnValue(pending.promise);
+    show(auth.client);
+    await screen.findByRole("navigation", { name: "CMS sections" });
+    const button = screen.getByRole("button", { name: "Sign Out" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(auth.client.signOut).toHaveBeenCalledOnce();
+    pending.resolve(undefined);
+    await screen.findByRole("heading", { name: "Welcome back" });
+  });
+
+  it("does not retry an UNKNOWN sign-out on navigation, focus or unmount", async () => {
+    const auth = mockClient(admin, true);
+    vi.mocked(auth.client.signOut).mockRejectedValue(new Error("synthetic ECONNRESET"));
+    const view = show(auth.client, "/education");
+    await screen.findByRole("navigation", { name: "CMS sections" });
+    fireEvent.click(screen.getByRole("button", { name: "Sign Out" }));
+    await screen.findByRole("alert");
+    fireEvent(window, new Event("focus"));
+    fireEvent(document, new Event("visibilitychange"));
+    fireEvent.click(screen.getByRole("link", { name: "Projects" }));
+    await screen.findByRole("heading", { name: "Projects", level: 1 });
+    view.unmount();
+    expect(auth.client.signOut).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a stale pending authorization after SIGNED_OUT", async () => {
+    const auth = mockClient(admin, true);
+    const pending = deferred<boolean>();
+    vi.mocked(auth.client.isResumeAdmin).mockReturnValue(pending.promise);
+    show(auth.client, "/education");
+    await waitFor(() => expect(auth.client.isResumeAdmin).toHaveBeenCalledOnce());
+    auth.emit("SIGNED_OUT", null);
+    await screen.findByRole("heading", { name: "Welcome back" });
+    await act(async () => { pending.resolve(true); });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Welcome back" })).toBeTruthy());
+    expect(screen.queryByRole("navigation", { name: "CMS sections" })).toBeNull();
+    expect(auth.client.signOut).not.toHaveBeenCalled();
   });
 });

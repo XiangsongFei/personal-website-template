@@ -43,6 +43,7 @@ export function createAdminSupabaseClient(): SupabaseClient | null {
 export function createAdminAuthClient(supabase: SupabaseClient): AdminAuthClient {
   const identityChecks = new Map<string, Promise<AdminIdentity>>();
   const accessChecks = new Map<string, Promise<AdminIdentityAndAccess>>();
+  let signOutInFlight: Promise<void> | null = null;
   return {
     async getIdentity() {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -124,13 +125,23 @@ export function createAdminAuthClient(supabase: SupabaseClient): AdminAuthClient
     async getAdminTarget() {
       return readAdminTarget(supabase);
     },
-    async signOut() {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+    signOut() {
+      // Share an in-flight attempt; never retry a failed/unknown remote logout.
+      // The SDK clears local storage and emits SIGNED_OUT even on network errors.
+      if (!signOutInFlight) {
+        signOutInFlight = (async () => {
+          const { error } = await supabase.auth.signOut({ scope: "local" });
+          if (error) throw error;
+        })().finally(() => { signOutInFlight = null; });
+      }
+      return signOutInFlight;
     },
     subscribe(listener) {
       const { data } = supabase.auth.onAuthStateChange((event, session) => {
-        if (event === "SIGNED_OUT") identityChecks.clear();
+        if (event === "SIGNED_OUT") {
+          identityChecks.clear();
+          accessChecks.clear();
+        }
         listener(event, session ? authSessionKey(session) : null);
       });
       return () => data.subscription.unsubscribe();
