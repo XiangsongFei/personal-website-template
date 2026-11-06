@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "head": "5136030888dda7d095efa84e779e5c513a1f3107",
+  "businessSha256": "65c3afe790ece8f5616e873fd8870803d4bef0e89cdeeec528c5439a054e37fd",
+  "toolingSha256": "ca13d8df89daa6a8da4bcac0b10396c6384a2a2885763ae9884d6799d3630b74",
+  "artifactSha256": "c1651d696bb5dc9ec3cbceb456b6ab0c0a34f3c609bc67db54a4f277c035ce48",
+  "lockSha256": "c8cc8a0b96c76e8eec73b7c0eb17621b1580dc8488d93f09523f859073779057",
+  "nodeInstall": {
+    "archiveSha256": "654ba79de6155647e22321932b45f2a1ccb705976cc337c9b8e278beb085a628",
+    "signer": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+    "signatureVerified": true,
+    "path": "$HOME/.nvm/s2-users/versions/node/v24.22.1/bin/node",
+    "binarySha256": "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329",
+    "uid": 501,
+    "mode": "0o755",
+    "oldNodeRetained": true,
+    "defaultAlias": "24",
+    "defaultAliasResolutionPreserved": "24 -> v24.13.0; S2 version outside standard alias scan"
+  },
+  "nodeVersion": "24.22.1",
+  "bundledUndici": "7.30.1",
+  "override": {
+    "satori@0.33.5": {
+      "fflate": "0.7.5"
+    }
+  },
+  "fullAudit": {
+    "auditReportVersion": 2,
+    "vulnerabilities": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "dependencies": {
+        "prod": 15,
+        "dev": 268,
+        "optional": 92,
+        "peer": 58,
+        "peerOptional": 0,
+        "total": 282
+      }
+    }
+  },
+  "productionAudit": {
+    "auditReportVersion": 2,
+    "vulnerabilities": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "dependencies": {
+        "prod": 15,
+        "dev": 268,
+        "optional": 92,
+        "peer": 58,
+        "peerOptional": 0,
+        "total": 282
+      }
+    }
+  },
+  "satoriParity": {
+    "identical": true,
+    "svgSha256": "70d610a86d777b9884dd3368eaaddd06d3072ead567c397f7fca38854b5bc040"
+  },
+  "checks": {
+    "npmCi": "PASS after owned generated directory ENOTEMPTY recovery",
+    "npmLsAll": "PASS",
+    "npmExplain": "PASS scoped exact override incl Satori opentype subtree",
+    "build": "PASS via npm test full RSC rebuild",
+    "typecheck": "PASS",
+    "nodeWorkerdDoTests": {
+      "passed": 85,
+      "failed": 0,
+      "skipped": 0
+    },
+    "targetedTests": 10,
+    "rollbackOfflineCases": 12,
+    "ciClassifierGate": 28,
+    "newNodeIdentity": "PASS actual PID/digest/owner; old Node rejected",
+    "loopbackTlsAndCertificatePreflight": "PASS isolated temporary non-CA/SAN fixture; explicit client-only anchor, not system trust",
+    "safariChromeSystemTrustedHttps": "NOT TESTED - no bound TLS material in this worktree, no Keychain writes authorized",
+    "browserPagesHttpSynthetic": "PASS login/register/forgot pages, no real auth",
+    "realIntegration": "NOT TESTED",
+    "hostedWorkerDo": "NOT TESTED",
+    "githubActions": "NOT RUN"
+  },
+  "protected": {
+    "beforeRound3": {
+      "package.json": "71357dc4905b671d322eba80ea343f2399d5867a9114ff3bd88fd8d5d1f9dacb",
+      "package-lock.json": "cf79133f1074f54fa7b565bd95a1a94b8606534f9c07dbccfd95e5e4cb77c520",
+      "docs/SECURITY-DEPENDENCY-REVIEW.md": "5c988d473043b5f4780ab05b5166a0c0af5e8c040a0d08ffe5724371b543265a",
+      "docs/SECURITY-REMEDIATION-ROUND2.md": "0f14b0e0ce2ec4b4b82a14c43c4bf60aa8a5acc81bfe4ce17a7ef5b72fd8a11f"
+    },
+    "round2VersionsRetained": true,
+    "primaryFilesCompared": 3621,
+    "historicalFilesCompared": 172,
+    "mismatches": 0,
+    "oldNodeBinaryUnchanged": true,
+    "defaultAliasResolution": "24 -> v24.13.0",
+    "keychainWrites": 0,
+    "realAuthOrMail": 0,
+    "cloudWrites": 0,
+    "gitWrites": 0,
+    "port8795Released": true
+  },
+  "trackedDiffVsHead": [
+    ".github/scripts/pr-validation-gate.test.mjs",
+    ".github/workflows/pr-validation.yml",
+    "example-cv-users/README.md",
+    "example-cv-users/docs/TESTING.md",
+    "example-cv-users/package-lock.json",
+    "example-cv-users/package.json",
+    "example-cv-users/scripts/https/identity.mjs",
+    "example-cv-users/scripts/https/policy.json",
+    "example-cv-users/scripts/run.mjs",
+    "example-cv-users/tests/tls-tools.test.mjs"
+  ],
+  "installEvents": [
+    "initial generated node_modules ENOTEMPTY: preserved log",
+    "partial dependency missing module: not classified as Satori incompatibility",
+    "final clean npm ci/npm ls/full suite passed",
+    "ZIP64 test fixture initially lacked ZIP64 EOCD and local offset; corrected fixture, no dependency workaround"
+  ]
+}

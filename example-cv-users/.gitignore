@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.runtime/
+.wrangler/
+.vite/
+.vinext/
+.dev.vars*
+.env*
+*.pem
+*.tsbuildinfo
+.playwright-cli/
+output/
+.next/
+
+# Historical evidence and raw/local diagnostic material remain local, unchanged.
+/evidence/
+/LOCAL-RESULT.md
+# No local TLS material, exported trust state or session databases in delivery.
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.har
+__pycache__/

@@ -1,0 +1,216 @@
+{
+  "schema": 1,
+  "classification": "sanitized derivative, not original network records; account identifiers omitted",
+  "project": "example-cv-users / makwjnbubmrmopjhzror",
+  "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+  "artifactSha256": "b268ae32fc9b494136911ee7d1bf3a36e49c138a3dca219bd31bee0204568cc2",
+  "batches": [
+    {
+      "test": "registration-email-confirmation",
+      "batchId": "S2-USERS-REAL-REGISTER-20261105-134245",
+      "profile": "registration-only-v1",
+      "status": "PASS",
+      "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+      "historicalToolSha256": "47d3556757c736950c56989dc5d7bca925166699b1f0eca139531bd2729f1894",
+      "approvedDraftSha256": "18403b17914f480044642819827afae08d76a2bd8dd96c50bb2ea352dd4496c1",
+      "executionConfigFileSha256": "b6e7b7827ffb847d46a043846fc274df99c6f98da668a9ece727c0a6e9aa923b",
+      "executionConfigCanonicalSha256": "7c33a3c990264ea822bd8a5561b1b3cb2d7039da4942ee75576cec789fda6912",
+      "counts": {
+        "signup": 1,
+        "verifySignup": 1,
+        "recover": 0,
+        "verifyRecovery": 0,
+        "passwordLogin": 0,
+        "refresh": 0,
+        "passwordUpdate": 0,
+        "localLogout": 1,
+        "getUser": 2,
+        "jwks": 1
+      },
+      "totalUpstream": 6,
+      "originalEvidenceLocalOnly": {
+        "archiveId": "S2-USERS-REAL-REGISTER-20261105-134245",
+        "resultJsonSha256": "cc83d065e800973df02251995386c21e8d129ec4dbf64d087eaaf742996747c7",
+        "resultReportSha256": "216f545e702594bdefab91c8b98c045f91094ee48d3032af9c1049e21fa51f49",
+        "eventsSha256": "e3e443ee3836190d3ab9d3372d14700c24486eba40bac197949d9a3cc464ebba",
+        "runnerSha256": "1ba8bcd15e5b0d281ccb9bee3616194b719e300444be620adf766f844c3d2dff"
+      },
+      "identity": "email and bound UID matched; all account identifiers omitted",
+      "cleanup": "scoped logout and cookie clearing confirmed; service/ports released; explicit and effective trust restored",
+      "accountIdentifiersPublished": false,
+      "mailCount": 1
+    },
+    {
+      "test": "chrome-safari-login-refresh-logout",
+      "batchId": "S2-USERS-REAL-LOGIN-REFRESH-20261105-160955",
+      "profile": "login-refresh-only-v1",
+      "status": "PASS",
+      "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+      "historicalToolSha256": "35a177eeab4ee0a5c6863c9a3c502e03ae12f267b86cd67ff83fd64b98545c32",
+      "approvedDraftSha256": "3acec086280ffd88e688c888c999dd05045a34066a2bb7007c7e8c2c6d789103",
+      "executionConfigFileSha256": "5648cbbf5ceb53299d5c8f7320318e6a08ad801b0b0f8f51a7267c6f6bf4b6ed",
+      "executionConfigCanonicalSha256": "17931190b950f6627981ff3e3e8321be040b6fb770e3a280731e7a3bcc5257dc",
+      "counts": {
+        "passwordLogin": 2,
+        "jwks": 1,
+        "getUser": 14,
+        "refresh": 2,
+        "localLogout": 2
+      },
+      "totalUpstream": 21,
+      "originalEvidenceLocalOnly": {
+        "archiveId": "S2-USERS-REAL-LOGIN-REFRESH-20261105-160955",
+        "resultJsonSha256": "87f42cb85d707a5e7774cbfa7a1ea2ef154ae96c2333b462655c6af016286194",
+        "resultReportSha256": "740782595fdca1174b18dbd21623af745419de85aae4854cf3c650d4a3ff14ec",
+        "eventsSha256": "d0fa5e4008f8e2bd3e23b11b1fc028c3fbef84aa6db58afb493cbe6cee2125f2",
+        "runnerSha256": "3d5f3b63d3927f79c94337ebf621b44e5a7ef692841b340f93cb8cc895039d35"
+      },
+      "identity": "email and bound UID matched; all account identifiers omitted",
+      "cleanup": "scoped logout and cookie clearing confirmed; service/ports released; explicit and effective trust restored",
+      "accountIdentifiersPublished": false,
+      "mailCount": 0,
+      "browsers": {
+        "Chrome": {
+          "login": 200,
+          "refresh": 200,
+          "upstreamLogout": 204,
+          "privatePageAfterLogout": 303
+        },
+        "Safari": {
+          "login": 200,
+          "refresh": 200,
+          "upstreamLogout": 204,
+          "privatePageAfterLogout": 303
+        }
+      },
+      "credentialGenerationAdvancedAndReused": true,
+      "realNaturalExpiryRefresh": "NOT_TESTED"
+    },
+    {
+      "test": "ordinary-password-change",
+      "batchId": "S2-USERS-REAL-CHANGE-20261105-165505",
+      "profile": "change-password-only-v1",
+      "status": "PASS",
+      "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+      "historicalToolSha256": "758220aef34a169a13b2e861afac7c901b6d4a3ada195aecd916dc9e74bd74d2",
+      "approvedDraftSha256": "1d7de01f15ff77119d1de04a38779e93eaa013885c574a8bb786c422bf20adf9",
+      "executionConfigFileSha256": "e742ef3c82f410b4f15cb269ad4839c26d0c0508795ef820403589f1987c48ef",
+      "executionConfigCanonicalSha256": "5d421380d6f8338af351960314544fe4fe67002b152ab78c024b193d0a9b92ac",
+      "counts": {
+        "passwordLogin": 2,
+        "jwks": 1,
+        "getUser": 8,
+        "passwordUpdate": 1,
+        "localLogout": 2
+      },
+      "totalUpstream": 14,
+      "originalEvidenceLocalOnly": {
+        "archiveId": "S2-USERS-REAL-CHANGE-20261105-165505",
+        "resultJsonSha256": "186f6dee3d9e20696426048ce34f08289571b9b66ccbc34449d0ff4ae5cfc3e1",
+        "resultReportSha256": "0d590f30d3eed279470e23c7fe2234b1aa49fe79e83322f418ca4b35a41ad222",
+        "eventsSha256": "2e9ece316d8edd4acd18f7f1be8ae6f170b0e078bf8c0e3dad559fdfd9833b3f",
+        "runnerSha256": "49940226549216282a5515730eeddd3aa7ceedfa49a3f5cf28b3e63ef205e82a"
+      },
+      "identity": "email and bound UID matched; all account identifiers omitted",
+      "cleanup": "scoped logout and cookie clearing confirmed; service/ports released; explicit and effective trust restored",
+      "accountIdentifiersPublished": false,
+      "mailCount": 1,
+      "passwordPhases": "P0 -> P1",
+      "updateHTTP": 200,
+      "sameSessionAfterChange": true,
+      "independentNewPasswordLoginHTTP": 200,
+      "wholeIncognitoWindowClosure": "not separately confirmed; test page closure and Cookie clear confirmed"
+    },
+    {
+      "test": "recovery-password-reset",
+      "batchId": "S2-USERS-REAL-RECOVERY-20261105-171537",
+      "profile": "recovery-only-v1",
+      "status": "PASS",
+      "businessSha256": "676c5c7c083f63be14c71be12dd79ccab67ec504bd7d89887bcb05ed8e29a1df",
+      "historicalToolSha256": "758220aef34a169a13b2e861afac7c901b6d4a3ada195aecd916dc9e74bd74d2",
+      "approvedDraftSha256": "921a8b559684679fcd86f8be29461ee6c69671a07ff87ea7b0a4bb9389d1a145",
+      "executionConfigFileSha256": "8f0967467dcc5e478a461f40c84458e054ffa21c805a6cacf00540af1defd58c",
+      "executionConfigCanonicalSha256": "11ff6604812c17318036872f8340abc62068510bc08a3a7a6650957363761d5b",
+      "counts": {
+        "recover": 1,
+        "verifyRecovery": 1,
+        "jwks": 2,
+        "getUser": 5,
+        "passwordUpdate": 1,
+        "localLogout": 2,
+        "passwordLogin": 1
+      },
+      "totalUpstream": 13,
+      "originalEvidenceLocalOnly": {
+        "archiveId": "S2-USERS-REAL-RECOVERY-20261105-171537",
+        "resultJsonSha256": "9e7f3641cdb814a05fd3fae40538937706b9e63a62374936ff4fad616289c43f",
+        "resultReportSha256": "4c9ee49673bfb799d0cfcfa66f62966c799ef22c612c9df53dcaf7fff4996521",
+        "eventsSha256": "97f2a42532feba37eb52e7186ffbf8731b41d7319caaefca8f91488aab9629d5",
+        "runnerSha256": "da5cef88ff689f80d59cee7afd8ab41215b233785479d6b4396f06667e11332f"
+      },
+      "identity": "email and bound UID matched; all account identifiers omitted",
+      "cleanup": "scoped logout and cookie clearing confirmed; service/ports released; explicit and effective trust restored",
+      "accountIdentifiersPublished": false,
+      "mailCount": 2,
+      "passwordPhases": "Q0 -> Q1",
+      "updateHTTP": 200,
+      "verificationType": "recovery",
+      "persistentGrantFinal": "updated",
+      "attemptedTimestampObservation": "NOT_CAPTURED; before-PUT durable ordering supported by exact source and workerd transport assertions",
+      "independentNewPasswordLoginHTTP": 200,
+      "extraLocalRequest": {
+        "browser": "Safari",
+        "path": "/login",
+        "status": 403,
+        "classification": "expected Chrome-only batch ingress rejection",
+        "upstreamRequests": 0
+      },
+      "templateEditorTimeout": "original event retained; final independent readback separately confirmed",
+      "templateRestoredBodySha256": "e63acc29afefb1488e2ef53ce55a93a9c61078fdf09f90c38cc45e85b8ab4acf",
+      "templateRestoredSubjectSha256": "6693f071726efd3afcbcce5b56ffb481dbc92097ddcd4928427e648af112b977"
+    }
+  ],
+  "successfulBatchesOnlyTotals": {
+    "upstream": 54,
+    "mail": 4
+  },
+  "notTested": [
+    "real one-hour natural expiry automatic refresh",
+    "deployed Cloudflare Worker/DO and production domains",
+    "hosted cloud concurrent attack"
+  ],
+  "history": [
+    {
+      "id": "original-probe-password-update",
+      "status": "UNKNOWN",
+      "laterIndependentPasswordCheck": "matched expected current state; original receipt unchanged"
+    },
+    {
+      "id": "S2-USERS-REAL-20261105-113537",
+      "status": "UNKNOWN",
+      "note": "one registration submission and reservation; server execution not established; later local reproduction does not prove historical request was not sent"
+    },
+    {
+      "id": "probe-extra-stop-handshake",
+      "status": "UNKNOWN",
+      "note": "independent cleanup receipts retained, original backend_exited not rewritten"
+    },
+    {
+      "id": "initial-CA-revocation-timeout",
+      "status": "UNKNOWN",
+      "note": "later baseline restoration separately confirmed"
+    },
+    {
+      "id": "S2-USERS-REAL-CHANGE-20261105-164826",
+      "status": "PREFLIGHT_ABORTED",
+      "businessRequests": 0,
+      "normalStopReceipt": "NOT_OBTAINED",
+      "laterEnvironmentCleanup": "confirmed"
+    },
+    {
+      "id": "past-isolated-test-failures",
+      "status": "FAIL records retained locally",
+      "note": "later fixes and passing reruns are separate, not overwrites"
+    }
+  ]
+}

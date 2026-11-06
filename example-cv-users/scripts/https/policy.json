@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "nodeVersion": "24.22.1",
+  "nodeExecutableSha256": "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329",
+  "serverCertificateSha256": "03442B780D6297FB22F0CDC95E7FB78199A6E8EB966C633C2A4C8E96997933F8",
+  "issuerCertificateSha256": "6EC113F0B30B2AB75ABB2A209D200D2414E4DF01E2C6972CC93AD0E2EDB49C52",
+  "origin": "https://127.0.0.1:8787",
+  "purpose": "ssl-server",
+  "note": "Public identity pins only. No certificates, keys, accounts, trust state or approvals are included."
+}
