@@ -28,7 +28,7 @@ async function registerVerify(c){c.executor.arm('r-register');assert.equal((awai
 test('mini profile rejects widened limits, extra accounts, wrong browser and approval without any network',()=>{
  const b=makeBatch();assert.equal(validateBatch(b,manifest,{offline:true}),b);
  for(const patch of [{maxUpstreamRequests:LIMITS},{accounts:{...b.accounts,A:{email:'other@example.invalid',userIdSha256:null}}},{primaryBrowser:'Safari'},{maxRegistrationEmails:2},{profile:'other'}])assert.throws(()=>validateBatch({...b,...patch},manifest,{offline:true}));
- const live={...b,authorization:'APPROVED',executable:true,configurationLiveRead:'VERIFIED',registrationStatus:'USER_CONFIRMED_UNUSED',approvalReference:'offline-pure-validation',accounts:{R:{email:'approved-register@example.invalid',userIdSha256:null}}};assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/live_approval_missing/);assert.throws(()=>validateBatch({...live,executable:false},manifest));
+ const live={...b,authorization:'APPROVED',executable:true,configurationLiveRead:'VERIFIED',registrationStatus:'USER_CONFIRMED_UNUSED',approvalReference:'offline-pure-validation',accounts:{R:{email:'approved-register@example.invalid',userIdSha256:null}}};assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/approval_policy_denied/);assert.throws(()=>validateBatch({...live,executable:false},manifest));
 });
 test('Chrome registration only through real workerd, native fetch loopback and response cookies; extra concurrent actions blocked before upstream',async t=>{
  const c=await setup();try{c.executor.arm('r-register');
@@ -44,8 +44,8 @@ test('Chrome registration only through real workerd, native fetch loopback and r
 test('registration UNKNOWN spends its only slot; retries and other stages cannot reach upstream',async()=>{
  const c=await setup({lost:true});try{c.executor.arm('r-register');assert.equal((await c.request('/api/account/register',signup(c))).status,503);assert.equal(c.hits(),1);assert.equal(c.executor.snapshot().counts.signup,1);assert.equal((await c.request('/api/account/register',signup(c))).status,403);assert.throws(()=>c.executor.arm('r-verify'));assert.equal(c.hits(),1);assert.equal(await c.executor.cleanup(),true);}finally{await c.close();}
 });
-test('identity quota exhaustion preserves independent scoped logout; failed cleanup cannot exceed two attempts',async()=>{
- const c=await setup();try{await registerVerify(c);while(c.executor.snapshot().counts.getUser<4)assert.equal((await c.request('/api/account/session')).status,200);const hits=c.hits();assert.equal((await c.request('/api/account/session')).status,503);assert.equal(c.hits(),hits);c.loseLogout();assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(c.executor.snapshot().counts.localLogout,2);assert.equal(c.hits(),hits+2);}finally{await c.close();}
+test('identity quota exhaustion preserves independent scoped logout; UNKNOWN cleanup is attempted once without quota refund',async()=>{
+ const c=await setup();try{await registerVerify(c);while(c.executor.snapshot().counts.getUser<4)assert.equal((await c.request('/api/account/session')).status,200);const hits=c.hits();assert.equal((await c.request('/api/account/session')).status,503);assert.equal(c.hits(),hits);c.loseLogout();assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(c.hits(),hits+1);assert.equal(c.executor.snapshot().logoutOutcomes.UNKNOWN,1);}finally{await c.close();}
 });
 
 test('mini timeout and verification UNKNOWN keep spent slots; no second send or verification',async()=>{

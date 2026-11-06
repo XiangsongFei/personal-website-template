@@ -1,3 +1,6 @@
+import {MANUAL_POLICY} from './manual-dashboard-evidence.mjs';
+import {applicationPreflight,runtimeBindings} from './controlled-runtime.mjs';
+import {RUN_LEASE_MAX_MS,usesReceipt} from './approval-receipt.mjs';
 import {safeError} from './transport-diagnostics.mjs';
 import {assertCurrentNode} from './https/node-identity.mjs';
 // Explicitly approved, one-shot local runner. Merely importing/building never runs it.
@@ -11,27 +14,50 @@ import {spawnSync} from 'node:child_process';
 import {runtime} from '../tests/runtime.mjs';
 import {CERT,readPublicCertificate,loadServerIdentity} from './https/identity.mjs';
 import {authorizeLocalRequest,outgoingHeaders,browserFamily,cookieMetadata,cookieNames} from './local-https-boundary.mjs';
-import {ORIGIN,POST_PATHS,validateBatch,checkManifest,bindings,createExecutor} from './controlled-real.mjs';
+import {ORIGIN,POST_PATHS,validateBatch,checkManifest,bindings,createExecutor,authorizeRun,inspectRunApproval} from './controlled-real.mjs';
 
 assertCurrentNode();
-const [batchFile,manifestFile,checkOnly]=process.argv.slice(2);
-if(!batchFile||!manifestFile||checkOnly&&checkOnly!=='--check')throw Error('explicit_batch_and_manifest_required');
-const batch=JSON.parse(readFileSync(batchFile)),manifest=JSON.parse(readFileSync(manifestFile));
-checkManifest(resolve('.'),manifest);validateBatch(batch,manifest);
-if(checkOnly){console.log('Approved batch and exact build/tool bindings valid; no services or authentication started.');process.exit(0);}
+const args=process.argv.slice(2);
+const [batchFile,manifestFile]=args;
+const checkOnly=args.includes('--check');
+const receiptAt=args.indexOf('--approval-receipt'),liveAt=args.indexOf('--live-read');
+const manualAt=args.indexOf('--manual-evidence');
+if(manualAt>=0&&liveAt>=0)throw Error('ambiguous_evidence_source');
+const receiptFile=receiptAt>=0?args[receiptAt+1]:null,liveReadFile=manualAt>=0?args[manualAt+1]:liveAt>=0?args[liveAt+1]:null;
+if(!batchFile||!manifestFile)throw Error('explicit_batch_and_manifest_required');
+const candidateBytes=readFileSync(batchFile),batch=JSON.parse(candidateBytes),manifest=JSON.parse(readFileSync(manifestFile));
+const receiptMode=usesReceipt(batch);
+if((batch.approvalPolicy===MANUAL_POLICY)!==(manualAt>=0)&&!args.includes('--application-preflight'))throw Error('evidence_source_argument_denied');
+checkManifest(resolve('.'),manifest);
+validateBatch(batch,manifest,{prepared:receiptMode});
+// Actual Worker/API check uses synthetic credentials and an in-memory authority only.
+// It runs before trust evaluation/installation and before live authorization claim.
+const plannedExpiry=Math.min(Date.now()+RUN_LEASE_MAX_MS,batch.expiresAt,Date.parse(readPublicCertificate().validTo)-3600000);
+const preflight=await applicationPreflight({batch,expiresAt:plannedExpiry});
+console.log(JSON.stringify({kind:'application_preflight',...preflight}));
+if(args.includes('--application-preflight'))process.exit(0);
+// Check never consumes approval and cannot be mistaken for an execution authorization.
+if(checkOnly){
+  if(receiptMode){if(!receiptFile||!liveReadFile)throw Error('approval_receipt_required');
+    inspectRunApproval({batch,manifest,candidateBytes,receipt:JSON.parse(readFileSync(receiptFile)),liveReadBytes:readFileSync(liveReadFile),certificateValidTo:Date.parse(readPublicCertificate().validTo)});
+  }
+  console.log('Authorization checked only; no lease consumed, services or authentication started.');process.exit(0);
+}
+
 if(!process.stdin.isTTY)throw Error('interactive_stdin_required_no_heredoc');
 const key=process.env.USERS_PUBLISHABLE_KEY;
 if(!key?.startsWith('sb_publishable_'))throw Error('publishable_key_missing');
 const cert=readPublicCertificate();
 if(cert.fingerprint256.replaceAll(':','')!=='03442B780D6297FB22F0CDC95E7FB78199A6E8EB966C633C2A4C8E96997933F8'
   ||cert.ca||cert.subjectAltName!=='IP Address:127.0.0.1'||Date.parse(cert.validFrom)>Date.now()
-  ||Date.parse(cert.validTo)<batch.expiresAt+10*60000)throw Error('bound_leaf_certificate_unusable');
+  ||Date.parse(cert.validTo)<(receiptMode?Date.now()+3600000:batch.expiresAt+10*60000))throw Error('bound_leaf_certificate_unusable');
 // This reads trust only. Separate approval is required to change certificate trust.
 const trusted=spawnSync('/usr/bin/security',['verify-cert','-c',CERT,'-p','ssl','-s','127.0.0.1'],{encoding:'utf8',timeout:5000,maxBuffer:16384});
 if(trusted.error||trusted.signal||trusted.status!==0)throw Error('trusted_https_unavailable');
 const dir=resolve('.runtime',batch.id);mkdirSync(dir,{recursive:true,mode:0o700});
-const executor=createExecutor({batch,manifest,dir,key,send:request=>fetch(request,{redirect:'manual'})});
-const mf=runtime({port:0,unsafeInspectDurableObjects:false,resourcePersistencePath:resolve(dir,'state'),bindings:bindings(batch,key),
+const approvalContext=receiptMode?authorizeRun({batch,manifest,candidateBytes,receipt:JSON.parse(readFileSync(receiptFile??'')),liveReadBytes:readFileSync(liveReadFile??''),certificateValidTo:Date.parse(cert.validTo)}):undefined;
+const executor=createExecutor({batch,manifest,dir,key,approvalContext,send:request=>fetch(request,{redirect:'manual'})});
+const mf=runtime({port:0,unsafeInspectDurableObjects:false,resourcePersistencePath:resolve(dir,'state'),bindings:runtimeBindings(batch,key,approvalContext?.expiresAt??Math.min(batch.expiresAt,Date.now()+RUN_LEASE_MAX_MS)),
   serviceBindings:{USERS_CONTROLLED_EGRESS:request=>executor.outbound(request)},
   outboundService:()=>{throw Error('unmediated_network_denied');}});
 let stopping=false,stopPromise,sequence=0,expiryTimer;
@@ -75,8 +101,8 @@ try{await mf.ready;await new Promise((ok,no)=>{server.once('error',no);server.li
 catch{await mf.dispose();executor.close();input.close();throw Error('local_start_failed');}
 writeFileSync(resolve(dir,'runtime.json'),JSON.stringify({pid:process.pid,node:process.execPath,sourceSha256:manifest.sourceSha256,toolingSha256:manifest.toolingSha256,
   artifactSha256:manifest.artifactSha256,origin:ORIGIN,workerURL:String(await mf.ready),noRemoteBindings:true,certificateFingerprint:cert.fingerprint256},null,2)+'\n',{mode:0o600});
-log({kind:'ready',batch:batch.id,origin:ORIGIN});
-expiryTimer=setTimeout(()=>void stop(),Math.max(0,batch.expiresAt-Date.now()));
+log({kind:'ready',batch:batch.id,origin:ORIGIN,runId:approvalContext?.runId??null,expiresAt:approvalContext?.expiresAt??batch.expiresAt});
+expiryTimer=setTimeout(()=>void stop(),Math.max(0,(approvalContext?.expiresAt??batch.expiresAt)-Date.now()));
 console.log('Commands: status; arm <step-id>; unknown-check (only after confirmed scoped logout); stop. Never enter credentials here.');
 input.on('line',line=>{try{
   if(line==='stop')void stop();

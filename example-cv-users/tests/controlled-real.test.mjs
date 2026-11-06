@@ -49,10 +49,10 @@ test('default/production/isolated remain closed to local real target; controlled
   {USERS_APP_ORIGIN:'https://localhost:8787'},{USERS_APP_ORIGIN:'https://127.0.0.1:8788'},{USERS_APP_ORIGIN:'http://127.0.0.1:8787'},{USERS_PROJECT_REF:'tkehttvppaqkybqehjbn'},{USERS_SUPABASE_URL:'https://wrong.supabase.co'}]) assert.throws(()=>configuration({...env,...patch}));
  assert.equal(configuration({...env,USERS_MODE:'production',USERS_APP_ORIGIN:'https://admin.example-cv.com'}).project,PROJECT);
  assert.equal(configuration({...env,USERS_MODE:'isolated',USERS_PROJECT_REF:'isolated-users',USERS_SUPABASE_URL:'https://users.auth.example.invalid'}).project,'isolated-users');
- assert.throws(()=>validateBatch({...batch,authorization:'NOT_GRANTED'},manifest),/live_approval_missing/);
+ assert.throws(()=>validateBatch({...batch,authorization:'NOT_GRANTED'},manifest),/approval_policy_denied/);
  // Pure validation only: deliberately fictitious hashes, no executor or transport is created.
  const live={...batch,authorization:'APPROVED',executable:true,configurationLiveRead:'VERIFIED',registrationStatus:'USER_CONFIRMED_UNUSED',approvalReference:'offline-validation-only',accounts:{A:{email:'unapproved-recovery@example.invalid',userIdSha256:'656d2712217564e0900bb29b57942863750190364d7a76e6beaab20d42877f86'},R:{email:'approved-register@example.invalid',userIdSha256:null}}};
- assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/live_approval_missing/);
+ assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/approval_policy_denied/);
  for(const patch of [{executable:false},{authorization:'NOT_GRANTED'},{configurationLiveRead:'PENDING_LIVE_RECHECK'},{registrationStatus:'PENDING_CONFIRMATION'},{currentPasswordPolicy:'UNVERIFIED'}])assert.equal(approvalStateMatches({...live,...patch}),false);
 });
 test('actual real-target Worker branch runs signup/login/refresh/change/recovery through API and SQLite DO; no external network',async t=>{

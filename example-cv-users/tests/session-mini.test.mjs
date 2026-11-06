@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
+import {createConnection} from 'node:net';
 import {mkdtempSync,readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {runtime} from './runtime.mjs';
@@ -9,15 +10,16 @@ import {outgoingHeaders} from '../scripts/local-https-boundary.mjs';
 import {EXECUTOR,ORIGIN,AUTH,PROJECT,LIMITS,SESSION_PROFILE,SESSION_LIMITS,SESSION_BROWSER_LIMITS,SESSION_UID_SHA256,sha,bindings,createExecutor,validateBatch,approvalStateMatches} from '../scripts/controlled-real.mjs';
 const manifest={sourceSha256:'a'.repeat(64),artifactSha256:'b'.repeat(64),toolingSha256:'c'.repeat(64)};
 const makeBatch=id=>({executor:EXECUTOR,id:'S2-USERS-REAL-SESSION-OFFLINE',profile:SESSION_PROFILE,browserOrder:['Chrome','Safari'],maxEmails:0,maxUpstreamTotal:36,identityRequestsPerBrowser:14,perBrowserLimits:{...SESSION_BROWSER_LIMITS},project:PROJECT,origin:ORIGIN,executionBuild:manifest.sourceSha256,artifactSha256:manifest.artifactSha256,toolingSha256:manifest.toolingSha256,maxUpstreamRequests:{...SESSION_LIMITS},expiresAt:Date.now()+20*60000,authorization:'OFFLINE_TRANSPORT_TEST',currentPasswordPolicy:'ON',accounts:{R:{email:'user-a@example.invalid',userIdSha256:sha(id)}}});
-async function setup({fault,phase='refresh',algorithm='ES256'}={}){
- let syntheticNow=Date.now();const auth=await realAuthority({url:AUTH,algorithm,now:()=>syntheticNow}),batch=makeBatch(auth.ids.A),dir=mkdtempSync(resolve('.runtime/session-mini-'));let hits=0,escaped=0;
- const server=createServer(async(q,r)=>{try{hits++;const chunks=[];for await(const c of q)chunks.push(c);const targeted=q.url.includes('grant_type='+ (phase==='login'?'password':'refresh_token'));
+async function setup({fault,phase='refresh',algorithm='ES256',leaseMs}={}){
+ let syntheticNow=Date.now();const auth=await realAuthority({url:AUTH,algorithm,now:()=>syntheticNow}),batch=makeBatch(auth.ids.A),dir=mkdtempSync(resolve('.runtime/session-mini-'));if(leaseMs)batch.expiresAt=Date.now()+leaseMs;let hits=0,escaped=0,entered,release;const logoutEntered=new Promise(ok=>{entered=ok;}),logoutRelease=new Promise(ok=>{release=ok;});
+ const server=createServer(async(q,r)=>{try{hits++;const chunks=[];for await(const c of q)chunks.push(c);const targeted=phase==='logout'?q.url==='/auth/v1/logout?scope=local':q.url.includes('grant_type='+ (phase==='login'?'password':'refresh_token'));
  if(targeted&&fault==='timeout')return;
  if(targeted&&fault==='limited'){r.writeHead(429,{'content-type':'application/json'});r.end(JSON.stringify({code:'over_request_rate_limit'}));return;}
  const out=await auth.fetch(new Request(AUTH+q.url,{method:q.method,headers:q.headers,...(!['GET','HEAD'].includes(q.method)?{body:Buffer.concat(chunks)}:{})}));
- if(targeted&&fault==='lost'){q.socket.destroy();return;}
+ if(targeted&&(fault?.startsWith('held')||fault==='late')){entered();await logoutRelease;}
+ if(targeted&&(fault==='lost'||fault==='held-lost')){q.socket.destroy();return;}
  r.writeHead(out.status,{'content-type':'application/json'});r.end(await out.text());}catch{q.socket.destroy();}});await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const port=server.address().port;
- const executor=createExecutor({batch,manifest,dir,key:TEST_KEY,offline:true,...(fault==='timeout'?{timeoutMs:50}:{}),send:async r=>{assert.equal(new URL(r.url).origin,AUTH);assert.equal(r.headers.get('content-length'),null);assert.equal(r.headers.get('host'),null);return fetch(new Request('http://127.0.0.1:'+port+new URL(r.url).pathname+new URL(r.url).search,{method:r.method,headers:r.headers,...(!['GET','HEAD'].includes(r.method)?{body:await r.arrayBuffer()}:{}),signal:r.signal}),{redirect:'manual'});}});
+ const executor=createExecutor({batch,manifest,dir,key:TEST_KEY,offline:true,...(['timeout','late'].includes(fault)?{timeoutMs:fault==='late'?150:50}:{}),send:async r=>{assert.equal(new URL(r.url).origin,AUTH);assert.equal(r.headers.get('content-length'),null);assert.equal(r.headers.get('host'),null);if(phase==='logout'&&fault==='econnreset'&&new URL(r.url).pathname==='/auth/v1/logout'){await auth.fetch(r);throw new TypeError('Synthetic reset',{cause:Object.assign(Error('Synthetic reset'),{code:'ECONNRESET'})});}return fetch(new Request('http://127.0.0.1:'+port+new URL(r.url).pathname+new URL(r.url).search,{method:r.method,headers:r.headers,...(!['GET','HEAD'].includes(r.method)?{body:await r.arrayBuffer()}:{}),signal:r.signal}),{redirect:'manual'});}});
  const mf=runtime({bindings:bindings(batch,TEST_KEY),resourcePersistencePath:resolve(dir,'state'),serviceBindings:{USERS_CONTROLLED_EGRESS:r=>executor.outbound(r)},outboundService:()=>{escaped++;throw Error('forbidden');}}),jars={Chrome:new Map(),Safari:new Map()};
  async function request(path,data,browser='Chrome',override){const jar=jars[browser]??new Map();
  const req=new Request(ORIGIN+path,{method:data===undefined?'GET':'POST',headers:{Origin:ORIGIN,'Content-Type':'application/json',Cookie:override??[...jar].map(([k,v])=>k+'='+v).join('; ')},...(data===undefined?{}:{body:JSON.stringify(data)})});
@@ -25,14 +27,14 @@ async function setup({fault,phase='refresh',algorithm='ES256'}={}){
  const h=outgoingHeaders(res);for(const line of h['set-cookie']??[]){const p=line.split(';')[0],i=p.indexOf('=');if(/Max-Age=0(?:;|$)/.test(line))jar.delete(p.slice(0,i));else jar.set(p.slice(0,i),p.slice(i+1));}
  return {status:res.status,location:h.location,body:await res.text(),cookieWritten:!!h['set-cookie']?.length};
  }
- return {auth,batch,dir,executor,request,jars,hits:()=>hits,advance:()=>{syntheticNow+=2000;},close:async()=>{await executor.cleanup();await mf.dispose();executor.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));assert.equal(server.listening,false);assert.equal(escaped,0);}};
+ return {auth,batch,dir,mf,executor,request,jars,logoutEntered,releaseLogout:release,hits:()=>hits,advance:()=>{syntheticNow+=2000;},close:async()=>{await executor.cleanup();await mf.dispose();executor.close();server.closeAllConnections();await new Promise(ok=>server.close(ok));assert.equal(server.listening,false);assert.equal(escaped,0);}};
 }
 const login=c=>({email:c.batch.accounts.R.email,password:TEST_PASSWORD});
 async function signIn(c,browser='Chrome'){c.executor.arm(browser.toLowerCase()+'-login');assert.equal((await c.request('/api/account/login',login(c),browser)).status,200);}
 test('exact session profile binds UID, browser caps, zero mail and live project; draft and scope expansion denied without network',()=>{
  const b=makeBatch('synthetic-id');assert.equal(validateBatch(b,manifest,{offline:true}),b);
  for(const patch of [{maxUpstreamRequests:LIMITS},{maxEmails:1},{maxUpstreamTotal:44},{identityRequestsPerBrowser:15},{browserOrder:['Safari','Chrome']},{perBrowserLimits:{...SESSION_BROWSER_LIMITS,refresh:2}},{accounts:{R:{email:b.accounts.R.email,userIdSha256:null}}}])assert.throws(()=>validateBatch({...b,...patch},manifest,{offline:true}));
- const live={...b,authorization:'APPROVED',executable:true,configurationLiveRead:'VERIFIED',accountStatus:'EXISTING_CONFIRMED_UID_BOUND',approvalReference:'pure-offline-config-validation',accounts:{R:{email:'approved-register@example.invalid',userIdSha256:SESSION_UID_SHA256}}};assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/live_approval_missing/);assert.throws(()=>validateBatch({...live,executable:false},manifest));assert.throws(()=>validateBatch({...live,accounts:{R:{...live.accounts.R,userIdSha256:'0'.repeat(64)}}},manifest));
+ const live={...b,authorization:'APPROVED',executable:true,configurationLiveRead:'VERIFIED',accountStatus:'EXISTING_CONFIRMED_UID_BOUND',approvalReference:'pure-offline-config-validation',accounts:{R:{email:'approved-register@example.invalid',userIdSha256:SESSION_UID_SHA256}}};assert.equal(approvalStateMatches(live),true);assert.throws(()=>validateBatch(live,manifest),/approval_policy_denied/);assert.throws(()=>validateBatch({...live,executable:false},manifest));assert.throws(()=>validateBatch({...live,accounts:{R:{...live.accounts.R,userIdSha256:'0'.repeat(64)}}},manifest));
 });
 test('two independent browser jars: login, protected navigation, real application proactive refresh, new cookie, identity and scoped logout',async t=>{
  for(const algorithm of ['ES256','HS256']){const c=await setup({algorithm});try{
@@ -68,6 +70,51 @@ test('copied browser cookie and stale pre-refresh cookie are denied before ident
 });
 
 test('combined identity budget cannot consume independent per-browser cleanup; no third logout reaches upstream',async()=>{
- const c=await setup();try{await signIn(c);while(c.executor.snapshot().browserCounts.Chrome.getUser+c.executor.snapshot().browserCounts.Chrome.jwks<14)assert.equal((await c.request('/api/account/session')).status,200);const hits=c.hits();assert.equal((await c.request('/api/account/session')).status,503);assert.equal(c.hits(),hits);c.auth.controls.logout='unknown';assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(c.executor.snapshot().browserCounts.Chrome.localLogout,2);assert.equal(c.hits(),hits+2);
+ const c=await setup();try{await signIn(c);while(c.executor.snapshot().browserCounts.Chrome.getUser+c.executor.snapshot().browserCounts.Chrome.jwks<14)assert.equal((await c.request('/api/account/session')).status,200);const hits=c.hits();assert.equal((await c.request('/api/account/session')).status,503);assert.equal(c.hits(),hits);c.auth.controls.logout='unknown';assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(await c.executor.cleanup(),false);assert.equal(c.executor.snapshot().browserCounts.Chrome.localLogout,1);assert.equal(c.hits(),hits+1);assert.equal(c.executor.snapshot().logoutOutcomes.UNKNOWN,1);
  }finally{await c.close();}
+});
+
+test('expired run rejects new business without spending refresh allowance; scoped executor cleanup remains independent',async()=>{
+ const c=await setup({leaseMs:4000});try{await signIn(c);await new Promise(ok=>setTimeout(ok,Math.max(0,c.batch.expiresAt-Date.now()+30)));const before=c.hits();assert.throws(()=>c.executor.arm('chrome-refresh'));assert.equal((await c.request('/api/account/refresh',{})).status,403);assert.equal(c.hits(),before);assert.equal(c.executor.snapshot().counts.refresh,0);assert.equal(await c.executor.cleanup(),true);assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(c.executor.snapshot().openSessions,0);assert.throws(()=>c.executor.arm('safari-login'));}finally{await c.close();}
+});
+
+for(const fault of ['lost','timeout','econnreset'])test('logout '+fault+': normal request remains UNKNOWN across repeated/concurrent cleanup and local cookie clearing',async()=>{
+ const c=await setup({phase:'logout',fault});try{
+  await signIn(c);c.executor.arm('chrome-refresh');assert.equal((await c.request('/api/account/refresh',{})).status,200);c.executor.arm('chrome-logout');
+  assert.equal((await c.request('/api/account/logout',{})).status,503);const before=c.hits();assert.equal(c.executor.snapshot().counts.localLogout,1);
+  assert.deepEqual(await Promise.all([c.executor.cleanup(),c.executor.cleanup(),c.executor.cleanup()]),[false,false,false]);
+  c.jars.Chrome.clear();assert.equal(await c.executor.cleanup(),false);assert.equal(c.hits(),before);assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(c.executor.snapshot().openSessions,1);assert.equal(c.executor.snapshot().logoutOutcomes.UNKNOWN,1);
+  const events=readFileSync(resolve(c.dir,'events.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(events.filter(e=>e.kind==='result'&&e.category==='localLogout').length,1);assert.ok(events.some(e=>e.kind==='result'&&e.category==='localLogout'&&e.outcome==='UNKNOWN'));assert.equal(events.filter(e=>e.kind==='session_closed').length,0);if(fault==='econnreset')assert.ok(events.some(e=>e.kind==='transport_failure'&&e.causeCode==='ECONNRESET'));
+ }finally{await c.close();}
+});
+test('concurrent cleanup of a known session sends one local logout; 204 and repeated cleanup remain confirmed',async()=>{
+ const c=await setup();try{await signIn(c);const before=c.hits();assert.deepEqual(await Promise.all([c.executor.cleanup(),c.executor.cleanup(),c.executor.cleanup()]),[true,true,true]);assert.equal(await c.executor.cleanup(),true);assert.equal(c.hits(),before+1);assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(c.executor.snapshot().openSessions,0);assert.equal(c.executor.snapshot().logoutOutcomes.HTTP,1);
+ }finally{await c.close();}
+});
+
+for(const fault of ['held','held-lost'])test('actual controlled stop body races in-flight logout and concurrent cleanup: '+fault,async()=>{
+ const c=await setup({phase:'logout',fault}),server=createServer((q,r)=>r.end('synthetic health only')),logs=[],previousExit=process.exitCode;
+ await new Promise(ok=>server.listen(0,'127.0.0.1',ok));const port=server.address().port;
+ const source=readFileSync(new URL('../scripts/controlled-https.mjs',import.meta.url),'utf8');const body=source.slice(source.indexOf('function stop(){'),source.indexOf('\ntry{await mf.ready;'));
+ assert.ok(body.includes('await executor.cleanup()'));const active=new Set();
+ const stop=new Function('server','mf','input','active','executor','log','let stopping=false,stopPromise,expiryTimer;'+body+';return stop;')(server,c.mf,{close(){}},active,c.executor,x=>logs.push(x));
+ try{
+  await signIn(c);c.executor.arm('chrome-refresh');assert.equal((await c.request('/api/account/refresh',{})).status,200);c.executor.arm('chrome-logout');
+  const request=c.request('/api/account/logout',{});active.add(request);await c.logoutEntered;
+  const cleaning=c.executor.cleanup(),stopped=stop();assert.equal(stop(),stopped);c.releaseLogout();
+  assert.equal((await request).status,fault==='held'?200:503);assert.equal(await cleaning,fault==='held');await stopped;
+  assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(logs.filter(x=>x.kind==='stop_accepted').length,1);assert.equal(logs.find(x=>x.kind==='stop_complete').cleanupConfirmed,fault==='held');
+  assert.equal(await c.executor.cleanup(),fault==='held');assert.equal(c.executor.snapshot().logoutOutcomes[fault==='held'?'HTTP':'UNKNOWN'],1);assert.equal(c.executor.snapshot().openSessions,fault==='held'?0:1);
+  await new Promise((ok,no)=>{const socket=createConnection({host:'127.0.0.1',port});socket.on('connect',()=>{socket.destroy();no(Error('health_port_still_open'));});socket.on('error',e=>e.code==='ECONNREFUSED'?ok():no(e));});
+  const raw=readFileSync(resolve(c.dir,'events.jsonl'),'utf8');assert.equal(raw.includes(TEST_PASSWORD),false);assert.equal(raw.includes('Bearer '),false);assert.equal(raw.includes('refresh_token'),false);
+ }finally{c.releaseLogout();server.closeAllConnections();await new Promise(ok=>server.close(ok));await c.close();process.exitCode=previousExit;}
+});
+
+test('late 204 after logout timeout cannot replace UNKNOWN or trigger a cleanup retry',async()=>{
+ const c=await setup({phase:'logout',fault:'late'});try{
+  await signIn(c);c.executor.arm('chrome-refresh');assert.equal((await c.request('/api/account/refresh',{})).status,200);c.executor.arm('chrome-logout');
+  assert.equal((await c.request('/api/account/logout',{})).status,503);await c.logoutEntered;assert.equal(await c.executor.cleanup(),false);const before=c.hits();c.releaseLogout();
+  // The late fetch may resolve or abort. Neither outcome may replace the completed UNKNOWN.
+  await new Promise(ok=>setTimeout(ok,50));assert.equal(await c.executor.cleanup(),false);assert.equal(c.hits(),before);assert.equal(c.executor.snapshot().counts.localLogout,1);assert.equal(c.executor.snapshot().logoutOutcomes.UNKNOWN,1);assert.equal(c.executor.snapshot().openSessions,1);
+ }finally{c.releaseLogout();await c.close();}
 });

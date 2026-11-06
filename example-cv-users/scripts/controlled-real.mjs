@@ -1,3 +1,5 @@
+import {MANUAL_POLICY,MANUAL_SOURCE,isManualBatchId} from './manual-dashboard-evidence.mjs';
+import {APPROVAL_POLICY,claimApproval,checkRunContext,inspectApproval,usesReceipt} from './approval-receipt.mjs';
 import {safeError,transportHeaders} from './transport-diagnostics.mjs';
 // Local acceptance transport, not application authentication or recovery storage.
 // Adapts the probe ledger's reserve-before-dispatch / exclusive-file / fsync pattern.
@@ -54,9 +56,11 @@ const denied = () => Response.json({ok:false},{status:403,headers:{'Cache-Contro
 const email = s => typeof s === 'string' ? s.trim().toLowerCase() : '';
 const jwt = token => {try{return JSON.parse(Buffer.from(token.split('.')[1],'base64url'));}catch{return null;}};
 const countTotal = counts => Object.values(counts).reduce((a,b)=>a+b,0);
+// Historical-format inspection only; never grants a live executor capability.
 export function approvalStateMatches(batch, policy=executionPolicy(batch)) { return !(batch.authorization!=='APPROVED' || batch.executable!==true || batch.configurationLiveRead!=='VERIFIED' || (policy.mutation?batch.accountStatus!=='EXISTING_CONFIRMED_UID_BOUND':policy.sessionOnly?batch.accountStatus!=='EXISTING_CONFIRMED_UID_BOUND':batch.registrationStatus!=='USER_CONFIRMED_UNUSED')
     || batch.currentPasswordPolicy!=='ON' || !batch.approvalReference); }
-export function validateBatch(batch, manifest, {offline=false, now=Date.now()}={}) {
+export function validateBatch(batch, manifest, {offline=false, now=Date.now(),approvalContext,prepared=false}={}) {
+  const receiptMode=offline?false:usesReceipt(batch);
   const policy=executionPolicy(batch);
   if(policy.mutation&&(Object.keys(batch.accounts??{}).join(',')!=='A'||!batch.accounts.A.userIdSha256||batch.primaryBrowser!=='Chrome'||batch.maxEmails!==policy.mutation.emails||batch.maxUpstreamTotal!==policy.mutation.total||batch.identityRequests!==policy.mutation.identityCap))throw Error('mutation_scope_denied');
   if(policy.sessionOnly && (Object.keys(batch.accounts??{}).join(',')!=='R'||!batch.accounts.R.userIdSha256||JSON.stringify(batch.browserOrder)!==JSON.stringify(['Chrome','Safari'])||batch.maxEmails!==0||batch.maxUpstreamTotal!==36||batch.identityRequestsPerBrowser!==14||JSON.stringify(batch.perBrowserLimits)!==JSON.stringify(SESSION_BROWSER_LIMITS)))throw Error('session_scope_denied');
@@ -66,16 +70,18 @@ export function validateBatch(batch, manifest, {offline=false, now=Date.now()}={
     || batch.executionBuild!==manifest.sourceSha256 || !/^[a-f0-9]{64}$/.test(batch.executionBuild??'')
     || batch.artifactSha256!==manifest.artifactSha256 || batch.toolingSha256!==manifest.toolingSha256
     || JSON.stringify(batch.maxUpstreamRequests)!==JSON.stringify(policy.limits)
-    || !Number.isSafeInteger(batch.expiresAt) || batch.expiresAt<=now || batch.expiresAt>now+40*60000)
+    || !Number.isSafeInteger(batch.expiresAt) || batch.expiresAt<=now || batch.expiresAt>now+(receiptMode?12*60:40)*60000)
     throw Error('batch_binding_denied');
   if(offline) {
     if(batch.authorization!=='OFFLINE_TRANSPORT_TEST' || !Object.values(batch.accounts).every(a=>a.email.endsWith('@example.invalid')))throw Error('offline_batch_denied');
-  } else if(!approvalStateMatches(batch,policy)
+  } else if(!(prepared || checkRunContext(approvalContext,batch,now))
     || policy.mutation&&(sha(batch.accounts.A.email??'')!==policy.mutation.emailSha256||batch.accounts.A.userIdSha256!==policy.mutation.uid)
     || policy.sessionOnly&&batch.accounts.R.userIdSha256!==SESSION_UID_SHA256
     || !policy.mutation&&sha(batch.accounts?.R?.email??'')!=='f61f9bed658d5c061d707d925740000ba4410ca3ab2804929f37b2c24b64db3f'
     || !policy.mutation&&!policy.mini&&!policy.sessionOnly&&(sha(batch.accounts?.A?.email??'')!=='0f1d69486c4375c6c60f0dbebc32c4e2173f7b48a425ccef63784e20172c28af'||batch.accounts.A.userIdSha256!=='656d2712217564e0900bb29b57942863750190364d7a76e6beaab20d42877f86')) throw Error('live_approval_missing');
   for(const a of Object.values(batch.accounts)) if(!a.email || a.userIdSha256!==null&&!/^[a-f0-9]{64}$/.test(a.userIdSha256))throw Error('account_binding_denied');
+  if(receiptMode && (batch.authorization!=='PREPARED_NOT_APPROVED'||batch.executable!==false||batch.configurationLiveRead!==(batch.approvalPolicy===MANUAL_POLICY?MANUAL_SOURCE:'LIVE_READ')||(!policy.sessionOnly&&batch.profile!==RECOVERY_PROFILE)))throw Error('receipt_candidate_denied');
+  if(batch.approvalPolicy===MANUAL_POLICY&&(!isManualBatchId(batch.id)||batch.profile!==RECOVERY_PROFILE))throw Error('manual_batch_scope_denied');
   return batch;
 }
 export function bindings(batch, key) {
@@ -92,8 +98,24 @@ export function checkManifest(root, manifest) {
   for(const [files,hash] of [[manifest.source,manifest.sourceSha256],[manifest.artifacts,manifest.artifactSha256],[manifest.tooling,manifest.toolingSha256]])
     if(sha(JSON.stringify(files))!==hash)throw Error('manifest_hash_invalid');
 }
-export function createExecutor({batch,manifest,dir,key,send,offline=false,timeoutMs=19500}) {
-  validateBatch(batch,manifest,{offline});
+// The HTTPS caller claims once and passes an opaque process-local run capability.
+// Direct executor callers use the same coordinator; neither entry can replay a receipt.
+export function inspectRunApproval({batch,manifest,...input}) {
+  checkManifest(resolve('.'),manifest);
+  validateBatch(batch,manifest,{prepared:true});
+  return inspectApproval({batch,...input});
+}
+export function authorizeRun(input) {
+  inspectRunApproval(input);
+  return claimApproval(input,resolve('.runtime/approval-leases'));
+}
+export function createExecutor({batch,manifest,dir,key,send,offline=false,timeoutMs=19500,approvalContext,approvalInput}) {
+  if(!offline&&usesReceipt(batch)){
+    approvalContext??=authorizeRun({batch,manifest,...approvalInput});
+    checkRunContext(approvalContext,batch,Date.now(),true);
+  }
+  validateBatch(batch,manifest,{offline,approvalContext});
+  const executionExpiresAt=approvalContext?.expiresAt??batch.expiresAt;
   const policy=executionPolicy(batch), limits=policy.limits, steps=policy.steps;
   if(typeof send!=='function')throw Error('explicit_transport_required');
   // Never resume a spent batch. A crash leaves its exclusive lease and reservations intact.
@@ -101,11 +123,11 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
   const lease=openSync(resolve(dir,'batch.lease'),'wx',0o600); writeSync(lease,JSON.stringify({pid:process.pid,batch:batch.id}));fsyncSync(lease);closeSync(lease);
   const fd=openSync(resolve(dir,'events.jsonl'),'wx',0o600);
   const directory=openSync(dir,'r');try{fsyncSync(directory);}finally{closeSync(directory);}
-  let closed=false,halted=false,busy=false,armed=null,next=steps[0].id,unknownStep=null,unknownCheckUsed=false,active=null,queue=Promise.resolve(),sequence=0,logoutPosts=0;
+  let closed=false,halted=false,busy=false,cleaning=false,cleanupPromise=null,unconfirmedAtClose=0,armed=null,next=steps[0].id,unknownStep=null,unknownCheckUsed=false,active=null,queue=Promise.resolve(),sequence=0,logoutPosts=0;
   const counts=Object.fromEntries(Object.keys(limits).map(k=>[k,0])), sessions=new Map(), accesses=new Map(), refreshes=new Map();
-  const accounts=structuredClone(batch.accounts), logoutAttempts=new Map(), pending=new Set(),stepsUsed=new Set(),accountCounts={A:{},R:{}}, browserCounts=Object.fromEntries(['Chrome','Safari'].map(b=>[b,Object.fromEntries(Object.keys(limits).map(k=>[k,0]))]));
+  const accounts=structuredClone(batch.accounts), logoutRequests=new Map(), pending=new Set(),stepsUsed=new Set(),accountCounts={A:{},R:{}}, browserCounts=Object.fromEntries(['Chrome','Safari'].map(b=>[b,Object.fromEntries(Object.keys(limits).map(k=>[k,0]))]));
   function emit(kind,data={}) {if(closed)throw Error('executor_closed');const bytes=Buffer.from(JSON.stringify({seq:++sequence,at:new Date().toISOString(),kind,...data})+'\n');let offset=0;while(offset<bytes.length){const written=writeSync(fd,bytes,offset,bytes.length-offset);if(written<=0)throw Error('ledger_write_failed');offset+=written;}fsyncSync(fd);}
-  emit('begin',{batch:batch.id,mode:offline?'intercepted-offline':'approved-live',build:batch.executionBuild,approvalSha256:sha(JSON.stringify(batch))});
+  emit('begin',{runId:approvalContext?.runId??null,executionExpiresAt,batch:batch.id,mode:offline?'intercepted-offline':'approved-live',build:batch.executionBuild,approvalSha256:sha(JSON.stringify(batch))});
   function reserve(category,step,account,browser) {
     if(policy.mutation&&(countTotal(counts)>=policy.mutation.total||['getUser','jwks'].includes(category)&&counts.getUser+counts.jwks>=policy.mutation.identityCap))throw Error('combined_budget_exhausted');
     if(policy.sessionOnly&&(countTotal(counts)>=36||['getUser','jwks'].includes(category)&&(browserCounts[browser]?.getUser??0)+(browserCounts[browser]?.jwks??0)>=14))throw Error('combined_budget_exhausted');
@@ -117,7 +139,7 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
   }
   const hasSession = () => [...sessions.values()].some(s=>!s.closed);
   function arm(id) {
-    if(closed||busy||pending.size||armed||halted||stepsUsed.has(id)||Date.now()>=batch.expiresAt||id!==next)throw Error('stage_denied');
+    if(closed||busy||pending.size||armed||halted||stepsUsed.has(id)||Date.now()>=executionExpiresAt||id!==next)throw Error('stage_denied');
     const step=steps.find(s=>s.id===id);if(!step)throw Error('stage_denied');
     if(['login','register','recovery-otp-send'].includes(step.action)&&hasSession())throw Error('prior_session_not_closed');
     armed=step;emit('armed',{step:id});
@@ -166,7 +188,7 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
       category=route==='POST /auth/v1/verify'?body.type==='signup'?'verifySignup':body.type==='recovery'?'verifyRecovery':null:routes[route];
       if(!category)throw Error('operation_denied');
       const cleanup=category==='localLogout';
-      if(!cleanup&&(halted||Date.now()>=batch.expiresAt))throw Error('business_stopped');
+      if(!cleanup&&(halted||Date.now()>=executionExpiresAt))throw Error('business_stopped');
       if(['signup','verifySignup','recover','verifyRecovery','passwordLogin'].includes(category)) {
         if(!step||category!==step.wire||context.primary||email(body.email)!==accounts[step.account].email)throw Error('primary_scope_denied');
       } else if(category==='jwks') {
@@ -189,14 +211,15 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
           if(!refreshes.delete(sha(body.refresh_token)))throw Error('spent_refresh');
           context.refreshed=true;
         }
-        if(cleanup) {
-          const attempts=logoutAttempts.get(record.sessionId)??0;
-          if(attempts>=2)throw Error('cleanup_limit');logoutAttempts.set(record.sessionId,attempts+1);
-        }
+        if(cleanup&&logoutRequests.has(record.sessionId))throw Error('logout_already_attempted');
       }
       const primary=step?.wire===category&&category!=='getUser'&&category!=='jwks';
       if(primary&&context.primary)throw Error('duplicate_primary');
       id=reserve(category,step?.id,record?.account??step?.account,record?.browser??context.browser);mark('reserved');
+      if(category==='localLogout'){
+        logoutRequests.set(record.sessionId,{id,outcome:'IN_FLIGHT',status:null});
+        emit('logout_state',{id,account:record.account,recovery:record.recovery,outcome:'IN_FLIGHT',status:null});
+      }
       if(primary)context.primary={id,category,outcome:'UNKNOWN',status:null};
       const controller=new AbortController();let timer;
       const {response,text}=await Promise.race([
@@ -225,10 +248,14 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
           if(email(u.email)!==accounts[record.account].email||sha((u.id??'').trim().toLowerCase())!==accounts[record.account].userIdSha256)throw Error('identity_mismatch');
           emit('identity_checked',{account:record.account,category,matched:true,...(policy.sessionOnly?{browser:record.browser,generation:record.generation,stage:step?.id??'protected_read'}:{})});
         }
-        if(cleanup){record.closed=true;emit('session_closed',{account:record.account,recovery:record.recovery});}
       }
       // A late transport receipt cannot turn an already-completed UNKNOWN app request into success.
       if(context.finished){emit('late_http_receipt',{id,category,status:response.status,appOutcomeUnchanged:true});throw Error('late_receipt_after_dispatch');}
+      if(category==='localLogout'){
+        Object.assign(logoutRequests.get(record.sessionId),{outcome:'HTTP',status:response.status});
+        emit('logout_state',{id,account:record.account,recovery:record.recovery,outcome:'HTTP',status:response.status});
+        if(response.ok){record.closed=true;emit('session_closed',{account:record.account,recovery:record.recovery});}
+      }
       const errorCode=!response.ok&&data.code==='invalid_credentials'?'invalid_credentials':null;
       emit('result',{id,category,outcome:'HTTP',status:response.status,errorCode});
       if(primary)Object.assign(context.primary,{outcome:'HTTP',status:response.status,errorCode});
@@ -236,6 +263,10 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
       if(step?.id==='a-old'&&response.ok)halted=true;
       return new Response(response.status===204?null:text,{status:response.status,headers:{'Content-Type':'application/json','X-Supabase-Api-Version':'2024-01-01'}});
     } catch(error) {
+      if(category==='localLogout'&&id!==undefined){
+        Object.assign(logoutRequests.get(record.sessionId),{outcome:'UNKNOWN',status:null});
+        emit('logout_state',{id,account:record.account,recovery:record.recovery,outcome:'UNKNOWN',status:null});
+      }
       emit('transport_failure',{batch:batch.id,id:id??null,category:category??null,stage,elapsedMs:Date.now()-started,networkEntered,httpStatus,cancelReason:timeoutFired?'executor_deadline':null,...safeError(error)});
       halted=true;
       if(id!==undefined) {halted=true;emit('result',{id,category,outcome:'UNKNOWN',status:null});}
@@ -246,7 +277,7 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
   async function dispatch(request,worker,browser='local-check') {
     const url=new URL(request.url);let step,cleanup=false;
     try {
-      if(closed||url.origin!==ORIGIN||!['GET','HEAD','POST'].includes(request.method))throw Error('request_denied');
+      if(closed||cleaning||url.origin!==ORIGIN||!['GET','HEAD','POST'].includes(request.method))throw Error('request_denied');
       if(policy.mutation){const m=policy.mutation;if(browser!=='Chrome'||(request.method==='POST'?!m.posts.some(a=>url.pathname==='/api/account/'+a):!m.gets.includes(url.pathname)&&!url.pathname.startsWith('/_next/static/')))throw Error('mutation_path_denied');}
       if(policy.sessionOnly) {
         const posts=['/api/account/login','/api/account/refresh','/api/account/logout'];
@@ -263,13 +294,13 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
         cleanup=['/api/account/logout','/api/account/recovery-logout'].includes(url.pathname);
         if(busy||pending.size)throw Error('inflight_business');
         step=armed;
-        if(!cleanup&&(!step||halted||Date.now()>=batch.expiresAt))throw Error('unarmed');
+        if(!cleanup&&(!step||halted||Date.now()>=executionExpiresAt))throw Error('unarmed');
         if(step&&(url.pathname!=='/api/account/'+step.action||((!offline||policy.sessionOnly||policy.mutation)&&browser!==step.browser)))throw Error('stage_denied');
         if(!step&&!cleanup)throw Error('stage_denied');
         const body=await request.clone().json();
         if(body.email!==undefined&&(!step||email(body.email)!==accounts[step.account].email))throw Error('account_denied');
         // Recheck after reading the body: simultaneous requests cannot share a slot.
-        if(busy||step&&(armed!==step||stepsUsed.has(step.id)))throw Error('concurrent_request');
+        if(cleaning||closed||busy||step&&(armed!==step||stepsUsed.has(step.id)))throw Error('concurrent_request');
         if(cleanup&&logoutPosts>=policy.logoutPosts)throw Error('logout_ingress_limit');
         emit('ingress_claim',{step:step?.id??'cleanup',action:url.pathname,browser});
         if(step)stepsUsed.add(step.id);if(cleanup)logoutPosts++;
@@ -295,19 +326,28 @@ export function createExecutor({batch,manifest,dir,key,send,offline=false,timeou
     const promise=queue.then(execute);queue=promise.catch(()=>{});return promise;
   }
   function permitUnknownCheck() {
-    if(busy||pending.size||hasSession()||!unknownStep||unknownCheckUsed)throw Error('unknown_branch_denied');
+    if(cleaning||busy||pending.size||hasSession()||!unknownStep||unknownCheckUsed)throw Error('unknown_branch_denied');
     unknownCheckUsed=true;
     next=unknownStep==='a-change'?'a-login1':'a-login2';halted=false;
     emit('unknown_check_enabled',{originalStep:unknownStep,next});
   }
-  async function cleanup() {
-    halted=true;armed=null;await queue;await Promise.allSettled([...pending]);
-    active={step:null,primary:null,refreshed:false};
-    try {for(const s of sessions.values())if(!s.closed)await outbound(new Request(AUTH+'/auth/v1/logout?scope=local',{method:'POST',headers:{apikey:key,Authorization:'Bearer '+s.access,'Content-Type':'application/json'},body:'{}'}));}
-    finally {active=null;}
-    const confirmed=!hasSession();emit('cleanup',{confirmed});return confirmed;
+  function cleanup() {
+    if(closed)return Promise.resolve(unconfirmedAtClose===0);
+    if(cleanupPromise)return cleanupPromise;
+    halted=true;armed=null;cleaning=true;
+    cleanupPromise=(async()=>{
+      await queue;await Promise.allSettled([...pending]);
+      active={step:null,primary:null,refreshed:false};
+      try {for(const s of sessions.values())if(!s.closed){
+        const prior=logoutRequests.get(s.sessionId);
+        if(prior){emit('cleanup_skipped',{id:prior.id,account:s.account,recovery:s.recovery,reason:'logout_already_attempted',outcome:prior.outcome});continue;}
+        await outbound(new Request(AUTH+'/auth/v1/logout?scope=local',{method:'POST',headers:{apikey:key,Authorization:'Bearer '+s.access,'Content-Type':'application/json'},body:'{}'}));
+      }}finally{active.finished=true;active=null;}
+      const confirmed=!hasSession();emit('cleanup',{confirmed});return confirmed;
+    })().finally(()=>{cleaning=false;cleanupPromise=null;});
+    return cleanupPromise;
   }
-  function snapshot(){return {counts:{...counts},accountCounts:structuredClone(accountCounts),...(policy.sessionOnly?{browserCounts:structuredClone(browserCounts)}:{}),total:countTotal(counts),logoutPosts,next,halted,busy,armed:armed?.id??null,openSessions:[...sessions.values()].filter(s=>!s.closed).length,unknownStep};}
-  function close(){if(!closed){emit('close',{openSessions:snapshot().openSessions});fsyncSync(fd);closeSync(fd);closed=true;sessions.clear();accesses.clear();refreshes.clear();}}
+  function snapshot(){return {counts:{...counts},accountCounts:structuredClone(accountCounts),...(policy.sessionOnly?{browserCounts:structuredClone(browserCounts)}:{}),total:countTotal(counts),logoutPosts,next,halted,busy,closed,armed:armed?.id??null,openSessions:closed?unconfirmedAtClose:[...sessions.values()].filter(s=>!s.closed).length,logoutOutcomes:Object.fromEntries(['IN_FLIGHT','HTTP','UNKNOWN'].map(outcome=>[outcome,[...logoutRequests.values()].filter(r=>r.outcome===outcome).length])),unknownStep};}
+  function close(){if(!closed){unconfirmedAtClose=snapshot().openSessions;emit('close',{openSessions:unconfirmedAtClose});fsyncSync(fd);closeSync(fd);closed=true;sessions.clear();accesses.clear();refreshes.clear();}}
   return {arm,outbound,dispatch,cleanup,close,snapshot,permitUnknownCheck};
 }
