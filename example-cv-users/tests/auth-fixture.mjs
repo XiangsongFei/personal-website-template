@@ -9,7 +9,7 @@ export const TEST_PASSWORD='SYNTHETIC_REAL_ADAPTER_PASSWORD';
 export const TEST_KEY='sb_publishable_SYNTHETIC_REAL_CONTRACT_ONLY';
 export const TEST_ORIGIN='http://localhost:8795';
 export const TEST_OTP='012345';
-export async function realAuthority({now=()=>Date.now(),url=USERS_URL,issuer=url+'/auth/v1',padding=0,algorithm='ES256',otpExpired=false,signupSession=false,verifyUnconfirmed=false,requireCurrentPassword=true,recoveryEmailOtp=true,otpSessionMethod='otp'}={}) {
+export async function realAuthority({now=()=>Date.now(),url=USERS_URL,issuer=url+'/auth/v1',padding=0,algorithm='ES256',otpExpired=false,signupSession=false,verifyUnconfirmed=false,requireCurrentPassword=true,recoveryEmailOtp=true,otpSessionMethod='otp',currentPasswordError='current_password_mismatch'}={}) {
   if(!['ES256','HS256'].includes(algorithm))throw Error('fixture_algorithm_invalid');
   const symmetric=algorithm==='HS256';
   const keys=await crypto.subtle.generateKey(symmetric?{name:'HMAC',hash:'SHA-256'}:{name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
@@ -95,7 +95,10 @@ export async function realAuthority({now=()=>Date.now(),url=USERS_URL,issuer=url
         if(controls.update==='reject')return error('weak_password',422);
         if(controls.update==='limited')return error('over_request_rate_limit',429);
         if(typeof body.password!=='string'||body.password.length<12||body.password.length>128)return error('weak_password',422);
-        const u=users.get(s.id);if(requireCurrentPassword&&!s.recovery&&body.current_password!==u.password)return error('current_password_mismatch');
+        const u=users.get(s.id);
+        if(requireCurrentPassword&&!s.recovery&&body.current_password!==u.password){
+          return json({code:400,error_code:currentPasswordError,msg:'SYNTHETIC_RAW_ERROR_DO_NOT_LOG'},400);
+        }
         if(body.password===u.password)return error('same_password',422);u.password=body.password;for(const [sid,other] of sessions)if(other.id===s.id&&sid!==s.sid)other.revoked=true;
         if(controls.update==='lost')throw Error('synthetic_response_lost');
         if(controls.update==='timeout')await new Promise(r=>setTimeout(r,19000));

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {maxHeaderSize} from 'node:http';
+import {registerHooks} from 'node:module';
+import {readdirSync} from 'node:fs';
+import {extname, resolve} from 'node:path';
 import {setup,request,recover,EMAIL,apiCount,hash,names} from './helpers.mjs';
 import {TEST_PASSWORD,TEST_OTP,TEST_ORIGIN} from './auth-fixture.mjs';
 const cookie = ctx => [...ctx.jar].map(([name,value])=>name+'='+value).join('; ');
@@ -121,6 +124,132 @@ test('ordinary change allows a deliberate correction, retains the authenticated 
     assert.equal((await request(c,'session')).body.user.id,c.auth.ids.A);assert.equal(apiCount(c.auth,'POST','/auth/v1/logout'),0);
     assert.equal((await request(c,'logout',{})).status,200);
   }finally{await c.mf.dispose();}
+});
+test('ordinary change handles HTTP 400 current_password_invalid without changing the password or signing out', async () => {
+  const c = await setup({auth: {currentPasswordError: 'current_password_invalid'}});
+  try {
+    await login(c);
+    const newPassword = TEST_PASSWORD + '-candidate';
+    const operation = crypto.randomUUID();
+    const data = {currentPassword: 'incorrect', newPassword, confirmNewPassword: newPassword, operation};
+    const rejection = await request(c, 'change-password', data);
+    assert.deepEqual(rejection.body, {
+      ok: false,
+      code: 'wrongCurrent',
+      message: '当前密码不正确，请重新输入。',
+      correctable: true
+    });
+    assert.equal(rejection.status, 422);
+    assert.deepEqual(rejection.lines, []);
+    assert.equal(apiCount(c.auth, 'POST', '/auth/v1/logout'), 0);
+    assert.equal(c.auth.passwordMatches(c.auth.ids.A, TEST_PASSWORD), true);
+    assert.equal(c.auth.passwordMatches(c.auth.ids.A, newPassword), false);
+    assert.equal((await request(c, 'session')).body.user.id, c.auth.ids.A);
+    assert.equal((await request(c, 'change-password', {...data, currentPassword: TEST_PASSWORD})).status, 409);
+    assert.equal(apiCount(c.auth, 'PUT', '/auth/v1/user'), 1);
+  } finally {
+    await c.mf.dispose();
+  }
+});
+test('ordinary change preserves weak-password rejection and HTTP 429', async () => {
+  const c = await setup();
+  try {
+    await login(c);
+    const input = {currentPassword: TEST_PASSWORD, newPassword: TEST_PASSWORD + '-candidate'};
+    for (const [mode, status, code] of [['reject', 422, 'weakPassword'], ['limited', 429, 'limited']]) {
+      c.auth.controls.update = mode;
+      const response = await request(c, 'change-password', {...input, operation: crypto.randomUUID()});
+      assert.deepEqual([response.status, response.body.code, response.body.correctable], [status, code, true]);
+      assert.equal(apiCount(c.auth, 'POST', '/auth/v1/logout'), 0);
+    }
+    assert.equal(apiCount(c.auth, 'PUT', '/auth/v1/user'), 2);
+    assert.equal(c.auth.passwordMatches(c.auth.ids.A, TEST_PASSWORD), true);
+  } finally {
+    await c.mf.dispose();
+  }
+});
+async function assertUnconfirmedChange(c) {
+  await login(c);
+  const data = {
+    currentPassword: 'incorrect',
+    newPassword: TEST_PASSWORD + '-candidate',
+    operation: crypto.randomUUID()
+  };
+  const response = await request(c, 'change-password', data);
+  const replay = {...data, currentPassword: TEST_PASSWORD};
+  assert.equal((await request(c, 'change-password', replay)).status, 409);
+  assert.equal((await request(c, 'change-password', {...replay, operation: crypto.randomUUID()})).status, 409);
+  assert.equal(apiCount(c.auth, 'PUT', '/auth/v1/user'), 1);
+  assert.deepEqual([response.status, response.body.code, response.body.cleanup], [503, 'updateUnknown', true]);
+  assert.equal(response.body.correctable, undefined);
+  assert.equal(c.auth.passwordMatches(c.auth.ids.A, TEST_PASSWORD), true);
+}
+
+for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf', 'synthetic_unrecognized_update_error']) {
+  test(`ordinary change keeps the session fence for unknown error ${code}`, async () => {
+    const c = await setup({auth: {currentPasswordError: code}});
+    try {
+      // Retain a usable session so an accidental unlock cannot be hidden by logout.
+      c.auth.controls.logout = 'unknown';
+      await assertUnconfirmedChange(c);
+      assert.equal(apiCount(c.auth, 'POST', '/auth/v1/logout'), 1);
+    } finally {
+      await c.mf.dispose();
+    }
+  });
+}
+
+test('ordinary change keeps the session fence if constructing a known rejection response throws', async () => {
+  const root = resolve('dist/server');
+  const modules = readdirSync(root, {recursive: true})
+    .filter(name => name.endsWith('.js'))
+    .map(name => ({type: 'ESModule', path: resolve(root, name)}));
+  const c = await setup({
+    auth: {currentPasswordError: 'current_password_invalid'},
+    runtime: {modules: [{
+      type: 'ESModule',
+      path: resolve(root, 'rejection-response-fault.js'),
+      contents: `
+        export {default, RecoveryState} from './index.js';
+        const json = Response.json.bind(Response);
+        Response.json = (body, init) => {
+          if (body?.code === 'wrongCurrent') throw new Error('synthetic_response_failure');
+          return json(body, init);
+        };
+      `
+    }, ...modules]}
+  });
+  try {
+    await assertUnconfirmedChange(c);
+    assert.equal(apiCount(c.auth, 'POST', '/auth/v1/logout'), 0);
+  } finally {
+    await c.mf.dispose();
+  }
+});
+test('the account client selects readable Chinese feedback for wrongCurrent', async t => {
+  const accountSource = new URL('../lib/account/', import.meta.url).href;
+  const hook = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      // Mirror the app bundler's extensionless TypeScript imports for this unit test.
+      const accountImport = context.parentURL?.startsWith(accountSource) && specifier.startsWith('./');
+      return nextResolve(accountImport && !extname(specifier) ? specifier + '.ts' : specifier, context);
+    }
+  });
+  let client;
+  try {
+    client = await import('../lib/account/client.ts');
+  } finally {
+    hook.deregister();
+  }
+  globalThis.document = {documentElement: {lang: 'zh'}};
+  t.after(() => { delete globalThis.document; });
+  t.mock.method(globalThis, 'fetch', async () => Response.json({
+    ok: false, code: 'wrongCurrent', message: 'Synthetic upstream text', correctable: true
+  }, {status: 422}));
+  const result = await client.sendAccountAction('change-password', {});
+  assert.equal(result.ok, false);
+  assert.equal(result.correctable, true);
+  assert.equal(result.message, '当前密码不正确，请重新输入。');
 });
 test('ordinary change with a lost receipt does not reopen a claimed session even for a fresh operation ID',async()=>{
   const c=await setup();

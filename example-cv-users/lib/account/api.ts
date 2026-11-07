@@ -213,11 +213,16 @@ export async function accountAPI(request: Request, env: UsersEnv) {
             });
             if (error && [400, 403, 422, 429].includes(error.status ?? 0)) {
                 const rejected = {invalid_credentials: messages.wrongCurrent, current_password_required: messages.wrongCurrent,
-                    current_password_mismatch: messages.wrongCurrent, weak_password: messages.weakPassword, same_password: messages.samePassword};
-                const reason = error.status === 429 ? AUTH_COPY.limited : rejected[error.code as keyof typeof rejected];
+                    current_password_mismatch: messages.wrongCurrent, current_password_invalid: messages.wrongCurrent,
+                    weak_password: messages.weakPassword, same_password: messages.samePassword};
+                const code = error.code;
+                const reason = error.status === 429 ? AUTH_COPY.limited :
+                    typeof code === 'string' && Object.hasOwn(rejected, code) ? rejected[code as keyof typeof rejected] : undefined;
                 if (reason) {
+                    // Keep the fence if the definitive reply cannot be constructed.
+                    const response = out(error.status === 429 ? 429 : 422, reason, {correctable: true});
                     await state.finishKnownChange(sessionHash, operation);
-                    return out(error.status === 429 ? 429 : 422, reason, {correctable: true});
+                    return response;
                 }
             }
             if (!error && data.user?.id === who.id) {
