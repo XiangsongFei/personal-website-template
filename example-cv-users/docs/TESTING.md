@@ -1,5 +1,9 @@
 # 测试与本地 HTTPS
 
+> **2026-11-07 证据入口：** 本文继续维护本地工具方法；末尾“最新候选”链接保留历史用途。当前各版本结果统一见[分版本测试与验收矩阵](S2-PRODUCTION-CLOSEOUT-2026-11-07.md#3-分版本测试与验收矩阵)。
+>
+> 原Mac、发布复现沙箱、GitHub平台跳过及Version 9用户报告分别记录；沙箱FAIL、历史UNKNOWN及NOT TESTED不被后续PASS覆盖，本次未重跑认证或构建。
+
 ## 默认隔离测试
 
 使用锁定 Node 24.22.1，在本包中运行 `npm run build`、`npm run typecheck`、`npm test`。测试默认真实 workerd、本机 SQLite DO、合成上游，禁止远程资源与真实认证回退。部分超时测试等待18秒或30秒；不要因等待时间而重试写操作。
