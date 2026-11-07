@@ -164,3 +164,88 @@ test("candidate staging rejects future migrations and source drift before copyin
     assert.throws(() => stageCandidateMigrations(source, destination)); assert(!existsSync(destination));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+const { createStagingDiagnostics, safeStagingDiagnostic, stagingDiagnosticPhases } = await import('./compatibility-contract.mjs');
+for (const phase of stagingDiagnosticPhases) {
+  test(`staging diagnostic ${phase}: success preserves result and call count`, async () => {
+    const records=[], d=createStagingDiagnostics(r=>records.push(r)); let calls=0;
+    const result={synthetic:true};
+    assert.equal(d.step(phase,()=>{calls++;return result;}),result);
+    assert.equal(await d.stepAsync(phase,async()=>{calls++;return result;}),result);
+    assert.equal(calls,2);
+    assert.deepEqual(records.map(r=>r.status),['unverified','success','unverified','success']);
+    assert(records.every(r=>r.phase===phase && r.resources==='not-created' && r.manifest==='not-created'));
+  });
+  test(`staging diagnostic ${phase}: failure preserves original error and does not leak`, async () => {
+    const records=[], d=createStagingDiagnostics(r=>records.push(r));
+    const error=new Error('synthetic-secret JWT internal-path');
+    assert.throws(()=>d.step(phase,()=>{throw error;}),e=>e===error);
+    await assert.rejects(d.stepAsync(phase,async()=>{throw error;}),e=>e===error);
+    assert.deepEqual(records.map(r=>r.status),['unverified','failed','unverified','failed']);
+    assert(!JSON.stringify(records).includes('synthetic-secret'));
+  });
+  test(`staging diagnostic ${phase}: timed-out operation cannot report success`, async () => {
+    const records=[], d=createStagingDiagnostics(r=>records.push(r));
+    const error=Object.assign(new Error('synthetic timeout'),{code:'ETIMEDOUT'});
+    await assert.rejects(d.stepAsync(phase,()=>new Promise((_resolve,reject)=>setTimeout(()=>reject(error),1))),e=>e===error);
+    assert.deepEqual(records.map(r=>r.status),['unverified','failed']);
+  });
+}
+test('staging diagnostics distinguish unknown creation, observed resources, manifest and cleanup',()=>{
+  const records=[], d=createStagingDiagnostics(r=>records.push(r));
+  d.mark('environment-preflight','success');
+  d.resourceAttempt();
+  assert.throws(()=>d.step('network-creation',()=>{throw new Error('synthetic');}));
+  assert.equal(records.at(-1).resources,'unverified');assert.equal(records.at(-1).manifest,'not-created');
+  d.step('ownership-verification',()=>d.resourceCreated());
+  d.step('manifest-creation',()=>d.manifestCreated());
+  d.mark('manifest-delivery','unverified');
+  assert.equal(records.at(-1).manifest,'created');
+  assert.equal(records.at(-1).resources,'created');
+  assert.equal(records.at(-1).status,'unverified'); // only parent reception confirms delivery
+  assert.throws(()=>d.step('cleanup',()=>{throw new Error('synthetic');}));
+  assert.equal(records.at(-1).status,'failed');assert.equal(records.at(-1).manifest,'created');
+  d.step('cleanup',()=>{});assert.equal(records.at(-1).status,'success');
+});
+test('staging diagnostics preserve failure before manifest and no-resource cleanup without fabricated success',()=>{
+  const records=[],d=createStagingDiagnostics(r=>records.push(r));
+  assert.throws(()=>d.step('image-verification',()=>{throw new Error('synthetic');}));
+  d.step('ownership-verification',()=>{});
+  d.mark('cleanup','not-needed');
+  assert.equal(records.at(-1).status,'not-needed');
+  assert.equal(records.at(-1).resources,'not-created');assert.equal(records.at(-1).manifest,'not-created');
+  assert(!records.some(r=>r.phase==='manifest-delivery'&&r.status==='success'));
+});
+test('staging diagnostics do not invent a result for a pending operation or unavailable reporter',async()=>{
+  const records=[], d=createStagingDiagnostics(r=>records.push(r));let finish;
+  const pending=d.stepAsync('supabase-start',()=>new Promise(resolve=>{finish=resolve;}));
+  assert.deepEqual(records.map(r=>r.status),['unverified']);finish();await pending;
+  const unavailable=createStagingDiagnostics(()=>{throw new Error('IPC unavailable');});
+  assert.equal(unavailable.step('cleanup',()=>42),42);
+  const error=new Error('original');assert.throws(()=>unavailable.step('cleanup',()=>{throw error;}),e=>e===error);
+});
+test('staging output projection rejects malicious fields without exposing resource identifiers',()=>{
+  const secret='synthetic-secret';
+  for(const input of [null,undefined,{},secret,{phase:secret,status:secret,resources:secret,manifest:secret,path:secret,env:secret}]) {
+    const safe=safeStagingDiagnostic(input);
+    assert.deepEqual(safe,{phase:'unknown',status:'unverified',resources:'unverified',manifest:'unverified'});
+    assert(!JSON.stringify(safe).includes(secret));
+  }
+});
+test('actual staging call sites retain ownership, startup and cleanup ordering and manifest receipt remains parent-owned',()=>{
+  const helper=readFileSync(resolve(admin,'tests/rls-runtime/stage-local-supabase.mjs'),'utf8');
+  const source=helper.slice(helper.indexOf('export async function withStagedLocalSupabase('));
+  for(const phase of stagingDiagnosticPhases)assert(source.includes(`"${phase}"`));
+  const ordered=['snapshot()','prefetchVerifiedSupabaseImages()','createLoopbackNetwork(projectId)',
+    'startDockerContainerEventObserver(projectId','runSupabase(context, ["start"])','await callback(resolved',
+    'cleanupStep("ownership-check"','cleanupOwnedResources(resources, projectId, before)','finalizeStageDirectory(stageRoot, cleanupFailure)'];
+  let last=-1;for(const call of ordered){const index=source.indexOf(call);assert(index>last);last=index;}
+  assert(source.includes('if (started || resources.containers.length || resources.volumes.length || resources.networks.length)'));
+  assert(source.includes('if (cleanupFailure) throw cleanupFailure;'));
+  assert(source.includes('if (callbackError) throw callbackError;'));
+  assert(!source.includes('mark("manifest-delivery", "success")'));
+  const runner=readFileSync(resolve(admin,'tests/rls-runtime/run-postmerge-compatibility.mjs'),'utf8');
+  assert(runner.includes('safeStagingDiagnostic(m)'));
+  assert(runner.includes('manifest_received=${typeof manifest === "string"}'));
+  assert(runner.includes('"--cleanup-manifest", manifest'));
+});
