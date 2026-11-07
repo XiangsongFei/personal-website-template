@@ -1,5 +1,9 @@
 # Example CV Users
 
+> **2026-11-07 生产状态补充：** S2已在 `https://admin.example-cv.com` 运行；旧CMS入口为独立的 `cms-admin.example-cv.com`。下方“尚未提交、部署”及旧构建说明保留为历史阶段记录。
+>
+> 当前生产基线、分版本验收及开放风险统一见[生产上线结项记录](docs/S2-PRODUCTION-CLOSEOUT-2026-11-07.md)。源码的 `disabled / UNVERIFIED` 是安全默认值，不代表当前生产模式；历史PASS不转移为Version 9完整生产回归。
+
 S2 普通用户账户应用，与同仓库的 `resume-admin/` 并列。独立使用 Vinext、Cloudflare Workers、Supabase Auth 和 SQLite Durable Object。目标入口为 `https://admin.example-cv.com`；旧 CMS 未来保留在独立的 `cms-admin.example-cv.com`，仍使用原项目和权限。
 
 **S2 本地开发及五项核心真实验收已完成。尚未提交、部署或切换正式入口。** 当前发布配置保持 `USERS_MODE=disabled`。本地真实验收不能代替未来正式域名及托管 Worker/DO 验收。
