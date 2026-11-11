@@ -1,0 +1,930 @@
+{
+  "auth_bridge": {
+    "caller": "verified PostgREST JWT only; session_user=authenticator; role=authenticated; no SQL login/GUC simulation acceptance",
+    "execute": [
+      "postgres",
+      "ecv_s3_authz_reader"
+    ],
+    "owner": "postgres",
+    "returns": "TABLE(uid uuid, sid uuid)",
+    "signature": "site_private.auth_source_identity()"
+  },
+  "auth_source_columns": {
+    "auth.sessions": [
+      "id",
+      "user_id",
+      "not_after"
+    ],
+    "auth.users": [
+      "id",
+      "email_confirmed_at",
+      "banned_until",
+      "is_anonymous"
+    ]
+  },
+  "columns": [
+    [
+      "site_private.user_security_state",
+      "security_epoch",
+      "ecv_s3_grant_writer",
+      "UPDATE"
+    ],
+    [
+      "site_private.business_session_grants",
+      "last_renewed_at",
+      "ecv_s3_grant_writer",
+      "UPDATE"
+    ],
+    [
+      "site_private.business_session_grants",
+      "expires_at",
+      "ecv_s3_grant_writer",
+      "UPDATE"
+    ],
+    [
+      "site_private.business_session_grants",
+      "revoked_at",
+      "ecv_s3_grant_writer",
+      "UPDATE"
+    ],
+    [
+      "site_private.business_session_grants",
+      "reason",
+      "ecv_s3_grant_writer",
+      "UPDATE"
+    ],
+    [
+      "site_data.sites",
+      "id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.sites",
+      "owner_auth_user_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.sites",
+      "status",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.sites",
+      "draft_revision",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_members",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_members",
+      "auth_user_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_members",
+      "role",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_members",
+      "state",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_publications",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_publications",
+      "state",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_publications",
+      "snapshot_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_publications",
+      "publication_revision",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_locales",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_locales",
+      "locale",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.site_locales",
+      "enabled",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_entries",
+      "id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_entries",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_entries",
+      "position",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_translations",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_translations",
+      "parent_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_translations",
+      "locale",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_data.intro_translations",
+      "text",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "site_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "actor_auth_user_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "operation",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "request_id",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "payload_digest",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ],
+    [
+      "site_private.operation_requests",
+      "result",
+      "ecv_s3_command_writer",
+      "SELECT"
+    ]
+  ],
+  "functions": {
+    "site_api.apply_business_grant(jsonb)": {
+      "body_sha256": "e8635ef5eebe1cb681ee14b3d14041d324f8b55fcaee801c6610bd61dc749c77",
+      "execute": [
+        "ecv_s3_grant_writer",
+        "authenticated"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_grant_writer",
+      "returns": "jsonb",
+      "security_definer": true
+    },
+    "site_api.create_site(jsonb)": {
+      "body_sha256": "018ada4d6b24342710fe2619f470490a4d253a5e2b626da5b9e649d3f3402fde",
+      "execute": [
+        "ecv_s3_command_writer",
+        "authenticated"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_command_writer",
+      "returns": "jsonb",
+      "security_definer": true
+    },
+    "site_api.get_my_site()": {
+      "body_sha256": "4b842a6e004ea5ba234f2f7a1a17aeeae47171126bf5cd0e6a1a13fa2bc536db",
+      "execute": [
+        "ecv_s3_command_writer",
+        "authenticated"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_command_writer",
+      "returns": "jsonb",
+      "security_definer": true
+    },
+    "site_api.read_create_operation(jsonb)": {
+      "body_sha256": "394a6c6106bdee2a691f05797e4eac339fcfae46732fdd667b8b7acf839ca5e3",
+      "execute": [
+        "ecv_s3_command_writer",
+        "authenticated"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_command_writer",
+      "returns": "jsonb",
+      "security_definer": true
+    },
+    "site_api.read_introduction(uuid)": {
+      "body_sha256": "26c40603f260c707a099b646e73d222fada1740d66ca6493fcebd5c2b572f9f2",
+      "execute": [
+        "ecv_s3_command_writer",
+        "authenticated"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_command_writer",
+      "returns": "jsonb",
+      "security_definer": true
+    },
+    "site_private.assert_site_integrity()": {
+      "body_sha256": "1aa8c6b6dd838b32b863936c13e5b12fcb335f9b20b238dcae24201fd3933654",
+      "execute": [
+        "ecv_s3_integrity"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_integrity",
+      "returns": "trigger",
+      "security_definer": true
+    },
+    "site_private.auth_source_identity()": {
+      "body_sha256": "7db3478abab4eeb6dd991ee232299899b4565d772bee0534c8dbdcb99199e329",
+      "execute": [
+        "postgres",
+        "ecv_s3_authz_reader"
+      ],
+      "language": "plpgsql",
+      "owner": "postgres",
+      "returns": "TABLE(uid uuid, sid uuid)",
+      "security_definer": true
+    },
+    "site_private.business_identity()": {
+      "body_sha256": "1ef8902b880bb2a3c2979daf4207b0704f2db5ca08253f3ad574083882a5b6bb",
+      "execute": [
+        "ecv_s3_authz_reader",
+        "ecv_s3_grant_writer",
+        "ecv_s3_command_writer"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_authz_reader",
+      "returns": "TABLE(uid uuid, sid uuid)",
+      "security_definer": true
+    },
+    "site_private.business_qualified()": {
+      "body_sha256": "beda745cdcb5af018c3561f96b19f611f4be991f096e91ddb58e05373fa5ae05",
+      "execute": [
+        "ecv_s3_authz_reader",
+        "ecv_s3_grant_writer",
+        "ecv_s3_command_writer"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_authz_reader",
+      "returns": "boolean",
+      "security_definer": true
+    },
+    "site_private.business_site_complete(uuid)": {
+      "body_sha256": "5870afd7011b08d2cf83ca4c1ab1b2da5dcb5b52fecf81dccb216325576aa469",
+      "execute": [
+        "ecv_s3_authz_reader",
+        "ecv_s3_command_writer"
+      ],
+      "language": "sql",
+      "owner": "ecv_s3_authz_reader",
+      "returns": "boolean",
+      "security_definer": true
+    },
+    "site_private.business_site_owned(uuid)": {
+      "body_sha256": "e3de7aabc72db5c99c78fbe12d42d556642d19899d074ac1f9f7fdab8727ec48",
+      "execute": [
+        "ecv_s3_authz_reader",
+        "ecv_s3_command_writer"
+      ],
+      "language": "sql",
+      "owner": "ecv_s3_authz_reader",
+      "returns": "boolean",
+      "security_definer": true
+    },
+    "site_private.create_payload(jsonb)": {
+      "body_sha256": "06cc2e88f8dc414ab21c823358bc1282ef949e8dffb46cfcebfa1ff2d9cbcb4c",
+      "execute": [
+        "ecv_s3_command_writer"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_command_writer",
+      "returns": "text",
+      "security_definer": false
+    },
+    "site_private.guard_business_grant()": {
+      "body_sha256": "3fa8eb7ad8675b3cebb50f984d6d6e55d2ae07a0c75a84b5e4f659a446f701e4",
+      "execute": [
+        "ecv_s3_owner"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_owner",
+      "returns": "trigger",
+      "security_definer": false
+    },
+    "site_private.guard_identity()": {
+      "body_sha256": "48fb0e02527907dc2af659fa5247d353829dddeb06d681b28cdad51d39588323",
+      "execute": [
+        "ecv_s3_owner"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_owner",
+      "returns": "trigger",
+      "security_definer": false
+    },
+    "site_private.guard_security_state()": {
+      "body_sha256": "73b661afbb97bad2ff9626e70e6f13ee2b5e841053ab4e8adcb8234133d6b0ed",
+      "execute": [
+        "ecv_s3_owner"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_owner",
+      "returns": "trigger",
+      "security_definer": false
+    },
+    "site_private.lock_business_qualification()": {
+      "body_sha256": "06615d63c92689a1f646ea64c6b8e47381bc6a9325b968b8c1bf5c9b16bf824f",
+      "execute": [
+        "ecv_s3_grant_writer",
+        "ecv_s3_command_writer"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_grant_writer",
+      "returns": "TABLE(uid uuid, sid uuid)",
+      "security_definer": true
+    },
+    "site_private.reject_mutation()": {
+      "body_sha256": "77f6fdcb68b54c15eb3ad8ccd72d5bd657e656b536ff970886d505786c2bf334",
+      "execute": [
+        "ecv_s3_owner"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_owner",
+      "returns": "trigger",
+      "security_definer": false
+    },
+    "site_private.request_uid()": {
+      "body_sha256": "c047de1153332029c1159103240ad3faec15c725bc1f35d05b429d2a140e74b9",
+      "execute": [
+        "ecv_s3_authz_reader",
+        "ecv_s3_grant_writer",
+        "ecv_s3_command_writer"
+      ],
+      "language": "sql",
+      "owner": "ecv_s3_authz_reader",
+      "returns": "uuid",
+      "security_definer": true
+    },
+    "site_private.verify_business_proof(jsonb,uuid,uuid)": {
+      "body_sha256": "a1814ca04cd10561dfc63fd4d9dbad61b2e4f2c4a5a3b8b47efc3c8ef98b6d7f",
+      "execute": [
+        "ecv_s3_grant_writer"
+      ],
+      "language": "plpgsql",
+      "owner": "ecv_s3_grant_writer",
+      "returns": "jsonb",
+      "security_definer": false
+    }
+  },
+  "internal_roles": [
+    "ecv_s3_owner",
+    "ecv_s3_integrity",
+    "ecv_s3_authz_reader",
+    "ecv_s3_grant_writer",
+    "ecv_s3_command_writer"
+  ],
+  "ordinary_roles": [
+    "anon",
+    "authenticated",
+    "authenticator",
+    "service_role"
+  ],
+  "permission_ddl": {
+    "20261109104800_s3_business_grants.sql": [
+      "grant ecv_s3_owner,ecv_s3_authz_reader,ecv_s3_grant_writer,ecv_s3_command_writer to postgres with admin false,inherit true,set true granted by postgres",
+      "grant usage on schema site_private,site_data to ecv_s3_authz_reader",
+      "grant usage on schema site_private,site_data,site_api,extensions to ecv_s3_grant_writer",
+      "grant usage on schema site_private,site_data,site_api,extensions to ecv_s3_command_writer",
+      "revoke all on site_private.business_runtime,site_private.business_proof_keys from public,anon,authenticated,authenticator,service_role",
+      "grant select on site_private.business_runtime to ecv_s3_authz_reader,ecv_s3_grant_writer",
+      "grant select on site_private.business_proof_keys to ecv_s3_grant_writer",
+      "grant select on site_private.user_security_state,site_private.business_session_grants to ecv_s3_authz_reader",
+      "grant select on site_data.sites,site_data.site_members to ecv_s3_authz_reader",
+      "grant create on schema site_private to ecv_s3_authz_reader,ecv_s3_grant_writer",
+      "grant create on schema site_api to ecv_s3_grant_writer",
+      "grant select,insert on site_private.user_security_state to ecv_s3_grant_writer",
+      "grant update(security_epoch)on site_private.user_security_state to ecv_s3_grant_writer",
+      "grant select,insert on site_private.business_session_grants,site_private.grant_proofs to ecv_s3_grant_writer",
+      "grant update(last_renewed_at,expires_at,revoked_at,reason)on site_private.business_session_grants to ecv_s3_grant_writer",
+      "alter default privileges revoke execute on functions from public",
+      "alter default privileges revoke execute on functions from public",
+      "alter default privileges revoke execute on functions from public",
+      "alter function site_private.auth_source_identity()owner to postgres",
+      "revoke all on function site_private.auth_source_identity()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.auth_source_identity()to ecv_s3_authz_reader",
+      "alter function site_private.request_uid()owner to ecv_s3_authz_reader",
+      "revoke all on function site_private.request_uid()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.request_uid()to ecv_s3_grant_writer,ecv_s3_command_writer",
+      "alter function site_private.business_identity()owner to ecv_s3_authz_reader",
+      "revoke all on function site_private.business_identity()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.business_identity()to ecv_s3_grant_writer,ecv_s3_command_writer",
+      "alter function site_private.business_qualified()owner to ecv_s3_authz_reader",
+      "revoke all on function site_private.business_qualified()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.business_qualified()to ecv_s3_grant_writer,ecv_s3_command_writer",
+      "alter function site_private.business_site_owned(uuid)owner to ecv_s3_authz_reader",
+      "revoke all on function site_private.business_site_owned(uuid)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.business_site_owned(uuid)to ecv_s3_command_writer",
+      "alter function site_private.business_site_complete(uuid)owner to ecv_s3_authz_reader",
+      "revoke all on function site_private.business_site_complete(uuid)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.business_site_complete(uuid)to ecv_s3_command_writer",
+      "alter function site_private.lock_business_qualification()owner to ecv_s3_grant_writer",
+      "revoke all on function site_private.lock_business_qualification()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_private.lock_business_qualification()to ecv_s3_command_writer",
+      "alter function site_private.verify_business_proof(jsonb,uuid,uuid)owner to ecv_s3_grant_writer",
+      "revoke all on function site_private.verify_business_proof(jsonb,uuid,uuid)from public,anon,authenticated,authenticator,service_role",
+      "alter function site_private.guard_business_grant()owner to ecv_s3_owner",
+      "revoke all on function site_private.guard_business_grant()from public,anon,authenticated,authenticator,service_role",
+      "alter function site_api.apply_business_grant(jsonb)owner to ecv_s3_grant_writer",
+      "revoke all on function site_api.apply_business_grant(jsonb)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_api.apply_business_grant(jsonb)to authenticated",
+      "grant usage on schema site_api to authenticated",
+      "revoke create on schema site_private from ecv_s3_authz_reader,ecv_s3_grant_writer",
+      "revoke create on schema site_api from ecv_s3_grant_writer",
+      "revoke ecv_s3_owner,ecv_s3_authz_reader,ecv_s3_grant_writer,ecv_s3_command_writer from postgres granted by postgres restrict"
+    ],
+    "20261109104802_s3_create_site_commands.sql": [
+      "grant ecv_s3_owner,ecv_s3_command_writer to postgres with admin false,inherit true,set true granted by postgres",
+      "grant create on schema site_private,site_api to ecv_s3_command_writer",
+      "grant insert on site_data.sites,site_data.site_members,site_data.site_domains,site_data.site_locales,site_data.site_settings,site_data.section_state,site_data.site_publications,site_data.intro_entries,site_data.intro_translations,site_data.draft_revisions,site_private.operation_requests,site_private.site_audit_events to ecv_s3_command_writer",
+      "grant select(id,owner_auth_user_id,status,draft_revision)on site_data.sites to ecv_s3_command_writer",
+      "grant select(site_id,auth_user_id,role,state)on site_data.site_members to ecv_s3_command_writer",
+      "grant select(site_id,state,snapshot_id,publication_revision)on site_data.site_publications to ecv_s3_command_writer",
+      "grant select(site_id,locale,enabled)on site_data.site_locales to ecv_s3_command_writer",
+      "grant select(id,site_id,position)on site_data.intro_entries to ecv_s3_command_writer",
+      "grant select(site_id,parent_id,locale,text)on site_data.intro_translations to ecv_s3_command_writer",
+      "grant select(id,site_id,actor_auth_user_id,operation,request_id,payload_digest,result)on site_private.operation_requests to ecv_s3_command_writer",
+      "alter function site_private.create_payload(jsonb)owner to ecv_s3_command_writer",
+      "revoke all on function site_private.create_payload(jsonb)from public,anon,authenticated,authenticator,service_role",
+      "alter function site_api.create_site(jsonb)owner to ecv_s3_command_writer",
+      "revoke all on function site_api.create_site(jsonb)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_api.create_site(jsonb)to authenticated",
+      "alter function site_api.read_create_operation(jsonb)owner to ecv_s3_command_writer",
+      "revoke all on function site_api.read_create_operation(jsonb)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_api.read_create_operation(jsonb)to authenticated",
+      "alter function site_api.get_my_site()owner to ecv_s3_command_writer",
+      "revoke all on function site_api.get_my_site()from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_api.get_my_site()to authenticated",
+      "alter function site_api.read_introduction(uuid)owner to ecv_s3_command_writer",
+      "revoke all on function site_api.read_introduction(uuid)from public,anon,authenticated,authenticator,service_role",
+      "grant execute on function site_api.read_introduction(uuid)to authenticated",
+      "revoke create on schema site_private,site_api from ecv_s3_command_writer",
+      "revoke ecv_s3_owner,ecv_s3_command_writer from postgres granted by postgres restrict"
+    ]
+  },
+  "schema_effective_usage_create": {
+    "auth": {
+      "ecv_s3_authz_reader": [
+        false,
+        false
+      ],
+      "ecv_s3_command_writer": [
+        false,
+        false
+      ],
+      "ecv_s3_grant_writer": [
+        false,
+        false
+      ],
+      "ecv_s3_integrity": [
+        false,
+        false
+      ],
+      "ecv_s3_owner": [
+        false,
+        false
+      ]
+    },
+    "extensions": {
+      "ecv_s3_authz_reader": [
+        null,
+        false
+      ],
+      "ecv_s3_command_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_grant_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_integrity": [
+        null,
+        false
+      ],
+      "ecv_s3_owner": [
+        null,
+        false
+      ]
+    },
+    "site_api": {
+      "ecv_s3_authz_reader": [
+        false,
+        false
+      ],
+      "ecv_s3_command_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_grant_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_integrity": [
+        false,
+        false
+      ],
+      "ecv_s3_owner": [
+        true,
+        true
+      ]
+    },
+    "site_data": {
+      "ecv_s3_authz_reader": [
+        true,
+        false
+      ],
+      "ecv_s3_command_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_grant_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_integrity": [
+        true,
+        false
+      ],
+      "ecv_s3_owner": [
+        true,
+        true
+      ]
+    },
+    "site_private": {
+      "ecv_s3_authz_reader": [
+        true,
+        false
+      ],
+      "ecv_s3_command_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_grant_writer": [
+        true,
+        false
+      ],
+      "ecv_s3_integrity": [
+        true,
+        false
+      ],
+      "ecv_s3_owner": [
+        true,
+        true
+      ]
+    }
+  },
+  "status": "R4 exact ACL specification; approved narrow postgres Auth bridge; offline only, not SQL execution evidence",
+  "tables": {
+    "site_data.draft_revisions": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.intro_entries": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.intro_translations": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.section_state": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.site_domains": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.site_locales": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.site_members": {
+      "ecv_s3_authz_reader": [
+        "SELECT"
+      ],
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_integrity": [
+        "SELECT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.site_publications": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_integrity": [
+        "SELECT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.site_settings": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_data.sites": {
+      "ecv_s3_authz_reader": [
+        "SELECT"
+      ],
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_integrity": [
+        "SELECT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.business_proof_keys": {
+      "ecv_s3_grant_writer": [
+        "SELECT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.business_runtime": {
+      "ecv_s3_authz_reader": [
+        "SELECT"
+      ],
+      "ecv_s3_grant_writer": [
+        "SELECT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.business_session_grants": {
+      "ecv_s3_authz_reader": [
+        "SELECT"
+      ],
+      "ecv_s3_grant_writer": [
+        "SELECT",
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.grant_proofs": {
+      "ecv_s3_grant_writer": [
+        "SELECT",
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.operation_requests": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.site_audit_events": {
+      "ecv_s3_command_writer": [
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    },
+    "site_private.user_security_state": {
+      "ecv_s3_authz_reader": [
+        "SELECT"
+      ],
+      "ecv_s3_grant_writer": [
+        "SELECT",
+        "INSERT"
+      ],
+      "ecv_s3_owner": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN"
+      ]
+    }
+  }
+}

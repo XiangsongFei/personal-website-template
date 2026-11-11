@@ -1,0 +1,61 @@
+-- Future isolated activation only. Requires independent approval and a verified,
+-- loaded fail-closed HBA on the pinned cluster. SQL cannot certify that boundary.
+-- Use single writer / exclusive deployment window, fixed psql -X -w, ON_ERROR_STOP.
+BEGIN;
+SET LOCAL search_path=pg_catalog;
+SET LOCAL lock_timeout='3s';
+SET LOCAL statement_timeout='10s';
+
+DO $guard$
+DECLARE
+  api oid := 'ecv_s3_internal_api_login'::regrole;
+  reg oid := 'ecv_s3_registration_login'::regrole;
+  grp oid := 'ecv_s3_proof_registrar'::regrole;
+  usr oid := 'authenticated'::regrole;
+  deployer oid := 'postgres'::regrole;
+BEGIN
+  IF current_user <> 'postgres' OR session_user <> current_user OR current_setting('role') <> 'none'
+     OR current_database() <> 'postgres' OR current_setting('server_version_num') <> '170011'
+     OR NOT EXISTS (SELECT FROM pg_roles WHERE oid=deployer AND rolcreaterole AND NOT rolsuper)
+     OR NOT EXISTS (SELECT FROM pg_roles WHERE oid=10 AND rolname='supabase_admin')
+  THEN RAISE EXCEPTION 'deployment identity mismatch'; END IF;
+
+  IF (SELECT count(*) FROM pg_authid
+      WHERE oid IN (api,reg,grp) AND NOT (rolcanlogin OR rolsuper OR rolbypassrls OR rolcreaterole
+         OR rolcreatedb OR rolreplication OR rolinherit) AND rolpassword IS NULL
+         AND (oid=grp OR rolconnlimit=CASE WHEN oid=api THEN 4 ELSE 2 END)) <> 3
+     OR EXISTS (SELECT FROM pg_shdepend WHERE refclassid='pg_authid'::regclass
+         AND refobjid IN (api,reg,grp) AND deptype='o')
+     OR EXISTS (SELECT FROM pg_db_role_setting WHERE setrole IN (api,reg,grp))
+  THEN RAISE EXCEPTION 'unexpected service attributes, settings or ownership'; END IF;
+
+  IF EXISTS (
+    WITH expected(roleid,member,grantor,admin_option,inherit_option,set_option) AS (VALUES
+      (usr,api,deployer,false,false,true), (grp,reg,deployer,false,true,false),
+      (api,deployer,10::oid,true,false,false), (reg,deployer,10::oid,true,false,false),
+      (grp,deployer,10::oid,true,false,false)
+    ), actual AS (
+      SELECT roleid,member,grantor,admin_option,inherit_option,set_option FROM pg_auth_members
+      WHERE roleid IN (api,reg,grp) OR member IN (api,reg,grp)
+    ) (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+      UNION ALL (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+  ) OR EXISTS (
+    SELECT FROM (VALUES(api),(reg)) s(id) CROSS JOIN pg_roles t WHERE t.oid<>s.id AND (
+      pg_has_role(s.id,t.oid,'SET') <> (s.id=api AND t.oid=usr)
+      OR pg_has_role(s.id,t.oid,'USAGE') <> (s.id=reg AND t.oid=grp)
+      OR pg_has_role(s.id,t.oid,'MEMBER') <> ((s.id=api AND t.oid=usr) OR (s.id=reg AND t.oid=grp)))
+  ) THEN RAISE EXCEPTION 'service membership mismatch'; END IF;
+
+  IF (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='site_private'
+      AND t.relname='business_runtime' AND c.convalidated AND (c.conname, pg_get_constraintdef(c.oid)) IN
+        (('business_gates_agree','CHECK ((enabled = proof_verifier_ready))'),
+         ('business_runtime_proof_verifier_ready_check','CHECK ((NOT proof_verifier_ready))'),
+         ('business_runtime_project_ref_check',$expr$CHECK ((project_ref = 'ecv-s33a-20261109-7dd22a81'::text))$expr$))) <> 3
+  THEN RAISE EXCEPTION 'closed project required'; END IF;
+END;
+$guard$;
+
+ALTER ROLE ecv_s3_internal_api_login LOGIN;
+ALTER ROLE ecv_s3_registration_login LOGIN;
+COMMIT;
