@@ -1,3 +1,21 @@
+# S3 contract and implementation status
+
+The current S3.3 delivery contract is [R3 trust-boundary ADR](R3-TRUST-BOUNDARY-ADR.md),
+[final acceptance](S3.3-FINAL-ACCEPTANCE.md), and [deployment boundary](S3.3-DEPLOYMENT-BOUNDARY.md).
+These supersede the original database-MAC requirement for the accepted **isolated S3.3 experiment**.
+The original S3.2 documents remain intact as the historical design, not a claim that both verification models run.
+
+M1–M7 are immutable historical, disabled-state installation sources. Their hardcoded isolated binding is
+not production configuration. No workflow applies them to any database. Production migration, project
+binding, credentials, TLS/hosting and public routes require independent review and authorization.
+S2's active Worker, configuration and account/recovery routes are unchanged. S3 modules have no default
+project, key, role credentials, listener or enabled production binding.
+
+Earlier S3.3 candidate and S3.4 planning documents retain their original NOT RUN/BLOCKED context;
+use final acceptance for results and remaining interface scope.
+
+## Preserved historical S3.2 index
+
 # Example CV S3 设计基线与阶段边界
 
 日期：2026-11-08（Asia/Shanghai）。文档状态：本地评审候选，尚未 Commit / Push / PR / Merge。

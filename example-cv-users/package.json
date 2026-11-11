@@ -10,8 +10,9 @@
     "build": "node scripts/run.mjs build",
     "dev": "node scripts/run.mjs build && node scripts/run.mjs dev",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/run.mjs build && node --test tests/*.test.mjs",
-    "types": "node scripts/run.mjs types"
+    "test": "node scripts/run.mjs build && node --test tests/*.test.mjs && npm run test:s3",
+    "types": "node scripts/run.mjs types",
+    "test:s3": "node scripts/s3-offline.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

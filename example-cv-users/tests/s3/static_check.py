@@ -1,4 +1,4 @@
-"""Offline source checks only. No SQL parser, database, network or subprocess.
+"""S3.3-A foundation checks only. No SQL parser, database, network or subprocess.
 
 Run with python3 tests/s3/static_check.py. Database tests remain NOT RUN.
 """
@@ -7,7 +7,12 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATIONS = sorted((ROOT / 'supabase/migrations').glob('*.sql'))
+# Preserve the 21 historical foundation assertions byte-for-byte in scope.
+# Forward candidates are separately guarded by business_static_check.py, which
+# also rejects any unlisted migration. Do not claim these are full B checks.
+MIGRATIONS = [ROOT / 'supabase/migrations' / name for name in (
+    '20261107180504_s3_security_foundation.sql',
+    '20261107180505_s3_site_foundation.sql')]
 SQL = '\n'.join(p.read_text() for p in MIGRATIONS)
 TABLES = re.findall(r'CREATE TABLE (site_\w+\.\w+)\s*\(', SQL)
 FUNCTIONS = re.findall(r'CREATE FUNCTION (site_\w+\.\w+)\(\)', SQL)

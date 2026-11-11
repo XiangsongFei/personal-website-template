@@ -53,3 +53,9 @@ npm test
 本轮 S2 专用 Node 并存于 `$HOME/.nvm/s2-users/versions/node/v24.22.1/bin/node`，不改变 nvm 动态默认别名 `24` 的原解析。启动本包命令时仅在当前 shell 设置 `export PATH="$HOME/.nvm/s2-users/versions/node/v24.22.1/bin:$PATH"`，并先核对实际可执行文件与公开 pin。历史 24.13.0 及旧验收记录保留；不要用旧构建真实 PASS 代替新候选结果。
 
 最新安全修复候选及后续双浏览器 HTTPS 证据见[交付状态](docs/FINAL-DELIVERY-CANDIDATE.md)；历史构建与真实验收结论保持各自版本绑定。
+
+## S3.3 server foundation (disabled)
+
+See [current S3 contract](docs/s3/README.md) for registered Proof trust, immutable isolated SQL history,
+real acceptance scope and production deployment exclusions. S3 offline checks run as part of npm test.
+No S3 route, live key, new DO binding or database migration is enabled by this code delivery.
