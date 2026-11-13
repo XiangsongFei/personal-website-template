@@ -1,0 +1,47 @@
+name: Synthetic backup recovery
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/synthetic-backup-recovery.yml'
+      - 'resume-admin/tests/rls-runtime/backup-recovery-contract*.mjs'
+      - 'resume-admin/tests/rls-runtime/run-synthetic-backup-recovery.mjs'
+      - 'resume-admin/tests/rls-runtime/stage-local-supabase.mjs'
+      - 'resume-admin/tests/synthetic-backup-recovery.test.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: synthetic-backup-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  synthetic-backup:
+    # No fork execution, environment, secrets, deployments, artifacts or writable token.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUPABASE_USE_SLIM_IMAGES: 'false'
+      SYNTHETIC_BACKUP_ONLY: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - name: Install locked test dependencies
+        working-directory: resume-admin
+        run: npm ci
+      - uses: supabase/setup-cli@45a513f8c64c0bc8e0e3dfe572b5c95be85f6359
+        with:
+          version: 2.119.0
+      - name: Contract and failure guards
+        run: |
+          node --test resume-admin/tests/rls-runtime/backup-recovery-contract.self-test.mjs
+          node resume-admin/tests/rls-runtime/run-synthetic-backup-recovery.mjs --security-self-test
+          node resume-admin/tests/rls-runtime/stage-local-supabase.mjs --security-self-test
+      - name: Real synthetic source and independent target recovery
+        timeout-minutes: 48
+        working-directory: resume-admin
+        run: node tests/rls-runtime/run-synthetic-backup-recovery.mjs --run
