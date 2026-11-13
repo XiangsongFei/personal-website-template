@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "authority": "PREPARATION_ONLY_NEW_REAL_AUTHORIZATION_REQUIRED",
+  "transport": "fixed-container-stdio-end-to-end-TLS",
+  "host_listener_dependencies": [],
+  "auth_target": "172.30.232.4:8443",
+  "candidate_target": "172.30.232.5:8445",
+  "carrier": "b75d0aeea7e5b66287c1b526289297d877cb5113759448a908c079c3ae3d63cf",
+  "mail_client": "existing Gateway /usr/bin/nc; fixed target/path; no proxy/redirect/retry",
+  "evidence": "actual UDS request and complete response + original JWT hash + unique PostgreSQL PID/SQLSTATE/frozen frame/RPC context + post-operation snapshots",
+  "denial_result": "DENIED_RESPONSE_OBSERVED; then NO_WRITE_RECONCILED; never inferred ROLLBACK",
+  "before_P01": [
+    "new run ID, current independently reviewed driver seal and all frozen files",
+    "daemon, existing containers/network/volumes, physical database, full 46-table baseline and exact M7 clean catalogue",
+    "existing fixed targets, Gateway route, nc/Node executables, UDS namespace/mount/permissions, readable PostgreSQL logs",
+    "certificate chain/SNI/key pairs/leaf pins and at least full-window validity",
+    "actual Auth stdio/TLS handshake, both carrier EOFs and exit zero, no business HTTP",
+    "resource/time/request/cleanup reserves, initial closed gates and isolated persistent Intent scope"
+  ],
+  "P01_only": [
+    "one authorized candidate creation/start, existing network and volume only",
+    "approved Node image ID plus Config/manifest/platform/layers, exact packaged files, UID/mounts/resources/fixed IP",
+    "controller retains attached stdin from START/READY until terminal cleanup; EOF is STOP, no restart",
+    "host stdio/mTLS to actual candidate with exact leaf pin and client identity, no business HTTP",
+    "candidate-to-Gateway actual TLS/SNI/leaf pin and candidate UID1000 UDS connect, no HTTP/SQL",
+    "test-only tmpfs UDS observer file exists, mode0600 UID/GID1000 nlink1, initial sequence empty"
+  ],
+  "before_business_writes": [
+    "P00 and P01 raw receipts, driver capability gates, live original JWT binding",
+    "budget reserved before each dispatch; one intent/one execution; missing trace or SQL attribution is NOT_VERIFIED/STOP",
+    "UNKNOWN never retries; safe closing and original historical evidence remain mandatory"
+  ],
+  "limits_unchanged": {
+    "http_edges": 203,
+    "postgres_transactions": 98,
+    "read_only_transactions": 50,
+    "local_intent_transactions": 6,
+    "auth_row_births": 32,
+    "window_seconds": 1200,
+    "cleanup_reserve_seconds": 90,
+    "automatic_retries": 0,
+    "new_sites": 0
+  },
+  "receipt_policy": "Preparation/static/synthetic results are not real P02-P16 PASS; missing dynamic checks remain P01_REQUIRED/NOT_RUN",
+  "before_P00": [
+    "actual CLI --preflight-before-p00; strict parameters and protected approval digest",
+    "immutable authority UTC normalized inward; one process monotonic deadline; strict no overrides; REAL clocks only",
+    "budget/90-second cleanup initialization within total1200s",
+    "current driver/source/package/review hashes and fixed service targets",
+    "new frozen candidate name, new run directory absent, persistent Intent identity and no used proof ID",
+    "AUTHORIZED effects all true; PREPARED contract cannot authorize execute",
+    "receiptDirectory exact new prefix/security; terminal marker absent; current P00 receipt directory existence alone is permitted",
+    "REAL/PREPARE: exact Mac Node24.22.1 binary/version/arch, pg dependency bytes, certificate/key pairs, publishable-key format and host disk budget checked without external I/O"
+  ],
+  "after_P00_before_P01": [
+    "actual CLI --preflight-before-p01 validates source-bound startup receipt order",
+    "P00 identity/fingerprints/raw READ ONLY PID/ROLLBACK and binding receipt digests checked with candidateId=P01_PENDING",
+    "store protected PRE_P01_FILE_PASS; actual candidate creation must be after checkedAt"
+  ],
+  "time_policy": {
+    "authority": "protected approval UTC window only; monotonic coordinates are process-local and never serialized",
+    "precision": "strict UTC/calendar 0-9 fraction digits; start ceil/end floor to milliseconds",
+    "translation": "one mono-before-wall anchor; Date.now bucket upper bound conservatively shortens, never adds tolerance",
+    "immutability": "Meter consumes exact branded immutable deadline; both early and late overrides refused",
+    "realClock": "custom clock contexts OFFLINE only"
+  },
+  "receipt_directory_policy": "BASE/s3-4-run-receipts-<new runId> is distinct from live journal and all historical s3-4-real-acceptance paths; may exist for current P00 receipts; terminal RESULT/STOP/OUTER-STOP/DRIVER-EXIT forbids reuse"
+}

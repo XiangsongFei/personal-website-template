@@ -75,3 +75,9 @@ S3.0元数据曾报告public无业务表、Storage统计为空，限该时点；
 - grant建议参数30分钟滑动/12小时绝对期限、软删除重建站点、Slug复用等需最终技术确认。
 - Public/CMS手动发布与恢复未完整验证；Version URL风险仍在。
 - 其他GitHub App/外部CI的完整清单尚无证明；Builds解绑不等于所有自动部署消失。
+
+## S3.4 final delivery
+
+[Permission contract, isolated acceptance and public offline fixtures](S3.4-DELIVERY.md) and
+[redacted evidence matrix](S3.4-PUBLIC-EVIDENCE.json). Historical UNKNOWN and NOT VERIFIED
+remain preserved; production enablement and GitHub merge require separate authorization.

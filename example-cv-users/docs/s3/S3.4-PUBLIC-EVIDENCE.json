@@ -1,0 +1,322 @@
+{
+  "version": 1,
+  "scope": "S3.4 isolated acceptance; public redacted summary, not live execution configuration",
+  "baseline": "56ab76779eab3ed1db6110574f2750c42252d5cf",
+  "initial_offline_snapshot": {
+    "version": 1,
+    "baseline": "56ab76779eab3ed1db6110574f2750c42252d5cf",
+    "date": "2026-11-12",
+    "timezone": "Asia/Shanghai",
+    "historical_source": {
+      "path": "docs/s3/S3.3-FINAL-ACCEPTANCE.md",
+      "sha256": "f45b3e1130cf953cc4db69b676abf1e94fb96ed7dc9c94e9d74f2e2b00e0138c"
+    },
+    "historical": [
+      {
+        "id": "H-M7",
+        "status": "PASS",
+        "claim": "M1–M7 byte-preserved replay; 19 RLS tables, 23 functions, 37 policies and exact catalog checks",
+        "reexecuted": false
+      },
+      {
+        "id": "H-OWNER",
+        "status": "PASS",
+        "claim": "Alice/Bob normal Auth, legal Grants, two complete sites and Owner mirrors; 28 rows",
+        "reexecuted": false
+      },
+      {
+        "id": "H-TENANT",
+        "status": "PASS",
+        "claim": "Owner positives and bidirectional introduction database refusal 403/42501",
+        "reexecuted": false
+      },
+      {
+        "id": "H-PROOF",
+        "status": "PASS",
+        "claim": "Proof/Grant consumption, replay/revocation/concurrency core; not every optional fault case",
+        "reexecuted": false
+      },
+      {
+        "id": "H-EXPIRY",
+        "status": "PASS",
+        "claim": "Natural 1800-second Grant expiry with original valid JWT/Auth Session",
+        "reexecuted": false
+      },
+      {
+        "id": "H-INPUT",
+        "status": "PASS",
+        "claim": "Caller-selected Owner/UID/Session rejected at input whitelist",
+        "reexecuted": false
+      },
+      {
+        "id": "H-REQUEST",
+        "status": "PASS",
+        "claim": "Same-key concurrent creation persisted once; different payload read returned PT409",
+        "reexecuted": false
+      },
+      {
+        "id": "H-API",
+        "status": "PASS",
+        "claim": "Private public-Data-API profiles returned 406/PGRST106",
+        "reexecuted": false
+      },
+      {
+        "id": "H-TRANSPORT",
+        "status": "UNKNOWN",
+        "claim": "Historical domain-conflict response lacked complete transport receipt; never relabelled PASS",
+        "reexecuted": false
+      }
+    ],
+    "current_live": "NOT RUN",
+    "cases": [
+      {
+        "id": "M7-SOURCE",
+        "offline": "PASS",
+        "offline_scope": "sealed-source and SHA checks",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "M7-CATALOG",
+        "offline": "PASS",
+        "offline_scope": "synthetic catalog/mutants/CLI; PostgreSQL execution NOT RUN",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-RECOVERY",
+        "offline": "PASS",
+        "offline_scope": "real production identity module with synthetic Auth; no DB",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-NO-GRANT",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-CROSS-SID",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-SESSION-GONE",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-SESSION-EXPIRED",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-HOLD",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-STATE-MISSING",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-EPOCH",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-DISABLED",
+        "offline": "PASS",
+        "offline_scope": "refusal projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-NO-SITE",
+        "offline": "PASS",
+        "offline_scope": "null-site projection only",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-OWNER",
+        "offline": "PASS",
+        "offline_scope": "final generic module composition, synthetic Auth/TLS/SQL",
+        "live": "NOT RUN"
+      },
+      {
+        "id": "AUTH-CROSS-SITE",
+        "offline": "PASS",
+        "offline_scope": "refusal and UNKNOWN receipt projection only",
+        "live": "NOT RUN"
+      }
+    ],
+    "prepared_only": [
+      {
+        "id": "AUTH-RECOVERY-DB",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "LIVE-FINAL-BINDING",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "PG-RENEW-REVOKE-RACE",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "PG-HOLD-EPOCH-GENERATION",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "PG-FAULT-ROLLBACK",
+        "status": "NOT RUN"
+      }
+    ],
+    "design_only": [
+      {
+        "id": "EDIT-DELETE",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "PUBLISH-RENDERER",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "STORAGE",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "OWNER-TRANSFER",
+        "status": "NOT RUN"
+      },
+      {
+        "id": "S2-GRANT-LIFECYCLE",
+        "status": "NOT RUN"
+      }
+    ],
+    "platform_creator_defaults": "NOT RUN: collect and independently review target-specific postgres global defaults"
+  },
+  "currentAcceptance": {
+    "status": "REAL_PASS",
+    "P00": "PASS",
+    "P01": "PASS",
+    "P14R": "PASS",
+    "P16": "PASS",
+    "independentReview": "INDEPENDENT_REAL_REVIEW_PASS",
+    "independentChecks": 43,
+    "mandatoryGaps": []
+  },
+  "history": [
+    {
+      "id": "P02-P03",
+      "status": "PASS"
+    },
+    {
+      "id": "P04-completed-subcases",
+      "status": "PASS"
+    },
+    {
+      "id": "P04-original",
+      "status": "UNKNOWN"
+    },
+    {
+      "id": "P04R",
+      "status": "PASS"
+    },
+    {
+      "id": "P05-P09",
+      "status": "PASS"
+    },
+    {
+      "id": "P10-original",
+      "status": "UNKNOWN"
+    },
+    {
+      "id": "P10R-P13",
+      "status": "PASS"
+    },
+    {
+      "id": "P14-original",
+      "status": "NOT VERIFIED",
+      "runtimeAcceptancePass": true
+    },
+    {
+      "id": "P14R",
+      "status": "PASS"
+    },
+    {
+      "id": "P15",
+      "status": "EXPECTED UNKNOWN",
+      "faultHandlingAndZeroWriteReconciliation": "PASS"
+    },
+    {
+      "id": "P16",
+      "status": "PASS"
+    }
+  ],
+  "finalBatch": {
+    "runId": "e93d8837-9aca-493b-be91-a3a13a535cb0",
+    "executedSourceFiles": 103,
+    "executedSealSha256": "e306625c8f48955b22ee7839168fc890cd999acdaa120a7739cd2a6e7508f555",
+    "privateReceiptManifestSha256": "2404f2bb4b02e6274171f65b56e17dd37b1c64b424440b835a20454787e3af25",
+    "independentReviewSha256": "7a8a2864dcee70c154b8e18e26d3f5c22840304b9a1ae162d2c44a1a57a02ba2",
+    "usage": {
+      "http": 28,
+      "pg": 27,
+      "readOnly": 17,
+      "authControl": 2,
+      "authUser": 8,
+      "authAddedRows": 5,
+      "authDeletedRows": 3,
+      "intent": 2,
+      "generation": 1,
+      "proof": 1,
+      "registration": 1,
+      "grant": 1,
+      "retry": 0,
+      "sitesCreated": 0
+    },
+    "reconciliation": {
+      "tables": 46,
+      "unchanged": 37,
+      "expectedChanged": 9,
+      "rowsBefore": 218,
+      "rowsAfter": 224,
+      "allHistoricalBusinessRowsUnchanged": true,
+      "BobCharlieAuthUnchanged": true,
+      "allSecurityStatesUnchanged": true,
+      "doubleGatesClosed": true,
+      "hardConstraintAndRolesRestored": true,
+      "generationRevoked": true,
+      "grantRowRevokedAt": null,
+      "containerStopped": true
+    },
+    "concurrency": {
+      "readPid": 542775,
+      "revokePid": 542829,
+      "observerPid": 542828,
+      "fencePid": 542830,
+      "sharedQueuedFirstMicroseconds": 12145,
+      "nativeCommitVerified": true,
+      "postCommitSqlstate": "42501",
+      "function": "site_private.lock_business_qualification",
+      "raiseLine": 7,
+      "fullIdentityAndUdsBindingVerified": true
+    }
+  },
+  "deferred": {
+    "S2LogoutRecoveryGrantLinkage": "NOT RUN",
+    "productionCloudflareServiceBinding": "NOT RUN",
+    "S3.7FullReplay": "NOT RUN"
+  },
+  "deliveryPortability": {
+    "publicFixtures": "SYNTHETIC_OFFLINE_NOT_REAL_EVIDENCE",
+    "historicalRawEvidence": "LOCAL_ONLY_PRESERVED",
+    "realAuthorizationFromPublicFixtures": false,
+    "productionEnablement": false
+  }
+}
