@@ -1,0 +1,17 @@
+{
+  "sourceCommit": "56ab76779eab3ed1db6110574f2750c42252d5cf",
+  "sourceSha256": {
+    "lib/business/binding.mjs": "a14c7b21efb287ef72b230d83be09951921e621b9671fda4816bbe60ed1e945c",
+    "lib/business/identity.mjs": "3575692dcb7c1a10e502d5168ddede1d8c974cbc792800dc77b70c9e829b629a",
+    "lib/business/private-ingress.node.mjs": "792b86dc8dda71c7186ef08f3640e59619b784a670bee68474e1933d23b88b69",
+    "lib/business/private-rpc.mjs": "e4e855218025c6d4563ad76ffe4070fce6808da6b5e89ce5d0f6bb51401cdc91",
+    "lib/business/protocol.mjs": "78de75a1447960dfcde953ea1171eed92720d77e71ece8a2a2083c88ce2ac4ad",
+    "lib/business/r3-intent-ledger.mjs": "e2f23956389417f46eb8272215742b1dbdfa4406e527a72e4eb9d6ea7a4a1adb",
+    "lib/business/r3-intent-object.mjs": "d4a51bb5cd839eadea666003096bb95faed49b7df5758750559b12abe730f3ff",
+    "lib/business/r3-verifier.mjs": "2371f24e8de6f187aaccf11fa33c0c13b403739f36b1b66c4b93367eabf58086",
+    "lib/business/repository.mjs": "1debe14fa654f06a3a546a6eb8bc5498fa50952ce79fcfb18e552019c6bd7b1c",
+    "lib/business/service.mjs": "8639e922343bda774d202db13fcd83ef250fb253ceca8aa69df6031e56c990f2",
+    "package-lock.json": "c8cc8a0b96c76e8eec73b7c0eb17621b1580dc8488d93f09523f859073779057",
+    "package.json": "5cc08f5030c4bcb4451a03bf0361377aeb3f49f5b45c8a74c389f553f0ba1167"
+  }
+}

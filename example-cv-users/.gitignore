@@ -10,6 +10,7 @@ dist/
 *.tsbuildinfo
 .playwright-cli/
 output/
+/outputs/s34-clean-candidate/
 .next/
 
 # Historical evidence and raw/local diagnostic material remain local, unchanged.
@@ -26,3 +27,26 @@ output/
 *.db
 *.har
 __pycache__/
+
+# Private one-shot runtime candidates and real evidence stay local.
+/outputs/
+/.s34-fixtures/
+/docs/s3/S3.4-*
+!/docs/s3/S3.4-DELIVERY.md
+!/docs/s3/S3.4-PUBLIC-EVIDENCE.json
+/tests/s3/driver/approval.example.json
+/tests/s3/driver/fixtures/p01-inspect.json
+/tests/s3/driver/mount-policy.json
+/tests/s3/driver/pg-dependencies.json
+/tests/s3/driver/pins.json
+/tests/s3/driver/remaining-profile.json
+/tests/s3/driver/tail-profile.json
+/tests/s3/driver/p14r-profile.json
+/tests/s3/clean-candidate/frozen.json
+/tests/s3/clean-candidate/launch.json
+/tests/s3/r3-clean-target.json
+/tests/s3/s34-fixture-contract.json
+/tests/s3/s34-execution-plan.json
+/tests/s3/driver/seal.json
+
+/@ROOT@/

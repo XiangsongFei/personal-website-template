@@ -1,0 +1,43 @@
+import{p14rMockRace}from'./p14r-mock.mjs';
+import{P14R_SCOPE}from'./contract.mjs';
+// OFFLINE only: frozen metadata and synthetic adapters, never a connection.
+import{MockHost,complete}from'./mock-host.mjs';import{remainingContract}from'./remaining.mjs';
+import{ALICE,CHARLIE,PROJECT,ISSUER}from'./contract.mjs';import{same,hash,canonical,need,DriverStop}from'./state.mjs';
+import{dispatchOuterRead}from'./requests.mjs';import{binding,PRIVATE_ORIGIN}from'../clean-candidate/service.mjs';
+import{createIdentityAdapter}from'../../../lib/business/identity.mjs';import{createRpcRepository}from'../../../lib/business/repository.mjs';import{checkRpc}from'../../../lib/business/private-rpc.mjs';
+const copy=x=>structuredClone(x);
+export class RemainingMockHost extends MockHost{
+ constructor({contract,...options}={}){
+  super(options);this.contract=contract??remainingContract();this.base=copy(this.contract.baseline);this.authRows=copy(this.contract.extra.authRows);this.userFields=copy(this.contract.extra.authUserFields);this.now=Date.parse(this.base.meta.snapshot_time)+1000;
+  this.originalBase=copy(this.base);this.protectedBusiness=copy(this.contract.extra.protectedBusiness);this.authStable=copy(this.contract.extra.authStable);this.history=copy(this.base);this.credentialsReady={Alice:false,Charlie:false};this.preflightUsage={read_only_audit:2,explicit_database_transactions:2};this.formalRequests=[];this.logicalStart=Object.fromEntries(this.originalBase.fingerprints.map(f=>[f.name,copy(this.logical(f.name))]));
+ }
+ logical(name){if(name.startsWith('auth.'))return this.authRows.filter(r=>r.table===name.slice(5));return {'site_private.business_runtime':[this.base.gates],'site_private.user_security_state':this.base.security_state,'site_private.business_session_grants':this.base.grants,'site_private.proof_generations':this.base.generations,'site_private.registered_business_tickets':this.base.tickets,'site_private.grant_proofs':this.base.proof_receipts}[name];}
+ snapshot(ctx){
+  this.logicalStart??=Object.fromEntries(this.originalBase.fingerprints.map(f=>[f.name,copy(this.logical(f.name))]));
+  const out=super.snapshot(ctx),original=new Map(this.originalBase.fingerprints.map(f=>[f.name,f]));
+  out.base.inventories=copy(this.originalBase.inventories);const synthetic=new Map(out.base.fingerprints.map(f=>[f.name,f]));out.base.fingerprints=this.originalBase.fingerprints.map(originalRow=>{const f=synthetic.get(originalRow.name);const rows=this.logical(f.name);return rows===undefined||same(rows,this.logicalStart[f.name])?copy(original.get(f.name)):f;});
+  out.authRows=copy(this.authRows).sort((a,b)=>a.table<b.table?-1:a.table>b.table?1:a.id<b.id?-1:a.id>b.id?1:0);out.authUserFields=copy(this.userFields);out.authStable=copy(this.contract.extra.authStable);out.charlieIdentityStable=this.contract.extra.charlieIdentityStable;out.protectedBusiness=copy(this.contract.extra.protectedBusiness);
+  for(const[key,field]of Object.entries({grants:'grants',generations:'generations',tickets:'tickets',receipts:'proof_receipts',state:'security_state'})){const originals=this.originalBase[field].filter(r=>field!=='security_state'||r.auth_user_id!==CHARLIE),ids=new Set(originals.map(r=>r.id??r.proof_id??r.key_id??r.auth_user_id)),retained=this.base[field].filter(r=>ids.has(r.id??r.proof_id??r.key_id??r.auth_user_id));if(!same(retained,originals))out.protectedBusiness[key]=hash(canonical(retained));}
+  return out;
+ }
+ identity(slot){const token=this.tokens[slot];need(token,'MOCK_ORIGINAL_TOKEN_REQUIRED');const claims=JSON.parse(Buffer.from(token.split('.')[1],'base64url')),user={id:claims.sub,is_anonymous:false,email_confirmed_at:'2026-01-01'};return createIdentityAdapter({issuer:ISSUER,clock:()=>Math.floor(this.now/1000),auth:{verifyTokenAndUser:async t=>{need(t===token,'MOCK_TOKEN_SUBSTITUTION');return{data:{claims,user}};}}});}
+ repo(identity,slot,respond){return createRpcRepository({binding,enabled:true,project:PROJECT,endpoint:PRIVATE_ORIGIN,identity,mtls:{fetch:async(url,init)=>{need(init.method==='POST'&&init.headers['Content-Type']==='application/json'&&init.headers.Authorization==='Bearer '+this.tokens[slot],'MOCK_WIRE_CONTRACT');const rpc=new URL(url).pathname.slice(5),args=JSON.parse(init.body);checkRpc(rpc,args,binding);need(rpc!=='create_site','CREATE_SITE_FORBIDDEN');this.formalRequests.push({rpc,args});return respond(rpc);}}});}
+ async read(a,ctx){
+  const model=super.read(a,ctx);if(a.action==='direct'){need(['get_my_site','read_introduction'].includes(a.rpc),'DIRECT_RPC_SCOPE');checkRpc(a.rpc,a.rpc==='read_introduction'?{target:ctx.fixture.actors.Alice.site}:{},binding);return model;}
+  const identity=this.identity(a.slot),repository=this.repo(identity,a.slot,rpc=>{if(a.action==='faultRead')throw new DriverStop('OFFLINE_TRANSPORT_LOST',true);if(model.postgrest.status===403)return Response.json({code:'42501'},{status:403});const result={schema_version:1,request_id:ctx.fixture.alice_receipt_read.request_id,site_id:ctx.fixture.actors.Alice.site,persisted:true,publication:{state:'unpublished',snapshot_id:null,publication_revision:0}};return Response.json(rpc==='read_create_operation'?{status:'succeeded',result}:rpc==='read_introduction'?{...model.data,section_revision:0,draft_revision:0}:model.data);});
+  const response=await dispatchOuterRead({rpc:a.rpc,fixture:ctx.fixture,identity,token:this.tokens[a.slot],repository});return{...model,outerStatus:response.status,data:await response.json()};
+ }
+ async execute(a,ctx){
+  if(this.contract.profile.scope===P14R_SCOPE){need(['prepareAliceCredential','login','approveIntent','signRegister','apply','read','race','observe','catalog','close','independentFinal','maintenance','stopCandidate'].includes(a.action)&&(!a.slot||a.slot==='A1')&&(!a.rpc||a.rpc==='get_my_site')&&(a.action!=='maintenance'||['generation','open'].includes(a.kind)),'P14R_ACTION_SCOPE');if(a.action==='race')return p14rMockRace(this,a,ctx);}
+  need(!['resetAlice','createCharlie'].includes(a.action),'LEGACY_ACTION_FORBIDDEN');if(a.action==='login')need(this.credentialsReady[ctx.fixture.session_slots[a.slot].actor],'MOCK_CREDENTIAL_UNAVAILABLE');
+  if(['prepareAliceCredential','prepareCharlieCredential'].includes(a.action)){
+   const id=ctx.step+':'+a.action;this.calls.push(id);if(this.faults[id]==='unknown')throw new DriverStop('INJECTED_UNKNOWN',true);if(this.faults[id]==='stop')throw new DriverStop('INJECTED_STOP');const actor=a.action==='prepareAliceCredential'?'Alice':'Charlie',uid=actor==='Alice'?ALICE:CHARLIE;
+   if(ctx.state.tail){for(const s of [...this.base.sessions].filter(s=>s.uid===uid))this.removeSession(s.sid);}else if(actor==='Alice')this.removeSession(ctx.fixture.actors.Alice.historical_sid);else need(!this.base.sessions.some(s=>s.uid===CHARLIE),'CHARLIE_CREDENTIAL_CASCADE_SCOPE');this.credentialsReady[actor]=true;this.audit(uid);this.userFields[uid].encrypted_password=hash('new-offline-'+uid);this.userFields[uid].updated_at=hash('new-offline-time');this.authRows.find(r=>r.table==='users'&&r.uid===uid).sha=hash(canonical(this.userFields[uid]));const r={status:200,uid,transport:complete()};if(typeof this.faults[id]==='function')await this.faults[id](r,this,ctx,a);return r;
+  }
+  if(a.action==='independentFinal'){this.calls.push('P16:independentFinal');const r={...this.snapshot(ctx),independent:{catalogExact:true,closed:!this.base.gates.enabled&&!this.base.gates.proof_verifier_ready,physicalId:'7706828727995158580'}};const f=this.faults['P16:independentFinal'];if(typeof f==='function')f(r,this,ctx,a);else if(f)throw new DriverStop('INDEPENDENT_INJECTED_UNKNOWN',true);return r;}
+  if(a.action==='outerRecovery'){this.calls.push(ctx.step+':outerRecovery:'+a.slot);const r=await this.read(a,ctx);need(r.outerStatus===403,'MOCK_RECOVERY_PURPOSE');return{outerStatus:403,layer:'identity-purpose',postgrest:null,transport:complete()};}
+  if(a.action==='maintenance'&&a.kind==='reactivateCharlie'){this.calls.push(ctx.step+':maintenance:reactivateCharlie');const ch=this.base.security_state.find(s=>s.auth_user_id===CHARLIE);need(ctx.state.tail&&!ch.business_enabled&&ch.security_hold&&ch.security_epoch===0,'TAIL_CAS');Object.assign(ch,{business_enabled:true,security_hold:false,hold_reason:'none'});return{committed:true,exitCode:0,roleDelta:0};}
+  const r=await super.execute(a,ctx);if(a.action==='apply'){const identity=this.identity(a.slot),repository=this.repo(identity,a.slot,()=>Response.json(r.data));await repository.grant(await identity.verifyAccount(this.tokens[a.slot]),{proof:ctx.state.proofs[a.slot]});}return r;
+ }
+ destroySecrets(){super.destroySecrets();this.credentialsReady={Alice:false,Charlie:false};}
+}
