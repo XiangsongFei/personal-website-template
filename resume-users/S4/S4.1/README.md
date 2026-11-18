@@ -24,3 +24,14 @@
 本轮只有 S4.1；不进入 S4.2，不建立网站、不创建 Grant、不新增数据库 Migration、不接真实保存/文件/发布/历史恢复/AI。没有生产 Supabase 连接、真实账户测试或 Cloudflare 写操作，没有改变 Access、DNS、Secret、路由或流量。
 
 本地功能候选和 GitHub 交付分别记账。本地专项复核不冒充第二审查人或官方批准；既有依赖审计11 high继续阻断，不能宣称已达到生产发布条件。Commit/Push 后的实际 SHA、PR、CI 和官方 Code Review 以 GitHub 回执和本轮最终报告为准，PR保持OPEN，不自动Merge。
+
+## UI Design V1 补充（2026-11-19）
+
+本阶段在原S4.1基础上追加用户已确认的Professional Minimalism + Editorial Layout + Sage Green视觉实现：
+
+- [UI-DESIGN-V1.md](UI-DESIGN-V1.md)
+- [DESIGN-TOKENS.md](DESIGN-TOKENS.md)
+- [VISUAL-COMPARISON.md](VISUAL-COMPARISON.md)
+- [S4-FEATURE-COVERAGE.md](S4-FEATURE-COVERAGE.md)
+
+原IMPLEMENTATION/TESTING/REVIEW等记录保留其2026-11-18历史范围；本次差异与验证在VISUAL-COMPARISON中单列。业务仍关闭，S3与审计/官方审查阻断未解除，不自动合并。

@@ -23,7 +23,7 @@ test('Dashboard and descendant documents, HEAD and RSC requests require a server
   try {
     for(const path of ['/dashboard','/dashboard/','/dashboard/private','/dashboard?__rsc=synthetic','/%64ashboard','/dashboard%2fprivate','//dashboard']) {
       const r=await page(c,path);assert.equal(r.status,303);assert.equal(r.headers.get('location'),'/login');
-      assert.equal(r.headers.get('cache-control'),'private, no-store');assert.doesNotMatch(await r.text(),/工作区概览/);
+      assert.equal(r.headers.get('cache-control'),'private, no-store');assert.doesNotMatch(await r.text(),/我的工作台/);
     }
     assert.equal((await page(c,'/dashboard',{method:'HEAD'})).status,303);
     assert.equal((await page(c,'/dashboard',{headers:{RSC:'1'}})).status,303);
@@ -35,7 +35,7 @@ test('verified S2 identity renders only foundation status and account links, wit
   try {
     await login(c);
     const r=await page(c);privateResponse(r);const html=await r.text();
-    for(const expected of ['工作区概览','账户设置','尚未开放','界面语言']) assert.ok(html.includes(expected),expected);
+    for(const expected of ['我的工作台','账户与安全','网站功能尚未开放','界面语言','教育经历','文件与媒体','求职与隐私']) assert.ok(html.includes(expected),expected);
     assert.match(html,/href="\/account"/);
     assert.doesNotMatch(html,/user-a@example\.invalid|__Host-ecv-users|access_token|已保存到服务器|发布成功/);
     privateResponse(await page(c,'/dashboard',{method:'HEAD'}));
@@ -54,7 +54,7 @@ test('upstream revoked session and post-logout stale cookies cannot render Dashb
     assert.equal((await request(c,'logout',{})).status,200);
     for(const jar of [c.jar,oldJar]) {
       const r=await page({...c,jar});assert.equal(r.status,303);assert.equal(r.headers.get('location'),'/login');
-      assert.doesNotMatch(await r.text(),/工作区概览/);
+      assert.doesNotMatch(await r.text(),/我的工作台/);
     }
   } finally {await c.mf.dispose();}
 });
@@ -64,7 +64,7 @@ for(const [fault,status] of [['network',503],['limited',429]])test('identity '+f
   try {
     await login(c);c.auth.controls.user=fault;
     const r=await page(c);privateResponse(r,status);assert.equal(r.headers.get('location'),null);
-    const html=await r.text();assert.match(html,/重新载入/);assert.doesNotMatch(html,/工作区概览|尚未创建网站|user-a@example\.invalid/);
+    const html=await r.text();assert.match(html,/重新载入/);assert.doesNotMatch(html,/我的工作台|尚未创建网站|user-a@example\.invalid/);
     c.auth.controls.user='ok';privateResponse(await page(c));
   } finally {await c.mf.dispose();}
 });
@@ -90,5 +90,17 @@ test('Dashboard does not enable business APIs or allow noncanonical hosts',async
     assert.equal((await c.mf.dispatchFetch('http://127.0.0.1:8795/dashboard',{headers:{Cookie:cookie(c)}})).status,421);
     assert.equal((await page(c,'/dashboard',{method:'POST'})).status,405);
     assert.ok(c.auth.events.every(e=>e.path.startsWith('/auth/v1/')));
+  } finally {await c.mf.dispose();}
+});
+
+test('Design V1 exposes only existing Overview and S2 account links, with no pretend business actions',async()=>{
+  const c=await setup();
+  try {
+    await login(c);const html=await (await page(c)).text();
+    const destinations=[...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map(m=>m[1]);
+    assert.ok(destinations.length>0);
+    assert.ok(destinations.every(href=>['/dashboard','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
+    assert.match(html,/aria-disabled="true"/);
+    assert.doesNotMatch(html,/Last updated|最近更新|发布成功|保存成功/);
   } finally {await c.mf.dispose();}
 });
