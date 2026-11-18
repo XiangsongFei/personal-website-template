@@ -1,0 +1,245 @@
+{
+  "baseline": "e95e9616c0dddb25f69a46a82b123ad4edc43f48",
+  "publicComputedStyleCases": 20,
+  "publicComputedStylesIdentical": true,
+  "imagePairs": [
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "forgot-password-en-1440.png",
+      "beforeSha256": "31148d3036f3715866b1d01db96642c5440aff0295cd8ed7da502d693716635e",
+      "afterSha256": "31148d3036f3715866b1d01db96642c5440aff0295cd8ed7da502d693716635e"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "forgot-password-en-390.png",
+      "beforeSha256": "5a276be67e3706694e2a48e2cb9aea5f6a47618007adc931c581a084f842ec63",
+      "afterSha256": "5a276be67e3706694e2a48e2cb9aea5f6a47618007adc931c581a084f842ec63"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "forgot-password-zh-1440.png",
+      "beforeSha256": "e9ed5167f7d93a52063b4bd4eb38a289c41c3f507d5cb1cc36c201f8f239b301",
+      "afterSha256": "e9ed5167f7d93a52063b4bd4eb38a289c41c3f507d5cb1cc36c201f8f239b301"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "forgot-password-zh-390.png",
+      "beforeSha256": "94430b084c720881d000ba615e2530852a1764cd752b226586cc231e07ce2499",
+      "afterSha256": "94430b084c720881d000ba615e2530852a1764cd752b226586cc231e07ce2499"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "login-en-1440.png",
+      "beforeSha256": "8fb82bc41665d57cd5484cfbee999b2569b2a019088a840d27f9144fb2eb1f5e",
+      "afterSha256": "8fb82bc41665d57cd5484cfbee999b2569b2a019088a840d27f9144fb2eb1f5e"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "login-en-390.png",
+      "beforeSha256": "dc255ca1bbb717a9e7fe2b3b05fb3086f448a4594f867d3871ab8ecace7b5f99",
+      "afterSha256": "dc255ca1bbb717a9e7fe2b3b05fb3086f448a4594f867d3871ab8ecace7b5f99"
+    },
+    {
+      "bounds": [
+        909,
+        523,
+        909,
+        523
+      ],
+      "differentPixels": 1,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 1,
+      "name": "login-zh-1440.png",
+      "beforeSha256": "ddddca370e86f5341681045b2a6c4f7d6cb9859e8ecfd847dadc4ce502a98791",
+      "afterSha256": "6228678852106d490b874fc1a2657d2f274c5729d6138b94ef8838c954069234"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "login-zh-390.png",
+      "beforeSha256": "f53b31ee29c0406f8fde9ed7577ed875bca8f1f607e8b7432f6eae733c3dfa47",
+      "afterSha256": "f53b31ee29c0406f8fde9ed7577ed875bca8f1f607e8b7432f6eae733c3dfa47"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "register-en-1440.png",
+      "beforeSha256": "92f1f4f8cf44dcf635ab1e84622c015348ec2ad87adba5a8d48a086d2027ecfa",
+      "afterSha256": "92f1f4f8cf44dcf635ab1e84622c015348ec2ad87adba5a8d48a086d2027ecfa"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "register-en-390.png",
+      "beforeSha256": "39f9b08e92994dc870084a0cba75f914cd0524d99fa041e38eee417e5a0228cf",
+      "afterSha256": "39f9b08e92994dc870084a0cba75f914cd0524d99fa041e38eee417e5a0228cf"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "register-zh-1440.png",
+      "beforeSha256": "2a0e8df1e90988d5c36a88eb4b6677ebe88933e7c0350d4fecb0c8ca570c6f32",
+      "afterSha256": "2a0e8df1e90988d5c36a88eb4b6677ebe88933e7c0350d4fecb0c8ca570c6f32"
+    },
+    {
+      "bounds": [
+        24,
+        291,
+        365,
+        640
+      ],
+      "differentPixels": 18,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 7,
+      "name": "register-zh-390.png",
+      "beforeSha256": "d9302aa9f7d15cc86398f76bf87f75c78f340849d91638deac64db8269c1d3f1",
+      "afterSha256": "296be1c086de549e87bb5565c9ca223958bf64b19f8760445fbcd4640bedc872"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "reset-password-en-1440.png",
+      "beforeSha256": "26ec39705cac30ba4b9c369c98a05f6456a7200cc3ccd162ea5fd0f4a9572023",
+      "afterSha256": "26ec39705cac30ba4b9c369c98a05f6456a7200cc3ccd162ea5fd0f4a9572023"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "reset-password-en-390.png",
+      "beforeSha256": "5a5334838ba7fb2d63c112569cff7a2ef55ae9849a024138138b1ca0fb25abd4",
+      "afterSha256": "5a5334838ba7fb2d63c112569cff7a2ef55ae9849a024138138b1ca0fb25abd4"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "reset-password-zh-1440.png",
+      "beforeSha256": "b730258b62164e175847391614da2dc16a7b4408cfa4a4a7ee786703265ec832",
+      "afterSha256": "b730258b62164e175847391614da2dc16a7b4408cfa4a4a7ee786703265ec832"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "reset-password-zh-390.png",
+      "beforeSha256": "514ba0f6590b1ba76413aa6af1452cc08e0e0d839a4cbc1d6c8bfe9c8c0f6be1",
+      "afterSha256": "514ba0f6590b1ba76413aa6af1452cc08e0e0d839a4cbc1d6c8bfe9c8c0f6be1"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "verify-email-en-1440.png",
+      "beforeSha256": "26fb671d9710a506bc06cfa96c371c9f58a4e5219d67901ce55aeabbb3a1d91f",
+      "afterSha256": "26fb671d9710a506bc06cfa96c371c9f58a4e5219d67901ce55aeabbb3a1d91f"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "verify-email-en-390.png",
+      "beforeSha256": "6caf4b77021698ed0a8daec1980b4d1efed6d6a5d13c5b459f50f69730713482",
+      "afterSha256": "6caf4b77021698ed0a8daec1980b4d1efed6d6a5d13c5b459f50f69730713482"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "verify-email-zh-1440.png",
+      "beforeSha256": "42bf36511610fa26cf0ba7380bda54d4825853d7a4d132bfbfe3f0033062b3c1",
+      "afterSha256": "42bf36511610fa26cf0ba7380bda54d4825853d7a4d132bfbfe3f0033062b3c1"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "verify-email-zh-390.png",
+      "beforeSha256": "8fa9338586dc02054a6e64ef37854cf967e1d9f987d6ec9a8630f2b11ac1d32a",
+      "afterSha256": "8fa9338586dc02054a6e64ef37854cf967e1d9f987d6ec9a8630f2b11ac1d32a"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "account-zh-1440",
+      "beforeSha256": "6f964da53fd94ce1c9690a34102a0048bad9b09161ae6a0abb41b02f1784f5ec",
+      "afterSha256": "6f964da53fd94ce1c9690a34102a0048bad9b09161ae6a0abb41b02f1784f5ec"
+    },
+    {
+      "bounds": [
+        15,
+        696,
+        205,
+        790
+      ],
+      "differentPixels": 18,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 10,
+      "name": "account-zh-390",
+      "beforeSha256": "d3f86f83f15f9dbf0039b2a1bb9ab025c44c06d4b3e7a1c12fdc4891fa25d22b",
+      "afterSha256": "8bca75fd6434d6b29a03a5030de80ca7dd62c9f4f3b6459b76a330ec825c0939"
+    },
+    {
+      "bounds": [],
+      "differentPixels": 0,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 0,
+      "name": "change-password-zh-1440",
+      "beforeSha256": "ad6978d64452e362b330354f9473d419ba155bcfbac190e600ab3242909ab132",
+      "afterSha256": "ad6978d64452e362b330354f9473d419ba155bcfbac190e600ab3242909ab132"
+    },
+    {
+      "bounds": [
+        346,
+        527,
+        346,
+        527
+      ],
+      "differentPixels": 1,
+      "dimensionsEqual": true,
+      "maxChannelDelta": 1,
+      "name": "change-password-zh-390",
+      "beforeSha256": "4bb5ebe338632180b20368a38be6d8bc201904bb739d5d8f4a33dd367fc34411",
+      "afterSha256": "df8225a0a97a46325ebd5869f21c4cb0f3593b4f7b0699aca66116c03f2e7a25"
+    }
+  ],
+  "exactImagePairs": 20,
+  "method": "Same pinned Chromium, same local origin, pointer moved, focus blurred, fonts/layout settled, fullPage, animations disabled. Original screenshots were not edited."
+}
