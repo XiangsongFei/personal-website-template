@@ -27,7 +27,12 @@ export default {
             return new Response(null, {status: 405, headers: {Allow: 'GET, HEAD', 'Cache-Control':'private, no-store'}});
         }
         let user, session, failure: 'network' | 'limited' | 'unavailable' | undefined;
-        if (['/account', '/change-password'].includes(url.pathname)) {
+        // Match the router's decoded path too, so encoded names/slashes cannot skip authentication.
+        let pagePath: string;
+        try { pagePath = decodeURIComponent(url.pathname).replace(/\/+/g, '/'); }
+        catch { return new Response('Not found', {status: 404, headers: {'Cache-Control': 'private, no-store'}}); }
+        const dashboard = pagePath === '/dashboard' || pagePath.startsWith('/dashboard/');
+        if (dashboard || ['/account', '/change-password'].includes(url.pathname)) {
             try {
                 configuration(env);
                 session = createSession(env, request.headers.get('cookie') ?? '');
@@ -40,7 +45,7 @@ export default {
                 return session ? session.apply(response) : response;
             }
         }
-        const rendered = await requestContext.run({ failure, user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
+        const rendered = await requestContext.run({ dashboard, failure, user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
         const response = new Response(rendered.body, {headers: rendered.headers, status: failure ? failure === 'limited' ? 429 : 503 : rendered.status});
         response.headers.set('Cache-Control', 'private, no-store');
         response.headers.set('Referrer-Policy', 'no-referrer');

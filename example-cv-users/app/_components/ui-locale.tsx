@@ -4,7 +4,7 @@ import { translate, type UiLocale } from '../../lib/account/messages';
 export const UI_LOCALE_KEY = 'example-cv-users:locale';
 const LocaleContext = createContext({ locale: 'zh' as UiLocale, setLocale: (_: UiLocale) => {}, t: (text: string) => text });
 
-export function UiLocaleProvider({ children, initialLocale = 'zh' }: { children: ReactNode; initialLocale?: UiLocale }) {
+export function UiLocaleProvider({ children, initialLocale = 'zh', pageTitle = 'account' }: { children: ReactNode; initialLocale?: UiLocale; pageTitle?: 'account' | 'dashboard' }) {
   const [locale, setLocaleState] = useState<UiLocale>(initialLocale);
   useEffect(() => {
     try {
@@ -14,8 +14,8 @@ export function UiLocaleProvider({ children, initialLocale = 'zh' }: { children:
   }, []);
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
-    document.title = locale === 'zh' ? 'EXAMPLE_CV · 账户' : 'EXAMPLE_CV · Account';
-  }, [locale]);
+    document.title = pageTitle === 'dashboard' ? (locale === 'zh' ? 'EXAMPLE_CV · 工作区' : 'EXAMPLE_CV · Dashboard') : (locale === 'zh' ? 'EXAMPLE_CV · 账户' : 'EXAMPLE_CV · Account');
+  }, [locale, pageTitle]);
   const value = useMemo(() => ({ locale, t: (text: string) => translate(text, locale), setLocale: (next: UiLocale) => {
     setLocaleState(next);
     try { window.localStorage.setItem(UI_LOCALE_KEY, next); } catch { /* Best-effort presentation preference. */ }

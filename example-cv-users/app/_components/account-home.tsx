@@ -38,7 +38,7 @@ export function AccountHome({user}: {user: {id:string;email:string}}) {
   }
   return <>
     <AccountStatus userId={identity?.id} email={identity?.email} busy={false}/>
-    {identity ? <><AccountActions busy={busy} onLogout={() => run('logout')}/>
+    {identity ? <><a className="button-link" href="/dashboard">{t('进入工作区')}</a><AccountActions busy={busy} onLogout={() => run('logout')}/>
       <button type="button" className="secondary" disabled={busy} onClick={() => run('refresh')}>{t('刷新账户状态')}</button></> :
       <a className="button-link" href="/login">{t('返回登录')}</a>}
     <Feedback result={result}/>
