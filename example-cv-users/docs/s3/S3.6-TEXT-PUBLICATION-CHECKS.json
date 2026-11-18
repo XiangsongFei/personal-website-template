@@ -246,5 +246,26 @@
     "git_writes": 0,
     "downloads_or_installs": 0
   },
-  "artifacts_are": "local source/test evidence and independent commit preparation only; no Commit, no real execution approval"
+  "artifacts_are": "local source/test evidence and independent commit preparation only; no Commit, no real execution approval",
+  "delivery_compatibility": {
+    "status": "PR40_LOCAL_COMPATIBILITY_CANDIDATE",
+    "base_commit": "e137f553469e9ace26bbfcd8a0359e4e1160ad9d",
+    "prior_pr_head": "3eca71800047b4035e37e1959fcc27777dacf553",
+    "base_package_json_sha256": "5cc08f5030c4bcb4451a03bf0361377aeb3f49f5b45c8a74c389f553f0ba1167",
+    "historical_scope": "Original fields record the 2026-11-16 six-file slice and its executed commands.",
+    "delivery_scope": "Five added files. package.json and historical source-integrity contracts retain the exact base bytes.",
+    "s3_offline_entrypoint": "npm run test:s3",
+    "full_users_entrypoint": "npm test",
+    "discovery_directory": "tests/s3/",
+    "discovered_test_files": [
+      "tests/s3/text-publication.test.mjs",
+      "tests/s3/text-publication-static.test.mjs"
+    ],
+    "targeted_argv": [
+      "node",
+      "--test",
+      "tests/s3/text-publication.test.mjs",
+      "tests/s3/text-publication-static.test.mjs"
+    ]
+  }
 }
