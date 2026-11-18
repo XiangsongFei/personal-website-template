@@ -1,10 +1,11 @@
 import {AccountUnavailable} from '../_components/account-ui';
 import {ChangePasswordForm} from '../_components/change-password-form';
-import {PageIntro, UiText} from '../_components/ui-locale';
+import {AccountWorkspace} from '../_components/account-workspace';
 import {requestContext} from '../../lib/context';
+import '../account-management.css';
 export default function ChangePasswordPage() {
   const ctx = requestContext.getStore();
-  return <><PageIntro title="修改密码" description="确认当前密码，然后设置新密码。"/>
+  return <AccountWorkspace section="password">
     {ctx?.user ? <ChangePasswordForm/> : <AccountUnavailable failure={ctx?.failure}/>}
-    <a className="text-link" href="/account"><UiText text="返回账户"/></a></>;
+  </AccountWorkspace>;
 }

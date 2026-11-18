@@ -17,6 +17,8 @@
 | [REPOSITORY.md](REPOSITORY.md) | 基线、全部 worktree、目录归属、原脏工作区保护 |
 | [IMPLEMENTATION.md](IMPLEMENTATION.md) | 十个源码/测试文件的修改说明和身份保护 |
 | [TESTING.md](TESTING.md) | 构建/类型/完整离线测试、浏览器与审计证据 |
+| [ACCOUNT-SECURITY-UI.md](ACCOUNT-SECURITY-UI.md) | 2026-11-19 账户与安全及修改密码的局部 UI 补充、文件与认证边界 |
+| [ACCOUNT-SECURITY-TESTING.md](ACCOUNT-SECURITY-TESTING.md) | 补充测试、自审、20 组禁止修改页面回归及真实浏览器截图 |
 | [REVIEW.md](REVIEW.md) | 本地专项复核、官方审查与 CI 的区别 |
 | [DEPENDENCIES.md](DEPENDENCIES.md) | S3 和安全审计阻断、当前能力边界 |
 | [CLOUDFLARE-PREVIEW.md](CLOUDFLARE-PREVIEW.md) | 只读云端核查与未来预览/部署检查表 |
