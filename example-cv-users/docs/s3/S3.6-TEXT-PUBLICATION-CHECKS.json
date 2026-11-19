@@ -267,5 +267,17 @@
       "tests/s3/text-publication.test.mjs",
       "tests/s3/text-publication-static.test.mjs"
     ]
+  },
+  "s36_0_delivery": {
+    "status": "OFFLINE_IMPLEMENTED_RUNTIME_DISABLED",
+    "base": "ceb96fda27df291d18285d18ae4f3ce25b668436",
+    "original_pr_head": "5364bc75adb3f3654b2d31be775957bff144c35b",
+    "scope": "Five paths. The earlier fields describe the historical cut and its compatibility evidence.",
+    "node": "24.22.1",
+    "npm": "11.19.1",
+    "targeted_tests": 40,
+    "app_checks": ["npm run build", "npm run typecheck", "npm test", "npm audit"],
+    "s3_discovery": "npm run test:s3",
+    "real_acceptance": "NOT_RUN"
   }
 }

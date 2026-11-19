@@ -1,0 +1,218 @@
+{
+  "baseline": "2690a82352705413aa24f9779dd9a6f7d659960c",
+  "method": "Baseline independently exported and built, same browser and Host, isolated synthetic Auth. Pointer (0,0), focus blurred, fonts and layout settled. No image editing.",
+  "computedStyleCasesIdentical": 20,
+  "exactPixelCases": 14,
+  "cases": [
+    {
+      "file": "forgot-password-en-1440.png",
+      "beforeSha256": "31148d3036f3715866b1d01db96642c5440aff0295cd8ed7da502d693716635e",
+      "afterSha256": "31148d3036f3715866b1d01db96642c5440aff0295cd8ed7da502d693716635e",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "forgot-password-en-390.png",
+      "beforeSha256": "5a276be67e3706694e2a48e2cb9aea5f6a47618007adc931c581a084f842ec63",
+      "afterSha256": "5a276be67e3706694e2a48e2cb9aea5f6a47618007adc931c581a084f842ec63",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "forgot-password-zh-1440.png",
+      "beforeSha256": "e9ed5167f7d93a52063b4bd4eb38a289c41c3f507d5cb1cc36c201f8f239b301",
+      "afterSha256": "e9ed5167f7d93a52063b4bd4eb38a289c41c3f507d5cb1cc36c201f8f239b301",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "forgot-password-zh-390.png",
+      "beforeSha256": "94430b084c720881d000ba615e2530852a1764cd752b226586cc231e07ce2499",
+      "afterSha256": "94430b084c720881d000ba615e2530852a1764cd752b226586cc231e07ce2499",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "login-en-1440.png",
+      "beforeSha256": "2cee4266f766ef73440e0eb3aecae352ad80fdbcbfff8762741f5b0c05607be4",
+      "afterSha256": "8fb82bc41665d57cd5484cfbee999b2569b2a019088a840d27f9144fb2eb1f5e",
+      "identical": false,
+      "differentDecodedPixels": 1,
+      "differenceBounds": [
+        909,
+        523,
+        909,
+        523
+      ],
+      "max8BitChannelDelta": 1
+    },
+    {
+      "file": "login-en-390.png",
+      "beforeSha256": "dc255ca1bbb717a9e7fe2b3b05fb3086f448a4594f867d3871ab8ecace7b5f99",
+      "afterSha256": "dc255ca1bbb717a9e7fe2b3b05fb3086f448a4594f867d3871ab8ecace7b5f99",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "login-zh-1440.png",
+      "beforeSha256": "6228678852106d490b874fc1a2657d2f274c5729d6138b94ef8838c954069234",
+      "afterSha256": "ddddca370e86f5341681045b2a6c4f7d6cb9859e8ecfd847dadc4ce502a98791",
+      "identical": false,
+      "differentDecodedPixels": 1,
+      "differenceBounds": [
+        909,
+        523,
+        909,
+        523
+      ],
+      "max8BitChannelDelta": 1
+    },
+    {
+      "file": "login-zh-390.png",
+      "beforeSha256": "7b4dd4f6f46d33e64511e704db55e3837caf62597ed7dd295c1197bb877eb8b2",
+      "afterSha256": "f53b31ee29c0406f8fde9ed7577ed875bca8f1f607e8b7432f6eae733c3dfa47",
+      "identical": false,
+      "differentDecodedPixels": 1,
+      "differenceBounds": [
+        365,
+        291,
+        365,
+        291
+      ],
+      "max8BitChannelDelta": 1
+    },
+    {
+      "file": "register-en-1440.png",
+      "beforeSha256": "92f1f4f8cf44dcf635ab1e84622c015348ec2ad87adba5a8d48a086d2027ecfa",
+      "afterSha256": "92f1f4f8cf44dcf635ab1e84622c015348ec2ad87adba5a8d48a086d2027ecfa",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "register-en-390.png",
+      "beforeSha256": "1ce6614320a4372df12d786903e4f2bdf26798e9e84fcc2f7f791cd391143257",
+      "afterSha256": "39f9b08e92994dc870084a0cba75f914cd0524d99fa041e38eee417e5a0228cf",
+      "identical": false,
+      "differentDecodedPixels": 16,
+      "differenceBounds": [
+        24,
+        291,
+        365,
+        640
+      ],
+      "max8BitChannelDelta": 11
+    },
+    {
+      "file": "register-zh-1440.png",
+      "beforeSha256": "ac68720c2e27ad13f364f6d357de886daef9f39cf68de4b8ab4d670dd9f9b7b6",
+      "afterSha256": "2a0e8df1e90988d5c36a88eb4b6677ebe88933e7c0350d4fecb0c8ca570c6f32",
+      "identical": false,
+      "differentDecodedPixels": 5,
+      "differenceBounds": [
+        741,
+        523,
+        909,
+        775
+      ],
+      "max8BitChannelDelta": 3
+    },
+    {
+      "file": "register-zh-390.png",
+      "beforeSha256": "296be1c086de549e87bb5565c9ca223958bf64b19f8760445fbcd4640bedc872",
+      "afterSha256": "d9302aa9f7d15cc86398f76bf87f75c78f340849d91638deac64db8269c1d3f1",
+      "identical": false,
+      "differentDecodedPixels": 18,
+      "differenceBounds": [
+        24,
+        291,
+        365,
+        640
+      ],
+      "max8BitChannelDelta": 8
+    },
+    {
+      "file": "reset-password-en-1440.png",
+      "beforeSha256": "26ec39705cac30ba4b9c369c98a05f6456a7200cc3ccd162ea5fd0f4a9572023",
+      "afterSha256": "26ec39705cac30ba4b9c369c98a05f6456a7200cc3ccd162ea5fd0f4a9572023",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "reset-password-en-390.png",
+      "beforeSha256": "5a5334838ba7fb2d63c112569cff7a2ef55ae9849a024138138b1ca0fb25abd4",
+      "afterSha256": "5a5334838ba7fb2d63c112569cff7a2ef55ae9849a024138138b1ca0fb25abd4",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "reset-password-zh-1440.png",
+      "beforeSha256": "b730258b62164e175847391614da2dc16a7b4408cfa4a4a7ee786703265ec832",
+      "afterSha256": "b730258b62164e175847391614da2dc16a7b4408cfa4a4a7ee786703265ec832",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "reset-password-zh-390.png",
+      "beforeSha256": "514ba0f6590b1ba76413aa6af1452cc08e0e0d839a4cbc1d6c8bfe9c8c0f6be1",
+      "afterSha256": "514ba0f6590b1ba76413aa6af1452cc08e0e0d839a4cbc1d6c8bfe9c8c0f6be1",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "verify-email-en-1440.png",
+      "beforeSha256": "26fb671d9710a506bc06cfa96c371c9f58a4e5219d67901ce55aeabbb3a1d91f",
+      "afterSha256": "26fb671d9710a506bc06cfa96c371c9f58a4e5219d67901ce55aeabbb3a1d91f",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "verify-email-en-390.png",
+      "beforeSha256": "6caf4b77021698ed0a8daec1980b4d1efed6d6a5d13c5b459f50f69730713482",
+      "afterSha256": "6caf4b77021698ed0a8daec1980b4d1efed6d6a5d13c5b459f50f69730713482",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "verify-email-zh-1440.png",
+      "beforeSha256": "42bf36511610fa26cf0ba7380bda54d4825853d7a4d132bfbfe3f0033062b3c1",
+      "afterSha256": "42bf36511610fa26cf0ba7380bda54d4825853d7a4d132bfbfe3f0033062b3c1",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    },
+    {
+      "file": "verify-email-zh-390.png",
+      "beforeSha256": "8fa9338586dc02054a6e64ef37854cf967e1d9f987d6ec9a8630f2b11ac1d32a",
+      "afterSha256": "8fa9338586dc02054a6e64ef37854cf967e1d9f987d6ec9a8630f2b11ac1d32a",
+      "identical": true,
+      "differentDecodedPixels": 0,
+      "differenceBounds": null,
+      "max8BitChannelDelta": 0
+    }
+  ]
+}

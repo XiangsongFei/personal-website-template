@@ -1,0 +1,215 @@
+/* Scoped workspace surfaces. The Dashboard sidebar and Header use dashboard.css. */
+.dashboard-main:has(.resume-editor) { max-width: 1480px; }
+.resume-editor {
+  container: resume-workspace / inline-size;
+  --editor-pane-height: max(25rem, calc(100svh - var(--dashboard-header-height) - 10rem));
+}
+.resume-editor button { cursor: pointer; }
+.resume-editor button:disabled { cursor: default; }
+.editor-heading { margin-block-end: var(--dashboard-space-3); }
+.editor-heading p, .editor-preview-heading p {
+  margin: 8px 0 0;
+  color: var(--dashboard-muted);
+}
+.editor-columns { display: grid; }
+.editor-pane, .editor-preview {
+  min-width: 0;
+  height: var(--editor-pane-height);
+  display: flex;
+  flex-direction: column;
+}
+.editor-pane-body, .site-preview-viewport {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
+.editor-pane-body { padding: 3px 8px 20px 3px; }
+.editor-pane-body h2 { margin-bottom: 16px; }
+.editor-preview-heading { flex: none; margin-bottom: 16px; }
+.editor-preview-heading p { font-size: 13px; }
+.editor-modes { margin: 0 0 20px; }
+.editor-switch { display: flex; flex-wrap: wrap; gap: 8px; }
+.resume-editor .editor-switch button,
+.resume-editor .editor-actions button,
+.resume-editor .editor-ai button {
+  width: auto;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dashboard-muted);
+  font: inherit;
+  line-height: 1.35;
+}
+.resume-editor .editor-switch button[aria-pressed=true] {
+  background: var(--dashboard-brand-light);
+  color: var(--dashboard-brand-dark);
+  font-weight: 600;
+}
+.resume-editor .editor-switch button:hover { color: var(--dashboard-brand-dark); }
+.editor-language {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.editor-language { margin-bottom: 24px; }
+.editor-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  padding: 0;
+  gap: 16px;
+  margin: 0 0 24px;
+  border: 0;
+  min-inline-size: 0;
+}
+.editor-fields legend { margin: 0 0 12px; padding: 0; font-size: 16px; font-weight: 600; }
+.editor-field { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.resume-editor input, .resume-editor textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #a3a3a3;
+  border-radius: 4px;
+  background: var(--dashboard-bg);
+  color: var(--dashboard-text);
+  font: inherit;
+  font-size: 16px;
+}
+.resume-editor input {
+  min-height: 44px;
+  padding-inline: 2px;
+  border: 0;
+  border-bottom: 1px solid #cbcbcb;
+  border-radius: 0;
+  background: transparent;
+}
+.resume-editor input:focus { border-bottom-color: var(--dashboard-brand); }
+.resume-editor input:focus-visible { outline: 2px solid var(--dashboard-brand-dark); outline-offset: 2px; }
+.resume-editor input[aria-invalid=true] { border-bottom-color: #a44242; }
+.resume-editor textarea { min-height: 12rem; resize: vertical; }
+.resume-editor textarea[aria-invalid=true] { border-color: #a44242; }
+.editor-introduction { margin-top: 12px; }
+.editor-ai { display: flex; flex-wrap: wrap; }
+.resume-editor .editor-ai button { padding-inline: 7px; }
+.editor-note { color: var(--dashboard-muted); font-size: 13px; margin: 8px 0 0; }
+#editor-intro-guidance { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.editor-actions {
+  flex: none;
+  background: var(--dashboard-bg);
+  border-top: 1px solid var(--dashboard-line);
+  padding-block: 8px 2px;
+}
+.editor-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 4px;
+}
+.editor-actions p { margin: 0; font-weight: 600; }
+.editor-actions small { color: var(--dashboard-muted); }
+.resume-editor .editor-actions button:enabled { color: var(--dashboard-brand-dark); text-decoration: underline; }
+.resume-editor .editor-actions .editor-save { background: var(--dashboard-bg-secondary); color: var(--dashboard-muted); }
+.resume-editor button:disabled { opacity: 1; }
+
+.editor-pane[data-mode=preview], .editor-preview[data-mode=edit] { display: none; }
+@container resume-workspace (min-width: 875px) {
+  .editor-columns { grid-template-columns: minmax(0, 45fr) minmax(0, 55fr); }
+  .editor-modes { display: none; }
+  .editor-pane[data-mode], .editor-preview[data-mode] { display: flex; }
+  .editor-pane { padding-right: 24px; }
+  .editor-preview { padding-left: 24px; border-left: 1px solid var(--dashboard-line); }
+}
+
+
+.resume-editor .record-add,
+.resume-editor .record-header button,
+.resume-editor .record-confirm button {
+  width: auto;
+  margin: 0;
+  padding: 7px 9px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dashboard-brand-dark);
+  font: inherit;
+}
+.resume-editor .record-add { background: var(--dashboard-brand-light); font-weight: 600; }
+.resume-editor .record-header button:disabled { color: var(--dashboard-muted); opacity: .65; }
+.record-list { padding: 0; list-style: none; }
+.record-list { margin: 16px 0 0; }
+.record-list > li { padding-block: 8px; border-bottom: 1px solid var(--dashboard-line); }
+.record-header, .record-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.record-header { justify-content: space-between; }
+.resume-editor .record-header .record-title {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dashboard-text);
+  text-align: start;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.record-fields { padding-block: 12px 8px; }
+.record-field-grid { margin: 0; }
+.record-field-grid .editor-field > label { margin: 0; }
+.record-description { margin-top: 16px; }
+.record-description textarea { min-height: 8rem; }
+.record-confirm { margin-block: 4px 8px; }
+.record-confirm p { margin: 0; }
+.resume-editor .record-confirm button:first-of-type { color: #a44242; text-decoration: underline; }
+.resume-editor .record-fields select {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid #a3a3a3;
+  border-radius: 4px;
+  background: var(--dashboard-bg);
+  color: var(--dashboard-text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.project-methods { margin-top: 20px; }
+.project-methods > h3 { margin-bottom: 8px; }
+.method-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.method-row { gap: 4px 8px; }
+.method-row + .method-row { margin-top: 12px; }
+.method-field { flex: 1 1 170px; }
+.method-row .record-actions { align-self: flex-end; }
+
+.award-fields { display: grid; gap: 12px; }
+.award-fields > .editor-note { margin: 0; }
+
+.editor-contact > section + section { margin-top: 28px; }
+.editor-contact h3 { margin-bottom: 12px; }
+.contact-field-stack { display: grid; gap: 12px; }
+.contact-field-stack .record-description { margin: 0; }
+.editor-contact textarea { min-height: 5rem; }
+.contact-status-type { margin-bottom: 12px; }
+.editor-contact-areas { margin-bottom: 16px; }
+.editor-section-note { margin: 0 0 12px; }
+/* One logical field, two persistent locale controls. */
+.editor-pair { grid-column: 1 / -1; margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+.editor-pair > legend { margin: 0 0 6px; padding: 0; font-size: inherit; font-weight: 600; }
+.editor-pair-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.editor-pair-values[data-pair-layout=stacked] { grid-template-columns: minmax(0, 1fr); }
+.editor-pair-values .editor-field label { color: var(--dashboard-muted); font-size: 13px; margin: 0; }
+.editor-pair-values .record-description { margin: 0; }
+.editor-pair + .editor-pair { margin-top: 14px; }
+.editor-fields > .editor-pair + .editor-pair { margin-top: 0; }
+.project-method-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px; }

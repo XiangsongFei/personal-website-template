@@ -1,0 +1,8 @@
+{
+  "stage": "S4.3",
+  "checks": [
+    "Profile and Introduction are bilingual, keep module drafts and project to full 45/55 preview; narrow toggle works"
+  ],
+  "chromium": "157.0.8103.79",
+  "editorFraction": 0.45
+}

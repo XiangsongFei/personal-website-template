@@ -1,7 +1,7 @@
 // OFFLINE ONLY. Pure state/effect tests, no JWT, Grant, SQL, Storage or network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BusinessError} from '../../lib/business/protocol.mjs';
+import {BusinessError,sha256} from '../../lib/business/protocol.mjs';
 import {initialTextPublication,planTextPublication,readTextPublicationOperation,textPayload} from '../../lib/business/text-publication.mjs';
 
 const id=n=>'b3600000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -188,7 +188,14 @@ test('OFFLINE review regression: no-op receipt cannot borrow a later valid publi
 test('OFFLINE no-op draft receipt stays bound to the publication version observed by its own operation',async()=>{
   const c=save();c.payload=payload();
   const no=await plan(await initial(),'save_text_draft',c),published=await plan(no.next,'publish_site',pub());
-  const bad=structuredClone(published.next);bad.operations[0].result.publication=structuredClone(published.next.publication);
+  const bad=structuredClone(published.next);
+  bad.operations[0].result.publication=structuredClone(published.next.publication);
+  await assert.rejects(readTextPublicationOperation(bad,actor,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
+  await assert.rejects(plan(bad,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
+  bad.operations[0].basis.publication_revision=published.next.publication.publication_revision;
+  await assert.rejects(readTextPublicationOperation(bad,actor,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
+  await assert.rejects(plan(bad,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
+  bad.operations.push(bad.operations.shift());
   await assert.rejects(readTextPublicationOperation(bad,actor,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
   await assert.rejects(plan(bad,'save_text_draft',c),code('PUBLICATION_STATE_INVALID'));
 });
@@ -212,4 +219,78 @@ test('OFFLINE nested asset references, invalid locales, duplicate entries and ov
 test('OFFLINE literal text is not rendered, fetched, resolved, or promoted to any file capability',()=>{
   const literal='<img src="https://private.invalid/file"> https://other.invalid/a';
   assert.equal(textPayload(payload(literal)).entries[0].translations.en,literal);
+});
+
+test('OFFLINE replay and reconciliation bind a save receipt to its resulting draft payload',async()=>{
+  for(const original of [save(),save(12,0,'Draft only')]){
+    const p=await plan(await initial(),'save_text_draft',original);
+    const otherCommand=save(12,0,'Different payload');
+    const otherPlan=await plan(await initial(),'save_text_draft',otherCommand);
+    const bad=structuredClone(p.next);
+    bad.operations[0].payload_digest=otherPlan.next.operations[0].payload_digest;
+    await assert.rejects(plan(bad,'save_text_draft',otherCommand),code('PUBLICATION_STATE_INVALID'));
+    await assert.rejects(readTextPublicationOperation(bad,actor,'save_text_draft',otherCommand),code('PUBLICATION_STATE_INVALID'));
+  }
+});
+
+test('OFFLINE snapshot history has at most one snapshot per source draft revision',async()=>{
+  const p=await plan(await initial(),'publish_site',pub());
+  const u=await plan(p.next,'unpublish_site',unpub());
+  const again=pub(20,2);
+  const republished=await plan(u.next,'publish_site',again);
+  const bad=structuredClone(republished.next),duplicateId=id(102);
+  bad.snapshots.push({...bad.snapshots[0],id:duplicateId});
+  bad.publication.snapshot_id=duplicateId;
+  bad.audits.at(-1).publication.snapshot_id=duplicateId;
+  bad.operations.at(-1).result.publication.snapshot_id=duplicateId;
+  await assert.rejects(readTextPublicationOperation(bad,actor,'publish_site',again),code('PUBLICATION_STATE_INVALID'));
+});
+
+test('OFFLINE actor must match the original plain UID/SID shape before copying',async()=>{
+  const state=await initial(),input=save();
+  class Actor {
+    uid=owner;
+    sid=id(3);
+  }
+  const invalidActor=new Actor();
+  await assert.rejects(planTextPublication(state,invalidActor,'save_text_draft',input,{now:1}),code('INVALID_INPUT'));
+  await assert.rejects(readTextPublicationOperation(state,invalidActor,'save_text_draft',input),code('INVALID_INPUT'));
+});
+
+test('OFFLINE text preserves valid Unicode and rejects strings PostgreSQL cannot represent',()=>{
+  const text='内容 😀\n\\ "';
+  assert.equal(textPayload(payload(text)).entries[0].translations.en,text);
+  for(const invalid of ['embedded\u0000NUL','\ud800','\udc00']){
+    assert.throws(()=>textPayload(payload(invalid)),code('INVALID_INPUT'));
+  }
+});
+
+test('OFFLINE publish rejects draft rewrites even when the draft content digest was recomputed',async()=>{
+  const saved=await plan(await initial(),'save_text_draft',save());
+  const bad=structuredClone(saved.next),row=bad.draft_revisions[1];
+  const altered=textPayload(payload('Rewritten history'));
+  row.payload=altered;
+  row.digest=await sha256(new TextEncoder().encode(JSON.stringify(altered)));
+  await assert.rejects(plan(bad,'publish_site',pub(30,0,1)),code('PUBLICATION_STATE_INVALID'));
+});
+
+test('OFFLINE an explicit snapshot cannot be supplied by the operation that created it',async()=>{
+  const p=await plan(await initial(),'publish_site',pub());
+  const bad=structuredClone(p.next),explicit=pub(10,0,0,id(100));
+  const request={operation:'publish_site',schema_version:1,request_id:explicit.request_id,
+    expected_draft_revision:0,expected_publication_revision:0,snapshot_id:explicit.snapshot_id};
+  bad.operations[0].payload_digest=await sha256(new TextEncoder().encode(JSON.stringify(request)));
+  await assert.rejects(readTextPublicationOperation(bad,actor,'publish_site',explicit),code('PUBLICATION_STATE_INVALID'));
+});
+
+test('OFFLINE validates audited save content even when its receipt is unresolved',async()=>{
+  const input=save(),saved=await plan(await initial(),'save_text_draft',input);
+  const bad=structuredClone(saved.next);
+  bad.operations[0].state='unknown';
+  bad.operations[0].result=null;
+  assert.equal((await readTextPublicationOperation(bad,actor,'save_text_draft',input)).status,'UNKNOWN');
+  const row=bad.draft_revisions[1];
+  row.payload=textPayload(payload('Different saved content'));
+  row.digest=await sha256(new TextEncoder().encode(JSON.stringify(row.payload)));
+  await assert.rejects(readTextPublicationOperation(bad,actor,'save_text_draft',input),code('PUBLICATION_STATE_INVALID'));
 });

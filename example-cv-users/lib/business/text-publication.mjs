@@ -13,6 +13,12 @@ const freeze=value=>{
 };
 const bytes=value=>encoder.encode(JSON.stringify(value));
 const digest=value=>sha256(bytes(value));
+const requestDigest=(op,input)=>digest({operation:op,...input});
+const operationBindingDigest=(o,index)=>digest({
+  index,site_id:o.site_id,actor_uid:o.actor_uid,actor_sid:o.actor_sid,operation:o.operation,
+  request_id:o.request_id,payload_digest:o.payload_digest,
+  draft_revision:o.basis.draft_revision,publication_revision:o.basis.publication_revision
+});
 
 // Narrow S3.2 Introduction aggregate. Extra fields, including ready/assets/URLs,
 // are rejected rather than projected away. Text itself remains literal text.
@@ -29,8 +35,9 @@ export function textPayload(value){
       Object.keys(t).some(k=>!['zh','en'].includes(k)))deny('INVALID_INPUT',400);
     const translations={};
     for(const locale of ['zh','en'])if(Object.hasOwn(t,locale)){
-      if(typeof t[locale]!=='string'||t[locale].length>20000)deny('INVALID_INPUT',400);
-      translations[locale]=t[locale];
+      const text=t[locale];
+      if(typeof text!=='string'||text.length>20000||text.includes('\u0000')||!text.isWellFormed())deny('INVALID_INPUT',400);
+      translations[locale]=text;
     }
     return {id:entry.id,position:entry.position,translations};
   }).sort((a,b)=>a.position-b.position);
@@ -75,12 +82,13 @@ async function checkedState(value){
     exact(r,['site_id','site_revision','payload','digest']);
     if(r.site_id!==s.site_id||r.site_revision!==i||r.digest!==await digest(textPayload(r.payload)))invariant();
   }
-  const seen=new Set();
+  const snapshotsById=new Map(),snapshotSources=new Set();
   for(const snap of s.snapshots){
     exact(snap,['id','site_id','source_draft_revision','schema_version','payload','digest','published_by','created_at']);
-    if(!uuid(snap.id)||seen.has(snap.id)||snap.site_id!==s.site_id||snap.schema_version!==1||
-      !revision(snap.source_draft_revision)||snap.published_by!==s.owner_uid||!revision(snap.created_at))invariant();
-    seen.add(snap.id);
+    if(!uuid(snap.id)||snapshotsById.has(snap.id)||snap.site_id!==s.site_id||snap.schema_version!==1||
+      !revision(snap.source_draft_revision)||snapshotSources.has(snap.source_draft_revision)||
+      snap.published_by!==s.owner_uid||!revision(snap.created_at))invariant();
+    snapshotsById.set(snap.id,snap);snapshotSources.add(snap.source_draft_revision);
     const source=s.draft_revisions[snap.source_draft_revision];
     if(!source||snap.digest!==source.digest||snap.digest!==await digest(textPayload(snap.payload)))invariant();
   }
@@ -88,7 +96,7 @@ async function checkedState(value){
   exact(p,['site_id','state','snapshot_id','publication_revision','changed_at','changed_by']);
   if(p.site_id!==s.site_id||!revision(p.publication_revision)||
     !['published','unpublished'].includes(p.state)||
-    (p.state==='published'?(!uuid(p.snapshot_id)||!seen.has(p.snapshot_id)):p.snapshot_id!==null))invariant();
+    (p.state==='published'?(!uuid(p.snapshot_id)||!snapshotsById.has(p.snapshot_id)):p.snapshot_id!==null))invariant();
   // The permanent row cannot be reset/recreated independently of its append-only
   // transition history. Delivery status is separate from publication revision.
   if(s.outbox.length!==p.publication_revision)invariant();
@@ -102,11 +110,11 @@ async function checkedState(value){
     if(p.state!=='unpublished'||p.changed_at!==null||p.changed_by!==null)invariant();
   }else if(p.changed_by!==s.owner_uid||!revision(p.changed_at)||
     p.state!==s.outbox.at(-1).event_type||p.changed_at!==s.outbox.at(-1).created_at)invariant();
-  if(s.operations.some(o=>o.site_id!==s.site_id||!uuid(o.actor_uid)||!uuid(o.actor_sid)||
-    !operations.has(o.operation)||!uuid(o.request_id)||!/^[0-9a-f]{64}$/.test(o.payload_digest)||
+  if(s.operations.some(o=>o.site_id!==s.site_id||o.actor_uid!==s.owner_uid||!uuid(o.actor_sid)||
+    !operations.has(o.operation)||!uuid(o.request_id)||!/^[0-9a-f]{64}$/.test(o.payload_digest)||!/^[0-9a-f]{64}$/.test(o.binding_digest)||
     !['succeeded','pending','unknown'].includes(o.state)))invariant();
   for(const o of s.operations){
-    exact(o,['site_id','actor_uid','actor_sid','operation','request_id','payload_digest','basis','state','result']);
+    exact(o,['site_id','actor_uid','actor_sid','operation','request_id','payload_digest','basis','state','result','binding_digest']);
     exact(o.basis,['site_id','draft_revision','publication_revision']);
     if(o.basis.site_id!==s.site_id||!revision(o.basis.draft_revision)||!revision(o.basis.publication_revision)||
       o.basis.draft_revision>s.draft_revision||o.basis.publication_revision>p.publication_revision)invariant();
@@ -118,7 +126,7 @@ async function checkedState(value){
       !revision(r.draft_revision)||r.draft_revision>s.draft_revision||typeof r.changed!=='boolean'||
       pr.site_id!==s.site_id||!revision(pr.publication_revision)||pr.publication_revision>p.publication_revision||
       !['published','unpublished'].includes(pr.state)||
-      (pr.state==='published'?(!uuid(pr.snapshot_id)||!seen.has(pr.snapshot_id)):pr.snapshot_id!==null)||
+      (pr.state==='published'?(!uuid(pr.snapshot_id)||!snapshotsById.has(pr.snapshot_id)):pr.snapshot_id!==null)||
       r.draft_revision!==o.basis.draft_revision+(o.operation==='save_text_draft'&&r.changed?1:0)||
       pr.publication_revision!==o.basis.publication_revision+(o.operation!=='save_text_draft'&&r.changed?1:0)||
       o.operation==='publish_site'&&pr.state!=='published'||
@@ -143,42 +151,71 @@ async function checkedState(value){
     .sort((a,b)=>a.publication_revision-b.publication_revision);
   const history=new Map([[0,{site_id:s.site_id,state:'unpublished',snapshot_id:null,
     publication_revision:0,changed_at:null,changed_by:null}]]);
+  const firstPublication=new Map();
   if(changes.length!==p.publication_revision)invariant();
   for(const [i,event]of changes.entries()){
     const row=event.publication,out=s.outbox[i],published=event.action==='publish_site';
     if(event.publication_revision!==i+1||row.state!==(published?'published':'unpublished')||
-      (published?(!uuid(row.snapshot_id)||!seen.has(row.snapshot_id)):row.snapshot_id!==null)||
+      (published?(!uuid(row.snapshot_id)||!snapshotsById.has(row.snapshot_id)):row.snapshot_id!==null)||
       row.changed_by!==event.actor_uid||row.changed_at!==out.created_at||row.state!==out.event_type)invariant();
+    const previous=history.get(i);
+    if(row.state===previous.state&&row.snapshot_id===previous.snapshot_id)invariant();
+    if(published&&!firstPublication.has(row.snapshot_id)){
+      const snap=snapshotsById.get(row.snapshot_id);
+      if(snap.created_at!==row.changed_at||snap.source_draft_revision!==event.draft_revision)invariant();
+      firstPublication.set(snap.id,i+1);
+    }
     history.set(i+1,row);
   }
-  if(!samePublication(p,history.get(p.publication_revision)))invariant();
-  for(const snap of s.snapshots){
-    if(!changes.some(a=>a.publication.snapshot_id===snap.id&&
-      a.publication.changed_at===snap.created_at&&a.draft_revision>=snap.source_draft_revision))invariant();
-  }
+  if(firstPublication.size!==s.snapshots.length||!samePublication(p,history.get(p.publication_revision)))invariant();
   const saves=[...audits.values()].filter(a=>a.action==='save_text_draft').sort((a,b)=>a.draft_revision-b.draft_revision);
   if(saves.length!==s.draft_revision||saves.some((a,i)=>a.draft_revision!==i+1))invariant();
   for(const event of audits.values()){
     if(!samePublication(event.publication,history.get(event.publication_revision)))invariant();
   }
-  for(const o of s.operations){
-    if(o.state!=='succeeded')continue; // Never promote pending/unknown from matching audit evidence.
-    const r=o.result,aud=audits.get(auditKey(o.actor_uid,o.operation,o.request_id));
-    if(!samePublication(r.publication,history.get(r.publication.publication_revision))||
-      (r.changed?(!aud||aud.draft_revision!==r.draft_revision||!samePublication(aud.publication,r.publication)):!!aud))invariant();
+  // Operations are appended in transaction order. Replay their audit effects
+  // to verify each basis, including the original basis of no-op receipts.
+  let draftRevision=0,publicationRevision=0;
+  for(const [index,o]of s.operations.entries()){
+    if(o.basis.draft_revision!==draftRevision||o.basis.publication_revision!==publicationRevision||
+      o.binding_digest!==await operationBindingDigest(o,index))invariant();
+    const aud=audits.get(auditKey(o.actor_uid,o.operation,o.request_id));
+    if(aud){
+      if(o.operation==='save_text_draft')draftRevision++;
+      else publicationRevision++;
+      if(aud.draft_revision!==draftRevision||aud.publication_revision!==publicationRevision)invariant();
+    }
+    const succeeded=o.state==='succeeded';
+    if(!aud&&!succeeded)continue; // An unresolved operation without effects has no result to verify.
+    const current=history.get(publicationRevision);
+    if(succeeded&&(o.result.changed!==!!aud||!samePublication(o.result.publication,current)))invariant();
+    const request={schema_version:1,request_id:o.request_id};
+    if(o.operation==='save_text_draft'){
+      const before=s.draft_revisions[o.basis.draft_revision],after=s.draft_revisions[draftRevision];
+      const input={...request,expected_draft_revision:o.basis.draft_revision,payload:textPayload(after.payload)};
+      if(!!aud!==(before.digest!==after.digest)||o.payload_digest!==await requestDigest(o.operation,input))invariant();
+    }else if(o.operation==='publish_site'){
+      const snap=snapshotsById.get(current.snapshot_id);
+      const input={...request,expected_draft_revision:o.basis.draft_revision,
+        expected_publication_revision:o.basis.publication_revision};
+      const currentDraft=snap.source_draft_revision===o.basis.draft_revision &&
+        o.payload_digest===await requestDigest(o.operation,{...input,snapshot_id:null});
+      const existingSnapshot=firstPublication.get(snap.id)<=o.basis.publication_revision &&
+        o.payload_digest===await requestDigest(o.operation,{...input,snapshot_id:snap.id});
+      if(!currentDraft&&!existingSnapshot)invariant();
+    }else if(o.payload_digest!==await requestDigest(o.operation,
+      {...request,expected_publication_revision:o.basis.publication_revision}))invariant();
   }
   const keys=s.operations.map(o=>JSON.stringify([o.site_id,o.actor_uid,o.operation,o.request_id]));
   if(new Set(keys).size!==keys.length)invariant();
   return s;
 }
 function actorFor(s,value){
-  exact(value,['uid','sid']);
   if(!uuid(value.uid)||!uuid(value.sid)||value.uid!==s.owner_uid)deny();
   return {...value}; // Requires a separately authorized server-owned context at integration.
 }
 const priorFor=(s,a,op,input)=>s.operations.find(o=>
   o.site_id===s.site_id&&o.actor_uid===a.uid&&o.operation===op&&o.request_id===input.request_id);
-const requestDigest=(op,input)=>digest({operation:op,...input});
 const unknown=input=>freeze({mode:'OFFLINE_RECONCILIATION',status:'UNKNOWN',request_id:input.request_id,retry_with_new_id:false});
 const increment=n=>{if(n===Number.MAX_SAFE_INTEGER)invariant();return n+1;};
 const rowResult=(s,input,changed)=>({schema_version:1,request_id:input.request_id,site_id:s.site_id,
@@ -194,7 +231,7 @@ function checkReceiptInput(s,operation,input,prior){
 }
 
 export async function readTextPublicationOperation(state,actor,operation,value){
-  const input=command(operation,value),who={...actor},s=await checkedState(state),a=actorFor(s,who);
+  const input=command(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
   const prior=priorFor(s,a,operation,input);
   if(!prior)return unknown(input); // Absence never proves an earlier write failed.
   if(prior.payload_digest!==await requestDigest(operation,input))conflict();
@@ -207,7 +244,7 @@ export async function readTextPublicationOperation(state,actor,operation,value){
 // CAS the expected revisions, and commit all effects together. No such adapter
 // is enabled here. Failure before this function returns leaves state untouched.
 export async function planTextPublication(state,actor,operation,value,{now,snapshot_id=null}={}){
-  const input=command(operation,value),who={...actor},s=await checkedState(state),a=actorFor(s,who);
+  const input=command(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
   if(!revision(now))deny('INVALID_INPUT',400);
   const hash=await requestDigest(operation,input),prior=priorFor(s,a,operation,input);
   if(prior){
@@ -265,6 +302,7 @@ export async function planTextPublication(state,actor,operation,value,{now,snaps
   const result=rowResult(s,input,changed);
   const receipt={site_id:s.site_id,actor_uid:a.uid,actor_sid:a.sid,operation,request_id:input.request_id,
     payload_digest:hash,basis:expected,state:'succeeded',result};
+  receipt.binding_digest=await operationBindingDigest(receipt,s.operations.length);
   s.operations.push(receipt);effects.operations.push(receipt);
   return freeze({mode:'OFFLINE_PLAN',replayed:false,expected,next:s,result,effects});
 }

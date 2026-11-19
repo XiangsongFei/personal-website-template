@@ -1,0 +1,191 @@
+{
+  "chromium": "157.0.8103.79",
+  "worker": {
+    "anonymous": 303,
+    "invalidHost": 421,
+    "invalidOrigin": 403,
+    "head": 200,
+    "rsc": 200,
+    "privateNoStore": true,
+    "closedBusinessPaths": 5
+  },
+  "viewportWidths": [
+    320,
+    390,
+    800,
+    1024,
+    1440
+  ],
+  "keyboard": "Enter toggled mobile navigation; Escape closed and restored focus",
+  "passwordInput": {
+    "ratios": [
+      {
+        "border": 4.54,
+        "placeholder": 4.74,
+        "placeholderOpacity": "1"
+      },
+      {
+        "border": 4.54,
+        "placeholder": 4.74,
+        "placeholderOpacity": "1"
+      },
+      {
+        "border": 4.54,
+        "placeholder": 4.74,
+        "placeholderOpacity": "1"
+      }
+    ],
+    "focused": {
+      "border": "rgb(70, 100, 83)",
+      "outline": "rgb(70, 100, 83)",
+      "background": "rgb(255, 255, 255)"
+    },
+    "disabled": {
+      "border": "rgb(188, 188, 188)",
+      "outline": "rgb(36, 36, 36)",
+      "background": "rgb(250, 250, 250)"
+    },
+    "errorStyle": {
+      "border": "rgb(154, 73, 73)",
+      "outline": "rgb(36, 36, 36)",
+      "background": "rgb(255, 255, 255)"
+    },
+    "actualErrorFeedback": true
+  },
+  "faults": {
+    "noJavaScript": 429,
+    "storageBlocked": 503,
+    "mainLandmark": true,
+    "bothLanguages": true,
+    "nativeReload": true,
+    "recovered": true
+  },
+  "browserHistory": {
+    "loggedOut": true,
+    "backStayedPrivate": true,
+    "navigationUsed": "Chromium goBack",
+    "persistedBfcacheHit": "not asserted"
+  },
+  "publicStyles": [
+    {
+      "path": "/login",
+      "locale": "zh",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/login",
+      "locale": "zh",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/login",
+      "locale": "en",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/login",
+      "locale": "en",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/register",
+      "locale": "zh",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/register",
+      "locale": "zh",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/register",
+      "locale": "en",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/register",
+      "locale": "en",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/verify-email",
+      "locale": "zh",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/verify-email",
+      "locale": "zh",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/verify-email",
+      "locale": "en",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/verify-email",
+      "locale": "en",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/forgot-password",
+      "locale": "zh",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/forgot-password",
+      "locale": "zh",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/forgot-password",
+      "locale": "en",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/forgot-password",
+      "locale": "en",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/reset-password",
+      "locale": "zh",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/reset-password",
+      "locale": "zh",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/reset-password",
+      "locale": "en",
+      "width": 390,
+      "computedStylesAndLayout": "identical"
+    },
+    {
+      "path": "/reset-password",
+      "locale": "en",
+      "width": 1440,
+      "computedStylesAndLayout": "identical"
+    }
+  ]
+}
