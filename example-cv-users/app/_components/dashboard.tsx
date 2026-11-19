@@ -2,9 +2,11 @@
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {useUiLocale} from './ui-locale';
 
-export type DashboardSection = 'overview' | 'website' | 'profile' | 'introduction';
+import type {EditorModule} from '../../lib/editor/draft';
 
-type NavItem = {id: string; zh: string; en: string; href?: '#overview' | '/account' | '/dashboard/website' | '/dashboard/editor#profile' | '/dashboard/editor#introduction'};
+export type DashboardSection = 'overview' | 'website' | EditorModule;
+
+type NavItem = {id: string; zh: string; en: string; href?: '#overview' | '/account' | '/dashboard/website' | `/dashboard/editor#${EditorModule}`};
 const navigation: {id: string; zh: string; en: string; items: NavItem[]}[] = [
   {id: 'workspace', zh: '工作台', en: 'Workspace', items: [
     {id: 'overview', zh: '概览', en: 'Overview', href: '#overview'},
@@ -13,8 +15,8 @@ const navigation: {id: string; zh: string; en: string; items: NavItem[]}[] = [
   {id: 'resume', zh: '个人简历', en: 'Resume', items: [
     {id: 'profile', zh: '个人资料', en: 'Profile', href: '/dashboard/editor#profile'},
     {id: 'introduction', zh: '个人介绍', en: 'Introduction', href: '/dashboard/editor#introduction'},
-    {id: 'education', zh: '教育经历', en: 'Education'},
-    {id: 'experience', zh: '工作经历', en: 'Experience'},
+    {id: 'education', zh: '教育经历', en: 'Education', href: '/dashboard/editor#education'},
+    {id: 'experience', zh: '工作经历', en: 'Experience', href: '/dashboard/editor#experience'},
     {id: 'projects', zh: '项目经历', en: 'Projects'},
     {id: 'skills', zh: '技能', en: 'Skills'},
     {id: 'awards', zh: '荣誉奖项', en: 'Awards'},
@@ -62,7 +64,7 @@ function Icon({kind}: {kind: string}) {
 
 function DashboardNavigation({mobile = false, onNavigate, section}: {mobile?: boolean; onNavigate: () => void; section: DashboardSection}) {
   const {locale} = useUiLocale();
-  const inEditor = section === 'profile' || section === 'introduction';
+  const inEditor = section !== 'overview' && section !== 'website';
   const noteId = mobile ? 'dashboard-nav-note-mobile' : 'dashboard-nav-note-desktop';
   return <>
     <p id={noteId} className="dashboard-nav-note">{locale === 'zh' ? '可使用概览、我的网站、账户安全及本地编辑。' : 'Overview, My website, account security and local editing are available.'}</p>

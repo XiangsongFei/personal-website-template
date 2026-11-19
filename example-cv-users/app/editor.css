@@ -159,3 +159,62 @@
 }
 .site-preview-prose { white-space: pre-wrap; }
 .site-preview-page footer { padding-block: 12px 24px; margin-top: 8px; }
+
+/* Repeatable sections share the S4.3 controls and the existing pane widths. */
+.resume-editor .record-add,
+.resume-editor .record-header button,
+.resume-editor .record-confirm button {
+  width: auto;
+  margin: 0;
+  padding: 7px 9px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dashboard-brand-dark);
+  font: inherit;
+}
+.resume-editor .record-add { background: var(--dashboard-brand-light); font-weight: 600; }
+.resume-editor .record-header button:disabled { color: var(--dashboard-muted); opacity: .65; }
+.record-list, .site-preview-records { padding: 0; list-style: none; }
+.record-list { margin: 16px 0 0; }
+.record-list > li { padding-block: 8px; border-bottom: 1px solid var(--dashboard-line); }
+.record-header, .record-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.record-header { justify-content: space-between; }
+.resume-editor .record-header .record-title {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dashboard-text);
+  text-align: start;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.record-fields { padding-block: 12px 8px; }
+.record-field-grid { margin: 0; }
+.record-field-grid .editor-field > label { margin: 0; }
+.record-description { margin-top: 16px; }
+.record-description textarea { min-height: 8rem; }
+.record-confirm { margin-block: 4px 8px; }
+.record-confirm p { margin: 0; }
+.resume-editor .record-confirm button:first-of-type { color: #a44242; text-decoration: underline; }
+.resume-editor .record-fields select {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid #a3a3a3;
+  border-radius: 4px;
+  background: var(--dashboard-bg);
+  color: var(--dashboard-text);
+  font: inherit;
+  font-size: 16px;
+}
+.site-preview-records { margin: 12px 0 0; }
+.site-preview-records li + li { margin-top: 20px; }
+.site-preview-records h4, .site-preview-records p { margin: 4px 0 0; }
+.site-preview-page::after { content: ''; display: block; block-size: var(--site-preview-end-space, 0px); }

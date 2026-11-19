@@ -1,0 +1,114 @@
+import type {ContentLocale} from './draft';
+
+export type OrderedDraftRecord = {clientId: string; position: number};
+export type DraftTranslations<T> = Partial<Record<ContentLocale, Partial<T>>>;
+
+export function moveRecord<T extends OrderedDraftRecord>(rows: readonly T[], clientId: string, direction: -1 | 1): readonly T[] {
+  const from = rows.findIndex(row => row.clientId === clientId);
+  const to = from + direction;
+  if (from < 0 || to < 0 || to >= rows.length) return rows;
+
+  const next = [...rows];
+  next[from] = {...rows[to], position: from};
+  next[to] = {...rows[from], position: to};
+  return next;
+}
+
+export function removeRecord<T extends OrderedDraftRecord>(rows: readonly T[], clientId: string): readonly T[] {
+  return rows.filter(row => row.clientId !== clientId).map((row, position) =>
+    row.position === position ? row : {...row, position});
+}
+
+export function editTranslation<T>(
+  translations: DraftTranslations<T>, locale: ContentLocale, changes: Partial<T>,
+): DraftTranslations<T> {
+  return {...translations, [locale]: {...translations[locale], ...changes}};
+}
+
+export const educationCategories = ['undergraduate', 'graduate', 'doctoral', 'summerSchool', 'custom'] as const;
+export type EducationCategory = typeof educationCategories[number];
+
+const categoryNames: Record<EducationCategory, Record<ContentLocale, string>> = {
+  undergraduate: {zh: '本科', en: 'Undergraduate'},
+  graduate: {zh: '研究生', en: 'Graduate'},
+  doctoral: {zh: '博士', en: 'Doctoral'},
+  summerSchool: {zh: '暑期学校', en: 'Summer School'},
+  custom: {zh: '自定义', en: 'Custom'},
+};
+
+const presetTitles: Record<Exclude<EducationCategory, 'custom'>, Record<ContentLocale, string>> = {
+  undergraduate: {zh: '本科教育', en: 'Undergraduate Education'},
+  graduate: {zh: '研究生教育', en: 'Graduate Education'},
+  doctoral: {zh: '博士教育', en: 'Doctoral Education'},
+  summerSchool: {zh: '暑期学校', en: 'Summer School'},
+};
+
+export type EducationText = {
+  title: string;
+  program: string;
+  period: string;
+  grade: string;
+  courseTitle: string | null;
+  courseDescription: string | null;
+  customCategoryLabel: string | null;
+};
+
+export type EducationDraft = OrderedDraftRecord & {
+  entryType: 'standard' | 'summerSchool';
+  category: EducationCategory | null;
+  // Provenance only. A local category change is not a persistence receipt.
+  persistedCategory: EducationCategory | null;
+  translations: DraftTranslations<EducationText>;
+};
+
+export function newEducation(clientId: string, position: number): EducationDraft {
+  return {clientId, position, entryType: 'standard', category: null, persistedCategory: null, translations: {}};
+}
+
+export function educationCategory(row: EducationDraft) {
+  return row.category ?? (row.entryType === 'summerSchool' ? 'summerSchool' : null);
+}
+
+export function changeEducationCategory(row: EducationDraft, category: EducationCategory | null): EducationDraft {
+  return {...row, category, entryType: category === 'summerSchool' ? 'summerSchool' : 'standard'};
+}
+
+export function educationCategoryLabel(category: EducationCategory | null, locale: ContentLocale) {
+  if (category) return categoryNames[category][locale];
+  return locale === 'zh' ? '未分类' : 'Uncategorized';
+}
+
+export function educationTitle(row: EducationDraft, locale: ContentLocale) {
+  const title = row.translations[locale]?.title;
+  if (title !== undefined) return title;
+  const category = educationCategory(row);
+  return category && category !== 'custom' ? presetTitles[category][locale] : '';
+}
+
+export function educationDisplay(row: EducationDraft, locale: ContentLocale) {
+  const values = row.translations[locale];
+  const category = educationCategory(row);
+  return {
+    title: educationTitle(row, locale),
+    categoryTitle: category === 'custom' ? values?.customCategoryLabel ?? '' : category ? educationCategoryLabel(category, locale) : '',
+    program: values?.program ?? '',
+    period: values?.period ?? '',
+    grade: values?.grade ?? '',
+    courseTitle: category === 'summerSchool' ? values?.courseTitle ?? '' : '',
+    courseDescription: category === 'summerSchool' ? values?.courseDescription ?? '' : '',
+  };
+}
+
+export type ExperienceText = {
+  organization: string;
+  title: string;
+  period: string;
+  description: string;
+  location: string | null;
+};
+
+export type ExperienceDraft = OrderedDraftRecord & {translations: DraftTranslations<ExperienceText>};
+
+export function newExperience(clientId: string, position: number): ExperienceDraft {
+  return {clientId, position, translations: {}};
+}

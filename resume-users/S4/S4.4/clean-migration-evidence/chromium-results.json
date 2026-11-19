@@ -1,0 +1,7 @@
+{
+  "stage": "S4.4",
+  "checks": [
+    "Education category and bilingual fields preserve data; stable order, confirmed deletion and per-section discard verified"
+  ],
+  "chromium": "157.0.8103.79"
+}
