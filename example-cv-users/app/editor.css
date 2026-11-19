@@ -116,7 +116,7 @@
 
 .editor-pane[data-mode=preview], .editor-preview[data-mode=edit] { display: none; }
 @container resume-workspace (min-width: 875px) {
-  .editor-columns { grid-template-columns: minmax(0, 55fr) minmax(0, 45fr); }
+  .editor-columns { grid-template-columns: minmax(0, 45fr) minmax(0, 55fr); }
   .editor-modes { display: none; }
   .editor-pane[data-mode], .editor-preview[data-mode] { display: flex; }
   .editor-pane { padding-right: 24px; }
