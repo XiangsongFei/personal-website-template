@@ -186,7 +186,7 @@
   gap: 4px;
 }
 .record-header { justify-content: space-between; }
-.resume-editor .record-title {
+.resume-editor .record-header .record-title {
   min-width: 0;
   max-width: 100%;
   color: var(--dashboard-text);
@@ -196,6 +196,7 @@
 }
 .record-fields { padding-block: 12px 8px; }
 .record-field-grid { margin: 0; }
+.record-field-grid .editor-field > label { margin: 0; }
 .record-description { margin-top: 16px; }
 .record-description textarea { min-height: 8rem; }
 .record-confirm { margin-block: 4px 8px; }
@@ -204,7 +205,7 @@
 .resume-editor .record-fields select {
   width: 100%;
   min-width: 0;
-  min-height: 44px;
+  min-height: 48px;
   padding: 8px 10px;
   border: 1px solid #a3a3a3;
   border-radius: 4px;

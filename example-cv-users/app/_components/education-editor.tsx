@@ -1,5 +1,6 @@
 'use client';
 
+import {useId} from 'react';
 import {
   changeEducationCategory, educationCategories, educationCategory, educationCategoryLabel, educationTitle,
   editTranslation, newEducation, type EducationCategory, type EducationDraft, type EducationText,
@@ -12,6 +13,7 @@ export function EducationEditor({rows, contentLocale, onChange}: {
   rows: readonly EducationDraft[]; contentLocale: ContentLocale; onChange: (rows: readonly EducationDraft[]) => void;
 }) {
   const {locale} = useUiLocale();
+  const categoryId = useId();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   return <RepeatableEditor rows={rows} onChange={onChange} create={newEducation}
     caption={(row, index) => {
@@ -32,15 +34,16 @@ export function EducationEditor({rows, contentLocale, onChange}: {
 
       return <>
         <div className="editor-fields record-field-grid">
-          <label className="editor-field">{text('教育类别', 'Education category')}
-            <select value={category ?? ''} onChange={event => {
+          <div className="editor-field">
+            <label htmlFor={categoryId}>{text('教育类别', 'Education category')}</label>
+            <select id={categoryId} value={category ?? ''} onChange={event => {
               const choice = event.target.value as EducationCategory | '';
               update(changeEducationCategory(row, choice || null));
             }}>
               <option value="">{educationCategoryLabel(null, locale)}</option>
               {educationCategories.map(choice => <option key={choice} value={choice}>{educationCategoryLabel(choice, locale)}</option>)}
             </select>
-          </label>
+          </div>
           {category === 'custom' && field('customCategoryLabel', text('自定义类别名称', 'Custom category name'))}
           {field('title', text('标题', 'Title'))}
           {field('program', text('学校、专业或项目', 'School, program or major'))}

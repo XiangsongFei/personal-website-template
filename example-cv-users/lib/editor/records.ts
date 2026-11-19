@@ -98,3 +98,17 @@ export function educationDisplay(row: EducationDraft, locale: ContentLocale) {
     courseDescription: category === 'summerSchool' ? values?.courseDescription ?? '' : '',
   };
 }
+
+export type ExperienceText = {
+  organization: string;
+  title: string;
+  period: string;
+  description: string;
+  location: string | null;
+};
+
+export type ExperienceDraft = OrderedDraftRecord & {translations: DraftTranslations<ExperienceText>};
+
+export function newExperience(clientId: string, position: number): ExperienceDraft {
+  return {clientId, position, translations: {}};
+}
