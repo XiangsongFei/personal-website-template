@@ -1,0 +1,50 @@
+{
+  "status": "PREPARATION_ONLY",
+  "authorized": false,
+  "current_action_budget": 0,
+  "run_id": "4dfd2f63-699b-4d82-92a8-1843202776b9",
+  "system_identifier": "NOT_YET_OBSERVED",
+  "postgres_image": "public.ecr.aws/supabase/postgres@sha256:74996d6d770095c7a95e794a936aeb0726424c6086dd120c5238910b4f0ea88b",
+  "resources": {
+    "container": "s36-a1-4dfd2f63-699b-4d82-92a8-1843202776b9",
+    "named_volume": "s36-a1-4dfd2f63-699b-4d82-92a8-1843202776b9-data",
+    "internal_network": "s36-a1-4dfd2f63-699b-4d82-92a8-1843202776b9-internal",
+    "host_ports": 0
+  },
+  "resource_ceiling": {
+    "containers": 1,
+    "volumes": 1,
+    "networks": 1,
+    "memory_bytes": 1073741824,
+    "nano_cpus": 1000000000,
+    "pids": 128,
+    "disk_bytes_proposed": 4294967296,
+    "disk_quota_verified": false
+  },
+  "prepared_target_ceiling": {
+    "sql": 411,
+    "connections": 10,
+    "docker_cli": 19,
+    "work_ms": 150000,
+    "total_ms": 210000,
+    "reconcile_sql": 17
+  },
+  "bootstrap": {
+    "native_invocations_proposed": 1,
+    "m1_m7_explicit_sql": 402,
+    "m1_m7_transactions": 7,
+    "max_connections_proposed": 10,
+    "joint_ceiling": "UNESTABLISHED"
+  },
+  "sql": {
+    "auth_acl_sha256": "77d62d3754f27ad60073afe9641b3cad45e5e9ce5677b5e3ae6ed2e09d2ec4d5",
+    "catalog_sha256": "a4bd3f0a112adc02ff69cf750913bc37262c853085080427be46b2ccd4278eae",
+    "auth_readback_sha256": "870398e4b82db98ece85ef45ae66ec51580d720593d924aa1d3987f9d270de02"
+  },
+  "catalog_expectations": {
+    "A07": null,
+    "A50": null,
+    "external_approval_digest": null
+  },
+  "excluded_system_identifiers": "PRIVATE_LOCAL_REQUIRED"
+}
