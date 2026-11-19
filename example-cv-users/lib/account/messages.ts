@@ -67,6 +67,7 @@ const english: Readonly<Record<string, string>> = {
   "确认当前密码，然后设置新密码。": "Confirm your current password, then choose a new one.",
   "返回账户": "Back to account",
   "我的账户": "My account",
+  "进入工作区": "Open dashboard",
   "查看登录状态，管理账户安全。": "Check your sign-in status and manage account security.",
   "邮箱": "Email",
   "请输入邮箱": "Enter your email",
