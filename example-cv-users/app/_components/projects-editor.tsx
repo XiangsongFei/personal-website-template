@@ -6,7 +6,8 @@ import {
   editTranslation, moveRecord, newProject, removeRecord, safeProjectUrl, updateProjectMethods,
   type ProjectDraft, type ProjectMethodDraft, type ProjectText,
 } from '../../lib/editor/records';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {editorLocales, PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 function ProjectMethods({methods, contentLocale, onChange}: {
@@ -28,7 +29,7 @@ function ProjectMethods({methods, contentLocale, onChange}: {
           const label = text('方法', 'Method') + ' ' + (index + 1);
           return <li className="record-header method-row" key={method.clientId} data-method-id={method.clientId} data-position={method.position}>
             <label className="editor-field method-field">{label}
-              <input value={method.value} autoComplete="off" maxLength={500} onChange={event => {
+              <input lang={contentLocale === 'zh' ? 'zh-CN' : 'en'} value={method.value} autoComplete="off" maxLength={500} onChange={event => {
                 const value = event.target.value;
                 onChange(methods.map(item => item.clientId === method.clientId ? {...item, value} : item));
               }}/>
@@ -51,39 +52,32 @@ export function ProjectsEditor({rows, contentLocale, onChange}: {
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
-  const urlId = useId();
   return <RepeatableEditor rows={rows} onChange={onChange} create={newProject}
     caption={(row, index) => (index + 1) + '. ' + (row.translations[contentLocale]?.title?.trim() || text('项目经历', 'Project'))}
     addLabel={text('＋ 添加项目', '＋ Add project')}
     emptyLabel={text('暂无项目。', 'No projects yet.')}
     fields={(row, update) => {
-      const values = row.translations[contentLocale];
-      const href = values?.href ?? '';
-      const fieldId = urlId + '-' + row.clientId;
-      const invalid = Boolean(href.trim() && !safeProjectUrl(href));
-      function change(key: keyof ProjectText, value: string) {
-        update({...row, translations: editTranslation(row.translations, contentLocale, {[key]: value})});
+      function change(language: ContentLocale, key: keyof ProjectText, value: string) {
+        update({...row, translations: editTranslation(row.translations, language, {[key]: value})});
       }
-      const field = (key: keyof ProjectText, label: string, multiline = false) => <RecordField
-        label={label} value={values?.[key] ?? ''} multiline={multiline} onChange={value => change(key, value)}/>;
+      const field = (key: keyof ProjectText, label: string, multiline = false) => <PairedField
+        label={label} value={language => row.translations[language]?.[key] ?? ''} multiline={multiline} ai={multiline}
+        onChange={(language, value) => change(language, key, value)}/>;
       return <>
         <div className="editor-fields record-field-grid">
           {field('title', text('项目名称', 'Project name'))}
           {field('subtitle', text('副标题', 'Subtitle'))}
           {field('period', text('时间范围', 'Period'))}
-          <div className="editor-field">
-            <label htmlFor={fieldId}>{text('项目链接', 'Project URL')}</label>
-            <input id={fieldId} type="url" value={href} maxLength={2048} autoComplete="off"
-              aria-invalid={invalid || undefined} aria-describedby={invalid ? fieldId + '-error' : undefined}
-              onChange={event => change('href', event.target.value)}/>
-            {invalid && <p className="editor-note" id={fieldId + '-error'} role="status">
-              {text('请输入不含账号或密码的完整 HTTP 或 HTTPS 链接。', 'Enter a full HTTP or HTTPS URL without credentials.')}
-            </p>}
-          </div>
+          <PairedField label={text('项目链接', 'Project URL')} type="url" maxLength={2048}
+            value={language => row.translations[language]?.href ?? ''} onChange={(language, value) => change(language, 'href', value)}
+            error={value => value.trim() && !safeProjectUrl(value)
+              ? text('请输入不含账号或密码的完整 HTTP 或 HTTPS 链接。', 'Enter a full HTTP or HTTPS URL without credentials.') : undefined}/>
         </div>
         {field('description', text('项目描述', 'Project description'), true)}
-        <ProjectMethods methods={row.methods[contentLocale]} contentLocale={contentLocale}
-          onChange={methods => update(updateProjectMethods(row, contentLocale, methods))}/>
+        <div className="project-method-columns">
+          {editorLocales.map(language => <ProjectMethods key={language} methods={row.methods[language]} contentLocale={language}
+            onChange={methods => update(updateProjectMethods(row, language, methods))}/>)}
+        </div>
       </>;
     }}/>
 }

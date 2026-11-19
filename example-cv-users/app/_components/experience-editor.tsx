@@ -2,7 +2,8 @@
 
 import {editTranslation, newExperience, type ExperienceDraft, type ExperienceText} from '../../lib/editor/records';
 import type {ContentLocale} from '../../lib/editor/draft';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 export function ExperienceEditor({rows, contentLocale, onChange}: {
@@ -18,10 +19,9 @@ export function ExperienceEditor({rows, contentLocale, onChange}: {
     addLabel={text('＋ 添加工作经历', '＋ Add experience')}
     emptyLabel={text('暂无工作记录。', 'No experience entries yet.')}
     fields={(row, update) => {
-      const values = row.translations[contentLocale];
-      const field = (key: keyof ExperienceText, label: string, multiline = false) => <RecordField label={label}
-        value={values?.[key] ?? ''} multiline={multiline}
-        onChange={value => update({...row, translations: editTranslation(row.translations, contentLocale, {[key]: value})})}/>;
+      const field = (key: keyof ExperienceText, label: string, multiline = false) => <PairedField label={label}
+        value={language => row.translations[language]?.[key] ?? ''} multiline={multiline} ai={multiline}
+        onChange={(language, value) => update({...row, translations: editTranslation(row.translations, language, {[key]: value})})}/>;
       return <>
         <div className="editor-fields record-field-grid">
           {field('organization', text('公司或组织', 'Company or organization'))}

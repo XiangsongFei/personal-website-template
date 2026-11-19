@@ -4,7 +4,8 @@ import {useId} from 'react';
 import {contactStatusLabels, newFocus, newStatus, type ContactDraft, type FocusDraft} from '../../lib/editor/contact';
 import type {ContentLocale} from '../../lib/editor/draft';
 import {editTranslation} from '../../lib/editor/records';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 export function ContactEditor({draft, contentLocale, onChange}: {
@@ -12,18 +13,16 @@ export function ContactEditor({draft, contentLocale, onChange}: {
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
-  const values = draft.translations[contentLocale];
   const statusFieldPrefix = useId();
   const caption = (row: FocusDraft, index: number, fallback: string) =>
     (index + 1) + '. ' + (row.translations[contentLocale]?.title?.trim() || fallback);
 
   function itemFields<T extends FocusDraft>(row: T, update: (next: T) => void, titleLabel: string) {
-    const values = row.translations[contentLocale];
     return <>
-      <RecordField label={titleLabel} value={values?.title ?? ''}
-        onChange={title => update({...row, translations: editTranslation(row.translations, contentLocale, {title})})}/>
-      <RecordField label={text('详情', 'Details')} value={values?.detail ?? ''} multiline ai={false}
-        onChange={detail => update({...row, translations: editTranslation(row.translations, contentLocale, {detail})})}/>
+      <PairedField label={titleLabel} value={language => row.translations[language]?.title ?? ''}
+        onChange={(language, title) => update({...row, translations: editTranslation(row.translations, language, {title})})}/>
+      <PairedField label={text('详情', 'Details')} value={language => row.translations[language]?.detail ?? ''} multiline
+        onChange={(language, detail) => update({...row, translations: editTranslation(row.translations, language, {detail})})}/>
     </>;
   }
 
@@ -31,10 +30,10 @@ export function ContactEditor({draft, contentLocale, onChange}: {
     <section aria-labelledby="editor-contact-text">
       <h3 id="editor-contact-text">{text('联系栏目', 'Contact text')}</h3>
       <div className="contact-field-stack">
-        <RecordField label={text('联系栏目标题', 'Contact section title')} value={values?.contactLabel ?? ''}
-          onChange={contactLabel => onChange({...draft, translations: editTranslation(draft.translations, contentLocale, {contactLabel})})}/>
-        <RecordField label={text('可联系状态', 'Availability')} value={values?.availability ?? ''} multiline ai={false}
-          onChange={availability => onChange({...draft, translations: editTranslation(draft.translations, contentLocale, {availability})})}/>
+        <PairedField label={text('联系栏目标题', 'Contact section title')} value={language => draft.translations[language]?.contactLabel ?? ''}
+          onChange={(language, contactLabel) => onChange({...draft, translations: editTranslation(draft.translations, language, {contactLabel})})}/>
+        <PairedField label={text('可联系状态', 'Availability')} value={language => draft.translations[language]?.availability ?? ''} multiline
+          onChange={(language, availability) => onChange({...draft, translations: editTranslation(draft.translations, language, {availability})})}/>
       </div>
     </section>
     <section aria-labelledby="editor-contact-focus">
