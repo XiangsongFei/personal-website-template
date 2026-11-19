@@ -1,7 +1,7 @@
 'use client';
 
 import {useLayoutEffect, useRef} from 'react';
-import {educationDisplay} from '../../lib/editor/records';
+import {educationDisplay, projectDisplay} from '../../lib/editor/records';
 import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
 
 const sections = {
@@ -16,7 +16,7 @@ const sections = {
 } as const;
 type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
-const laterSections = ['projects', 'skills', 'awards'] as const;
+const laterSections = ['skills', 'awards'] as const;
 
 export function FullSitePreview({draft, locale, module}: {
   draft: LocalDraft; locale: ContentLocale; module: EditorModule;
@@ -38,6 +38,12 @@ export function FullSitePreview({draft, locale, module}: {
     return [{...values, clientId: row.clientId}];
   });
 
+  const projects = draft.projects.flatMap(row => {
+    const values = projectDisplay(row, locale);
+    const hasContent = [values.title, values.subtitle, values.period, values.description].some(value => value.trim());
+    return hasContent || values.href || values.methods.length ? [{...values, clientId: row.clientId}] : [];
+  });
+
   function position(section: PreviewSection, moduleEntry = false) {
     const owner = viewport.current;
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
@@ -46,7 +52,7 @@ export function FullSitePreview({draft, locale, module}: {
     const top = owner.scrollTop + target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.offsetHeight ?? 0);
     // Short sections near the end still align under the preview navigation.
-    if (moduleEntry && (section === 'education' || section === 'experience')) {
+    if (moduleEntry && (section !== 'profile' && section !== 'introduction')) {
       const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
       if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
     }
@@ -116,6 +122,22 @@ export function FullSitePreview({draft, locale, module}: {
               {organization?.trim() && <p>{organization}</p>}
               {(period?.trim() || location?.trim()) && <p className="site-preview-muted">{[period, location].filter(value => value?.trim()).join(' · ')}</p>}
               {description?.trim() && <p className="site-preview-prose">{description}</p>}
+            </li>)}
+        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      </section>
+      <section data-site-section="projects">
+        <h3>{labels('projects')}</h3>
+        {projects.length ? <ol className="site-preview-records">
+          {projects.map(({clientId, title, subtitle, period, description, href, methods}) =>
+            <li key={clientId} data-preview-entry={clientId}>
+              {title.trim() && <h4>{title}</h4>}
+              {subtitle.trim() && <p>{subtitle}</p>}
+              {period.trim() && <p className="site-preview-muted">{period}</p>}
+              {description.trim() && <p className="site-preview-prose">{description}</p>}
+              {methods.length > 0 && <ul className="site-preview-methods" aria-label={text('项目方法', 'Project methods')}>
+                {methods.map(method => <li key={method.clientId} data-preview-method={method.clientId}>{method.value}</li>)}
+              </ul>}
+              {href && <p className="site-preview-muted" data-preview-project-url>{text('项目链接', 'Project URL')} · {href}</p>}
             </li>)}
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>

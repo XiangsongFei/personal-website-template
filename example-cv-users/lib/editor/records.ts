@@ -112,3 +112,43 @@ export type ExperienceDraft = OrderedDraftRecord & {translations: DraftTranslati
 export function newExperience(clientId: string, position: number): ExperienceDraft {
   return {clientId, position, translations: {}};
 }
+
+export type ProjectText = {title: string; subtitle: string; period: string; description: string; href: string};
+export type ProjectMethodDraft = OrderedDraftRecord & {value: string};
+export type ProjectDraft = OrderedDraftRecord & {
+  translations: DraftTranslations<ProjectText>;
+  methods: Record<ContentLocale, readonly ProjectMethodDraft[]>;
+};
+
+export function newProject(clientId: string, position: number): ProjectDraft {
+  return {clientId, position, translations: {}, methods: {zh: [], en: []}};
+}
+
+export function updateProjectMethods(project: ProjectDraft, locale: ContentLocale, methods: readonly ProjectMethodDraft[]): ProjectDraft {
+  return {...project, methods: {...project.methods, [locale]: methods}};
+}
+
+export function safeProjectUrl(value: string | undefined): string | undefined {
+  const input = value?.trim();
+  if (!input || !/^https?:\/\/[^/]/i.test(input) || /[\u0000-\u0020\u007f\\]/u.test(input)) return;
+  try {
+    const url = new URL(input);
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && url.hostname && !url.username && !url.password) {
+      return url.href;
+    }
+  } catch {
+    // Invalid URL text remains in the local draft for the user to correct.
+  }
+}
+
+export function projectDisplay(project: ProjectDraft, locale: ContentLocale) {
+  const values = project.translations[locale];
+  return {
+    title: values?.title ?? '',
+    subtitle: values?.subtitle ?? '',
+    period: values?.period ?? '',
+    description: values?.description ?? '',
+    href: safeProjectUrl(values?.href),
+    methods: project.methods[locale].filter(method => method.value.trim()),
+  };
+}
