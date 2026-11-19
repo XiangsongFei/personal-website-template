@@ -1,0 +1,77 @@
+{
+  "contact-en-desktop.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "46dbde25aea3dc0dd6fa4db36d8aee626bf0ee28490a8155cfabf3a054a1e78c"
+  },
+  "contact-full-preview.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "4726c1534fd789b8ae041df0dcb3b7314ce2d2a24eac6903cdd7bb07b5a85481"
+  },
+  "contact-zh-desktop.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "54ecf515552626a164d658810b485ef9a44acb725a8b370f97cd4d2eda4b0c0e"
+  },
+  "focus-records.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "5d620172eca4e1603dba07d9192278dd63521d677b835f2594e629c452c8edf6"
+  },
+  "links-en-desktop.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "b3a8a5b6cf44d090605ce1e5bcb0f17064a3a050b8ee44c1c784540b4d7cb164"
+  },
+  "links-zh-desktop.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "8bb7324d4e97f3382fdb5a6822bbdb8f5c9d282cd272d79040bef870e9568255"
+  },
+  "mobile-en.png": {
+    "width": 390,
+    "height": 974,
+    "sha256": "85b8383245776d39eb63dae566c92a90cde693c780f2467572f4e7abf4581c6a"
+  },
+  "mobile-zh.png": {
+    "width": 390,
+    "height": 974,
+    "sha256": "9d9b6bd835afc70084dd58b63715179edf30d8943b6db5012752da6c4de94f44"
+  },
+  "narrow-edit.png": {
+    "width": 1024,
+    "height": 1106,
+    "sha256": "336562160a5f3e8d0c9864ef9c5fbf40e33ecdb201fe77f990ee16336944f173"
+  },
+  "narrow-preview.png": {
+    "width": 1024,
+    "height": 1106,
+    "sha256": "12405e60eb919fe9f909b7b48c1dd1720ce5f03c6d652babaaa35d471f439817"
+  },
+  "public-links-details.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "cfb27a5050e8b613317167c9a465ef9f8ae725891ea9082bcac7944a700e37e1"
+  },
+  "s4.5-projects-baseline.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "1d0e11d46c422949e8e4ac1a72bfff53c71a407447eed19354605263e26948be"
+  },
+  "s4.6-projects-regression.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "7817009b472deeb3f26657890098daacd7a750abd01c17f86c334513c7363e73"
+  },
+  "status-types.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "6eb41a4e5c66fb29f006fe9b772b773dc7536469a62fa340f539ee70d8894e2e"
+  },
+  "website-navigation.png": {
+    "width": 1440,
+    "height": 1058,
+    "sha256": "ebf72c0cdf155b7c66cdbcce6e7e281f8c72eae9fc76a0dd57d99f03c84d465e"
+  }
+}

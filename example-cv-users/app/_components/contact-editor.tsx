@@ -1,5 +1,6 @@
 'use client';
 
+import {useId} from 'react';
 import {contactStatusLabels, newFocus, newStatus, type ContactDraft, type FocusDraft} from '../../lib/editor/contact';
 import type {ContentLocale} from '../../lib/editor/draft';
 import {editTranslation} from '../../lib/editor/records';
@@ -12,6 +13,7 @@ export function ContactEditor({draft, contentLocale, onChange}: {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const values = draft.translations[contentLocale];
+  const statusFieldPrefix = useId();
   const caption = (row: FocusDraft, index: number, fallback: string) =>
     (index + 1) + '. ' + (row.translations[contentLocale]?.title?.trim() || fallback);
 
@@ -47,20 +49,24 @@ export function ContactEditor({draft, contentLocale, onChange}: {
       <RepeatableEditor rows={draft.status} onChange={status => onChange({...draft, status})} create={newStatus}
         caption={(row, index) => caption(row, index, contactStatusLabels[row.statusType][locale])}
         addLabel={text('＋ 添加状态', '＋ Add status')} emptyLabel={text('暂无状态。', 'No status items yet.')}
-        fields={(row, update) => <>
-          <label className="editor-field contact-status-type">{text('状态类别', 'Status type')}
-            <select value={row.statusType} onChange={event => {
-              const statusType = event.target.value;
-              if (Object.hasOwn(contactStatusLabels, statusType)) {
-                update({...row, statusType: statusType as typeof row.statusType});
-              }
-            }}>
-              {Object.entries(contactStatusLabels).map(([value, labels]) =>
-                <option key={value} value={value}>{labels[locale]}</option>)}
-            </select>
-          </label>
-          {itemFields(row, update, text('状态标题', 'Status title'))}
-        </>}/>
+        fields={(row, update) => {
+          const fieldId = statusFieldPrefix + '-' + row.clientId;
+          return <>
+            <div className="editor-field contact-status-type">
+              <label htmlFor={fieldId}>{text('状态类别', 'Status type')}</label>
+              <select id={fieldId} value={row.statusType} onChange={event => {
+                const statusType = event.target.value;
+                if (Object.hasOwn(contactStatusLabels, statusType)) {
+                  update({...row, statusType: statusType as typeof row.statusType});
+                }
+              }}>
+                {Object.entries(contactStatusLabels).map(([value, labels]) =>
+                  <option key={value} value={value}>{labels[locale]}</option>)}
+              </select>
+            </div>
+            {itemFields(row, update, text('状态标题', 'Status title'))}
+          </>;
+        }}/>
     </section>
   </div>;
 }
