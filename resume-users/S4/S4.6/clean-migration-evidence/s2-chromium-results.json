@@ -1,0 +1,9 @@
+{
+  "chromium": "157.0.8103.79",
+  "checks": [
+    "Registration and verification OTP completed with isolated synthetic account",
+    "Signed-in password change, S4.1 contrast and new-password login verified",
+    "Forgot password, isolated recovery OTP, reset and new-password login verified",
+    "Dashboard 429/503, no-script reload, logout and back, private editor and closed endpoints verified"
+  ]
+}

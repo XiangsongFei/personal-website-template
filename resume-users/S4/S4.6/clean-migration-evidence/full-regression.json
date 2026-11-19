@@ -1,0 +1,7 @@
+{
+  "最终 Users 回归": "182 项通过，0 项跳过。S3 Node 767 项及 Python 110 项离线回归通过",
+  "Users npm audit": "0 vulnerabilities",
+  "Public": "生产构建及 52 项测试通过",
+  "Admin": "lint、构建及 2169 项前端测试通过，27 项跳过",
+  "S2 Chromium": "登录、注册、验证 OTP、会话内改密、恢复 OTP、重置和登出后回退均通过。S4.1 429、503 和改密对比度修复同步核对"
+}
