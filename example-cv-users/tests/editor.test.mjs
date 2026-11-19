@@ -58,6 +58,12 @@ test('only a current server session can render the editor, including HEAD and RS
     for (const section of ['profile','introduction','education','experience','projects','skills','awards','contact']) {
       assert.match(html, new RegExp('data-site-section="' + section + '"'));
     }
+    assert.deepEqual([...html.matchAll(/data-preview-nav="([^"]+)"/g)].map(match => match[1]),
+      ['profile', 'experience', 'projects', 'skills', 'awards', 'contact']);
+    assert.match(html, /class="public-hero"[^>]*data-site-section="profile"[\s\S]+?class="public-intro" data-site-section="introduction"/);
+    const publicPage = html.split('class="site-preview-page public-canvas"')[1]?.split('class="public-preview-scroll-space"')[0];
+    assert.ok(publicPage);
+    assert.doesNotMatch(publicPage, /<a\b|<iframe\b|<img\b|<time\b/);
     assert.match(html, /disabled="" aria-describedby="editor-save-reason"/);
     assert.doesNotMatch(html, /user-a@example\.invalid|已保存成功|已发布成功/);
     const stale = new Map(ctx.jar);

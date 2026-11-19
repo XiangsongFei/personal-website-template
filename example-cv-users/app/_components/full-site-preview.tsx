@@ -10,10 +10,10 @@ import {editableNavigationSections, previewSections, sectionTitleFields, siteNav
 import {PreviewIcon} from './preview-icons';
 import './public-preview.css';
 
-function Action({kind, children, marker}: {
-  kind: 'mail' | 'file' | 'linkedin' | 'github'; children: ReactNode; marker?: string;
+function Action({kind, children, marker, reference}: {
+  kind: 'mail' | 'file' | 'linkedin' | 'github'; children: ReactNode; marker?: string; reference?: string;
 }) {
-  return <span className="public-action" data-preview-public-link={marker} aria-disabled="true">
+  return <span className="public-action" data-preview-public-link={marker} aria-disabled="true" title={reference}>
     <PreviewIcon kind={kind}/><span>{children}</span><PreviewIcon kind="external"/>
   </span>;
 }
@@ -145,8 +145,8 @@ export function FullSitePreview({draft, locale, module, onLocaleChange}: {
             {(links.email || profile.emailActionLabel.trim()) && <Action kind="mail">{profile.emailActionLabel.trim() ? profile.emailActionLabel : text('邮箱', 'Email')}</Action>}
             {pdfLabel?.trim() && <span data-preview-pdf-label title={text('PDF 尚未开放', 'PDF unavailable')}>
               <Action kind="file">{pdfLabel} · {text('未开放', 'Unavailable')}</Action></span>}
-            {links.linkedInHref && <Action kind="linkedin" marker="linkedin-action">{links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
-            {links.github && <Action kind="github" marker="github">{links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
+            {links.linkedInHref && <Action kind="linkedin" marker="linkedin-action" reference={links.linkedInHref}>{links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
+            {links.github && <Action kind="github" marker="github" reference={links.github}>{links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
           </div>
           {(shared.graduationValue.trim() || profile.graduationLabel.trim()) && <div className="public-graduation">
             <span>{profile.graduationLabel.trim() ? profile.graduationLabel : text('毕业时间', 'Graduation')}</span>
@@ -252,7 +252,9 @@ export function FullSitePreview({draft, locale, module, onLocaleChange}: {
                 <h3>{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h3>}
               <div className="public-status-list">{contact.status.map(({row, title, detail}) =>
                 <div key={row.clientId} className="public-status" data-preview-status={row.clientId} data-status-type={row.statusType}>
-                  <span title={contactStatusLabels[row.statusType][locale]}><PreviewIcon kind={row.statusType}/></span>
+                  <span role="img" aria-label={contactStatusLabels[row.statusType][locale]} title={contactStatusLabels[row.statusType][locale]}>
+                    <PreviewIcon kind={row.statusType}/>
+                  </span>
                   <div>{title.trim() && <p>{title}</p>}{detail.trim() && <span>{detail}</span>}</div>
                 </div>)}</div>
             </div>
