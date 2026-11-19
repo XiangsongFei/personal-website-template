@@ -8,6 +8,9 @@ import {
 } from '../../lib/editor/draft';
 import {EducationEditor} from './education-editor';
 import {ExperienceEditor} from './experience-editor';
+import {ProjectsEditor} from './projects-editor';
+import {SkillsEditor} from './skills-editor';
+import {AwardsEditor} from './awards-editor';
 import {EditorAiActions} from './repeatable-editor';
 import {DashboardShell} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
@@ -67,6 +70,9 @@ export function ResumeEditor() {
     introduction: text('个人介绍', 'Introduction'),
     education: text('教育经历', 'Education'),
     experience: text('工作经历', 'Experience'),
+    projects: text('项目经历', 'Projects'),
+    skills: text('技能', 'Skills'),
+    awards: text('荣誉奖项', 'Awards'),
   };
   const introduction = draft.introduction[contentLocale];
   const introValid = validIntroduction(introduction);
@@ -139,6 +145,15 @@ export function ResumeEditor() {
           module === 'experience' ?
             <ExperienceEditor rows={draft.experience} contentLocale={contentLocale}
               onChange={experience => setDraft(current => ({...current, experience}))}/> :
+          module === 'projects' ?
+            <ProjectsEditor rows={draft.projects} contentLocale={contentLocale}
+              onChange={projects => setDraft(current => ({...current, projects}))}/> :
+          module === 'skills' ?
+            <SkillsEditor rows={draft.skills} contentLocale={contentLocale}
+              onChange={skills => setDraft(current => ({...current, skills}))}/> :
+          module === 'awards' ?
+            <AwardsEditor rows={draft.awards} contentLocale={contentLocale}
+              onChange={awards => setDraft(current => ({...current, awards}))}/> :
             <div className="editor-introduction">
             <div className="editor-field-heading">
               <label htmlFor="editor-intro-text">{contentLocale === 'zh' ? '中文介绍' : 'English introduction'}</label>
