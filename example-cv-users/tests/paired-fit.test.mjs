@@ -9,6 +9,8 @@ test('locale pair fits its hypothetical equal tracks and either wide field can s
   assert.equal(stackPairedControls(440, 16, [30, 205], false), true);
   assert.equal(stackPairedControls(440, 16, [210, 270], false), true);
   assert.equal(stackPairedControls(230, 16, [4, 4], false), true);
+  assert.equal(stackPairedControls(277, 16, [4, 4], false), true);
+  assert.equal(stackPairedControls(347, 16, [4, 4], true), false);
 });
 
 test('independent thresholds prevent oscillation and allow recovery with shorter input or more space', () => {

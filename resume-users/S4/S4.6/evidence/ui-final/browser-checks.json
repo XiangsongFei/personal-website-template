@@ -1,0 +1,346 @@
+{
+  "browser": "Chromium",
+  "fixture": "synthetic-resume.json",
+  "finalEditor": {
+    "checks": [
+      "Anonymous blocked",
+      "Empty pair sits on one row",
+      "Short pair sits on one row",
+      "Short controls have bottom-only border",
+      "Long English with emoji reflows",
+      "Long transition preserves focus and input identity",
+      "English edit leaves Chinese unchanged",
+      "Shortening English restores pair",
+      "Long Chinese reflows",
+      "Both long remain stacked",
+      "Pair recovers after both shorten",
+      "Aligned introduction",
+      "Intro paragraphs render inside Hero",
+      "Long textarea retains a box",
+      "AI actions remain disabled",
+      "Aligned education",
+      "Summer School extra fields project",
+      "Custom education label projects",
+      "Education splits metadata grades",
+      "Aligned experience",
+      "Responsibilities render in a list",
+      "Aligned projects",
+      "Project inputs preserve preview position",
+      "Long URL stacks the pair",
+      "Unsafe inactive-locale URL marked invalid before preview switch",
+      "Unsafe URL omitted",
+      "Project URL visible as validated text reference",
+      "Chinese Methods reorder independently",
+      "English Method IDs unchanged",
+      "Project move preserves IDs",
+      "Delete confirmation can retain record",
+      "Delete removes only selected ID",
+      "Aligned skills",
+      "Skill preset is projected",
+      "Skill custom title retained",
+      "Aligned awards",
+      "Award name uses a short input",
+      "Award year differences preserved",
+      "Aligned contact",
+      "Status icon graduation",
+      "Status icon open",
+      "Aligned profile",
+      "Account email never prefilled",
+      "Public mailbox explicitly projected",
+      "Localized LinkedIn visible without navigation",
+      "Six actual public navigation items",
+      "Eight section anchors kept",
+      "Public text cannot change Dashboard navigation",
+      "No external actions, files, frames, fake timestamps",
+      "Special text rendered literally",
+      "Aligned experience",
+      "Aligned contact",
+      "Aligned experience",
+      "Aligned contact",
+      "Shell preserved at 1440",
+      "Grid geometry 1440",
+      "Shell preserved at 1280",
+      "Grid geometry 1280",
+      "Shell preserved at 1175",
+      "Grid geometry 1175",
+      "Shell preserved at 1174",
+      "Grid geometry 1174",
+      "Preview fits at 1174",
+      "View retains input and focus 1174",
+      "View retains scroll 1174",
+      "Shell preserved at 1024",
+      "Grid geometry 1024",
+      "Preview fits at 1024",
+      "View retains input and focus 1024",
+      "View retains scroll 1024",
+      "Shell preserved at 900",
+      "Grid geometry 900",
+      "Preview fits at 900",
+      "View retains input and focus 900",
+      "View retains scroll 900",
+      "Shell preserved at 768",
+      "Grid geometry 768",
+      "Preview fits at 768",
+      "View retains input and focus 768",
+      "View retains scroll 768",
+      "Shell preserved at 390",
+      "Grid geometry 390",
+      "Preview fits at 390",
+      "Mobile portrait leads at 390",
+      "View retains input and focus 390",
+      "View retains scroll 390",
+      "Shell preserved at 320",
+      "Grid geometry 320",
+      "Preview fits at 320",
+      "Mobile portrait leads at 320",
+      "View retains input and focus 320",
+      "View retains scroll 320",
+      "320px short pair stacks due to minimum track",
+      "Wide viewport recovers short pair",
+      "Long content stacks at desktop",
+      "Left scroll is independent",
+      "Right scroll is independent",
+      "Cancel clears both profile fields only",
+      "Unsaved work engages warning",
+      "Save remains unavailable",
+      "No external/business requests or page errors"
+    ],
+    "widths": [
+      {
+        "w": 1440,
+        "main": 1140,
+        "edit": 513,
+        "preview": 627,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 1280,
+        "main": 980,
+        "edit": 441,
+        "preview": 539,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 1175,
+        "main": 875,
+        "edit": 393.75,
+        "preview": 481.25,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 1174,
+        "main": 874,
+        "edit": 874,
+        "preview": 0,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 1024,
+        "main": 740,
+        "edit": 740,
+        "preview": 0,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 900,
+        "main": 616,
+        "edit": 616,
+        "preview": 0,
+        "side": 220,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 768,
+        "main": 720,
+        "edit": 720,
+        "preview": 0,
+        "side": 0,
+        "header": 72,
+        "fits": true
+      },
+      {
+        "w": 390,
+        "main": 358,
+        "edit": 358,
+        "preview": 0,
+        "side": 0,
+        "header": 64,
+        "fits": true
+      },
+      {
+        "w": 320,
+        "main": 288,
+        "edit": 288,
+        "preview": 0,
+        "side": 0,
+        "header": 64,
+        "fits": true
+      }
+    ],
+    "foreign": [],
+    "errors": []
+  },
+  "referenceMeasurements": [
+    {
+      "kind": "public",
+      "layout": "desktop",
+      "locale": "zh",
+      "width": 980,
+      "name": "林 示例",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 360,
+        "height": 303.796875
+      },
+      "nav": {
+        "width": 882,
+        "height": 25.75
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "public",
+      "layout": "desktop",
+      "locale": "en",
+      "width": 980,
+      "name": "Lin Example",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 360,
+        "height": 303.796875
+      },
+      "nav": {
+        "width": 882,
+        "height": 26
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "public",
+      "layout": "mobile",
+      "locale": "zh",
+      "width": 390,
+      "name": "林 示例",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 250,
+        "height": 260
+      },
+      "nav": {
+        "width": 358.8125,
+        "height": 72.390625
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "public",
+      "layout": "mobile",
+      "locale": "en",
+      "width": 390,
+      "name": "Lin Example",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 250,
+        "height": 260
+      },
+      "nav": {
+        "width": 358.8125,
+        "height": 72.390625
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "cms",
+      "layout": "desktop",
+      "locale": "zh",
+      "width": 980,
+      "name": "林 示例",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 339.6171875,
+        "height": 345
+      },
+      "nav": {
+        "width": 882,
+        "height": 25.75
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "cms",
+      "layout": "desktop",
+      "locale": "en",
+      "width": 980,
+      "name": "Lin Example",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 339.6171875,
+        "height": 345
+      },
+      "nav": {
+        "width": 882,
+        "height": 26
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "cms",
+      "layout": "mobile",
+      "locale": "zh",
+      "width": 390,
+      "name": "林 示例",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 99.484375,
+        "height": 103.46875
+      },
+      "nav": {
+        "width": 351,
+        "height": 10.34375
+      },
+      "hasIntro": true
+    },
+    {
+      "kind": "cms",
+      "layout": "mobile",
+      "locale": "en",
+      "width": 390,
+      "name": "Lin Example",
+      "font": "Georgia, \"Songti SC\", serif",
+      "portrait": {
+        "width": 99.484375,
+        "height": 103.46875
+      },
+      "nav": {
+        "width": 351,
+        "height": 10.578125
+      },
+      "hasIntro": true
+    }
+  ],
+  "baselineComparison": {
+    "authAndAccount": 28,
+    "dashboardAndWebsite": 8,
+    "equal": true
+  },
+  "nativeBeforeUnload": {
+    "seen": true,
+    "draftRetained": true
+  },
+  "regression": {
+    "users": 180,
+    "s3Node": 767,
+    "s3Python": 110
+  }
+}
