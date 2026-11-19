@@ -1,0 +1,8 @@
+{
+  "stage": "S4.2",
+  "checks": [
+    "Protected website shows unavailable, not empty; three-step guide and disabled creation",
+    "All six loopback-only synthetic site statuses remain distinct and labeled"
+  ],
+  "chromium": "157.0.8103.79"
+}

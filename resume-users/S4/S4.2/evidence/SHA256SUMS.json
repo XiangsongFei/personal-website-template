@@ -1,0 +1,23 @@
+{
+  "account-mobile-after.png": "8bca75fd6434d6b29a03a5030de80ca7dd62c9f4f3b6459b76a330ec825c0939",
+  "account-mobile-before.png": "d3f86f83f15f9dbf0039b2a1bb9ab025c44c06d4b3e7a1c12fdc4891fa25d22b",
+  "app-browser.json": "ff1f5ee1ef73c9b4113a87961d7baaa2a011a9a259a7b91bbd44aaf1d46e9e42",
+  "denied-zh-390.png": "1f9e0658d257977c8a5325e1b5229d92ab78107813359578331fdf8ea6b8c8b6",
+  "empty-zh-1440.png": "4fc0f8e7aa079fe7fe49dfbfc6ce1a0d5709ef9b36fe2d0a4cf90ee1560d756c",
+  "fixtures-browser.json": "1d6b63acd0539e65f13fb95d50a7d903a8801a29c7750a6579304ab7023629e8",
+  "guide-actual-details-zh-desktop.png": "635595da73a19f56873912ba4bd99fe78dedc19f5ab361d0328fd2624f32a905",
+  "guide-actual-review-zh-mobile.png": "bccf76d6a1d536027f5ad5676d8ddc72abd4205ccb6b57cf13c4b0d0394a3ba6",
+  "guide-actual-template-en-desktop.png": "03f9bb53889c70b5f8b6d2af9435bc284ce2c7ec462bf44939ae5894d26df2bb",
+  "loading-zh-390.png": "d2f84db68aa618da8f4a874a04275a4ae5e34c3b7e0f2c6e1f4bc3159cb251af",
+  "login-desktop-after.png": "6228678852106d490b874fc1a2657d2f274c5729d6138b94ef8838c954069234",
+  "login-desktop-before.png": "ddddca370e86f5341681045b2a6c4f7d6cb9859e8ecfd847dadc4ce502a98791",
+  "public-styles.json": "35fe5a7e617dc0ac8bbacd0c82a51f224255f7433b8e14709c1652b564c5ec0e",
+  "ready-en-1440.png": "04870a9265e3d1415deb263d5b67f18224ce3efb128702f8b3a17025a494d978",
+  "regression.json": "49b6f16ccfe3f3030bff392fb12270f20b31557476f2601ed8436351aa2bb240",
+  "revoked-zh-390.png": "a73a9d68ac4c05bc8f3da2e78dcd3b6333942045949b1fac98e7883e9bece112",
+  "source-invariants.json": "118400f72f9e01d6231269ea843e98e9b5b85380156379265f03d4f135db515a",
+  "unavailable-en-390.png": "d2c967649881f2b77d93a6c337e611fbc6d4159fe333624ab388bd081b8c5ef9",
+  "website-actual-en-1440.png": "b76156cedb958e7c3e5c8f16af1440171769435b93eefed723b04450237bc72d",
+  "website-actual-zh-1440.png": "3d7eeed48397ce583ab862daae950580e937a348038967fcd887f2faf6b3c0ad",
+  "website-actual-zh-390.png": "ff23f34e8734e66500beea4ff4e7394bbd4a099ff112ffe24f7444d190f284b1"
+}

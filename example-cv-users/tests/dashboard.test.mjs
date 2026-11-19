@@ -93,13 +93,13 @@ test('Dashboard does not enable business APIs or allow noncanonical hosts',async
   } finally {await c.mf.dispose();}
 });
 
-test('Design V1 exposes only existing Overview and S2 account links, with no pretend business actions',async()=>{
+test('Design V1 exposes Overview, website UI and S2 account links, with no pretend business actions',async()=>{
   const c=await setup();
   try {
     await login(c);const html=await (await page(c)).text();
     const destinations=[...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map(m=>m[1]);
     assert.ok(destinations.length>0);
-    assert.ok(destinations.every(href=>['/dashboard','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
+    assert.ok(destinations.every(href=>['/dashboard','/dashboard/website','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
     assert.match(html,/aria-disabled="true"/);
     assert.doesNotMatch(html,/Last updated|最近更新|发布成功|保存成功/);
   } finally {await c.mf.dispose();}
