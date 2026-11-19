@@ -1,14 +1,32 @@
 'use client';
 
-import {useLayoutEffect, useRef} from 'react';
+import {useLayoutEffect, useRef, type ReactNode} from 'react';
 import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationDisplay, projectDisplay, skillTitle} from '../../lib/editor/records';
 import type {ContentLocale, LocalDraft} from '../../lib/editor/draft';
 import {publicLinksDisplay} from '../../lib/editor/site-links';
-import {previewOrder, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
+import {editableNavigationSections, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
 
-export function FullSitePreview({draft, locale, module}: {
-  draft: LocalDraft; locale: ContentLocale; module: PreviewSection;
+import {PreviewIcon} from './preview-icons';
+import './public-preview.css';
+
+function Action({kind, children, marker}: {
+  kind: 'mail' | 'file' | 'linkedin' | 'github'; children: ReactNode; marker?: string;
+}) {
+  return <span className="public-action" data-preview-public-link={marker} aria-disabled="true">
+    <PreviewIcon kind={kind}/><span>{children}</span><PreviewIcon kind="external"/>
+  </span>;
+}
+
+function Bullets({value, locale}: {value?: string; locale: ContentLocale}) {
+  if (!value?.trim()) return null;
+  const separator = value.includes('\n') ? /\r?\n/ : locale === 'zh' ? /[；。]/ : /\.\s+(?=[A-Z])/;
+  return <ul className="public-bullets">{value.split(separator).map((line, index) =>
+    line.trim() && <li key={index}>{line.trim()}</li>)}</ul>;
+}
+
+export function FullSitePreview({draft, locale, module, onLocaleChange}: {
+  draft: LocalDraft; locale: ContentLocale; module: PreviewSection; onLocaleChange: (locale: ContentLocale) => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
@@ -63,13 +81,28 @@ export function FullSitePreview({draft, locale, module}: {
     const top = owner.scrollTop + target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.offsetHeight ?? 0);
     // Short sections near the end still align under the preview navigation.
-    if (moduleEntry && (section !== 'profile' && section !== 'introduction')) {
+    if (moduleEntry && section !== 'profile') {
       const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
       if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
     }
     owner.scrollTop = top;
     return true;
   }
+
+  useLayoutEffect(() => {
+    const owner = viewport.current;
+    if (!owner) return;
+    const measure = () => {
+      if (!owner.clientWidth) return;
+      const compact = owner.clientWidth < 440;
+      owner.dataset.siteLayout = compact ? 'mobile' : 'desktop';
+      owner.style.setProperty('--public-preview-scale', String(compact ? 1 : Math.min(owner.clientWidth / 980, 1)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(owner);
+    return () => observer.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     const owner = viewport.current;
@@ -83,143 +116,149 @@ export function FullSitePreview({draft, locale, module}: {
     return () => observer.disconnect();
   }, [module]);
 
-  return <div className="site-preview-viewport" ref={viewport} tabIndex={0}
+  const emptyContent = <p className="public-placeholder">{text('暂无本地内容', 'No local content')}</p>;
+  const introduction = draft.introduction[locale].split(/\r?\n/).filter(line => line.trim());
+  const pdfLabel = siteText?.portfolioLabel;
+  const linkedInName = links.linkedInDisplayName.trim() ? links.linkedInDisplayName : links.linkedInHref;
+  const hasContactDetails = contact.availability.trim() || contact.focus.length || contact.status.length || links.email || links.linkedInHref;
+  const navButton = (key: PreviewSection, className?: string) => <button type="button" className={className} key={key}
+    data-preview-nav={key} onClick={() => position(key, true)}>{navLabel(key)}</button>;
+
+  return <div className="site-preview-viewport public-preview" ref={viewport} tabIndex={0}
     role="region" aria-label={text('个人网站预览内容', 'Personal website preview content')} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
     <nav className="site-preview-nav" ref={navigation} aria-label={text('预览网站导航', 'Preview website navigation')}>
-      {previewOrder.map(key => <button type="button" key={key} data-preview-nav={key} onClick={() => position(key)}>
-        {navLabel(key)}
-      </button>)}
+      <div className="public-nav public-canvas">
+        {navButton('profile', 'public-nav-home')}
+        <div className="public-nav-links">{editableNavigationSections.map(key => navButton(key))}</div>
+        <button type="button" className="public-nav-language" aria-label={text('切换预览语言', 'Switch preview language')}
+          onClick={() => onLocaleChange(locale === 'zh' ? 'en' : 'zh')}>{locale === 'zh' ? 'EN' : '中文'}</button>
+      </div>
     </nav>
-    <article className="site-preview-page">
-      <section data-site-section="profile" aria-labelledby="site-preview-name">
-        <div className="site-preview-hero">
-          <div>
-            <p className="site-preview-kicker">{text('个人网站', 'Personal website')}</p>
-            <h3 id="site-preview-name">{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</h3>
-            {shared.graduationValue.trim() && <p><strong>{profile.graduationLabel.trim() || text('毕业时间', 'Graduation')}</strong> · {shared.graduationValue}</p>}
-            {profile.emailActionLabel.trim() && <p className="site-preview-muted">{profile.emailActionLabel}</p>}
-            {siteText?.portfolioLabel?.trim() && <p className="site-preview-muted" data-preview-pdf-label>
-              {siteText.portfolioLabel} · {text('PDF 尚未开放', 'PDF unavailable')}
-            </p>}
-            {links.github && <p className="site-preview-muted" data-preview-public-link="github">
-              {links.githubLabel.trim() ? links.githubLabel : 'GitHub'} · {links.github}
-            </p>}
-            {links.linkedInHref && <p className="site-preview-muted" data-preview-public-link="linkedin-action">
-              {links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}
-            </p>}
+    <article className="site-preview-page public-canvas">
+      <header className="public-hero" data-site-section="profile" aria-labelledby="site-preview-name">
+        <div className="public-hero-copy">
+          <h1 id="site-preview-name">{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</h1>
+          <div className="public-intro" data-site-section="introduction">
+            {introduction.length ? introduction.map((line, index) => <p key={index}>{line}</p>) : emptyContent}
           </div>
-          <div className="site-preview-portrait" role="img" aria-label={profile.avatarLabel.trim() || text('头像占位', 'Portrait placeholder')}>
-            {shared.avatarInitials.trim() || '—'}
+          <div className="public-actions">
+            {(links.email || profile.emailActionLabel.trim()) && <Action kind="mail">{profile.emailActionLabel.trim() ? profile.emailActionLabel : text('邮箱', 'Email')}</Action>}
+            {pdfLabel?.trim() && <span data-preview-pdf-label title={text('PDF 尚未开放', 'PDF unavailable')}>
+              <Action kind="file">{pdfLabel} · {text('未开放', 'Unavailable')}</Action></span>}
+            {links.linkedInHref && <Action kind="linkedin" marker="linkedin-action">{links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
+            {links.github && <Action kind="github" marker="github">{links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
           </div>
+          {(shared.graduationValue.trim() || profile.graduationLabel.trim()) && <div className="public-graduation">
+            <span>{profile.graduationLabel.trim() ? profile.graduationLabel : text('毕业时间', 'Graduation')}</span>
+            {shared.graduationValue.trim() && <b>{shared.graduationValue}</b>}
+          </div>}
         </div>
-      </section>
-      <section data-site-section="introduction">
-        <h3>{labels('introduction')}</h3>
-        <p className={draft.introduction[locale].trim() ? 'site-preview-prose' : 'site-preview-muted'}>
-          {draft.introduction[locale].trim() ? draft.introduction[locale] : text('在这里介绍你自己和职业方向。', 'Introduce yourself and your professional focus here.')}
-        </p>
-      </section>
-      <section data-site-section="education">
-        <h3>{sectionTitle('education')}</h3>
-        {education.length > 0 ? <ol className="site-preview-records">
-          {education.map(({clientId, title, categoryTitle, program, period, grade, courseTitle, courseDescription}) =>
-            <li key={clientId} data-preview-entry={clientId}>
-              {categoryTitle.trim() && categoryTitle !== title && <p className="site-preview-muted">{categoryTitle}</p>}
-              {title.trim() && <h4>{title}</h4>}
+        <div className="public-portrait" role="img" aria-label={profile.avatarLabel.trim() || text('头像占位，上传尚未开放', 'Portrait placeholder, upload unavailable')}>
+          {shared.avatarInitials.trim() || '—'}
+        </div>
+      </header>
+
+      <section className="public-section public-education public-timeline" data-site-section="education">
+        <h2>{sectionTitle('education')}</h2>
+        {education.length ? education.map(({clientId, title, categoryTitle, program, period, grade, courseTitle, courseDescription}) =>
+          <article key={clientId} data-preview-entry={clientId}>
+            <div>
+              {title.trim() && <h3>{title}</h3>}
+              {categoryTitle.trim() && categoryTitle !== title && <p className="public-secondary">{categoryTitle}</p>}
               {program.trim() && <p>{program}</p>}
-              {(period.trim() || grade.trim()) && <p className="site-preview-muted">{[period, grade].filter(value => value.trim()).join(' · ')}</p>}
-              {courseTitle.trim() && <h4>{courseTitle}</h4>}
-              {courseDescription.trim() && <p className="site-preview-prose">{courseDescription}</p>}
-            </li>)}
-        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+              {courseTitle.trim() && <p className="public-course">{courseTitle}</p>}
+              {courseDescription.trim() && <p className="public-course-detail">{courseDescription}</p>}
+            </div>
+            <div className="public-date">{period.trim() && <b>{period}</b>}
+              {grade.split(' · ').map((line, index) => line.trim() && <span key={index}>{line}</span>)}</div>
+          </article>) : emptyContent}
       </section>
-      <section data-site-section="experience">
-        <h3>{sectionTitle('experience')}</h3>
-        {experience.length > 0 ? <ol className="site-preview-records">
-          {experience.map(({clientId, title, organization, period, location, description}) =>
-            <li key={clientId} data-preview-entry={clientId}>
-              {title?.trim() && <h4>{title}</h4>}
-              {organization?.trim() && <p>{organization}</p>}
-              {(period?.trim() || location?.trim()) && <p className="site-preview-muted">{[period, location].filter(value => value?.trim()).join(' · ')}</p>}
-              {description?.trim() && <p className="site-preview-prose">{description}</p>}
-            </li>)}
-        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      <section className="public-section public-work public-timeline" data-site-section="experience">
+        <h2>{sectionTitle('experience')}</h2>
+        {experience.length ? experience.map(({clientId, title, organization, period, location, description}) =>
+          <article key={clientId} data-preview-entry={clientId}>
+            <div className="public-entry-copy">
+              {(organization?.trim() || title?.trim()) && <h3>{organization?.trim() ? organization : title}</h3>}
+              {period?.trim() && <b className="public-mobile-date">{period}</b>}
+              {organization?.trim() && title?.trim() && <p className="public-subtitle">{title}</p>}
+              {location?.trim() && <p className="public-secondary">{location}</p>}
+              <Bullets value={description} locale={locale}/>
+            </div>
+            <div className="public-date">{period?.trim() && <b>{period}</b>}</div>
+          </article>) : emptyContent}
       </section>
-      <section data-site-section="projects">
-        <h3>{sectionTitle('projects')}</h3>
-        {projects.length ? <ol className="site-preview-records">
-          {projects.map(({clientId, title, subtitle, period, description, href, methods}) =>
-            <li key={clientId} data-preview-entry={clientId}>
-              {title.trim() && <h4>{title}</h4>}
-              {subtitle.trim() && <p>{subtitle}</p>}
-              {period.trim() && <p className="site-preview-muted">{period}</p>}
-              {description.trim() && <p className="site-preview-prose">{description}</p>}
-              {methods.length > 0 && <ul className="site-preview-methods" aria-label={text('项目方法', 'Project methods')}>
-                {methods.map(method => <li key={method.clientId} data-preview-method={method.clientId}>{method.value}</li>)}
-              </ul>}
-              {href && <p className="site-preview-muted" data-preview-project-url>
-                {siteText?.kaggleLabel?.trim() ? siteText.kaggleLabel : text('项目链接', 'Project URL')} · {href}
-              </p>}
-            </li>)}
-        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      <section className="public-section public-work public-projects public-timeline" data-site-section="projects">
+        <h2>{sectionTitle('projects')}</h2>
+        {projects.length ? projects.map(({clientId, title, subtitle, period, description, href, methods}) =>
+          <article key={clientId} data-preview-entry={clientId}>
+            <div className="public-entry-copy">
+              {title.trim() && <h3>{title}</h3>}
+              {period.trim() && <b className="public-mobile-date">{period}</b>}
+              {subtitle.trim() && <p className="public-subtitle">{subtitle}</p>}
+              {!!methods.length && <p className="public-methods">{methods.map((method, index) =>
+                <span key={method.clientId}>{index > 0 && ' · '}<span data-preview-method={method.clientId}>{method.value}</span></span>)}</p>}
+              <Bullets value={description} locale={locale}/>
+              {href && <span className="public-project-link" data-preview-project-url aria-disabled="true" title={href}>
+                {siteText?.kaggleLabel?.trim() ? siteText.kaggleLabel : text('项目链接', 'Project URL')} <PreviewIcon kind="external"/>
+              </span>}
+            </div>
+            <div className="public-date">{period.trim() && <b>{period}</b>}</div>
+          </article>) : emptyContent}
       </section>
-      <section data-site-section="skills">
-        <h3>{sectionTitle('skills')}</h3>
-        {skills.length ? <ol className="site-preview-records">
-          {skills.map(({clientId, title, items}) => <li key={clientId} data-preview-entry={clientId}>
-            {title.trim() && <h4>{title}</h4>}
-            {items.trim() && <p className="site-preview-prose">{items}</p>}
-          </li>)}
-        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      <section className="public-section public-skills" data-site-section="skills">
+        <h2>{sectionTitle('skills')}</h2>
+        <div className="public-skill-grid">{skills.length ? skills.map(({clientId, title, items}) =>
+          <div key={clientId} data-preview-entry={clientId}>
+            {title.trim() && <h3>{title}</h3>}{items.trim() && <p>{items}</p>}
+          </div>) : emptyContent}</div>
       </section>
-      <section data-site-section="awards">
-        <h3>{sectionTitle('awards')}</h3>
-        {awards.length ? <ol className="site-preview-records">
-          {awards.map(({clientId, name, year}) => <li key={clientId} data-preview-entry={clientId}>
-            {name.trim() && <h4 className="site-preview-prose">{name}</h4>}
-            {year.trim() && <p className="site-preview-muted">{year}</p>}
-          </li>)}
-        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      <section className="public-section public-awards public-timeline" data-site-section="awards">
+        <h2>{sectionTitle('awards')}</h2>
+        {awards.length ? awards.map(({clientId, name, year}) =>
+          <article key={clientId} data-preview-entry={clientId}>
+            {name.trim() ? <h3>{name}</h3> : <span/>}
+            <div className="public-date">{year.trim() && <b>{year}</b>}</div>
+          </article>) : emptyContent}
       </section>
-      <section data-site-section="contact">
-        <h3>{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</h3>
-        {contact.availability.trim() && <p className="site-preview-prose">{contact.availability}</p>}
-        {(links.email || links.linkedInHref) && <dl className="site-preview-contact-links">
-          {links.email && <>
-            <dt>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
-            <dd data-preview-public-link="email">{links.email}</dd>
-          </>}
-          {links.linkedInHref && <>
-            <dt>{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
-            <dd data-preview-public-link="linkedin">{links.linkedInDisplayName.trim() && <>{links.linkedInDisplayName} · </>}{links.linkedInHref}</dd>
-          </>}
+      <footer className="public-contact" data-site-section="contact">
+        <p className="public-contact-label">{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</p>
+        {contact.availability.trim() && <h2>{contact.availability}</h2>}
+        {(links.email || links.linkedInHref) && <dl className="public-contact-links">
+          {links.email && <div><dt>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
+            <dd data-preview-public-link="email">{links.email} <PreviewIcon kind="external"/></dd></div>}
+          {links.linkedInHref && <div><dt>{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
+            <dd data-preview-public-link="linkedin" title={links.linkedInHref}>{linkedInName} <PreviewIcon kind="external"/></dd></div>}
         </dl>}
-        {(profile.contactFocusHeading.trim() || contact.focus.length > 0) &&
-          <h4>{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h4>}
-        {contact.focus.length > 0 && <ol className="site-preview-records" aria-label={text('职业关注方向', 'Career interests')}>
-          {contact.focus.map(({row, title, detail}) => <li key={row.clientId} data-preview-focus={row.clientId}>
-            {title.trim() && <h5>{title}</h5>}
-            {detail.trim() && <p className="site-preview-prose">{detail}</p>}
-          </li>)}
-        </ol>}
-        {(profile.contactStatusHeading.trim() || contact.status.length > 0) &&
-          <h4>{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h4>}
-        {contact.status.length > 0 && <ol className="site-preview-records" aria-label={text('当前状态', 'Current status')}>
-          {contact.status.map(({row, title, detail}) => <li key={row.clientId} data-preview-status={row.clientId} data-status-type={row.statusType}>
-            {title.trim() && <h5>{title}</h5>}
-            <p className="site-preview-muted">{contactStatusLabels[row.statusType][locale]}</p>
-            {detail.trim() && <p className="site-preview-prose">{detail}</p>}
-          </li>)}
-        </ol>}
-        {!contact.availability.trim() && !contact.focus.length && !contact.status.length && !links.email && !links.linkedInHref &&
-          <p className="site-preview-muted">{text('暂无本地联系信息', 'No local contact details')}</p>}
-      </section>
-      <footer>
-        {[shared.footerName, shared.copyright].filter(value => value.trim()).join(' · ') || 'EXAMPLE_CV'}
-        {siteText?.updatedAtLabel?.trim() && <p className="site-preview-muted" data-preview-updated-label>
-          {siteText.updatedAtLabel} · {text('暂无已确认更新时间', 'No confirmed update date')}
-        </p>}
+        {!hasContactDetails && <p className="public-placeholder">{text('暂无本地联系信息', 'No local contact details')}</p>}
+        <div className="public-footer-meta">
+          <span>{shared.footerName}</span>
+          <span data-preview-updated-label={siteText?.updatedAtLabel?.trim() ? '' : undefined}>
+            {siteText?.updatedAtLabel?.trim() && <>{siteText.updatedAtLabel} · {text('暂无已确认更新时间', 'No confirmed update date')}</>}
+          </span>
+          <span>{shared.copyright}</span>
+        </div>
+        {(profile.contactFocusHeading.trim() || contact.focus.length > 0 || profile.contactStatusHeading.trim() || contact.status.length > 0) &&
+          <div className="public-contact-extension">
+            <div>
+              {(profile.contactFocusHeading.trim() || contact.focus.length > 0) &&
+                <h3>{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h3>}
+              <div className="public-focus-list">{contact.focus.map(({row, title, detail}) =>
+                <div key={row.clientId} data-preview-focus={row.clientId}>
+                  {title.trim() && <p>{title}</p>}{detail.trim() && <span>{detail}</span>}
+                </div>)}</div>
+            </div>
+            <div>
+              {(profile.contactStatusHeading.trim() || contact.status.length > 0) &&
+                <h3>{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h3>}
+              <div className="public-status-list">{contact.status.map(({row, title, detail}) =>
+                <div key={row.clientId} className="public-status" data-preview-status={row.clientId} data-status-type={row.statusType}>
+                  <span title={contactStatusLabels[row.statusType][locale]}><PreviewIcon kind={row.statusType}/></span>
+                  <div>{title.trim() && <p>{title}</p>}{detail.trim() && <span>{detail}</span>}</div>
+                </div>)}</div>
+            </div>
+          </div>}
       </footer>
     </article>
+    <div className="public-preview-scroll-space" aria-hidden="true"/>
   </div>;
 }

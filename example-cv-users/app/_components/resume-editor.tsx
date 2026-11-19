@@ -197,7 +197,7 @@ export function ResumeEditor() {
             <h2 id="editor-preview-heading">{text('完整网站预览', 'Full website preview')}</h2>
             <p>{text('本地预览 · 未保存、未发布', 'Local preview · Unsaved and unpublished')}</p>
           </div>
-          <FullSitePreview draft={draft} locale={contentLocale} module={module === 'links' ? 'profile' : activeSection}/>
+          <FullSitePreview draft={draft} locale={contentLocale} module={module === 'links' ? 'profile' : activeSection} onLocaleChange={setContentLocale}/>
         </section>
       </div>
     </div>

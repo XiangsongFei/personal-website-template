@@ -33,8 +33,7 @@
 .editor-switch { display: flex; flex-wrap: wrap; gap: 8px; }
 .resume-editor .editor-switch button,
 .resume-editor .editor-actions button,
-.resume-editor .editor-ai button,
-.resume-editor .site-preview-nav button {
+.resume-editor .editor-ai button {
   width: auto;
   min-width: 0;
   min-height: 44px;
@@ -52,8 +51,7 @@
   color: var(--dashboard-brand-dark);
   font-weight: 600;
 }
-.resume-editor .editor-switch button:hover,
-.resume-editor .site-preview-nav button:hover { color: var(--dashboard-brand-dark); }
+.resume-editor .editor-switch button:hover { color: var(--dashboard-brand-dark); }
 .editor-language, .editor-field-heading {
   display: flex;
   flex-wrap: wrap;
@@ -123,44 +121,7 @@
   .editor-preview { padding-left: 24px; border-left: 1px solid var(--dashboard-line); }
 }
 
-.site-preview-viewport { background: var(--dashboard-bg-secondary); overflow-anchor: none; outline-offset: -2px; }
-.site-preview-nav {
-  display: flex;
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  gap: 2px;
-  overflow-x: auto;
-  background: var(--dashboard-bg);
-  border-bottom: 1px solid var(--dashboard-line);
-  padding-inline: 6px;
-  scrollbar-width: thin;
-}
-.resume-editor .site-preview-nav button { flex: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
-.site-preview-page { padding: clamp(14px, 2.4cqw, 30px); overflow-wrap: anywhere; }
-.site-preview-page section { padding-block: 20px; }
-.site-preview-page section + section { border-top: 1px solid var(--dashboard-line); }
-.site-preview-page h3 { font-size: 19px; line-height: 1.3; }
-.site-preview-page h4 { font-size: 14px; margin: 12px 0 0; }
-.site-preview-page p { margin: 8px 0 0; }
-.site-preview-kicker, .site-preview-muted, .site-preview-page footer { color: var(--dashboard-muted); font-size: 13px; }
-.site-preview-hero { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
-.site-preview-hero > div:first-child { min-width: 0; }
-.site-preview-hero h3 { margin-top: 8px; font-size: clamp(23px, 3cqw, 36px); font-weight: 650; }
-.site-preview-portrait {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: clamp(60px, 9cqw, 96px);
-  aspect-ratio: 4 / 5;
-  padding: 6px;
-  background: #eee;
-  color: var(--dashboard-muted);
-}
-.site-preview-prose { white-space: pre-wrap; }
-.site-preview-page footer { padding-block: 12px 24px; margin-top: 8px; }
 
-/* Repeatable sections share the S4.3 controls and the existing pane widths. */
 .resume-editor .record-add,
 .resume-editor .record-header button,
 .resume-editor .record-confirm button {
@@ -176,7 +137,7 @@
 }
 .resume-editor .record-add { background: var(--dashboard-brand-light); font-weight: 600; }
 .resume-editor .record-header button:disabled { color: var(--dashboard-muted); opacity: .65; }
-.record-list, .site-preview-records { padding: 0; list-style: none; }
+.record-list { padding: 0; list-style: none; }
 .record-list { margin: 16px 0 0; }
 .record-list > li { padding-block: 8px; border-bottom: 1px solid var(--dashboard-line); }
 .record-header, .record-actions {
@@ -214,10 +175,6 @@
   font: inherit;
   font-size: 16px;
 }
-.site-preview-records { margin: 12px 0 0; }
-.site-preview-records li + li { margin-top: 20px; }
-.site-preview-records h4, .site-preview-records p { margin: 4px 0 0; }
-.site-preview-page::after { content: ''; display: block; block-size: var(--site-preview-end-space, 0px); }
 
 .project-methods { margin-top: 20px; }
 .project-methods > h3 { margin-bottom: 8px; }
@@ -226,8 +183,6 @@
 .method-row + .method-row { margin-top: 12px; }
 .method-field { flex: 1 1 170px; }
 .method-row .record-actions { align-self: flex-end; }
-.site-preview-methods { padding-inline-start: 22px; margin-block: 8px; }
-.site-preview-methods li + li { margin-top: 4px; }
 
 .award-fields { display: grid; gap: 12px; }
 .award-fields .record-description { margin: 0; }
@@ -240,11 +195,6 @@
 .contact-field-stack .record-description { margin: 0; }
 .editor-contact textarea { min-height: 5rem; }
 .contact-status-type { margin-bottom: 12px; }
-[data-site-section=contact] .site-preview-records { margin-top: 8px; }
-[data-site-section=contact] .site-preview-records h5 { margin: 0; font-size: 14px; }
 .editor-contact-areas { margin-bottom: 16px; }
 .editor-section-note { margin: 0 0 12px; }
 .editor-contact input[aria-invalid=true] { border-color: #a44242; }
-.site-preview-contact-links { display: grid; gap: 4px; margin: 12px 0; }
-.site-preview-contact-links dt { font-weight: 600; }
-.site-preview-contact-links dd { margin: 0 0 8px; }
