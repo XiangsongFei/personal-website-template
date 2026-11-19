@@ -59,6 +59,7 @@ export function ProjectsEditor({rows, contentLocale, onChange}: {
     fields={(row, update) => {
       const values = row.translations[contentLocale];
       const href = values?.href ?? '';
+      const fieldId = urlId + '-' + row.clientId;
       const invalid = Boolean(href.trim() && !safeProjectUrl(href));
       function change(key: keyof ProjectText, value: string) {
         update({...row, translations: editTranslation(row.translations, contentLocale, {[key]: value})});
@@ -71,11 +72,11 @@ export function ProjectsEditor({rows, contentLocale, onChange}: {
           {field('subtitle', text('副标题', 'Subtitle'))}
           {field('period', text('时间范围', 'Period'))}
           <div className="editor-field">
-            <label htmlFor={urlId}>{text('项目链接', 'Project URL')}</label>
-            <input id={urlId} type="url" value={href} maxLength={2048} autoComplete="off"
-              aria-invalid={invalid || undefined} aria-describedby={invalid ? urlId + '-error' : undefined}
+            <label htmlFor={fieldId}>{text('项目链接', 'Project URL')}</label>
+            <input id={fieldId} type="url" value={href} maxLength={2048} autoComplete="off"
+              aria-invalid={invalid || undefined} aria-describedby={invalid ? fieldId + '-error' : undefined}
               onChange={event => change('href', event.target.value)}/>
-            {invalid && <p className="editor-note" id={urlId + '-error'} role="status">
+            {invalid && <p className="editor-note" id={fieldId + '-error'} role="status">
               {text('请输入不含账号或密码的完整 HTTP 或 HTTPS 链接。', 'Enter a full HTTP or HTTPS URL without credentials.')}
             </p>}
           </div>

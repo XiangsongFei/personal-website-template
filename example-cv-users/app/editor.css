@@ -228,3 +228,8 @@
 .method-row .record-actions { align-self: flex-end; }
 .site-preview-methods { padding-inline-start: 22px; margin-block: 8px; }
 .site-preview-methods li + li { margin-top: 4px; }
+
+.award-fields { display: grid; gap: 12px; }
+.award-fields .record-description { margin: 0; }
+.award-fields textarea { min-height: 5rem; }
+.award-fields > .editor-note { margin: 0; }

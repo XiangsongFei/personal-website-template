@@ -189,3 +189,16 @@ export function skillTitle(row: SkillDraft, locale: ContentLocale): string {
   const category = skillCategory(row);
   return category === 'custom' ? row.translations[locale]?.title ?? '' : skillPresetTitles[category][locale];
 }
+
+export type AwardText = {name: string; year: string};
+export type AwardDraft = OrderedDraftRecord & {translations: DraftTranslations<AwardText>};
+
+export function newAward(clientId: string, position: number): AwardDraft {
+  return {clientId, position, translations: {}};
+}
+
+export function awardYearsDiffer(row: AwardDraft): boolean {
+  const zh = row.translations.zh?.year;
+  const en = row.translations.en?.year;
+  return zh !== undefined && en !== undefined && zh !== en;
+}

@@ -1,7 +1,7 @@
-import type {EducationDraft, ExperienceDraft, ProjectDraft, SkillDraft} from './records';
+import type {EducationDraft, ExperienceDraft, ProjectDraft, SkillDraft, AwardDraft} from './records';
 
 export type ContentLocale = 'zh' | 'en';
-export const editorModules = {profile: true, introduction: true, education: true, experience: true, projects: true, skills: true} as const;
+export const editorModules = {profile: true, introduction: true, education: true, experience: true, projects: true, skills: true, awards: true} as const;
 export type EditorModule = keyof typeof editorModules;
 type Localized<T> = Record<ContentLocale, T>;
 
@@ -28,7 +28,15 @@ export type ProfileDraft = {
   shared: Record<keyof typeof profileShared, string>;
   translations: Localized<Record<keyof typeof profileLocalized, string>>;
 };
-export type LocalDraft = {profile: ProfileDraft; introduction: Localized<string>; education: readonly EducationDraft[]; experience: readonly ExperienceDraft[]; projects: readonly ProjectDraft[]; skills: readonly SkillDraft[]};
+export type LocalDraft = {
+  profile: ProfileDraft;
+  introduction: Localized<string>;
+  education: readonly EducationDraft[];
+  experience: readonly ExperienceDraft[];
+  projects: readonly ProjectDraft[];
+  skills: readonly SkillDraft[];
+  awards: readonly AwardDraft[];
+};
 
 export const emptyProfile: ProfileDraft = {
   shared: {graduationValue: '', avatarInitials: '', footerName: '', copyright: ''},
@@ -38,7 +46,7 @@ export const emptyProfile: ProfileDraft = {
   },
 };
 
-export const emptyDraft: LocalDraft = {profile: emptyProfile, introduction: {zh: '', en: ''}, education: [], experience: [], projects: [], skills: []};
+export const emptyDraft: LocalDraft = {profile: emptyProfile, introduction: {zh: '', en: ''}, education: [], experience: [], projects: [], skills: [], awards: []};
 
 export function moduleFromHash(hash: string): EditorModule | undefined {
   if (!hash.startsWith('#')) return;
