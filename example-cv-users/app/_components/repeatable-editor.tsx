@@ -12,18 +12,18 @@ export function EditorAiActions({reasonId}: {reasonId: string}) {
   </div>;
 }
 
-export function RecordField({label, value, onChange, multiline = false}: {
-  label: string; value: string; onChange: (value: string) => void; multiline?: boolean;
+export function RecordField({label, value, onChange, multiline = false, ai = true}: {
+  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; ai?: boolean;
 }) {
   const {locale} = useUiLocale();
   const fieldId = useId();
   const reasonId = fieldId + '-ai';
   if (multiline) return <div className="record-description">
     <div className="editor-field-heading">
-      <label htmlFor={fieldId}>{label}</label><EditorAiActions reasonId={reasonId}/>
+      <label htmlFor={fieldId}>{label}</label>{ai && <EditorAiActions reasonId={reasonId}/>}
     </div>
     <textarea id={fieldId} value={value} maxLength={20_000} onChange={event => onChange(event.target.value)}/>
-    <p id={reasonId} className="editor-note">{locale === 'zh' ? 'AI 优化与生成尚未开放。' : 'AI refinement and generation are unavailable.'}</p>
+    {ai && <p id={reasonId} className="editor-note">{locale === 'zh' ? 'AI 优化与生成尚未开放。' : 'AI refinement and generation are unavailable.'}</p>}
   </div>;
 
   return <label className="editor-field">{label}
