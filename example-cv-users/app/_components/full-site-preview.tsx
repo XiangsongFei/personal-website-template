@@ -3,33 +3,30 @@
 import {useLayoutEffect, useRef} from 'react';
 import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationDisplay, projectDisplay, skillTitle} from '../../lib/editor/records';
-import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
+import type {ContentLocale, LocalDraft} from '../../lib/editor/draft';
 import {publicLinksDisplay} from '../../lib/editor/site-links';
-
-const sections = {
-  profile: ['个人资料', 'Profile'],
-  introduction: ['个人介绍', 'Introduction'],
-  education: ['教育经历', 'Education'],
-  experience: ['工作经历', 'Experience'],
-  projects: ['项目经历', 'Projects'],
-  skills: ['技能', 'Skills'],
-  awards: ['荣誉奖项', 'Awards'],
-  contact: ['联系与链接', 'Contact'],
-} as const;
-type PreviewSection = keyof typeof sections;
-const sectionKeys = Object.keys(sections) as PreviewSection[];
+import {previewOrder, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
 
 export function FullSitePreview({draft, locale, module}: {
-  draft: LocalDraft; locale: ContentLocale; module: Exclude<EditorModule, 'links'>;
+  draft: LocalDraft; locale: ContentLocale; module: PreviewSection;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
-  const labels = (key: PreviewSection) => sections[key][locale === 'zh' ? 0 : 1];
+  const labels = (key: PreviewSection) => previewSections[key][locale === 'zh' ? 0 : 1];
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const profile = draft.profile.translations[locale];
   const shared = draft.profile.shared;
   const contact = contactDisplay(draft.contact, locale);
   const links = publicLinksDisplay(draft.links, locale);
+  const siteText = draft['site-text'].translations[locale];
+  const navLabel = (section: PreviewSection) => {
+    const value = section === 'profile' ? profile.navAboutLabel : siteNavigationLabel(draft['site-text'], locale, section);
+    return value?.trim() ? value : labels(section);
+  };
+  const sectionTitle = (section: keyof typeof sectionTitleFields) => {
+    const value = siteText?.[sectionTitleFields[section]];
+    return value?.trim() ? value : labels(section);
+  };
   const education = draft.education.flatMap(row => {
     const values = educationDisplay(row, locale);
     return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId}] : [];
@@ -89,8 +86,8 @@ export function FullSitePreview({draft, locale, module}: {
   return <div className="site-preview-viewport" ref={viewport} tabIndex={0}
     role="region" aria-label={text('个人网站预览内容', 'Personal website preview content')} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
     <nav className="site-preview-nav" ref={navigation} aria-label={text('预览网站导航', 'Preview website navigation')}>
-      {sectionKeys.map(key => <button type="button" key={key} onClick={() => position(key)}>
-        {key === 'profile' && profile.navAboutLabel.trim() ? profile.navAboutLabel : labels(key)}
+      {previewOrder.map(key => <button type="button" key={key} data-preview-nav={key} onClick={() => position(key)}>
+        {navLabel(key)}
       </button>)}
     </nav>
     <article className="site-preview-page">
@@ -101,6 +98,9 @@ export function FullSitePreview({draft, locale, module}: {
             <h3 id="site-preview-name">{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</h3>
             {shared.graduationValue.trim() && <p><strong>{profile.graduationLabel.trim() || text('毕业时间', 'Graduation')}</strong> · {shared.graduationValue}</p>}
             {profile.emailActionLabel.trim() && <p className="site-preview-muted">{profile.emailActionLabel}</p>}
+            {siteText?.portfolioLabel?.trim() && <p className="site-preview-muted" data-preview-pdf-label>
+              {siteText.portfolioLabel} · {text('PDF 尚未开放', 'PDF unavailable')}
+            </p>}
             {links.github && <p className="site-preview-muted" data-preview-public-link="github">
               {links.githubLabel.trim() ? links.githubLabel : 'GitHub'} · {links.github}
             </p>}
@@ -120,7 +120,7 @@ export function FullSitePreview({draft, locale, module}: {
         </p>
       </section>
       <section data-site-section="education">
-        <h3>{labels('education')}</h3>
+        <h3>{sectionTitle('education')}</h3>
         {education.length > 0 ? <ol className="site-preview-records">
           {education.map(({clientId, title, categoryTitle, program, period, grade, courseTitle, courseDescription}) =>
             <li key={clientId} data-preview-entry={clientId}>
@@ -134,7 +134,7 @@ export function FullSitePreview({draft, locale, module}: {
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       <section data-site-section="experience">
-        <h3>{labels('experience')}</h3>
+        <h3>{sectionTitle('experience')}</h3>
         {experience.length > 0 ? <ol className="site-preview-records">
           {experience.map(({clientId, title, organization, period, location, description}) =>
             <li key={clientId} data-preview-entry={clientId}>
@@ -146,7 +146,7 @@ export function FullSitePreview({draft, locale, module}: {
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       <section data-site-section="projects">
-        <h3>{labels('projects')}</h3>
+        <h3>{sectionTitle('projects')}</h3>
         {projects.length ? <ol className="site-preview-records">
           {projects.map(({clientId, title, subtitle, period, description, href, methods}) =>
             <li key={clientId} data-preview-entry={clientId}>
@@ -157,12 +157,14 @@ export function FullSitePreview({draft, locale, module}: {
               {methods.length > 0 && <ul className="site-preview-methods" aria-label={text('项目方法', 'Project methods')}>
                 {methods.map(method => <li key={method.clientId} data-preview-method={method.clientId}>{method.value}</li>)}
               </ul>}
-              {href && <p className="site-preview-muted" data-preview-project-url>{text('项目链接', 'Project URL')} · {href}</p>}
+              {href && <p className="site-preview-muted" data-preview-project-url>
+                {siteText?.kaggleLabel?.trim() ? siteText.kaggleLabel : text('项目链接', 'Project URL')} · {href}
+              </p>}
             </li>)}
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       <section data-site-section="skills">
-        <h3>{labels('skills')}</h3>
+        <h3>{sectionTitle('skills')}</h3>
         {skills.length ? <ol className="site-preview-records">
           {skills.map(({clientId, title, items}) => <li key={clientId} data-preview-entry={clientId}>
             {title.trim() && <h4>{title}</h4>}
@@ -171,7 +173,7 @@ export function FullSitePreview({draft, locale, module}: {
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       <section data-site-section="awards">
-        <h3>{labels('awards')}</h3>
+        <h3>{sectionTitle('awards')}</h3>
         {awards.length ? <ol className="site-preview-records">
           {awards.map(({clientId, name, year}) => <li key={clientId} data-preview-entry={clientId}>
             {name.trim() && <h4 className="site-preview-prose">{name}</h4>}
@@ -212,7 +214,12 @@ export function FullSitePreview({draft, locale, module}: {
         {!contact.availability.trim() && !contact.focus.length && !contact.status.length && !links.email && !links.linkedInHref &&
           <p className="site-preview-muted">{text('暂无本地联系信息', 'No local contact details')}</p>}
       </section>
-      <footer>{[shared.footerName, shared.copyright].filter(value => value.trim()).join(' · ') || 'EXAMPLE_CV'}</footer>
+      <footer>
+        {[shared.footerName, shared.copyright].filter(value => value.trim()).join(' · ') || 'EXAMPLE_CV'}
+        {siteText?.updatedAtLabel?.trim() && <p className="site-preview-muted" data-preview-updated-label>
+          {siteText.updatedAtLabel} · {text('暂无已确认更新时间', 'No confirmed update date')}
+        </p>}
+      </footer>
     </article>
   </div>;
 }
