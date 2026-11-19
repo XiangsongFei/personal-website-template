@@ -1,5 +1,8 @@
+import type {EducationDraft} from './records';
+
 export type ContentLocale = 'zh' | 'en';
-export type EditorModule = 'profile' | 'introduction';
+export const editorModules = {profile: true, introduction: true, education: true} as const;
+export type EditorModule = keyof typeof editorModules;
 type Localized<T> = Record<ContentLocale, T>;
 
 export const INTRODUCTION_LIMIT = 20_000;
@@ -25,7 +28,7 @@ export type ProfileDraft = {
   shared: Record<keyof typeof profileShared, string>;
   translations: Localized<Record<keyof typeof profileLocalized, string>>;
 };
-export type LocalDraft = {profile: ProfileDraft; introduction: Localized<string>};
+export type LocalDraft = {profile: ProfileDraft; introduction: Localized<string>; education: readonly EducationDraft[]};
 
 export const emptyProfile: ProfileDraft = {
   shared: {graduationValue: '', avatarInitials: '', footerName: '', copyright: ''},
@@ -35,11 +38,12 @@ export const emptyProfile: ProfileDraft = {
   },
 };
 
-export const emptyDraft: LocalDraft = {profile: emptyProfile, introduction: {zh: '', en: ''}};
+export const emptyDraft: LocalDraft = {profile: emptyProfile, introduction: {zh: '', en: ''}, education: []};
 
 export function moduleFromHash(hash: string): EditorModule | undefined {
-  if (hash === '#profile') return 'profile';
-  if (hash === '#introduction') return 'introduction';
+  if (!hash.startsWith('#')) return;
+  const key = hash.slice(1);
+  if (Object.hasOwn(editorModules, key)) return key as EditorModule;
 }
 
 export function validIntroduction(value: string) {

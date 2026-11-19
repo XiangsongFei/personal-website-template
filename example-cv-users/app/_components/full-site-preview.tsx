@@ -1,6 +1,7 @@
 'use client';
 
 import {useLayoutEffect, useRef} from 'react';
+import {educationDisplay} from '../../lib/editor/records';
 import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
 
 const sections = {
@@ -15,38 +16,45 @@ const sections = {
 } as const;
 type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
-const laterSections = ['education', 'experience', 'projects', 'skills', 'awards'] as const;
+const laterSections = ['experience', 'projects', 'skills', 'awards'] as const;
 
 export function FullSitePreview({draft, locale, module}: {
   draft: LocalDraft; locale: ContentLocale; module: EditorModule;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
-  const positionedModule = useRef<EditorModule | null>(null);
   const labels = (key: PreviewSection) => sections[key][locale === 'zh' ? 0 : 1];
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const profile = draft.profile.translations[locale];
   const shared = draft.profile.shared;
+  const education = draft.education.flatMap(row => {
+    const values = educationDisplay(row, locale);
+    return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId}] : [];
+  });
 
-  function position(section: PreviewSection) {
+  function position(section: PreviewSection, moduleEntry = false) {
     const owner = viewport.current;
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
     if (!owner || !owner.clientHeight || !target) return false;
-    owner.scrollTop += target.getBoundingClientRect().top - owner.getBoundingClientRect().top
+    if (moduleEntry) owner.style.removeProperty('--site-preview-end-space');
+    const top = owner.scrollTop + target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.offsetHeight ?? 0);
+    if (moduleEntry && section === 'education') {
+      const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
+      if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
+    }
+    owner.scrollTop = top;
     return true;
   }
 
   useLayoutEffect(() => {
     const owner = viewport.current;
     if (!owner) return;
-    const positionWhenVisible = () => {
-      if (positionedModule.current !== module && position(module)) positionedModule.current = module;
-    };
-    positionWhenVisible();
     // A hidden single-column pane has no layout. Position it once it opens.
-    if (positionedModule.current === module) return;
-    const observer = new ResizeObserver(positionWhenVisible);
+    if (position(module, true)) return;
+    const observer = new ResizeObserver(() => {
+      if (position(module, true)) observer.disconnect();
+    });
     observer.observe(owner);
     return () => observer.disconnect();
   }, [module]);
@@ -77,6 +85,20 @@ export function FullSitePreview({draft, locale, module}: {
         <p className={draft.introduction[locale].trim() ? 'site-preview-prose' : 'site-preview-muted'}>
           {draft.introduction[locale].trim() ? draft.introduction[locale] : text('在这里介绍你自己和职业方向。', 'Introduce yourself and your professional focus here.')}
         </p>
+      </section>
+      <section data-site-section="education">
+        <h3>{labels('education')}</h3>
+        {education.length > 0 ? <ol className="site-preview-records">
+          {education.map(({clientId, title, categoryTitle, program, period, grade, courseTitle, courseDescription}) =>
+            <li key={clientId} data-preview-entry={clientId}>
+              {categoryTitle.trim() && categoryTitle !== title && <p className="site-preview-muted">{categoryTitle}</p>}
+              {title.trim() && <h4>{title}</h4>}
+              {program.trim() && <p>{program}</p>}
+              {(period.trim() || grade.trim()) && <p className="site-preview-muted">{[period, grade].filter(value => value.trim()).join(' · ')}</p>}
+              {courseTitle.trim() && <h4>{courseTitle}</h4>}
+              {courseDescription.trim() && <p className="site-preview-prose">{courseDescription}</p>}
+            </li>)}
+        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       {laterSections.map(key => <section data-site-section={key} key={key}>
         <h3>{labels(key)}</h3>

@@ -2,10 +2,12 @@
 
 import {useLayoutEffect, useEffect, useState, type ReactNode} from 'react';
 import {
-  cancelModule, emptyDraft, INTRODUCTION_LIMIT, moduleFromHash, moduleIsDirty,
+  cancelModule, editorModules, emptyDraft, INTRODUCTION_LIMIT, moduleFromHash, moduleIsDirty,
   profileLocalized, profileShared, validIntroduction, type ContentLocale,
   type EditorModule, type LocalDraft,
 } from '../../lib/editor/draft';
+import {EducationEditor} from './education-editor';
+import {EditorAiActions} from './repeatable-editor';
 import {DashboardShell} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
 import {useUiLocale} from './ui-locale';
@@ -58,12 +60,17 @@ export function ResumeEditor() {
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [draft, setDraft] = useState<LocalDraft>(emptyDraft);
   const dirty = moduleIsDirty(draft, module);
-  const hasChanges = dirty || moduleIsDirty(draft, module === 'profile' ? 'introduction' : 'profile');
+  const hasChanges = (Object.keys(editorModules) as EditorModule[]).some(key => moduleIsDirty(draft, key));
+  const titles: Record<EditorModule, string> = {
+    profile: text('个人资料', 'Profile'),
+    introduction: text('个人介绍', 'Introduction'),
+    education: text('教育经历', 'Education'),
+  };
   const introduction = draft.introduction[contentLocale];
   const introValid = validIntroduction(introduction);
 
   useLayoutEffect(() => {
-    // Same-document navigation keeps both module drafts in memory. Other hashes
+    // Same-document navigation keeps all module drafts in memory. Other hashes
     // belong to the existing Dashboard skip and navigation links.
     const select = () => {
       const requested = moduleFromHash(location.hash);
@@ -87,7 +94,7 @@ export function ResumeEditor() {
   return <DashboardShell section={module}>
     <div className="resume-editor">
       <header className="editor-heading">
-        <h1>{module === 'profile' ? text('个人资料', 'Profile') : text('个人介绍', 'Introduction')}</h1>
+        <h1>{titles[module]}</h1>
         <p>{text('本地工作区 · 输入仅保留在当前页面', 'Local workspace · Your edits stay on this page')}</p>
       </header>
       <div className="editor-modes">
@@ -124,13 +131,13 @@ export function ResumeEditor() {
               })}
             </fieldset>
             <p className="editor-note">{text('头像上传尚未开放。职业定位可在个人介绍中编辑。', 'Photo upload is unavailable. Describe your professional focus in Introduction.')}</p>
-          </> : <div className="editor-introduction">
+          </> : module === 'education' ?
+            <EducationEditor rows={draft.education} contentLocale={contentLocale}
+              onChange={education => setDraft(current => ({...current, education}))}/> :
+            <div className="editor-introduction">
             <div className="editor-field-heading">
               <label htmlFor="editor-intro-text">{contentLocale === 'zh' ? '中文介绍' : 'English introduction'}</label>
-              <div className="editor-ai" aria-describedby="editor-ai-reason">
-                <button type="button" disabled><span aria-hidden="true">✧</span> {text('AI 优化', 'AI refine')}</button>
-                <button type="button" disabled><span aria-hidden="true">✧</span> {text('AI 生成', 'AI generate')}</button>
-              </div>
+              <EditorAiActions reasonId="editor-ai-reason"/>
             </div>
             <textarea id="editor-intro-text" value={introduction} maxLength={INTRODUCTION_LIMIT}
               aria-describedby="editor-intro-guidance" aria-invalid={!introValid || undefined}
