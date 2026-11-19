@@ -4,6 +4,7 @@ import {useLayoutEffect, useRef} from 'react';
 import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationDisplay, projectDisplay, skillTitle} from '../../lib/editor/records';
 import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
+import {publicLinksDisplay} from '../../lib/editor/site-links';
 
 const sections = {
   profile: ['个人资料', 'Profile'],
@@ -19,7 +20,7 @@ type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
 
 export function FullSitePreview({draft, locale, module}: {
-  draft: LocalDraft; locale: ContentLocale; module: EditorModule;
+  draft: LocalDraft; locale: ContentLocale; module: Exclude<EditorModule, 'links'>;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
@@ -28,6 +29,7 @@ export function FullSitePreview({draft, locale, module}: {
   const profile = draft.profile.translations[locale];
   const shared = draft.profile.shared;
   const contact = contactDisplay(draft.contact, locale);
+  const links = publicLinksDisplay(draft.links, locale);
   const education = draft.education.flatMap(row => {
     const values = educationDisplay(row, locale);
     return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId}] : [];
@@ -99,6 +101,12 @@ export function FullSitePreview({draft, locale, module}: {
             <h3 id="site-preview-name">{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</h3>
             {shared.graduationValue.trim() && <p><strong>{profile.graduationLabel.trim() || text('毕业时间', 'Graduation')}</strong> · {shared.graduationValue}</p>}
             {profile.emailActionLabel.trim() && <p className="site-preview-muted">{profile.emailActionLabel}</p>}
+            {links.github && <p className="site-preview-muted" data-preview-public-link="github">
+              {links.githubLabel.trim() ? links.githubLabel : 'GitHub'} · {links.github}
+            </p>}
+            {links.linkedInHref && <p className="site-preview-muted" data-preview-public-link="linkedin-action">
+              {links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}
+            </p>}
           </div>
           <div className="site-preview-portrait" role="img" aria-label={profile.avatarLabel.trim() || text('头像占位', 'Portrait placeholder')}>
             {shared.avatarInitials.trim() || '—'}
@@ -174,6 +182,16 @@ export function FullSitePreview({draft, locale, module}: {
       <section data-site-section="contact">
         <h3>{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</h3>
         {contact.availability.trim() && <p className="site-preview-prose">{contact.availability}</p>}
+        {(links.email || links.linkedInHref) && <dl className="site-preview-contact-links">
+          {links.email && <>
+            <dt>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
+            <dd data-preview-public-link="email">{links.email}</dd>
+          </>}
+          {links.linkedInHref && <>
+            <dt>{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
+            <dd data-preview-public-link="linkedin">{links.linkedInDisplayName.trim() && <>{links.linkedInDisplayName} · </>}{links.linkedInHref}</dd>
+          </>}
+        </dl>}
         {(profile.contactFocusHeading.trim() || contact.focus.length > 0) &&
           <h4>{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h4>}
         {contact.focus.length > 0 && <ol className="site-preview-records" aria-label={text('职业关注方向', 'Career interests')}>
@@ -191,7 +209,7 @@ export function FullSitePreview({draft, locale, module}: {
             {detail.trim() && <p className="site-preview-prose">{detail}</p>}
           </li>)}
         </ol>}
-        {!contact.availability.trim() && !contact.focus.length && !contact.status.length &&
+        {!contact.availability.trim() && !contact.focus.length && !contact.status.length && !links.email && !links.linkedInHref &&
           <p className="site-preview-muted">{text('暂无本地联系信息', 'No local contact details')}</p>}
       </section>
       <footer>{[shared.footerName, shared.copyright].filter(value => value.trim()).join(' · ') || 'EXAMPLE_CV'}</footer>

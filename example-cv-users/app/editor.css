@@ -242,3 +242,9 @@
 .contact-status-type { margin-bottom: 12px; }
 [data-site-section=contact] .site-preview-records { margin-top: 8px; }
 [data-site-section=contact] .site-preview-records h5 { margin: 0; font-size: 14px; }
+.editor-contact-areas { margin-bottom: 16px; }
+.editor-section-note { margin: 0 0 12px; }
+.editor-contact input[aria-invalid=true] { border-color: #a44242; }
+.site-preview-contact-links { display: grid; gap: 4px; margin: 12px 0; }
+.site-preview-contact-links dt { font-weight: 600; }
+.site-preview-contact-links dd { margin: 0 0 8px; }
