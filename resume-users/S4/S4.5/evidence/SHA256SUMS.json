@@ -1,0 +1,97 @@
+{
+  "awards-auto-location.png": {
+    "sha256": "e7b8e580391396faf7aa59c5ebfc806ac1ea7a52fc58d09245518f5eca8a55ae",
+    "width": 1440,
+    "height": 1058
+  },
+  "awards-en-desktop.png": {
+    "sha256": "53b5776cda8663a7452e15cf446b857d2c3bd109b49a3f25465fd7c52a3c2e3c",
+    "width": 1440,
+    "height": 1058
+  },
+  "awards-zh-desktop.png": {
+    "sha256": "abaec6e2331cbdf1a84c4e1287bd1e402a34627e502808e4e3184de9c21b7efb",
+    "width": 1440,
+    "height": 1058
+  },
+  "methods-en.png": {
+    "sha256": "a54cbbb2f1e0f0cdf8adcff5d01c72e06bada8b7e5849c7ad8c74d023a448700",
+    "width": 1440,
+    "height": 1058
+  },
+  "methods-zh.png": {
+    "sha256": "797dadb7e5efb843e763c9394c28a8352866b82ab3dfb7f8cd6c2c27661b7ce4",
+    "width": 1440,
+    "height": 1058
+  },
+  "mobile-en.png": {
+    "sha256": "ce162b831b33880d8545361f56771e4a3564275885145e9bee2a0d93f79eca26",
+    "width": 390,
+    "height": 974
+  },
+  "mobile-zh.png": {
+    "sha256": "403612d7d947f8bfc4c1ede017accffb2225bd9fab244a33af9ae047cafdb81f",
+    "width": 390,
+    "height": 974
+  },
+  "narrow-edit.png": {
+    "sha256": "e18a4ab2dd5e1ba95803dbad103dfad726329b19187d6fe31a21ec0727201c89",
+    "width": 1024,
+    "height": 1106
+  },
+  "narrow-preview.png": {
+    "sha256": "d0c6fdc55b760ae3e9ebfa3d036cfe801c560d973de2330a360b7d478c1c3547",
+    "width": 1024,
+    "height": 1106
+  },
+  "projects-auto-location.png": {
+    "sha256": "eccb2c5ebe2387ab841d3a0cc12179d7ecfb34242b0202836ec912210abbb7fd",
+    "width": 1440,
+    "height": 1058
+  },
+  "projects-en-desktop.png": {
+    "sha256": "82def0814a0132d16f4a94bd17dd992a1b2e43a6e87846604bd97767700a762a",
+    "width": 1440,
+    "height": 1058
+  },
+  "projects-order-after.png": {
+    "sha256": "d0becca7ca0003e85dba1a9530a193c248fa07d7e55797f9abf0cc66814919e6",
+    "width": 1440,
+    "height": 1058
+  },
+  "projects-order-before.png": {
+    "sha256": "4ec74798652df274edd200dab36cc9ed4bfc60c5e7ca127c925af814d52b810b",
+    "width": 1440,
+    "height": 1058
+  },
+  "projects-zh-desktop.png": {
+    "sha256": "1d0e11d46c422949e8e4ac1a72bfff53c71a407447eed19354605263e26948be",
+    "width": 1440,
+    "height": 1058
+  },
+  "s4.4-education-baseline.png": {
+    "sha256": "ba17cbedeca8ef2fd1cc81462a8f4dcdfc17e3cdda3a500f23f3d1f34abb8a08",
+    "width": 1440,
+    "height": 1058
+  },
+  "s4.5-education-regression.png": {
+    "sha256": "97b24f22603fb44ebb7b91ece8de967b792d840b4558d2ecb5149ac8545f0743",
+    "width": 1440,
+    "height": 1058
+  },
+  "skills-auto-location.png": {
+    "sha256": "1cdc7c914830bce9c26b095a2767410f790deb22d6c321d0940f3791d9fb6780",
+    "width": 1440,
+    "height": 1058
+  },
+  "skills-custom.png": {
+    "sha256": "1c49df71c689dc58ea8c3dd9360bac76ca2ac79aa022d089717437058bdc5c4a",
+    "width": 1440,
+    "height": 1058
+  },
+  "skills-preset.png": {
+    "sha256": "d928e1f23ab13e0e01a681826b9a27833b84631942a8f5506c22aa1a30dfc88a",
+    "width": 1440,
+    "height": 1058
+  }
+}

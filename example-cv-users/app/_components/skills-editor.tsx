@@ -22,11 +22,12 @@ export function SkillsEditor({rows, contentLocale, onChange}: {
     fields={(row, update) => {
       const category = skillCategory(row);
       const values = row.translations[contentLocale];
+      const fieldId = categoryId + '-' + row.clientId;
       return <>
         <div className="editor-fields record-field-grid">
           <div className="editor-field">
-            <label htmlFor={categoryId}>{text('技能类别', 'Skill category')}</label>
-            <select id={categoryId} value={category} onChange={event =>
+            <label htmlFor={fieldId}>{text('技能类别', 'Skill category')}</label>
+            <select id={fieldId} value={category} onChange={event =>
               update({...row, category: event.target.value as SkillCategory})}>
               {skillCategories.map(choice => <option key={choice} value={choice}>
                 {choice === 'custom' ? text('自定义', 'Custom') : skillPresetTitles[choice][locale]}

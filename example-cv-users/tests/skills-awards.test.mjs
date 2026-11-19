@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {editTranslation, newSkill, skillCategory, skillPresetTitles, skillTitle} from '../lib/editor/records.ts';
+import {awardYearsDiffer, editTranslation, moveRecord, newAward, newSkill, removeRecord, skillCategory, skillPresetTitles, skillTitle} from '../lib/editor/records.ts';
 import {cancelModule, emptyDraft} from '../lib/editor/draft.ts';
 
 test('skill presets infer only an exact bilingual legacy title pair', () => {
@@ -31,4 +31,29 @@ test('preset selections preserve custom titles, raw skills text and other module
   const draft={...emptyDraft,skills:[custom],introduction:{zh:'保留',en:''}};
   assert.deepEqual(cancelModule(draft,'skills').skills,[]);
   assert.equal(cancelModule(draft,'skills').introduction,draft.introduction);
+});
+
+
+test('award years can differ, and only the edited locale is updated', () => {
+  const row = newAward('local-first', 0);
+  const zh = {name:'合成奖项',year:'2025 年'};
+  const en = {name:'Long synthetic award '.repeat(80),year:'2024'};
+  const translations = editTranslation(editTranslation(row.translations,'zh',zh),'en',en);
+  const bilingual = {...row,translations};
+  assert.equal(awardYearsDiffer(bilingual),true);
+  assert.equal(awardYearsDiffer({...row,translations:{zh}}),false);
+  const cleared = {...bilingual,translations:editTranslation(translations,'en',{year:''})};
+  assert.equal(awardYearsDiffer(cleared),true);
+  assert.deepEqual(cleared.translations.zh,zh);
+  assert.equal(cleared.translations.en.name,en.name);
+  assert.equal(cleared.translations.en.year,'');
+  const ordered = moveRecord([cleared,newAward('local-second',1)],row.clientId,1);
+  assert.equal(ordered[1].translations,cleared.translations);
+  assert.equal(ordered[1].position,1);
+  const remaining = removeRecord(ordered,'local-second');
+  assert.equal(remaining[0].position,0);
+  assert.equal(remaining[0].translations,cleared.translations);
+  const draft={...emptyDraft,awards:remaining,skills:[newSkill('local-skill',0)]};
+  assert.deepEqual(cancelModule(draft,'awards').awards,[]);
+  assert.equal(cancelModule(draft,'awards').skills,draft.skills);
 });

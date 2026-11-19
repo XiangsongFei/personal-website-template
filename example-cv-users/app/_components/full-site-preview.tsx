@@ -16,7 +16,6 @@ const sections = {
 } as const;
 type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
-const laterSections = ['awards'] as const;
 
 export function FullSitePreview({draft, locale, module}: {
   draft: LocalDraft; locale: ContentLocale; module: EditorModule;
@@ -48,6 +47,11 @@ export function FullSitePreview({draft, locale, module}: {
     const title = skillTitle(row, locale);
     const items = row.translations[locale]?.items ?? '';
     return title.trim() || items.trim() ? [{clientId: row.clientId, title, items}] : [];
+  });
+
+  const awards = draft.awards.flatMap(row => {
+    const {name = '', year = ''} = row.translations[locale] ?? {};
+    return name.trim() || year.trim() ? [{clientId: row.clientId, name, year}] : [];
   });
 
   function position(section: PreviewSection, moduleEntry = false) {
@@ -156,10 +160,15 @@ export function FullSitePreview({draft, locale, module}: {
           </li>)}
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
-      {laterSections.map(key => <section data-site-section={key} key={key}>
-        <h3>{labels(key)}</h3>
-        <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>
-      </section>)}
+      <section data-site-section="awards">
+        <h3>{labels('awards')}</h3>
+        {awards.length ? <ol className="site-preview-records">
+          {awards.map(({clientId, name, year}) => <li key={clientId} data-preview-entry={clientId}>
+            {name.trim() && <h4 className="site-preview-prose">{name}</h4>}
+            {year.trim() && <p className="site-preview-muted">{year}</p>}
+          </li>)}
+        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      </section>
       <section data-site-section="contact">
         <h3>{labels('contact')}</h3>
         {profile.contactFocusHeading.trim() && <h4>{profile.contactFocusHeading}</h4>}
