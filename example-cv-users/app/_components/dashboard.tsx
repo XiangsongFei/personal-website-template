@@ -1,12 +1,12 @@
 'use client';
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {useUiLocale} from './ui-locale';
 
-type NavItem = {id: string; zh: string; en: string; href?: '#overview' | '/account'};
+type NavItem = {id: string; zh: string; en: string; href?: '#overview' | '/account' | '/dashboard/website'};
 const navigation: {id: string; zh: string; en: string; items: NavItem[]}[] = [
   {id: 'workspace', zh: '工作台', en: 'Workspace', items: [
     {id: 'overview', zh: '概览', en: 'Overview', href: '#overview'},
-    {id: 'website', zh: '我的网站', en: 'My website'},
+    {id: 'website', zh: '我的网站', en: 'My website', href: '/dashboard/website'},
   ]},
   {id: 'resume', zh: '个人简历', en: 'Resume', items: [
     {id: 'profile', zh: '个人资料', en: 'Profile'},
@@ -58,22 +58,22 @@ function Icon({kind}: {kind: string}) {
   return <svg className="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={paths[kind]}/></svg>;
 }
 
-function DashboardNavigation({mobile = false, onNavigate}: {mobile?: boolean; onNavigate: () => void}) {
+function DashboardNavigation({mobile = false, onNavigate, section}: {mobile?: boolean; onNavigate: () => void; section: 'overview' | 'website'}) {
   const {locale} = useUiLocale();
   const noteId = mobile ? 'dashboard-nav-note-mobile' : 'dashboard-nav-note-desktop';
   return <>
-    <p id={noteId} className="dashboard-nav-note">{locale === 'zh' ? '仅概览与账户安全可使用。' : 'Overview and account security are available.'}</p>
+    <p id={noteId} className="dashboard-nav-note">{locale === 'zh' ? '概览、我的网站与账户安全可使用；其余功能未开放。' : 'Overview, My website and account security are available. Other features are not open.'}</p>
     {navigation.map(group => <details className="dashboard-nav-group" key={group.id} open>
       <summary><Icon kind={group.id}/><span>{locale === 'zh' ? group.zh : group.en}</span><Icon kind="chevron"/></summary>
       <ul aria-describedby={noteId}>{group.items.map(item => <li key={item.id}>
-        {item.href ? <a className={`dashboard-nav-item${item.id === 'overview' ? ' dashboard-nav-current' : ''}`} href={item.href} aria-current={item.id === 'overview' ? 'page' : undefined} onClick={onNavigate}>{locale === 'zh' ? item.zh : item.en}</a>
+        {item.href ? <a className={`dashboard-nav-item${item.id === section ? ' dashboard-nav-current' : ''}`} href={item.href === '#overview' && section !== 'overview' ? '/dashboard#overview' : item.href} aria-current={item.id === section ? 'page' : undefined} onClick={onNavigate}>{locale === 'zh' ? item.zh : item.en}</a>
           : <span className="dashboard-nav-item dashboard-nav-disabled" aria-disabled="true">{item.id === 'ai' && <Icon kind="ai"/>}{locale === 'zh' ? item.zh : item.en}</span>}
       </li>)}</ul>
     </details>)}
   </>;
 }
 
-export function Dashboard() {
+export function DashboardShell({children, section = 'overview'}: {children: ReactNode; section?: 'overview' | 'website'}) {
   const {locale, setLocale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const [open, setOpen] = useState(false);
@@ -95,13 +95,13 @@ export function Dashboard() {
     <a className="dashboard-skip" href="#dashboard-main">{text('跳至主要内容', 'Skip to main content')}</a>
     <aside className="dashboard-sidebar">
       <a className="dashboard-brand" href="/dashboard"><strong>EXAMPLE_CV</strong><span>{text('个人工作台', 'Personal workspace')}</span></a>
-      <nav aria-label={text('工作台导航', 'Workspace navigation')}><DashboardNavigation onNavigate={closeNavigation}/></nav>
+      <nav aria-label={text('工作台导航', 'Workspace navigation')}><DashboardNavigation section={section} onNavigate={closeNavigation}/></nav>
     </aside>
     <div className="dashboard-body">
       <header className="dashboard-header">
         <div className="dashboard-header-location">
           <button className="dashboard-menu-toggle" ref={toggle} type="button" aria-label={text(open ? '关闭导航' : '打开导航', open ? 'Close navigation' : 'Open navigation')} aria-expanded={open} aria-controls="dashboard-mobile-navigation" onClick={() => setOpen(!open)}><Icon kind={open ? 'close' : 'menu'}/></button>
-          <span className="dashboard-breadcrumb"><span className="dashboard-breadcrumb-prefix">{text('工作台', 'Workspace')}<span aria-hidden="true"> / </span></span>{text('概览', 'Overview')}</span>
+          <span className="dashboard-breadcrumb"><span className="dashboard-breadcrumb-prefix">{text('工作台', 'Workspace')}<span aria-hidden="true"> / </span></span>{text(section === 'overview' ? '概览' : '我的网站', section === 'overview' ? 'Overview' : 'My website')}</span>
         </div>
         <div className="dashboard-header-actions">
           <div className="ui-locale-switch" role="group" aria-label={text('界面语言', 'Interface language')}>
@@ -111,8 +111,19 @@ export function Dashboard() {
           <a className="dashboard-account-link" href="/account" aria-label={text('账户与安全', 'Account & security')}><Icon kind="account"/><span>{text('账户', 'Account')}</span></a>
         </div>
       </header>
-      <nav className="dashboard-mobile-navigation" id="dashboard-mobile-navigation" hidden={!open} aria-label={text('移动端工作台导航', 'Mobile workspace navigation')}><DashboardNavigation mobile onNavigate={closeNavigation}/></nav>
+      <nav className="dashboard-mobile-navigation" id="dashboard-mobile-navigation" hidden={!open} aria-label={text('移动端工作台导航', 'Mobile workspace navigation')}><DashboardNavigation section={section} mobile onNavigate={closeNavigation}/></nav>
       <main className="dashboard-main" id="dashboard-main" ref={main} tabIndex={-1}>
+        {children}
+        <footer className="dashboard-footer"><span>EXAMPLE_CV</span><span>{text('界面语言与简历内容语言独立。', 'Interface and resume content languages are separate.')}</span></footer>
+      </main>
+    </div>
+  </div>;
+}
+
+export function Dashboard() {
+  const {locale} = useUiLocale();
+  const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
+  return <DashboardShell>
         <section className="dashboard-intro" id="overview">
           <h1>{text('我的工作台', 'My workspace')}</h1>
           <p>{text('管理个人简历内容与账户安全。', 'Manage your resume content and account security.')}</p>
@@ -133,8 +144,5 @@ export function Dashboard() {
           <h2 id="dashboard-account-title">{text('账户与安全', 'Account & security')}</h2>
           <p>{text('查看账户状态、管理密码或安全退出。', 'Check your account, manage your password or sign out securely.')}</p>
         </div><a className="dashboard-primary-link" href="/account">{text('管理账户', 'Manage account')}<Icon kind="arrow"/></a></section>
-        <footer className="dashboard-footer"><span>EXAMPLE_CV</span><span>{text('界面语言与简历内容语言独立。', 'Interface and resume content languages are separate.')}</span></footer>
-      </main>
-    </div>
-  </div>;
+  </DashboardShell>;
 }
