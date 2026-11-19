@@ -12,6 +12,7 @@ import {ProjectsEditor} from './projects-editor';
 import {SkillsEditor} from './skills-editor';
 import {AwardsEditor} from './awards-editor';
 import {ContactEditor} from './contact-editor';
+import {SiteLinksEditor} from './site-links-editor';
 import {EditorAiActions} from './repeatable-editor';
 import {DashboardShell} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
@@ -64,6 +65,7 @@ export function ResumeEditor() {
   const [contentLocale, setContentLocale] = useState<ContentLocale>('zh');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [draft, setDraft] = useState<LocalDraft>(emptyDraft);
+  const contactArea = module === 'contact' || module === 'links';
   const dirty = moduleIsDirty(draft, module);
   const hasChanges = (Object.keys(editorModules) as EditorModule[]).some(key => moduleIsDirty(draft, key));
   const titles: Record<EditorModule, string> = {
@@ -75,6 +77,7 @@ export function ResumeEditor() {
     skills: text('技能', 'Skills'),
     awards: text('荣誉奖项', 'Awards'),
     contact: text('联系与链接', 'Contact & links'),
+    links: text('联系与链接', 'Contact & links'),
   };
   const introduction = draft.introduction[contentLocale];
   const introValid = validIntroduction(introduction);
@@ -101,7 +104,7 @@ export function ResumeEditor() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [hasChanges]);
 
-  return <DashboardShell section={module}>
+  return <DashboardShell section={contactArea ? 'contact' : module}>
     <div className="resume-editor">
       <header className="editor-heading">
         <h1>{titles[module]}</h1>
@@ -114,6 +117,11 @@ export function ResumeEditor() {
       </div>
       <div className="editor-columns">
         <EditorPanel mode={mode} dirty={dirty} hasChanges={hasChanges} cancel={() => setDraft(current => cancelModule(current, module))}>
+          {contactArea && <div className="editor-contact-areas">
+            <EditorModeSwitcher options={[
+              ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')],
+            ]} selected={module} select={section => {location.hash = section;}} label={text('联系与链接区域', 'Contact and links areas')}/>
+          </div>}
           <div className="editor-language">
             <span>{text('内容语言', 'Content language')}</span>
             <EditorModeSwitcher options={[[ 'zh', '中文' ], [ 'en', 'English' ]]} selected={contentLocale}
@@ -159,6 +167,9 @@ export function ResumeEditor() {
           module === 'contact' ?
             <ContactEditor draft={draft.contact} contentLocale={contentLocale}
               onChange={contact => setDraft(current => ({...current, contact}))}/> :
+          module === 'links' ?
+            <SiteLinksEditor draft={draft.links} contentLocale={contentLocale}
+              onChange={links => setDraft(current => ({...current, links}))}/> :
             <div className="editor-introduction">
             <div className="editor-field-heading">
               <label htmlFor="editor-intro-text">{contentLocale === 'zh' ? '中文介绍' : 'English introduction'}</label>
@@ -180,7 +191,7 @@ export function ResumeEditor() {
             <h2 id="editor-preview-heading">{text('完整网站预览', 'Full website preview')}</h2>
             <p>{text('本地预览 · 未保存、未发布', 'Local preview · Unsaved and unpublished')}</p>
           </div>
-          <FullSitePreview draft={draft} locale={contentLocale} module={module}/>
+          <FullSitePreview draft={draft} locale={contentLocale} module={module === 'links' ? 'contact' : module}/>
         </section>
       </div>
     </div>

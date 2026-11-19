@@ -1,9 +1,10 @@
 import type {EducationDraft, ExperienceDraft, ProjectDraft, SkillDraft, AwardDraft} from './records';
 import {emptyContact, type ContactDraft} from './contact.ts';
+import {emptyLinks, type LinksDraft} from './site-links.ts';
 
 export type ContentLocale = 'zh' | 'en';
 export const editorModules = {
-  profile: true, introduction: true, education: true, experience: true, projects: true, skills: true, awards: true, contact: true,
+  profile: true, introduction: true, education: true, experience: true, projects: true, skills: true, awards: true, contact: true, links: true,
 } as const;
 export type EditorModule = keyof typeof editorModules;
 type Localized<T> = Record<ContentLocale, T>;
@@ -40,6 +41,7 @@ export type LocalDraft = {
   skills: readonly SkillDraft[];
   awards: readonly AwardDraft[];
   contact: ContactDraft;
+  links: LinksDraft;
 };
 
 export const emptyProfile: ProfileDraft = {
@@ -53,6 +55,7 @@ export const emptyProfile: ProfileDraft = {
 export const emptyDraft: LocalDraft = {
   profile: emptyProfile, introduction: {zh: '', en: ''}, education: [], experience: [], projects: [], skills: [], awards: [],
   contact: emptyContact,
+  links: emptyLinks,
 };
 
 export function moduleFromHash(hash: string): EditorModule | undefined {
