@@ -6,7 +6,8 @@ import {
   editTranslation, newSkill, skillCategories, skillCategory, skillPresetTitles, skillTitle,
   type SkillCategory, type SkillDraft,
 } from '../../lib/editor/records';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 export function SkillsEditor({rows, contentLocale, onChange}: {
@@ -21,7 +22,6 @@ export function SkillsEditor({rows, contentLocale, onChange}: {
     emptyLabel={text('暂无技能分组。', 'No skill groups yet.')}
     fields={(row, update) => {
       const category = skillCategory(row);
-      const values = row.translations[contentLocale];
       const fieldId = categoryId + '-' + row.clientId;
       return <>
         <div className="editor-fields record-field-grid">
@@ -34,15 +34,15 @@ export function SkillsEditor({rows, contentLocale, onChange}: {
               </option>)}
             </select>
           </div>
-          {category === 'custom' ? <RecordField label={text('技能分组名称', 'Skill group name')} value={values?.title ?? ''}
-            onChange={title => update({...row, category: 'custom', translations: editTranslation(row.translations, contentLocale, {title})})}/> :
+          {category === 'custom' ? <PairedField label={text('技能分组名称', 'Skill group name')} value={language => row.translations[language]?.title ?? ''}
+            onChange={(language, title) => update({...row, category: 'custom', translations: editTranslation(row.translations, language, {title})})}/> :
             <div className="editor-field">
               <span>{text('预设名称', 'Preset name')}</span>
               <p className="editor-note">{skillTitle(row, contentLocale)} · {text('切回自定义可编辑原名称。', 'Switch to Custom to edit your own name.')}</p>
             </div>}
         </div>
-        <RecordField label={text('技能内容', 'Skills content')} value={values?.items ?? ''} multiline ai={false}
-          onChange={items => update({...row, translations: editTranslation(row.translations, contentLocale, {items})})}/>
+        <PairedField label={text('技能内容', 'Skills content')} value={language => row.translations[language]?.items ?? ''} multiline
+          onChange={(language, items) => update({...row, translations: editTranslation(row.translations, language, {items})})}/>
       </>;
     }}/>
 }

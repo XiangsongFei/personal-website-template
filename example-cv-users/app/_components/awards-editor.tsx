@@ -2,7 +2,8 @@
 
 import type {ContentLocale} from '../../lib/editor/draft';
 import {awardYearsDiffer, editTranslation, newAward, type AwardDraft} from '../../lib/editor/records';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 export function AwardsEditor({rows, contentLocale, onChange}: {
@@ -15,12 +16,11 @@ export function AwardsEditor({rows, contentLocale, onChange}: {
     addLabel={text('＋ 添加奖项', '＋ Add award')}
     emptyLabel={text('暂无奖项。', 'No awards yet.')}
     fields={(row, update) => {
-      const values = row.translations[contentLocale];
       return <div className="award-fields">
-        <RecordField label={text('奖项名称', 'Award name')} value={values?.name ?? ''} multiline ai={false}
-          onChange={name => update({...row, translations: editTranslation(row.translations, contentLocale, {name})})}/>
-        <RecordField label={text('年份', 'Year')} value={values?.year ?? ''}
-          onChange={year => update({...row, translations: editTranslation(row.translations, contentLocale, {year})})}/>
+        <PairedField label={text('奖项名称', 'Award name')} value={language => row.translations[language]?.name ?? ''} maxLength={20_000}
+          onChange={(language, name) => update({...row, translations: editTranslation(row.translations, language, {name})})}/>
+        <PairedField label={text('年份', 'Year')} value={language => row.translations[language]?.year ?? ''}
+          onChange={(language, year) => update({...row, translations: editTranslation(row.translations, language, {year})})}/>
         {awardYearsDiffer(row) && <p className="editor-note">
           {text('两种语言的年份不同，可分别编辑。', 'The years differ by language. Edit each separately.')}
         </p>}
