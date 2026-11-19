@@ -16,7 +16,7 @@ const navigation: {id: string; zh: string; en: string; items: NavItem[]}[] = [
     {id: 'profile', zh: '个人资料', en: 'Profile', href: '/dashboard/editor#profile'},
     {id: 'introduction', zh: '个人介绍', en: 'Introduction', href: '/dashboard/editor#introduction'},
     {id: 'education', zh: '教育经历', en: 'Education', href: '/dashboard/editor#education'},
-    {id: 'experience', zh: '工作经历', en: 'Experience'},
+    {id: 'experience', zh: '工作经历', en: 'Experience', href: '/dashboard/editor#experience'},
     {id: 'projects', zh: '项目经历', en: 'Projects'},
     {id: 'skills', zh: '技能', en: 'Skills'},
     {id: 'awards', zh: '荣誉奖项', en: 'Awards'},

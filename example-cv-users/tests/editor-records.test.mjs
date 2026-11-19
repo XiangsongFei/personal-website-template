@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   changeEducationCategory, educationCategories, educationCategory, educationDisplay,
-  educationTitle, editTranslation, moveRecord, newEducation, removeRecord,
+  educationTitle, editTranslation, moveRecord, newEducation, newExperience, removeRecord,
 } from '../lib/editor/records.ts';
 import {cancelModule, emptyDraft, moduleFromHash, moduleIsDirty} from '../lib/editor/draft.ts';
 
@@ -77,4 +77,26 @@ test('Education cancel resets just that module and unknown hashes remain unavail
   assert.equal(reset.profile, modified.profile);
   assert.equal(moduleFromHash('#education'), 'education');
   assert.equal(moduleFromHash('#constructor'), undefined);
+});
+
+
+test('Experience keeps both five-field translations and literal descriptions with the same row', () => {
+  const text = '<b>Plain text</b> & café\n' + '长'.repeat(1200);
+  const zh = {organization: '示例组', title: '角色', period: '2024 年秋', description: text, location: ''};
+  const en = {organization: 'Example lab', title: 'Researcher', period: 'Fall 2024', description: 'Two\nparagraphs.', location: 'Remote'};
+  const row = newExperience('local-exp', 0);
+  const translated = editTranslation(editTranslation(row.translations, 'zh', zh), 'en', en);
+  const change = editTranslation(translated, 'zh', {location: null});
+  assert.deepEqual(change.en, en);
+  assert.equal(translated.zh.location, '');
+  assert.equal(change.zh.location, null);
+  const ordered = moveRecord([{...row, translations: change}, newExperience('local-other', 1)], row.clientId, 1);
+  assert.equal(ordered[1].clientId, row.clientId);
+  assert.equal(ordered[1].translations.zh.description, text);
+  const draft = {...emptyDraft, experience: ordered, education: [newEducation('local-edu', 0)]};
+  assert.equal(moduleIsDirty(draft, 'experience'), true);
+  const reset = cancelModule(draft, 'experience');
+  assert.deepEqual(reset.experience, []);
+  assert.equal(reset.education, draft.education);
+  assert.equal(moduleFromHash('#experience'), 'experience');
 });

@@ -16,7 +16,7 @@ const sections = {
 } as const;
 type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
-const laterSections = ['experience', 'projects', 'skills', 'awards'] as const;
+const laterSections = ['projects', 'skills', 'awards'] as const;
 
 export function FullSitePreview({draft, locale, module}: {
   draft: LocalDraft; locale: ContentLocale; module: EditorModule;
@@ -32,6 +32,12 @@ export function FullSitePreview({draft, locale, module}: {
     return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId}] : [];
   });
 
+  const experience = draft.experience.flatMap(row => {
+    const values = row.translations[locale];
+    if (!values || !Object.values(values).some(value => value?.trim())) return [];
+    return [{...values, clientId: row.clientId}];
+  });
+
   function position(section: PreviewSection, moduleEntry = false) {
     const owner = viewport.current;
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
@@ -39,7 +45,8 @@ export function FullSitePreview({draft, locale, module}: {
     if (moduleEntry) owner.style.removeProperty('--site-preview-end-space');
     const top = owner.scrollTop + target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.offsetHeight ?? 0);
-    if (moduleEntry && section === 'education') {
+    // Short sections near the end still align under the preview navigation.
+    if (moduleEntry && (section === 'education' || section === 'experience')) {
       const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
       if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
     }
@@ -97,6 +104,18 @@ export function FullSitePreview({draft, locale, module}: {
               {(period.trim() || grade.trim()) && <p className="site-preview-muted">{[period, grade].filter(value => value.trim()).join(' · ')}</p>}
               {courseTitle.trim() && <h4>{courseTitle}</h4>}
               {courseDescription.trim() && <p className="site-preview-prose">{courseDescription}</p>}
+            </li>)}
+        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      </section>
+      <section data-site-section="experience">
+        <h3>{labels('experience')}</h3>
+        {experience.length > 0 ? <ol className="site-preview-records">
+          {experience.map(({clientId, title, organization, period, location, description}) =>
+            <li key={clientId} data-preview-entry={clientId}>
+              {title?.trim() && <h4>{title}</h4>}
+              {organization?.trim() && <p>{organization}</p>}
+              {(period?.trim() || location?.trim()) && <p className="site-preview-muted">{[period, location].filter(value => value?.trim()).join(' · ')}</p>}
+              {description?.trim() && <p className="site-preview-prose">{description}</p>}
             </li>)}
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
