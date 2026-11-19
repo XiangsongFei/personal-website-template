@@ -233,3 +233,12 @@
 .award-fields .record-description { margin: 0; }
 .award-fields textarea { min-height: 5rem; }
 .award-fields > .editor-note { margin: 0; }
+
+.editor-contact > section + section { margin-top: 28px; }
+.editor-contact h3 { margin-bottom: 12px; }
+.contact-field-stack { display: grid; gap: 12px; }
+.contact-field-stack .record-description { margin: 0; }
+.editor-contact textarea { min-height: 5rem; }
+.contact-status-type { margin-bottom: 12px; }
+[data-site-section=contact] .site-preview-records { margin-top: 8px; }
+[data-site-section=contact] .site-preview-records h5 { margin: 0; font-size: 14px; }

@@ -1,6 +1,7 @@
 'use client';
 
 import {useLayoutEffect, useRef} from 'react';
+import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationDisplay, projectDisplay, skillTitle} from '../../lib/editor/records';
 import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
 
@@ -26,6 +27,7 @@ export function FullSitePreview({draft, locale, module}: {
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const profile = draft.profile.translations[locale];
   const shared = draft.profile.shared;
+  const contact = contactDisplay(draft.contact, locale);
   const education = draft.education.flatMap(row => {
     const values = educationDisplay(row, locale);
     return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId}] : [];
@@ -170,10 +172,27 @@ export function FullSitePreview({draft, locale, module}: {
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       <section data-site-section="contact">
-        <h3>{labels('contact')}</h3>
-        {profile.contactFocusHeading.trim() && <h4>{profile.contactFocusHeading}</h4>}
-        {profile.contactStatusHeading.trim() && <h4>{profile.contactStatusHeading}</h4>}
-        <p className="site-preview-muted">{text('暂无本地联系信息', 'No local contact details')}</p>
+        <h3>{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</h3>
+        {contact.availability.trim() && <p className="site-preview-prose">{contact.availability}</p>}
+        {(profile.contactFocusHeading.trim() || contact.focus.length > 0) &&
+          <h4>{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h4>}
+        {contact.focus.length > 0 && <ol className="site-preview-records" aria-label={text('职业关注方向', 'Career interests')}>
+          {contact.focus.map(({row, title, detail}) => <li key={row.clientId} data-preview-focus={row.clientId}>
+            {title.trim() && <h5>{title}</h5>}
+            {detail.trim() && <p className="site-preview-prose">{detail}</p>}
+          </li>)}
+        </ol>}
+        {(profile.contactStatusHeading.trim() || contact.status.length > 0) &&
+          <h4>{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h4>}
+        {contact.status.length > 0 && <ol className="site-preview-records" aria-label={text('当前状态', 'Current status')}>
+          {contact.status.map(({row, title, detail}) => <li key={row.clientId} data-preview-status={row.clientId} data-status-type={row.statusType}>
+            {title.trim() && <h5>{title}</h5>}
+            <p className="site-preview-muted">{contactStatusLabels[row.statusType][locale]}</p>
+            {detail.trim() && <p className="site-preview-prose">{detail}</p>}
+          </li>)}
+        </ol>}
+        {!contact.availability.trim() && !contact.focus.length && !contact.status.length &&
+          <p className="site-preview-muted">{text('暂无本地联系信息', 'No local contact details')}</p>}
       </section>
       <footer>{[shared.footerName, shared.copyright].filter(value => value.trim()).join(' · ') || 'EXAMPLE_CV'}</footer>
     </article>
