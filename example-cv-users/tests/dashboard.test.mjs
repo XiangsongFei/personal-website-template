@@ -99,7 +99,8 @@ test('Design V1 exposes Overview, local editor, website UI and S2 account links,
     await login(c);const html=await (await page(c)).text();
     const destinations=[...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map(m=>m[1]);
     assert.ok(destinations.length>0);
-    assert.ok(destinations.every(href=>['/dashboard','/dashboard/website','/dashboard/editor#profile','/dashboard/editor#introduction','/dashboard/editor#education','/dashboard/editor#experience','/dashboard/editor#projects','/dashboard/editor#skills','/dashboard/editor#awards','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
+    assert.ok(destinations.every(href=>['/dashboard','/dashboard/website','/dashboard/editor#profile','/dashboard/editor#introduction','/dashboard/editor#education','/dashboard/editor#experience','/dashboard/editor#projects','/dashboard/editor#skills','/dashboard/editor#awards','/dashboard/editor#contact','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
+    assert.ok(destinations.includes('/dashboard/editor#contact'));
     assert.match(html,/aria-disabled="true"/);
     assert.doesNotMatch(html,/Last updated|最近更新|发布成功|保存成功/);
   } finally {await c.mf.dispose();}

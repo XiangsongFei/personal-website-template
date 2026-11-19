@@ -11,6 +11,7 @@ import {ExperienceEditor} from './experience-editor';
 import {ProjectsEditor} from './projects-editor';
 import {SkillsEditor} from './skills-editor';
 import {AwardsEditor} from './awards-editor';
+import {ContactEditor} from './contact-editor';
 import {EditorAiActions} from './repeatable-editor';
 import {DashboardShell} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
@@ -73,6 +74,7 @@ export function ResumeEditor() {
     projects: text('项目经历', 'Projects'),
     skills: text('技能', 'Skills'),
     awards: text('荣誉奖项', 'Awards'),
+    contact: text('联系与链接', 'Contact & links'),
   };
   const introduction = draft.introduction[contentLocale];
   const introValid = validIntroduction(introduction);
@@ -154,6 +156,9 @@ export function ResumeEditor() {
           module === 'awards' ?
             <AwardsEditor rows={draft.awards} contentLocale={contentLocale}
               onChange={awards => setDraft(current => ({...current, awards}))}/> :
+          module === 'contact' ?
+            <ContactEditor draft={draft.contact} contentLocale={contentLocale}
+              onChange={contact => setDraft(current => ({...current, contact}))}/> :
             <div className="editor-introduction">
             <div className="editor-field-heading">
               <label htmlFor="editor-intro-text">{contentLocale === 'zh' ? '中文介绍' : 'English introduction'}</label>
