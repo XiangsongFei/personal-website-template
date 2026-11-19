@@ -1,0 +1,158 @@
+/* Public resume typography and geometry from the versioned app/globals.css.
+   The desktop reference is 980 CSS pixels, the original CMS preview canvas. */
+.public-preview {
+  --public-edge: 49px;
+  --public-rule: #dedede;
+  color: #202020;
+  background: white;
+  font: 16px/1.65 Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow-x: hidden;
+  overflow-anchor: none;
+}
+.public-preview .public-canvas { width: 100%; margin-inline: auto; }
+.public-preview[data-site-layout=desktop] .public-canvas { width: 980px; zoom: var(--public-preview-scale, 1); }
+.public-preview :is(h1, h2, h3, p, dl, dd) { margin: 0; }
+.public-preview :is(h1, h2, h3, p, dd, span, b, li) { overflow-wrap: anywhere; }
+.public-preview .site-preview-nav { position: sticky; top: 0; z-index: 1; width: 100%; background: rgb(255 255 255 / 96%); }
+.public-preview .public-nav {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto; align-items: center;
+  gap: 26px; padding: 16px var(--public-edge) 0;
+}
+.public-preview .public-nav::after {
+  content: ''; grid-column: 1 / -1; height: 1px; background: var(--public-rule); margin-top: -24px; align-self: end;
+}
+.public-preview .public-nav button {
+  padding: 0; min-width: 0; width: auto; min-height: 28px; border: 0; border-radius: 0; background: transparent;
+  color: #3d3d3d; font: 500 15px/1.5 Arial, "PingFang SC", sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.public-preview .public-nav button:hover { color: #202020; text-decoration: underline; }
+.public-preview .public-nav .public-nav-home { justify-self: start; max-width: 100%; color: #202020; font-weight: 600; }
+.public-preview .public-nav .public-nav-language { color: #202020; font-weight: 600; }
+.public-preview .public-nav-links { display: flex; gap: 26px; min-width: 0; }
+.public-preview .public-nav-links button { max-width: 135px; }
+
+.public-preview .public-hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 360px); gap: 50px; align-items: start;
+  padding: 70px var(--public-edge) 58px; border-bottom: 1px solid var(--public-rule);
+}
+.public-preview .public-hero h1 {
+  margin-block: 12px; font: 400 70px/1 Georgia, "Songti SC", serif; letter-spacing: -2.5px;
+}
+.public-preview[lang=en] .public-hero h1 { font-size: 62px; letter-spacing: -2px; }
+.public-preview .public-intro { margin-block: 24px; color: #444; font-size: 16px; line-height: 1.8; white-space: pre-wrap; }
+.public-preview .public-intro p + p { margin-top: 10px; }
+.public-preview .public-portrait {
+  display: grid; place-items: center; justify-self: end; align-self: center; width: min(100%, 345px);
+  aspect-ratio: 1; border: 1px solid #d5d5d5; border-radius: 50%; color: #555;
+  font: 400 84px/1 Georgia, "Songti SC", serif; letter-spacing: -.08em; transform: translateY(-20px);
+}
+.public-preview .public-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.public-preview .public-actions > span { max-width: 100%; }
+.public-preview .public-action {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 10px 14px;
+  border: 1px solid rgb(0 0 0 / 45%); border-radius: 1px; color: #252525; font: 400 13px/1.4 Arial, sans-serif;
+}
+.public-preview svg {
+  display: inline-block; width: 16px; height: 16px; flex: 0 0 16px; fill: none;
+  stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.public-preview .filled-icon { fill: currentColor; stroke: none; }
+.public-preview .public-graduation { display: grid; gap: 4px; margin-top: 18px; }
+.public-preview .public-graduation > span { color: rgb(0 0 0 / 55%); font-size: 13px; }
+.public-preview .public-graduation::after { content: ''; width: 48px; height: 1px; margin-top: 6px; background: currentColor; }
+
+.public-preview .public-section {
+  --public-label-width: 100px;
+  --public-date-width: 220px;
+  display: grid; grid-template-columns: var(--public-label-width) minmax(0, 1fr);
+  column-gap: 18px; padding: 34px var(--public-edge) 36px; border-bottom: 1px solid var(--public-rule);
+}
+.public-preview .public-section > h2 { font: 600 14px/1.65 Arial, "PingFang SC", sans-serif; letter-spacing: .3px; color: #333; }
+.public-preview .public-section h3 { font: 600 16px/1.55 Arial, "PingFang SC", sans-serif; }
+.public-preview .public-timeline > :not(h2) { grid-column: 2; }
+.public-preview .public-timeline > article {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, var(--public-date-width)); gap: 18px;
+}
+.public-preview .public-timeline > article + article { margin-top: 26px; }
+.public-preview .public-education > article + article { margin-top: 36px; }
+.public-preview .public-section p { color: #444; font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+.public-preview .public-section .public-secondary { color: #666; font-size: 13px; }
+.public-preview .public-section .public-course { margin-top: 3px; font-style: italic; }
+.public-preview .public-section .public-course-detail { margin-top: 6px; color: #666; font-size: 12px; }
+.public-preview .public-date { display: grid; gap: 2px; align-content: start; color: #666; font-size: 12px; text-align: right; }
+.public-preview .public-date b { color: #383838; font-size: 13px; font-weight: 600; }
+.public-preview .public-work { --public-date-width: 120px; }
+.public-preview[lang=en] .public-work { --public-label-width: 90px; --public-date-width: 115px; column-gap: 14px; }
+.public-preview .public-subtitle { font-weight: 500; }
+.public-preview .public-section .public-methods { color: #686868; margin-top: 4px; font-size: 12px; }
+.public-preview .public-bullets { margin: 9px 0 0; padding: 0; list-style: none; color: #454545; font-size: 14px; }
+.public-preview .public-bullets li { position: relative; padding-inline-start: 18px; margin-block: 3px; }
+.public-preview .public-bullets li::before { content: '–'; position: absolute; inset-inline-start: 0; color: #666; }
+.public-preview .public-mobile-date { display: none; }
+.public-preview .public-project-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 11px; border-bottom: 1px solid #555; font-size: 13px; font-weight: 600; }
+.public-preview .public-skills { --public-label-width: 150px; column-gap: 38px; }
+.public-preview .public-skill-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 42px; }
+.public-preview[lang=en] .public-skill-grid { grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: 28px; }
+.public-preview .public-skill-grid h3 { font-size: 14px; }
+.public-preview .public-skill-grid p { margin-top: 7px; color: #666; }
+.public-preview .public-awards { --public-label-width: 150px; --public-date-width: 120px; row-gap: 26px; }
+.public-preview .public-awards > article + article { margin-top: 0; }
+.public-preview .public-awards h3 { font-size: 15px; font-weight: 500; }
+.public-preview .public-placeholder { color: #737373; font-size: 13px; }
+
+.public-preview .public-contact { padding: 52px var(--public-edge) 28px; }
+.public-preview .public-contact-label { margin-bottom: 20px; font-size: 16px; font-weight: 600; color: #333; }
+.public-preview .public-contact h2 { margin-bottom: 32px; font: 400 34px/1.3 Georgia, "Songti SC", serif; white-space: pre-wrap; }
+.public-preview .public-contact-links { display: flex; flex-wrap: wrap; gap: 42px; padding-bottom: 13px; border-bottom: 1px solid var(--public-rule); }
+.public-preview .public-contact-links > div { min-width: 0; }
+.public-preview .public-contact-links dt { color: #777; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.public-preview .public-contact-links dd { font-size: 16px; }
+.public-preview .public-footer-meta { display: flex; justify-content: space-between; gap: 10px; padding-top: 18px; color: #777; font-size: 11px; }
+.public-preview .public-contact-extension { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; margin-top: 44px; }
+.public-preview .public-contact-extension h3 { color: #5f5f5f; font-size: 12px; font-weight: 600; letter-spacing: .08em; }
+.public-preview .public-contact-extension h3::after { display: block; content: ''; width: 18px; height: 1px; margin-top: 12px; background: #626262; }
+.public-preview .public-focus-list, .public-preview .public-status-list { display: grid; gap: 21px; margin-top: 18px; }
+.public-preview .public-focus-list { border-left: 1px solid #e3e3e3; padding-left: 15px; }
+.public-preview .public-focus-list > div { position: relative; }
+.public-preview .public-focus-list > div::before {
+  content: ''; position: absolute; top: 9px; left: -18px; width: 5px; height: 5px; border: 1px solid #a0a0a0; border-radius: 50%; background: white;
+}
+.public-preview .public-status { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; color: #686868; }
+.public-preview .public-contact-extension p { color: #454545; font-size: 16px; font-weight: 500; }
+.public-preview .public-contact-extension div span { color: #737373; font-size: 13px; }
+.public-preview .public-preview-scroll-space { block-size: var(--site-preview-end-space, 0px); }
+
+.public-preview[data-site-layout=mobile] { --public-edge: 14px; }
+.public-preview[data-site-layout=mobile] .public-nav { grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; padding-top: 0; border-bottom: 1px solid var(--public-rule); }
+.public-preview[data-site-layout=mobile] .public-nav::after { display: none; }
+.public-preview[data-site-layout=mobile] .public-nav-language { grid-column: 2; grid-row: 1; }
+.public-preview[data-site-layout=mobile] .public-nav-links { grid-column: 1 / -1; grid-row: 2; padding-bottom: 4px; gap: 14px; justify-content: space-between; overflow: auto; scrollbar-width: thin; }
+.public-preview[data-site-layout=mobile] .public-nav-links button { flex: 0 0 auto; }
+.public-preview[data-site-layout=mobile] .public-nav button { font-size: 13px; }
+.public-preview[data-site-layout=mobile] .public-hero { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 24px 32px; }
+.public-preview[data-site-layout=mobile] .public-portrait { order: -1; justify-self: center; width: min(56%, 220px); font-size: 54px; transform: none; }
+.public-preview[data-site-layout=mobile] .public-hero h1 { font-size: 42px; text-align: center; }
+.public-preview[data-site-layout=mobile][lang=en] .public-hero h1 { font-size: 38px; }
+.public-preview[data-site-layout=mobile] .public-intro { margin-block: 16px; font-size: 14px; }
+.public-preview[data-site-layout=mobile] .public-actions { gap: 8px; }
+.public-preview[data-site-layout=mobile] .public-action { padding: 7px 9px; font-size: 12px; }
+.public-preview[data-site-layout=mobile] .public-section { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-block: 24px; }
+.public-preview[data-site-layout=mobile] .public-section > h2 { font-size: 15px; font-weight: 700; }
+.public-preview[data-site-layout=mobile] .public-timeline > :not(h2) { grid-column: 1; margin-top: 0; }
+.public-preview[data-site-layout=mobile] .public-timeline > article { grid-template-columns: minmax(0, 1fr) minmax(0, 38%); gap: 8px; }
+.public-preview[data-site-layout=mobile] .public-work > article { grid-template-columns: minmax(0, 1fr); }
+.public-preview[data-site-layout=mobile] .public-work .public-date { display: none; }
+.public-preview[data-site-layout=mobile] .public-work .public-entry-copy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 38%); column-gap: 8px; align-items: start; }
+.public-preview[data-site-layout=mobile] .public-entry-copy h3 { grid-column: 1; grid-row: 1; }
+.public-preview[data-site-layout=mobile] .public-mobile-date { display: block; grid-column: 2; grid-row: 1; text-align: right; font-size: 12px; }
+.public-preview[data-site-layout=mobile] .public-entry-copy > :not(h3, .public-mobile-date) { grid-column: 1 / -1; }
+.public-preview[data-site-layout=mobile] .public-project-link { justify-self: start; }
+.public-preview[data-site-layout=mobile] .public-skill-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.public-preview[data-site-layout=mobile] .public-contact { padding-block: 26px; }
+.public-preview[data-site-layout=mobile] .public-contact h2 { font-size: 24px; }
+.public-preview[data-site-layout=mobile] .public-contact-links { gap: 14px; flex-direction: column; }
+.public-preview[data-site-layout=mobile] .public-footer-meta { gap: 6px; font-size: 9px; }
+.public-preview[data-site-layout=mobile] .public-contact-extension { gap: 18px; margin-top: 24px; }
+.public-preview[data-site-layout=mobile] .public-focus-list, .public-preview[data-site-layout=mobile] .public-status-list { gap: 10px; }
+.public-preview[data-site-layout=mobile] .public-contact-extension p { font-size: 13px; }
+.public-preview[data-site-layout=mobile] .public-contact-extension div span { font-size: 11px; }
