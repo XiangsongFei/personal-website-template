@@ -112,3 +112,93 @@ export type ExperienceDraft = OrderedDraftRecord & {translations: DraftTranslati
 export function newExperience(clientId: string, position: number): ExperienceDraft {
   return {clientId, position, translations: {}};
 }
+
+export type ProjectText = {title: string; subtitle: string; period: string; description: string; href: string};
+export type ProjectMethodDraft = OrderedDraftRecord & {value: string};
+export type ProjectDraft = OrderedDraftRecord & {
+  translations: DraftTranslations<ProjectText>;
+  methods: Record<ContentLocale, readonly ProjectMethodDraft[]>;
+};
+
+export function newProject(clientId: string, position: number): ProjectDraft {
+  return {clientId, position, translations: {}, methods: {zh: [], en: []}};
+}
+
+export function updateProjectMethods(project: ProjectDraft, locale: ContentLocale, methods: readonly ProjectMethodDraft[]): ProjectDraft {
+  return {...project, methods: {...project.methods, [locale]: methods}};
+}
+
+export function safeProjectUrl(value: string | undefined): string | undefined {
+  const input = value?.trim();
+  if (!input || !/^https?:\/\/[^/]/i.test(input) || /[\u0000-\u0020\u007f\\]/u.test(input)) return;
+  try {
+    const url = new URL(input);
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && url.hostname && !url.username && !url.password) {
+      return url.href;
+    }
+  } catch {
+    // Invalid URL text remains in the local draft for the user to correct.
+  }
+}
+
+export function projectDisplay(project: ProjectDraft, locale: ContentLocale) {
+  const values = project.translations[locale];
+  return {
+    title: values?.title ?? '',
+    subtitle: values?.subtitle ?? '',
+    period: values?.period ?? '',
+    description: values?.description ?? '',
+    href: safeProjectUrl(values?.href),
+    methods: project.methods[locale].filter(method => method.value.trim()),
+  };
+}
+
+export const skillPresetTitles = {
+  programming: {zh: '编程', en: 'Programming'},
+  dataSystems: {zh: '数据与系统', en: 'Data & Systems'},
+  analytics: {zh: '分析', en: 'Analytics'},
+  tools: {zh: '工具', en: 'Tools'},
+  languages: {zh: '语言', en: 'Languages'},
+} as const;
+
+type SkillPreset = keyof typeof skillPresetTitles;
+export type SkillCategory = SkillPreset | 'custom';
+export const skillCategories: readonly SkillCategory[] = [...Object.keys(skillPresetTitles) as SkillPreset[], 'custom'];
+
+export type SkillText = {title: string; items: string};
+export type SkillDraft = OrderedDraftRecord & {
+  // Editor choice only, never a storage column.
+  category?: SkillCategory;
+  translations: DraftTranslations<SkillText>;
+};
+
+export function newSkill(clientId: string, position: number): SkillDraft {
+  return {clientId, position, translations: {}};
+}
+
+export function skillCategory(row: SkillDraft): SkillCategory {
+  if (row.category) return row.category;
+  const pair = (Object.keys(skillPresetTitles) as SkillPreset[]).find(key => {
+    const titles = skillPresetTitles[key];
+    return row.translations.zh?.title === titles.zh && row.translations.en?.title === titles.en;
+  });
+  return pair ?? 'custom';
+}
+
+export function skillTitle(row: SkillDraft, locale: ContentLocale): string {
+  const category = skillCategory(row);
+  return category === 'custom' ? row.translations[locale]?.title ?? '' : skillPresetTitles[category][locale];
+}
+
+export type AwardText = {name: string; year: string};
+export type AwardDraft = OrderedDraftRecord & {translations: DraftTranslations<AwardText>};
+
+export function newAward(clientId: string, position: number): AwardDraft {
+  return {clientId, position, translations: {}};
+}
+
+export function awardYearsDiffer(row: AwardDraft): boolean {
+  const zh = row.translations.zh?.year;
+  const en = row.translations.en?.year;
+  return zh !== undefined && en !== undefined && zh !== en;
+}
