@@ -1,0 +1,1373 @@
+{
+  "authenticatedAndAuthStyleCases": 28,
+  "workspaceShellComparisonCases": 8,
+  "baseline": "e95e9616c0dddb25f69a46a82b123ad4edc43f48",
+  "matchedAuthCases": [
+    {
+      "route": "/login",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/login",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/login",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/login",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/register",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/register",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/register",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/register",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/verify-email",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/verify-email",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/verify-email",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/verify-email",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/forgot-password",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/forgot-password",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/forgot-password",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/forgot-password",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/reset-password",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/reset-password",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/reset-password",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/reset-password",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/account",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/account",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/account",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/account",
+      "language": "English",
+      "width": 390
+    },
+    {
+      "route": "/change-password",
+      "language": "中文",
+      "width": 1440
+    },
+    {
+      "route": "/change-password",
+      "language": "中文",
+      "width": 390
+    },
+    {
+      "route": "/change-password",
+      "language": "English",
+      "width": 1440
+    },
+    {
+      "route": "/change-password",
+      "language": "English",
+      "width": 390
+    }
+  ],
+  "matchingShellMeasurements": [
+    {
+      "route": "/dashboard",
+      "language": "中文",
+      "width": 1440,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 220,
+              "height": 1000,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 219,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 220,
+              "y": 0,
+              "width": 1220,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 40px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "11px 15px",
+              "background": "rgb(34, 34, 34)",
+              "border": "rgb(34, 34, 34)",
+              "color": "rgb(255, 255, 255)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 1226.671875,
+              "y": 13.5,
+              "width": 95.328125,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 1346,
+              "y": 13.5,
+              "width": 54,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "工作台",
+          "概览",
+          "我的网站"
+        ],
+        [
+          "个人简历",
+          "个人资料",
+          "个人介绍",
+          "教育经历",
+          "工作经历",
+          "项目经历",
+          "技能",
+          "荣誉奖项",
+          "联系与链接"
+        ],
+        [
+          "工具与发布",
+          "文件与媒体",
+          "AI 助手",
+          "预览与发布"
+        ],
+        [
+          "账户与设置",
+          "求职与隐私",
+          "活动记录",
+          "版本历史",
+          "网站设置",
+          "账户与安全"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard",
+      "language": "中文",
+      "width": 390,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 64,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 16px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 16,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "8px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 226.671875,
+              "y": 9.5,
+              "width": 95.328125,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 330,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "工作台",
+          "概览",
+          "我的网站"
+        ],
+        [
+          "个人简历",
+          "个人资料",
+          "个人介绍",
+          "教育经历",
+          "工作经历",
+          "项目经历",
+          "技能",
+          "荣誉奖项",
+          "联系与链接"
+        ],
+        [
+          "工具与发布",
+          "文件与媒体",
+          "AI 助手",
+          "预览与发布"
+        ],
+        [
+          "账户与设置",
+          "求职与隐私",
+          "活动记录",
+          "版本历史",
+          "网站设置",
+          "账户与安全"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard",
+      "language": "English",
+      "width": 1440,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 220,
+              "height": 1000,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 219,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 220,
+              "y": 0,
+              "width": 1220,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 40px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "11px 15px",
+              "background": "rgb(34, 34, 34)",
+              "border": "rgb(34, 34, 34)",
+              "color": "rgb(255, 255, 255)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 1200.3125,
+              "y": 13.5,
+              "width": 97.71875,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 1322.03125,
+              "y": 13.5,
+              "width": 77.96875,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "Workspace",
+          "Overview",
+          "My website"
+        ],
+        [
+          "Resume",
+          "Profile",
+          "Introduction",
+          "Education",
+          "Experience",
+          "Projects",
+          "Skills",
+          "Awards",
+          "Contact & links"
+        ],
+        [
+          "Tools & publishing",
+          "Files & media",
+          "AI assistant",
+          "Preview & publish"
+        ],
+        [
+          "Account & settings",
+          "Career & privacy",
+          "Activity log",
+          "Version history",
+          "Website settings",
+          "Account & security"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard",
+      "language": "English",
+      "width": 390,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 64,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 16px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 16,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "8px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 224.28125,
+              "y": 9.5,
+              "width": 97.71875,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 330,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "Workspace",
+          "Overview",
+          "My website"
+        ],
+        [
+          "Resume",
+          "Profile",
+          "Introduction",
+          "Education",
+          "Experience",
+          "Projects",
+          "Skills",
+          "Awards",
+          "Contact & links"
+        ],
+        [
+          "Tools & publishing",
+          "Files & media",
+          "AI assistant",
+          "Preview & publish"
+        ],
+        [
+          "Account & settings",
+          "Career & privacy",
+          "Activity log",
+          "Version history",
+          "Website settings",
+          "Account & security"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard/editor#profile",
+      "language": "中文",
+      "width": 1440,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 220,
+              "height": 1000,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 219,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 220,
+              "y": 0,
+              "width": 1220,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 40px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "11px 15px",
+              "background": "rgb(34, 34, 34)",
+              "border": "rgb(34, 34, 34)",
+              "color": "rgb(255, 255, 255)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 1226.671875,
+              "y": 13.5,
+              "width": 95.328125,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 1346,
+              "y": 13.5,
+              "width": 54,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "工作台",
+          "概览",
+          "我的网站"
+        ],
+        [
+          "个人简历",
+          "个人资料",
+          "个人介绍",
+          "教育经历",
+          "工作经历",
+          "项目经历",
+          "技能",
+          "荣誉奖项",
+          "联系与链接"
+        ],
+        [
+          "工具与发布",
+          "文件与媒体",
+          "AI 助手",
+          "预览与发布"
+        ],
+        [
+          "账户与设置",
+          "求职与隐私",
+          "活动记录",
+          "版本历史",
+          "网站设置",
+          "账户与安全"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard/editor#profile",
+      "language": "中文",
+      "width": 390,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 64,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 16px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 16,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "8px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 226.671875,
+              "y": 9.5,
+              "width": 95.328125,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 330,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "工作台",
+          "概览",
+          "我的网站"
+        ],
+        [
+          "个人简历",
+          "个人资料",
+          "个人介绍",
+          "教育经历",
+          "工作经历",
+          "项目经历",
+          "技能",
+          "荣誉奖项",
+          "联系与链接"
+        ],
+        [
+          "工具与发布",
+          "文件与媒体",
+          "AI 助手",
+          "预览与发布"
+        ],
+        [
+          "账户与设置",
+          "求职与隐私",
+          "活动记录",
+          "版本历史",
+          "网站设置",
+          "账户与安全"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard/editor#profile",
+      "language": "English",
+      "width": 1440,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 220,
+              "height": 1000,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 219,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 220,
+              "y": 0,
+              "width": 1220,
+              "height": 72,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 40px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "11px 15px",
+              "background": "rgb(34, 34, 34)",
+              "border": "rgb(34, 34, 34)",
+              "color": "rgb(255, 255, 255)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 1200.3125,
+              "y": 13.5,
+              "width": 97.71875,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 1322.03125,
+              "y": 13.5,
+              "width": 77.96875,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "Workspace",
+          "Overview",
+          "My website"
+        ],
+        [
+          "Resume",
+          "Profile",
+          "Introduction",
+          "Education",
+          "Experience",
+          "Projects",
+          "Skills",
+          "Awards",
+          "Contact & links"
+        ],
+        [
+          "Tools & publishing",
+          "Files & media",
+          "AI assistant",
+          "Preview & publish"
+        ],
+        [
+          "Account & settings",
+          "Career & privacy",
+          "Activity log",
+          "Version history",
+          "Website settings",
+          "Account & security"
+        ]
+      ]
+    },
+    {
+      "route": "/dashboard/editor#profile",
+      "language": "English",
+      "width": 390,
+      "shared": [
+        {
+          "selector": ".dashboard-sidebar",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(232, 232, 232) rgb(36, 36, 36) rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "none"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-brand",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 24px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "grid"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header",
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 390,
+              "height": 64,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px 16px",
+              "background": "rgb(255, 255, 255)",
+              "border": "rgb(36, 36, 36) rgb(36, 36, 36) rgb(232, 232, 232)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-menu-toggle",
+          "items": [
+            {
+              "x": 16,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "600 14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "8px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-header .ui-locale-switch",
+          "items": [
+            {
+              "x": 224.28125,
+              "y": 9.5,
+              "width": 97.71875,
+              "height": 44,
+              "font": "14px / 22.4px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "14px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "22.4px",
+              "display": "flex"
+            }
+          ]
+        },
+        {
+          "selector": ".dashboard-account-link",
+          "items": [
+            {
+              "x": 330,
+              "y": 9.5,
+              "width": 44,
+              "height": 44,
+              "font": "13px / 20.8px Inter, ui-sans-serif, -apple-system, \"system-ui\", \"Segoe UI\", sans-serif",
+              "fontSize": "13px",
+              "padding": "0px",
+              "background": "rgba(0, 0, 0, 0)",
+              "border": "rgb(36, 36, 36)",
+              "color": "rgb(36, 36, 36)",
+              "lineHeight": "20.8px",
+              "display": "flex"
+            }
+          ]
+        }
+      ],
+      "structure": [
+        [
+          "Workspace",
+          "Overview",
+          "My website"
+        ],
+        [
+          "Resume",
+          "Profile",
+          "Introduction",
+          "Education",
+          "Experience",
+          "Projects",
+          "Skills",
+          "Awards",
+          "Contact & links"
+        ],
+        [
+          "Tools & publishing",
+          "Files & media",
+          "AI assistant",
+          "Preview & publish"
+        ],
+        [
+          "Account & settings",
+          "Career & privacy",
+          "Activity log",
+          "Version history",
+          "Website settings",
+          "Account & security"
+        ]
+      ]
+    }
+  ]
+}
