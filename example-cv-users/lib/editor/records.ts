@@ -152,3 +152,40 @@ export function projectDisplay(project: ProjectDraft, locale: ContentLocale) {
     methods: project.methods[locale].filter(method => method.value.trim()),
   };
 }
+
+export const skillPresetTitles = {
+  programming: {zh: '编程', en: 'Programming'},
+  dataSystems: {zh: '数据与系统', en: 'Data & Systems'},
+  analytics: {zh: '分析', en: 'Analytics'},
+  tools: {zh: '工具', en: 'Tools'},
+  languages: {zh: '语言', en: 'Languages'},
+} as const;
+
+type SkillPreset = keyof typeof skillPresetTitles;
+export type SkillCategory = SkillPreset | 'custom';
+export const skillCategories: readonly SkillCategory[] = [...Object.keys(skillPresetTitles) as SkillPreset[], 'custom'];
+
+export type SkillText = {title: string; items: string};
+export type SkillDraft = OrderedDraftRecord & {
+  // Editor choice only, never a storage column.
+  category?: SkillCategory;
+  translations: DraftTranslations<SkillText>;
+};
+
+export function newSkill(clientId: string, position: number): SkillDraft {
+  return {clientId, position, translations: {}};
+}
+
+export function skillCategory(row: SkillDraft): SkillCategory {
+  if (row.category) return row.category;
+  const pair = (Object.keys(skillPresetTitles) as SkillPreset[]).find(key => {
+    const titles = skillPresetTitles[key];
+    return row.translations.zh?.title === titles.zh && row.translations.en?.title === titles.en;
+  });
+  return pair ?? 'custom';
+}
+
+export function skillTitle(row: SkillDraft, locale: ContentLocale): string {
+  const category = skillCategory(row);
+  return category === 'custom' ? row.translations[locale]?.title ?? '' : skillPresetTitles[category][locale];
+}

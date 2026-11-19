@@ -1,7 +1,7 @@
 'use client';
 
 import {useLayoutEffect, useRef} from 'react';
-import {educationDisplay, projectDisplay} from '../../lib/editor/records';
+import {educationDisplay, projectDisplay, skillTitle} from '../../lib/editor/records';
 import type {ContentLocale, EditorModule, LocalDraft} from '../../lib/editor/draft';
 
 const sections = {
@@ -16,7 +16,7 @@ const sections = {
 } as const;
 type PreviewSection = keyof typeof sections;
 const sectionKeys = Object.keys(sections) as PreviewSection[];
-const laterSections = ['skills', 'awards'] as const;
+const laterSections = ['awards'] as const;
 
 export function FullSitePreview({draft, locale, module}: {
   draft: LocalDraft; locale: ContentLocale; module: EditorModule;
@@ -42,6 +42,12 @@ export function FullSitePreview({draft, locale, module}: {
     const values = projectDisplay(row, locale);
     const hasContent = [values.title, values.subtitle, values.period, values.description].some(value => value.trim());
     return hasContent || values.href || values.methods.length ? [{...values, clientId: row.clientId}] : [];
+  });
+
+  const skills = draft.skills.flatMap(row => {
+    const title = skillTitle(row, locale);
+    const items = row.translations[locale]?.items ?? '';
+    return title.trim() || items.trim() ? [{clientId: row.clientId, title, items}] : [];
   });
 
   function position(section: PreviewSection, moduleEntry = false) {
@@ -139,6 +145,15 @@ export function FullSitePreview({draft, locale, module}: {
               </ul>}
               {href && <p className="site-preview-muted" data-preview-project-url>{text('项目链接', 'Project URL')} · {href}</p>}
             </li>)}
+        </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
+      </section>
+      <section data-site-section="skills">
+        <h3>{labels('skills')}</h3>
+        {skills.length ? <ol className="site-preview-records">
+          {skills.map(({clientId, title, items}) => <li key={clientId} data-preview-entry={clientId}>
+            {title.trim() && <h4>{title}</h4>}
+            {items.trim() && <p className="site-preview-prose">{items}</p>}
+          </li>)}
         </ol> : <p className="site-preview-muted">{text('暂无本地内容', 'No local content')}</p>}
       </section>
       {laterSections.map(key => <section data-site-section={key} key={key}>
