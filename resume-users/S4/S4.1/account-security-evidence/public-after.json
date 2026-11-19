@@ -1,0 +1,2186 @@
+[
+  {
+    "path": "/login",
+    "locale": "zh",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "497.141px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 497.140625
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 814.6171875,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/login",
+    "locale": "zh",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "482.641px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 482.640625
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 245.1953125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 270.6171875,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/login",
+    "locale": "en",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "497.141px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 497.140625
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 812.828125,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/login",
+    "locale": "en",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "507.391px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 507.390625
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 269.9453125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 268.828125,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/register",
+    "locale": "zh",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "628.383px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 628.3828125
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 814.6171875,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/register",
+    "locale": "zh",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "613.883px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 613.8828125
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 245.1953125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 270.6171875,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/register",
+    "locale": "en",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "628.383px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 628.3828125
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 812.828125,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/register",
+    "locale": "en",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "613.883px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 613.8828125
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 245.1953125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 268.828125,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/verify-email",
+    "locale": "zh",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "568.938px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 568.9375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 814.6171875,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/verify-email",
+    "locale": "zh",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "554.438px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 554.4375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 245.1953125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 270.6171875,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/verify-email",
+    "locale": "en",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "588.734px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 588.734375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 379.6953125,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 812.828125,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/verify-email",
+    "locale": "en",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "574.234px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 574.234375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 245.1953125,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 268.828125,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/forgot-password",
+    "locale": "zh",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "505.086px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 505.0859375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 439.0859375,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 814.6171875,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/forgot-password",
+    "locale": "zh",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "490.586px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 490.5859375
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 304.5859375,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 270.6171875,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/forgot-password",
+    "locale": "en",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "569.43px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 569.4296875
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "380px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 530,
+          "y": 503.4296875,
+          "w": 380,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 812.828125,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/forgot-password",
+    "locale": "en",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "554.93px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 554.9296875
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "342px",
+        "height": "48px",
+        "padding": "10px 14px",
+        "border": "1px solid rgb(222, 221, 217)",
+        "rect": {
+          "x": 24,
+          "y": 368.9296875,
+          "w": 342,
+          "h": 48
+        }
+      },
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 268.828125,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/reset-password",
+    "locale": "zh",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "326.75px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 326.75
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": null,
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 814.6171875,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/reset-password",
+    "locale": "zh",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "316.25px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 316.25
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": null,
+      "button": {
+        "font": "13px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 270.6171875,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/reset-password",
+    "locale": "en",
+    "width": 1440,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "1440px",
+        "height": "1000px",
+        "padding": "160px 24px 40px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1440,
+          "h": 1000
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "326.75px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 326.75
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 530,
+          "y": 160,
+          "w": 380,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "30px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "380px",
+        "height": "37.5px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 530,
+          "y": 248,
+          "w": 380,
+          "h": 37.5
+        }
+      },
+      "input": null,
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 812.828125,
+          "y": 160,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  },
+  {
+    "path": "/reset-password",
+    "locale": "en",
+    "width": 390,
+    "style": {
+      "body": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-screen": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgb(255, 255, 255)",
+        "width": "390px",
+        "height": "844px",
+        "padding": "40px 24px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 390,
+          "h": 844
+        }
+      },
+      ".auth-content": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "316.25px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 316.25
+        }
+      },
+      ".auth-header": {
+        "font": "16px",
+        "color": "rgb(34, 34, 34)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "44px",
+        "padding": "0px",
+        "border": "0px none rgb(34, 34, 34)",
+        "rect": {
+          "x": 24,
+          "y": 40,
+          "w": 342,
+          "h": 44
+        }
+      },
+      "h1": {
+        "font": "28px",
+        "color": "rgb(32, 32, 32)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "342px",
+        "height": "35px",
+        "padding": "0px",
+        "border": "0px none rgb(32, 32, 32)",
+        "rect": {
+          "x": 24,
+          "y": 120,
+          "w": 342,
+          "h": 35
+        }
+      },
+      "input": null,
+      "button": {
+        "font": "13px",
+        "color": "rgb(115, 115, 115)",
+        "background": "rgba(0, 0, 0, 0)",
+        "width": "32px",
+        "height": "44px",
+        "padding": "4px 0px",
+        "border": "0px none rgb(115, 115, 115)",
+        "rect": {
+          "x": 268.828125,
+          "y": 40,
+          "w": 32,
+          "h": 44
+        }
+      }
+    }
+  }
+]
