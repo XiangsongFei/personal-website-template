@@ -128,7 +128,7 @@ export function updateProjectMethods(project: ProjectDraft, locale: ContentLocal
   return {...project, methods: {...project.methods, [locale]: methods}};
 }
 
-export function safeProjectUrl(value: string | undefined): string | undefined {
+export function safeHttpUrl(value: string | undefined): string | undefined {
   const input = value?.trim();
   if (!input || !/^https?:\/\/[^/]/i.test(input) || /[\u0000-\u0020\u007f\\]/u.test(input)) return;
   try {
@@ -141,6 +141,8 @@ export function safeProjectUrl(value: string | undefined): string | undefined {
   }
 }
 
+export {safeHttpUrl as safeProjectUrl};
+
 export function projectDisplay(project: ProjectDraft, locale: ContentLocale) {
   const values = project.translations[locale];
   return {
@@ -148,7 +150,7 @@ export function projectDisplay(project: ProjectDraft, locale: ContentLocale) {
     subtitle: values?.subtitle ?? '',
     period: values?.period ?? '',
     description: values?.description ?? '',
-    href: safeProjectUrl(values?.href),
+    href: safeHttpUrl(values?.href),
     methods: project.methods[locale].filter(method => method.value.trim()),
   };
 }

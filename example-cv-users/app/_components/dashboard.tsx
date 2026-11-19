@@ -20,7 +20,7 @@ const navigation: {id: string; zh: string; en: string; items: NavItem[]}[] = [
     {id: 'projects', zh: '项目经历', en: 'Projects', href: '/dashboard/editor#projects'},
     {id: 'skills', zh: '技能', en: 'Skills', href: '/dashboard/editor#skills'},
     {id: 'awards', zh: '荣誉奖项', en: 'Awards', href: '/dashboard/editor#awards'},
-    {id: 'contact', zh: '联系与链接', en: 'Contact & links'},
+    {id: 'contact', zh: '联系与链接', en: 'Contact & links', href: '/dashboard/editor#contact'},
   ]},
   {id: 'tools', zh: '工具与发布', en: 'Tools & publishing', items: [
     {id: 'files', zh: '文件与媒体', en: 'Files & media'},
