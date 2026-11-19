@@ -1,0 +1,58 @@
+/* Only /account and /change-password contain this marker. Auth entry/recovery pages keep their approved CSS. */
+.auth-screen:has(.account-workspace){
+  --account-text:var(--dashboard-text,#242424);--account-muted:var(--dashboard-muted,#737373);
+  --account-line:var(--dashboard-line,#E8E8E8);--account-brand:var(--dashboard-brand,#688574);--account-brand-dark:var(--dashboard-brand-dark,#466453);
+  display:block;padding:0 max(40px,env(safe-area-inset-right)) 48px max(40px,env(safe-area-inset-left));background:#FFFFFF;
+}
+.auth-screen:has(.account-workspace)>.auth-content{width:min(100%,960px);margin:0 auto}
+.auth-screen:has(.account-workspace-password)>.auth-content{width:min(100%,720px)}
+.auth-screen:has(.account-workspace) .auth-header{min-height:72px;margin:0;border-bottom:1px solid var(--account-line);gap:24px}
+.auth-screen:has(.account-workspace) .auth-brand{gap:0}
+.auth-screen:has(.account-workspace) .auth-brand span:first-child{font-size:15px;letter-spacing:.1em;color:var(--account-text)}
+.auth-screen:has(.account-workspace) .auth-brand span:last-child{font-size:12px;color:var(--account-muted)}
+.account-workspace{padding-top:32px;color:var(--account-text);font-size:14px;line-height:1.6}
+.account-workspace[hidden]{display:none}
+.account-workspace :focus-visible{outline:2px solid var(--account-brand-dark);outline-offset:3px}
+.account-breadcrumb{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-bottom:24px;font-size:13px;color:var(--account-muted)}
+.account-breadcrumb a{display:inline-flex;align-items:center;min-height:44px;text-decoration:none}
+.account-breadcrumb a:hover{color:var(--account-brand-dark);text-decoration:underline}
+.account-breadcrumb [aria-current=page]{color:var(--account-text)}
+.account-page-heading{margin-bottom:32px}
+.account-page-heading h1{margin:0;color:var(--account-text);font-size:32px;font-weight:600;line-height:1.25;letter-spacing:-.025em}
+.account-page-heading>p{margin:16px 0 0;color:var(--account-muted);font-size:15px}
+.account-workspace h2{margin:0;color:var(--account-text);font-size:20px;font-weight:600;line-height:1.4}
+.account-workspace .account-identity{margin:0;padding:24px 0;border-top:1px solid var(--account-line);border-bottom:1px solid var(--account-line)}
+.account-identity-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.account-workspace .session-status{margin:0;color:var(--account-muted);font-size:13px;white-space:nowrap}
+.account-workspace .session-status span{background:var(--account-text)}
+.account-workspace .account-email{margin:16px 0 0;color:var(--account-text);font-size:16px;font-weight:500;overflow-wrap:anywhere}
+.account-workspace .hint{color:var(--account-muted);font-size:13px}
+.account-workspace .identity-details{margin-top:8px;color:var(--account-muted);font-size:13px}
+.account-workspace .identity-details summary{min-height:44px;padding:8px 0;color:var(--account-brand-dark)}
+.account-workspace .user-id{font-size:13px;color:var(--account-muted)}
+.account-management-section{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:24px 0;border-bottom:1px solid var(--account-line)}
+.account-management-section p{margin:8px 0 0;color:var(--account-muted);font-size:14px}
+.account-workspace .account-action-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 16px;border:1px solid var(--account-line);border-radius:4px;color:var(--account-brand-dark);font-size:14px;text-decoration:none;white-space:nowrap}
+.account-workspace .account-action-link:hover{border-color:var(--account-brand-dark);background:#FAFAFA}
+.account-session-actions{display:flex;align-items:center;gap:16px;flex-shrink:0}
+.account-workspace .account-session-actions button{width:auto;min-height:44px;margin:0;font-size:14px;white-space:nowrap}
+.account-workspace .account-session-actions .secondary{color:var(--account-brand-dark);padding:8px 0;background:transparent}
+.account-workspace .account-session-actions .secondary:hover{color:var(--account-brand-dark);background:transparent}
+.account-workspace .account-session-actions .outline-button{padding:8px 16px;border-color:var(--account-line);background:#FFFFFF;color:var(--account-text)}
+.account-workspace .account-session-actions .outline-button:hover:not(:disabled){border-color:var(--account-text);background:#FAFAFA;color:var(--account-text)}
+.account-workspace .account-form{max-width:520px;margin-top:0}
+.account-workspace .form-field+.form-field{margin-top:24px}
+.account-workspace .form-field>label{margin-bottom:8px;color:var(--account-text);font-size:14px;font-weight:550}
+.account-workspace-password .account-form input{border-color:#767676;color:var(--account-text)}
+.account-workspace-password .account-form input::placeholder{color:var(--account-muted)}
+.account-workspace-password .account-form input:focus-visible{border-color:var(--account-brand-dark);outline-color:var(--account-brand-dark)}
+.account-workspace-password .account-form input[aria-invalid=true]:not(:disabled){border-color:#9a4949}
+.account-workspace-password .account-form input:disabled{border-color:#bcbcbc}
+.account-workspace .account-form button[type=submit]{margin-top:32px;border-color:var(--account-text);background:var(--account-text);color:#FFFFFF}
+.account-workspace .account-form button[type=submit]:hover:not(:disabled){background:var(--account-text);color:#FFFFFF}
+.account-workspace .feedback,.account-workspace .success{margin-top:16px;font-size:14px}
+.account-workspace-back{margin-top:32px;padding-top:16px;border-top:1px solid var(--account-line);font-size:13px;color:var(--account-muted)}
+.account-workspace-back a{display:inline-flex;align-items:center;min-height:44px;color:var(--account-brand-dark);text-decoration:none}
+.account-workspace-back a:hover{text-decoration:underline}
+@media(max-width:800px){.account-management-section{align-items:flex-start;flex-direction:column;gap:16px}.auth-screen:has(.account-workspace){padding-left:24px;padding-right:24px}}
+@media(max-width:600px){.auth-screen:has(.account-workspace){padding:0 16px 32px}.auth-screen:has(.account-workspace) .auth-header{min-height:64px;gap:16px}.account-workspace{padding-top:16px}.account-breadcrumb{gap:4px 8px;margin-bottom:16px}.account-page-heading h1{font-size:30px}.account-page-heading>p{font-size:14px}.account-page-heading{margin-bottom:24px}.account-workspace h2{font-size:18px}.account-session-actions{gap:16px;flex-wrap:wrap}.account-workspace .account-email{font-size:15px}.account-workspace-back{margin-top:24px}}
