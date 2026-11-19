@@ -5,21 +5,19 @@ import {editTranslation} from '../../lib/editor/records';
 import {
   editableNavigationSections, previewSections, sectionTitleFields, type SiteTextDraft,
 } from '../../lib/editor/site-text';
-import {RecordField} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 type SiteTextKey = keyof NonNullable<SiteTextDraft['translations'][ContentLocale]>;
 
-export function SiteTextEditor({draft, contentLocale, onChange}: {
-  draft: SiteTextDraft; contentLocale: ContentLocale; onChange: (next: SiteTextDraft) => void;
+export function SiteTextEditor({draft, onChange}: {
+  draft: SiteTextDraft; onChange: (next: SiteTextDraft) => void;
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const sectionLabel = (section: keyof typeof previewSections) => previewSections[section][locale === 'zh' ? 0 : 1];
-  const fields = draft.translations[contentLocale];
-  const nav = draft.navigation[contentLocale];
-  const field = (key: SiteTextKey, label: string) => <RecordField key={key} label={label} value={fields?.[key] ?? ''}
-    onChange={value => onChange({...draft, translations: editTranslation(draft.translations, contentLocale, {[key]: value})})}/>;
+  const field = (key: SiteTextKey, label: string) => <PairedField key={key} label={label} value={language => draft.translations[language]?.[key] ?? ''}
+    onChange={(language, value) => onChange({...draft, translations: editTranslation(draft.translations, language, {[key]: value})})}/>;
 
   return <div className="editor-contact">
     <section aria-labelledby="editor-site-navigation">
@@ -28,8 +26,8 @@ export function SiteTextEditor({draft, contentLocale, onChange}: {
         'Edit the public website labels. The sections and their order are fixed.')}</p>
       <div className="editor-fields record-field-grid">
         {editableNavigationSections.map(section =>
-          <RecordField key={section} label={sectionLabel(section)} value={nav?.[section] ?? ''}
-            onChange={value => onChange({...draft, navigation: editTranslation(draft.navigation, contentLocale, {[section]: value})})}/>)}
+          <PairedField key={section} label={sectionLabel(section)} value={language => draft.navigation[language]?.[section] ?? ''}
+            onChange={(language, value) => onChange({...draft, navigation: editTranslation(draft.navigation, language, {[section]: value})})}/>)}
       </div>
     </section>
     <section aria-labelledby="editor-site-headings">

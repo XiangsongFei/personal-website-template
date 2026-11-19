@@ -12,23 +12,26 @@ export function EditorAiActions({reasonId}: {reasonId: string}) {
   </div>;
 }
 
-export function RecordField({label, value, onChange, multiline = false, ai = true}: {
-  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; ai?: boolean;
+export function RecordField({label, accessibleLabel, value, onChange, multiline = false, maxLength,
+  type = 'text', error, hint, lang}: {
+  label: string; accessibleLabel?: string; value: string; onChange: (value: string) => void;
+  multiline?: boolean; maxLength?: number; type?: 'text' | 'url' | 'email';
+  error?: string; hint?: string; lang?: string;
 }) {
-  const {locale} = useUiLocale();
-  const fieldId = useId();
-  const reasonId = fieldId + '-ai';
-  if (multiline) return <div className="record-description">
-    <div className="editor-field-heading">
-      <label htmlFor={fieldId}>{label}</label>{ai && <EditorAiActions reasonId={reasonId}/>}
-    </div>
-    <textarea id={fieldId} value={value} maxLength={20_000} onChange={event => onChange(event.target.value)}/>
-    {ai && <p id={reasonId} className="editor-note">{locale === 'zh' ? 'AI 优化与生成尚未开放。' : 'AI refinement and generation are unavailable.'}</p>}
+  const id = useId();
+  const feedbackId = id + '-feedback';
+  const props = {
+    id, value, lang, 'aria-label': accessibleLabel,
+    'aria-invalid': error ? true : undefined,
+    'aria-describedby': error || hint ? feedbackId : undefined,
+  };
+  return <div className={multiline ? 'editor-field record-description' : 'editor-field'}>
+    <label htmlFor={id}>{label}</label>
+    {multiline ? <textarea {...props} maxLength={maxLength ?? 20_000} onChange={event => onChange(event.target.value)}/>
+      : <input {...props} type={type} maxLength={maxLength ?? 500} autoComplete="off" spellCheck={type === 'text' ? undefined : false}
+        onChange={event => onChange(event.target.value)}/>}
+    {(error || hint) && <p id={feedbackId} className="editor-note" role={error ? 'status' : undefined}>{error || hint}</p>}
   </div>;
-
-  return <label className="editor-field">{label}
-    <input value={value} autoComplete="off" maxLength={500} onChange={event => onChange(event.target.value)}/>
-  </label>;
 }
 
 export function RepeatableEditor<T extends OrderedDraftRecord>({rows, onChange, create, caption, addLabel, emptyLabel, fields}: {

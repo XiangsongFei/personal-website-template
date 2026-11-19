@@ -14,7 +14,8 @@ import {AwardsEditor} from './awards-editor';
 import {ContactEditor} from './contact-editor';
 import {SiteLinksEditor} from './site-links-editor';
 import {SiteTextEditor} from './site-text-editor';
-import {EditorAiActions} from './repeatable-editor';
+import {RecordField} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {DashboardShell} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
 import {useUiLocale} from './ui-locale';
@@ -26,14 +27,6 @@ function EditorModeSwitcher({options, selected, select, label}: {
     {options.map(([key, caption]) => <button key={key} type="button"
       aria-pressed={selected === key} onClick={() => select(key)}>{caption}</button>)}
   </div>;
-}
-
-function EditorField({label, value, maxLength, onChange}: {
-  label: string; value: string; maxLength: number; onChange: (text: string) => void;
-}) {
-  return <label className="editor-field">{label}
-    <input value={value} maxLength={maxLength} autoComplete="off" onChange={event => onChange(event.target.value)}/>
-  </label>;
 }
 
 function EditorPanel({children, mode, dirty, hasChanges, cancel}: {
@@ -82,8 +75,6 @@ export function ResumeEditor() {
     links: text('联系与链接', 'Contact & links'),
     'site-text': text('联系与链接', 'Contact & links'),
   };
-  const introduction = draft.introduction[contentLocale];
-  const introValid = validIntroduction(introduction);
 
   useLayoutEffect(() => {
     // Same-document navigation keeps all module drafts in memory. Other hashes
@@ -126,18 +117,18 @@ export function ResumeEditor() {
             ]} selected={module} select={section => {location.hash = section;}} label={text('联系与链接区域', 'Contact and links areas')}/>
           </div>}
           <div className="editor-language">
-            <span>{text('内容语言', 'Content language')}</span>
+            <span>{text('预览内容语言', 'Preview content language')}</span>
             <EditorModeSwitcher options={[[ 'zh', '中文' ], [ 'en', 'English' ]]} selected={contentLocale}
-              select={value => setContentLocale(value === 'en' ? 'en' : 'zh')} label={text('内容语言', 'Content language')}/>
+              select={value => setContentLocale(value === 'en' ? 'en' : 'zh')} label={text('预览内容语言', 'Preview content language')}/>
           </div>
           {module === 'profile' ? <>
             <fieldset className="editor-fields">
-              <legend>{text('显示内容', 'Display content')} · {contentLocale === 'zh' ? '中文' : 'English'}</legend>
+              <legend>{text('显示内容', 'Display content')}</legend>
               {Object.entries(profileLocalized).map(([field, [zh, en, limit]]) => {
                 const key = field as keyof typeof profileLocalized;
-                return <EditorField key={key} label={text(zh, en)} maxLength={limit} value={draft.profile.translations[contentLocale][key]}
-                  onChange={value => setDraft(current => ({...current, profile: {...current.profile, translations: {
-                    ...current.profile.translations, [contentLocale]: {...current.profile.translations[contentLocale], [key]: value},
+                return <PairedField key={key} label={text(zh, en)} maxLength={limit} value={language => draft.profile.translations[language][key]}
+                  onChange={(language, value) => setDraft(current => ({...current, profile: {...current.profile, translations: {
+                    ...current.profile.translations, [language]: {...current.profile.translations[language], [key]: value},
                   }}}))}/>;
               })}
             </fieldset>
@@ -145,7 +136,7 @@ export function ResumeEditor() {
               <legend>{text('共享信息', 'Shared details')}</legend>
               {Object.entries(profileShared).map(([field, [zh, en, limit]]) => {
                 const key = field as keyof typeof profileShared;
-                return <EditorField key={key} label={text(zh, en)} maxLength={limit} value={draft.profile.shared[key]}
+                return <RecordField key={key} label={text(zh, en)} maxLength={limit} value={draft.profile.shared[key]}
                   onChange={value => setDraft(current => ({...current, profile: {
                     ...current.profile, shared: {...current.profile.shared, [key]: value},
                   }}))}/>;
@@ -171,26 +162,19 @@ export function ResumeEditor() {
             <ContactEditor draft={draft.contact} contentLocale={contentLocale}
               onChange={contact => setDraft(current => ({...current, contact}))}/> :
           module === 'links' ?
-            <SiteLinksEditor draft={draft.links} contentLocale={contentLocale}
+            <SiteLinksEditor draft={draft.links}
               onChange={links => setDraft(current => ({...current, links}))}/> :
           module === 'site-text' ?
-            <SiteTextEditor draft={draft['site-text']} contentLocale={contentLocale}
+            <SiteTextEditor draft={draft['site-text']}
               onChange={siteText => setDraft(current => ({...current, 'site-text': siteText}))}/> :
             <div className="editor-introduction">
-            <div className="editor-field-heading">
-              <label htmlFor="editor-intro-text">{contentLocale === 'zh' ? '中文介绍' : 'English introduction'}</label>
-              <EditorAiActions reasonId="editor-ai-reason"/>
-            </div>
-            <textarea id="editor-intro-text" value={introduction} maxLength={INTRODUCTION_LIMIT}
-              aria-describedby="editor-intro-guidance" aria-invalid={!introValid || undefined}
-              onChange={event => {
-                const value = event.target.value;
-                setDraft(current => ({...current, introduction: {...current.introduction, [contentLocale]: value}}));
-              }}/>
-            <p id="editor-intro-guidance" className="editor-note">{text('纯文本。支持换行。', 'Plain text. Line breaks are preserved.')} <span>{introduction.length} / 20,000</span></p>
-            {!introValid && <p role="alert">{text('内容含无效字符或超过长度上限。', 'The introduction contains invalid characters or exceeds the length limit.')}</p>}
-            <p id="editor-ai-reason" className="editor-note">{text('AI 优化与生成尚未开放。', 'AI refinement and generation are unavailable.')}</p>
-          </div>}
+              <PairedField label={text('个人介绍', 'Introduction')} value={language => draft.introduction[language]} multiline ai
+                maxLength={INTRODUCTION_LIMIT}
+                onChange={(language, value) => setDraft(current => ({...current, introduction: {...current.introduction, [language]: value}}))}
+                hint={value => text('纯文本。支持换行。', 'Plain text. Line breaks are preserved.') + ' ' + value.length + ' / 20,000'}
+                error={value => validIntroduction(value) ? undefined : text('内容含无效字符或超过长度上限。',
+                  'The introduction contains invalid characters or exceeds the length limit.')}/>
+            </div>}
         </EditorPanel>
         <section className="editor-preview" data-mode={mode} aria-labelledby="editor-preview-heading">
           <div className="editor-preview-heading">

@@ -6,7 +6,8 @@ import {
   editTranslation, newEducation, type EducationCategory, type EducationDraft, type EducationText,
 } from '../../lib/editor/records';
 import type {ContentLocale} from '../../lib/editor/draft';
-import {RecordField, RepeatableEditor} from './repeatable-editor';
+import {RepeatableEditor} from './repeatable-editor';
+import {PairedField} from './paired-field';
 import {useUiLocale} from './ui-locale';
 
 export function EducationEditor({rows, contentLocale, onChange}: {
@@ -24,13 +25,12 @@ export function EducationEditor({rows, contentLocale, onChange}: {
     emptyLabel={text('暂无教育记录。', 'No education entries yet.')}
     fields={(row, update) => {
       const category = educationCategory(row);
-      const values = row.translations[contentLocale];
-      function change(field: keyof EducationText, value: string) {
-        update({...row, translations: editTranslation(row.translations, contentLocale, {[field]: value})});
+      function change(language: ContentLocale, field: keyof EducationText, value: string) {
+        update({...row, translations: editTranslation(row.translations, language, {[field]: value})});
       }
-      const field = (key: keyof EducationText, label: string, multiline = false) => <RecordField label={label}
-        value={key === 'title' ? educationTitle(row, contentLocale) : values?.[key] ?? ''}
-        multiline={multiline} onChange={value => change(key, value)}/>;
+      const field = (key: keyof EducationText, label: string, multiline = false) => <PairedField label={label}
+        value={language => key === 'title' ? educationTitle(row, language) : row.translations[language]?.[key] ?? ''}
+        multiline={multiline} ai={multiline} onChange={(language, value) => change(language, key, value)}/>;
 
       return <>
         <div className="editor-fields record-field-grid">
