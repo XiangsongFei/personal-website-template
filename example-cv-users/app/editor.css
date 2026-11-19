@@ -1,0 +1,161 @@
+/* Scoped workspace surfaces. The Dashboard sidebar and Header use dashboard.css. */
+.dashboard-main:has(.resume-editor) { max-width: 1480px; }
+.resume-editor {
+  container: resume-workspace / inline-size;
+  --editor-pane-height: max(25rem, calc(100svh - var(--dashboard-header-height) - 10rem));
+}
+.resume-editor button { cursor: pointer; }
+.resume-editor button:disabled { cursor: default; }
+.editor-heading { margin-block-end: var(--dashboard-space-3); }
+.editor-heading p, .editor-preview-heading p {
+  margin: 8px 0 0;
+  color: var(--dashboard-muted);
+}
+.editor-columns { display: grid; }
+.editor-pane, .editor-preview {
+  min-width: 0;
+  height: var(--editor-pane-height);
+  display: flex;
+  flex-direction: column;
+}
+.editor-pane-body, .site-preview-viewport {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+}
+.editor-pane-body { padding: 3px 8px 20px 3px; }
+.editor-pane-body h2 { margin-bottom: 16px; }
+.editor-preview-heading { flex: none; margin-bottom: 16px; }
+.editor-preview-heading p { font-size: 13px; }
+.editor-modes { margin: 0 0 20px; }
+.editor-switch { display: flex; flex-wrap: wrap; gap: 8px; }
+.resume-editor .editor-switch button,
+.resume-editor .editor-actions button,
+.resume-editor .editor-ai button,
+.resume-editor .site-preview-nav button {
+  width: auto;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dashboard-muted);
+  font: inherit;
+  line-height: 1.35;
+}
+.resume-editor .editor-switch button[aria-pressed=true] {
+  background: var(--dashboard-brand-light);
+  color: var(--dashboard-brand-dark);
+  font-weight: 600;
+}
+.resume-editor .editor-switch button:hover,
+.resume-editor .site-preview-nav button:hover { color: var(--dashboard-brand-dark); }
+.editor-language, .editor-field-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.editor-language { margin-bottom: 24px; }
+.editor-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  padding: 0;
+  gap: 16px;
+  margin: 0 0 24px;
+  border: 0;
+  min-inline-size: 0;
+}
+.editor-fields legend { margin: 0 0 12px; padding: 0; font-size: 16px; font-weight: 600; }
+.editor-field { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.resume-editor input, .resume-editor textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #a3a3a3;
+  border-radius: 4px;
+  background: var(--dashboard-bg);
+  color: var(--dashboard-text);
+  font: inherit;
+  font-size: 16px;
+}
+.resume-editor input { min-height: 44px; }
+.resume-editor textarea { min-height: 12rem; resize: vertical; }
+.resume-editor textarea[aria-invalid=true] { border-color: #a44242; }
+.editor-introduction { margin-top: 12px; }
+.editor-field-heading { margin-bottom: 4px; }
+.editor-field-heading > label { font-weight: 600; }
+.editor-ai { display: flex; flex-wrap: wrap; }
+.resume-editor .editor-ai button { padding-inline: 7px; }
+.editor-note { color: var(--dashboard-muted); font-size: 13px; margin: 8px 0 0; }
+#editor-intro-guidance { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.editor-actions {
+  flex: none;
+  background: var(--dashboard-bg);
+  border-top: 1px solid var(--dashboard-line);
+  padding-block: 8px 2px;
+}
+.editor-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 4px;
+}
+.editor-actions p { margin: 0; font-weight: 600; }
+.editor-actions small { color: var(--dashboard-muted); }
+.resume-editor .editor-actions button:enabled { color: var(--dashboard-brand-dark); text-decoration: underline; }
+.resume-editor .editor-actions .editor-save { background: var(--dashboard-bg-secondary); color: var(--dashboard-muted); }
+.resume-editor button:disabled { opacity: 1; }
+
+.editor-pane[data-mode=preview], .editor-preview[data-mode=edit] { display: none; }
+@container resume-workspace (min-width: 875px) {
+  .editor-columns { grid-template-columns: minmax(0, 45fr) minmax(0, 55fr); }
+  .editor-modes { display: none; }
+  .editor-pane[data-mode], .editor-preview[data-mode] { display: flex; }
+  .editor-pane { padding-right: 24px; }
+  .editor-preview { padding-left: 24px; border-left: 1px solid var(--dashboard-line); }
+}
+
+.site-preview-viewport { background: var(--dashboard-bg-secondary); overflow-anchor: none; outline-offset: -2px; }
+.site-preview-nav {
+  display: flex;
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  gap: 2px;
+  overflow-x: auto;
+  background: var(--dashboard-bg);
+  border-bottom: 1px solid var(--dashboard-line);
+  padding-inline: 6px;
+  scrollbar-width: thin;
+}
+.resume-editor .site-preview-nav button { flex: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.site-preview-page { padding: clamp(14px, 2.4cqw, 30px); overflow-wrap: anywhere; }
+.site-preview-page section { padding-block: 20px; }
+.site-preview-page section + section { border-top: 1px solid var(--dashboard-line); }
+.site-preview-page h3 { font-size: 19px; line-height: 1.3; }
+.site-preview-page h4 { font-size: 14px; margin: 12px 0 0; }
+.site-preview-page p { margin: 8px 0 0; }
+.site-preview-kicker, .site-preview-muted, .site-preview-page footer { color: var(--dashboard-muted); font-size: 13px; }
+.site-preview-hero { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.site-preview-hero > div:first-child { min-width: 0; }
+.site-preview-hero h3 { margin-top: 8px; font-size: clamp(23px, 3cqw, 36px); font-weight: 650; }
+.site-preview-portrait {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: clamp(60px, 9cqw, 96px);
+  aspect-ratio: 4 / 5;
+  padding: 6px;
+  background: #eee;
+  color: var(--dashboard-muted);
+}
+.site-preview-prose { white-space: pre-wrap; }
+.site-preview-page footer { padding-block: 12px 24px; margin-top: 8px; }
