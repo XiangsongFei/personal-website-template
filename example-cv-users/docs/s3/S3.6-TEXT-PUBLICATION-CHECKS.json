@@ -1,0 +1,283 @@
+{
+  "status": "S36_TEXT_OFFLINE_IMPLEMENTED_RUNTIME_DISABLED",
+  "recorded_at": "2026-11-16T21:34:18.412377+08:00",
+  "scope": "six-file text-only offline transaction planner and tests; no publication runtime",
+  "s35_status": "PAUSED_FOR_P1_FIXES",
+  "C_D_COMPLETE": "NO",
+  "frozen_df94c266": "HOLD_UNCHANGED",
+  "file_business": "CLOSED",
+  "runtime_routes_enabled": false,
+  "base_commit": "e137f553469e9ace26bbfcd8a0359e4e1160ad9d",
+  "previous_checks_sha256": "71b5505a89881f679962bc5db686eb5bade6d1f9500e0fd70ba50778e55fa6a0",
+  "targeted_tests": {
+    "pass": 33,
+    "total": 33,
+    "kind": "pure/offline + static",
+    "working_and_clean": true
+  },
+  "existing_offline_regression": {
+    "pass": 88,
+    "total": 88,
+    "kind": "synthetic Auth/TLS/SQL; no real integration",
+    "working_and_clean": true
+  },
+  "node": {
+    "actual": "v24.13.0",
+    "actual_path": "<LOCAL>/v24.13.0/bin/node",
+    "project_engines": "24.22.1",
+    "target_engine_runtime": "NOT_RUN_TARGET_NOT_INSTALLED",
+    "discovery": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/node-discovery.json",
+    "no_download_install_or_upgrade": true
+  },
+  "npm": "11.6.2",
+  "typescript": "5.9.3",
+  "typecheck": {
+    "argv": [
+      "<LOCAL>/v24.13.0/bin/npm",
+      "run",
+      "typecheck",
+      "--",
+      "--incremental",
+      "false"
+    ],
+    "exit_code": 0,
+    "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-typecheck.log",
+    "log_sha256": "e91936f2e6bdf27edd6738e33eec18ac8f176309043d2f2d0057afe6ba7a1a3c",
+    "coverage": "allowJs=true, checkJs=false; project TS compatibility only, not full semantic type checking of .mjs"
+  },
+  "commands": {
+    "working-targeted": {
+      "name": "working-targeted",
+      "cwd": "<LOCAL>/example-cv-users",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/npm",
+        "run",
+        "test:s36"
+      ],
+      "started_at": "2026-11-16T21:32:03.829453+08:00",
+      "duration_seconds": 0.42416804103413597,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/working-targeted.log",
+      "log_sha256": "2d7c8f23d6138b3e2f512e55424a5be7c10564379947136521cb8340009ea6c3"
+    },
+    "working-regression": {
+      "name": "working-regression",
+      "cwd": "<LOCAL>/example-cv-users",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--test",
+        "tests/s3/business.test.mjs",
+        "tests/s3/binding.test.mjs",
+        "tests/s3/authorization.test.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:04.254012+08:00",
+      "duration_seconds": 0.20330612501129508,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/working-regression.log",
+      "log_sha256": "23a5ff485af44b6af4467e4b5b90b045b2880c8589feca7a6a5c50035e352b56"
+    },
+    "clean-targeted": {
+      "name": "clean-targeted",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/npm",
+        "run",
+        "test:s36"
+      ],
+      "started_at": "2026-11-16T21:32:04.457454+08:00",
+      "duration_seconds": 0.2858080419828184,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-targeted.log",
+      "log_sha256": "18e69b94adcfeeba90daf268f55f04197f0bd4613e1bcfd674da1f8cc0052407"
+    },
+    "clean-regression": {
+      "name": "clean-regression",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--test",
+        "tests/s3/business.test.mjs",
+        "tests/s3/binding.test.mjs",
+        "tests/s3/authorization.test.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:04.743383+08:00",
+      "duration_seconds": 0.15557466697646305,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-regression.log",
+      "log_sha256": "c8f8eafd04245a7e2bd3da6cbb732c0c481fa0949a86510b9778cec728fc0af8"
+    },
+    "clean-syntax-core": {
+      "name": "clean-syntax-core",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--check",
+        "lib/business/text-publication.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:04.899081+08:00",
+      "duration_seconds": 0.030543125001713634,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-syntax-core.log",
+      "log_sha256": "3cadabec897fd961a14ae0f164fbcc2d872da835fd7c259079ac6fab44594c72"
+    },
+    "clean-syntax-test": {
+      "name": "clean-syntax-test",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--check",
+        "tests/s3/text-publication.test.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:04.929757+08:00",
+      "duration_seconds": 0.029888375021982938,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-syntax-test.log",
+      "log_sha256": "3cadabec897fd961a14ae0f164fbcc2d872da835fd7c259079ac6fab44594c72"
+    },
+    "clean-syntax-static": {
+      "name": "clean-syntax-static",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--check",
+        "tests/s3/text-publication-static.test.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:04.959743+08:00",
+      "duration_seconds": 0.03329466696595773,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-syntax-static.log",
+      "log_sha256": "3cadabec897fd961a14ae0f164fbcc2d872da835fd7c259079ac6fab44594c72"
+    },
+    "clean-typecheck": {
+      "name": "clean-typecheck",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/npm",
+        "run",
+        "typecheck",
+        "--",
+        "--incremental",
+        "false"
+      ],
+      "started_at": "2026-11-16T21:32:04.993163+08:00",
+      "duration_seconds": 1.5797780840075575,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/clean-typecheck.log",
+      "log_sha256": "e91936f2e6bdf27edd6738e33eec18ac8f176309043d2f2d0057afe6ba7a1a3c"
+    },
+    "new-review-receipt-cases": {
+      "name": "new-review-receipt-cases",
+      "cwd": "<LOCAL>/s35-p1-s36-local-fixes-20261116T212757-50592802/s36",
+      "argv": [
+        "<LOCAL>/v24.13.0/bin/node",
+        "--test",
+        "review-receipt-cases.mjs"
+      ],
+      "started_at": "2026-11-16T21:32:46.155700+08:00",
+      "duration_seconds": 0.22201483399840072,
+      "exit_code": 0,
+      "log": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/logs/review-receipt-cases.log",
+      "log_sha256": "3321d356ec4f98fdd95eb510affe4983dd4fc2f12a936cf57b5280ea56fa56f6"
+    }
+  },
+  "review_regression_cases": {
+    "status": "NEW_THIS_BATCH_NOT_RECONSTRUCTED_HISTORY",
+    "pass": 4,
+    "total": 4,
+    "source": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/review-receipt-cases.mjs",
+    "error": "PUBLICATION_STATE_INVALID",
+    "cases": [
+      "unpublish_site no-op / borrowed later publication / read",
+      "unpublish_site no-op / borrowed later publication / plan",
+      "save_text_draft no-op / borrowed later publication / read",
+      "save_text_draft no-op / borrowed later publication / plan"
+    ],
+    "formal_test_mapping": [
+      "OFFLINE review regression: no-op receipt cannot borrow a later valid publication version",
+      "OFFLINE no-op draft receipt stays bound to the publication version observed by its own operation"
+    ],
+    "historical_raw_log": "NOT_FOUND_NOT_BACKFILLED"
+  },
+  "independent_review": {
+    "this_batch_result": "RECORDED_SEPARATELY_AGAINST_FINAL_MANIFEST",
+    "record": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/REVIEW-S36.json",
+    "old_review_is_not_this_batch_review": true
+  },
+  "source_manifest": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/SOURCE-MANIFEST.json",
+  "clean_reproduction": {
+    "base": "e137f553469e9ace26bbfcd8a0359e4e1160ad9d",
+    "method": "git archive read-only base export plus exactly six whitelisted files; package only test:s36 delta",
+    "directory": ".runtime/s35-p1-s36-local-fixes-20261116T212757-50592802/s36/clean-base-six-files",
+    "dependency_source": "existing locked APP_ROOT/node_modules via explicit symlink; no install",
+    "targeted_pass": 33,
+    "regression_pass": 88,
+    "syntax_exit_codes": [
+      0,
+      0,
+      0
+    ],
+    "typecheck_exit_code": 0,
+    "git_directory_created": false
+  },
+  "build": {
+    "status": "NOT_RUN_NOT_REQUIRED_FOR_THIS_SLICE",
+    "reason": "No route, Worker, UI, dependency, bundler or runtime configuration changes; targeted syntax and TS compatibility checked"
+  },
+  "not_run": [
+    "target Node 24.22.1",
+    "Docker/services",
+    "live DB/SQL/RLS/transaction rollback",
+    "migration generation/installation",
+    "Auth/Session/Proof/Grant/Storage HTTP",
+    "public reading/cache withdrawal",
+    "outbox external delivery",
+    "attachments/ready/signed URLs",
+    "full app build",
+    "production/deploy",
+    "Git writes"
+  ],
+  "actual_real_operations": {
+    "docker": 0,
+    "services_started": 0,
+    "database_connections": 0,
+    "business_http": 0,
+    "credentials_read": 0,
+    "configuration_or_business_writes": 0,
+    "git_writes": 0,
+    "downloads_or_installs": 0
+  },
+  "artifacts_are": "local source/test evidence and independent commit preparation only; no Commit, no real execution approval",
+  "delivery_compatibility": {
+    "status": "PR40_LOCAL_COMPATIBILITY_CANDIDATE",
+    "base_commit": "e137f553469e9ace26bbfcd8a0359e4e1160ad9d",
+    "prior_pr_head": "3eca71800047b4035e37e1959fcc27777dacf553",
+    "base_package_json_sha256": "5cc08f5030c4bcb4451a03bf0361377aeb3f49f5b45c8a74c389f553f0ba1167",
+    "historical_scope": "Original fields record the 2026-11-16 six-file slice and its executed commands.",
+    "delivery_scope": "Five added files. package.json and historical source-integrity contracts retain the exact base bytes.",
+    "s3_offline_entrypoint": "npm run test:s3",
+    "full_users_entrypoint": "npm test",
+    "discovery_directory": "tests/s3/",
+    "discovered_test_files": [
+      "tests/s3/text-publication.test.mjs",
+      "tests/s3/text-publication-static.test.mjs"
+    ],
+    "targeted_argv": [
+      "node",
+      "--test",
+      "tests/s3/text-publication.test.mjs",
+      "tests/s3/text-publication-static.test.mjs"
+    ]
+  },
+  "s36_0_delivery": {
+    "status": "OFFLINE_IMPLEMENTED_RUNTIME_DISABLED",
+    "base": "ceb96fda27df291d18285d18ae4f3ce25b668436",
+    "original_pr_head": "5364bc75adb3f3654b2d31be775957bff144c35b",
+    "scope": "Five paths. The earlier fields describe the historical cut and its compatibility evidence.",
+    "node": "24.22.1",
+    "npm": "11.19.1",
+    "targeted_tests": 40,
+    "app_checks": ["npm run build", "npm run typecheck", "npm test", "npm audit"],
+    "s3_discovery": "npm run test:s3",
+    "real_acceptance": "NOT_RUN"
+  }
+}
