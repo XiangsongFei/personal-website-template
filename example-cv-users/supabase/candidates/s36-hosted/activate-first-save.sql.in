@@ -1,0 +1,84 @@
+-- Separate operator step for the approved hosted test project after closed install.
+-- psql -X -v ON_ERROR_STOP=1, vars: project, alice, bob, generation_id,
+-- not_before, sign_until, verify_until (UTC Unix seconds).
+BEGIN;
+SET LOCAL search_path=pg_catalog;
+SET LOCAL lock_timeout='3s';
+SET LOCAL statement_timeout='15s';
+SELECT set_config('s36_test.project', :'project', true),
+       set_config('s36_test.alice', :'alice', true),
+       set_config('s36_test.bob', :'bob', true),
+       set_config('s36_test.generation', :'generation_id', true);
+DO $deployer$
+BEGIN
+ IF session_user<>'postgres' OR current_user<>session_user OR current_database()<>'postgres'
+    OR current_setting('server_version_num')::int / 10000<>17
+    OR NOT EXISTS (SELECT FROM pg_roles WHERE rolname=current_user AND NOT rolsuper AND rolbypassrls)
+ THEN RAISE EXCEPTION 'HOSTED_ACTIVATION_DEPLOYER'; END IF;
+END;
+$deployer$;
+GRANT ecv_s3_owner TO postgres WITH ADMIN FALSE, INHERIT TRUE, SET TRUE GRANTED BY postgres;
+SELECT pg_advisory_xact_lock(3303,5);
+DO $scope$
+DECLARE
+ project text := current_setting('s36_test.project');
+ alice uuid := current_setting('s36_test.alice')::uuid;
+ bob uuid := current_setting('s36_test.bob')::uuid;
+BEGIN
+ IF project <> '@PROJECT@' OR project !~ '^[a-z]{20}$' OR project IN ('tkehttvppaqkybqehjbn','makwjnbubmrmopjhzror')
+    OR EXISTS(SELECT FROM (VALUES /* reviewed function definitions */) e(signature,owner,digest)
+        LEFT JOIN pg_proc p ON p.oid=to_regprocedure(e.signature)
+        WHERE p.proowner IS DISTINCT FROM to_regrole(e.owner)::oid
+          OR encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') IS DISTINCT FROM e.digest)
+    OR alice=bob OR current_setting('s36_test.generation') !~ '^[a-zA-Z0-9_-]{1,40}$'
+    OR (SELECT count(*) FROM auth.users WHERE id IN (alice,bob) AND email_confirmed_at IS NOT NULL AND NOT is_anonymous)<>2
+    OR (SELECT count(*) FROM auth.users)<>2
+    OR EXISTS(SELECT FROM site_data.sites)
+    OR EXISTS(SELECT FROM site_private.user_security_state)
+    OR EXISTS(SELECT FROM site_private.business_session_grants)
+    OR EXISTS(SELECT FROM site_private.proof_generations)
+    OR EXISTS(SELECT FROM site_private.registered_business_tickets)
+    OR EXISTS(SELECT FROM site_private.business_proof_keys)
+    OR NOT EXISTS(SELECT FROM site_private.business_runtime WHERE singleton AND NOT enabled AND NOT proof_verifier_ready
+        AND project_ref=project AND auth_issuer='https://'||project||'.supabase.co/auth/v1')
+    OR NOT EXISTS(SELECT FROM site_private.text_publication_runtime WHERE singleton
+        AND NOT write_enabled AND NOT outbox_enabled AND NOT public_read_enabled)
+    OR NOT EXISTS(SELECT FROM pg_constraint WHERE conrelid='site_private.business_runtime'::regclass
+        AND conname='business_runtime_proof_verifier_ready_check' AND convalidated
+        AND pg_get_expr(conbin,conrelid)='(NOT proof_verifier_ready)')
+    OR NOT EXISTS(SELECT FROM pg_constraint WHERE conrelid='site_private.business_runtime'::regclass
+        AND conname='business_gates_agree' AND convalidated AND pg_get_expr(conbin,conrelid)='(enabled = proof_verifier_ready)')
+    OR (SELECT count(*) FROM pg_roles WHERE rolname IN ('ecv_s3_internal_api_login','ecv_s3_registration_login')
+        AND rolcanlogin AND NOT (rolsuper OR rolinherit OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication))<>2
+    OR NOT pg_has_role('ecv_s3_internal_api_login','authenticated','SET')
+    OR pg_has_role('ecv_s3_internal_api_login','authenticated','USAGE')
+    OR NOT pg_has_role('ecv_s3_registration_login','ecv_s3_proof_registrar','USAGE')
+    OR pg_has_role('ecv_s3_registration_login','ecv_s3_proof_registrar','SET')
+    OR EXISTS(SELECT FROM pg_roles WHERE rolname IN ('anon','authenticated','authenticator','service_role')
+        AND (has_function_privilege(oid,'site_private.register_business_ticket(jsonb)','EXECUTE')
+          OR has_function_privilege(oid,'site_api.publish_site(uuid,jsonb,text)','EXECUTE')
+          OR has_function_privilege(oid,'site_api.unpublish_site(uuid,jsonb,text)','EXECUTE')))
+ THEN RAISE EXCEPTION 'HOSTED_ACTIVATION_SCOPE_OR_ACL'; END IF;
+END;
+$scope$;
+INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
+ SELECT :'generation_id',to_timestamp(:'not_before'::bigint),to_timestamp(:'sign_until'::bigint),to_timestamp(:'verify_until'::bigint)
+ WHERE :'not_before'::bigint<=extract(epoch FROM clock_timestamp())
+   AND :'sign_until'::bigint>extract(epoch FROM clock_timestamp())
+   AND :'verify_until'::bigint-:'not_before'::bigint<=1800;
+DO $window$
+BEGIN
+ IF (SELECT count(*) FROM site_private.proof_generations)<>1
+ THEN RAISE EXCEPTION 'HOSTED_ACTIVATION_WINDOW'; END IF;
+END;
+$window$;
+INSERT INTO site_private.user_security_state(auth_user_id,business_enabled,security_hold,hold_reason)
+ VALUES (:'alice'::uuid,true,false,'none'),(:'bob'::uuid,true,false,'none');
+
+-- Keep the frozen M3/M5 install and the gates-agree constraint. Transition the
+-- physical closed latch only after verifying the installed definition and scope.
+ALTER TABLE site_private.business_runtime DROP CONSTRAINT business_runtime_proof_verifier_ready_check;
+UPDATE site_private.business_runtime SET enabled=true, proof_verifier_ready=true WHERE singleton;
+UPDATE site_private.text_publication_runtime SET write_enabled=true WHERE singleton;
+REVOKE ecv_s3_owner FROM postgres GRANTED BY postgres RESTRICT;
+COMMIT;

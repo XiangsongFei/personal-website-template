@@ -4,11 +4,11 @@ import {readFileSync,readdirSync} from 'node:fs';
 import {configuration} from '../../scripts/s36-hosted/target.mjs';
 import {firstAcceptance} from '../../scripts/s36-hosted/acceptance.mjs';
 import {projectBridge} from '../../scripts/s36-hosted/stage.mjs';
-import {createBusinessBinding} from '../../lib/business/binding.mjs';
+import {createHostedBinding} from '../../scripts/s36-hosted/compat/binding.mjs';
 import {createIdentityAdapter} from '../../lib/business/identity.mjs';
-import {createRpcRepository} from '../../lib/business/repository.mjs';
-import {createSiteService} from '../../lib/business/service.mjs';
-import {checkRpc} from '../../lib/business/private-rpc.mjs';
+import {createRpcRepository} from '../../scripts/s36-hosted/compat/repository.mjs';
+import {createSiteService} from '../../scripts/s36-hosted/compat/service.mjs';
+import {checkRpc} from '../../scripts/s36-hosted/compat/private-rpc.mjs';
 
 const id = n => '00000000-0000-4000-8000-'+String(n).padStart(12,'0');
 const plan={project:'abcdefghijklmnopqrst',publishableKey:'sb_publishable_fixture',privateOrigin:'https://127.0.0.1:9443',
@@ -23,13 +23,10 @@ test('hosted acceptance config rejects production and non-loopback business ingr
 });
 
 test('native macOS socket is restricted to the loopback hosted test binding',()=>{
-  const options={project:plan.project, authIssuer:'https://'+plan.project+'.supabase.co/auth/v1',
-    privateOrigin:plan.privateOrigin,registrarHost:'db.'+plan.project+'.supabase.co',
-    socketPath:'/private/var/tmp/s36-hosted-12345678/postgrest.sock',testOnly:true,textDraft:true};
-  assert.equal(createBusinessBinding(options).socketPath,options.socketPath);
-  for(const change of [{textDraft:false},{testOnly:false},{socketPath:'/tmp/postgrest.sock'},
-    {privateOrigin:'https://example.invalid'},{authIssuer:'https://example.invalid/auth/v1'}])
-    assert.throws(()=>createBusinessBinding({...options,...change}),{code:'NOT_CONFIGURED'});
+  const socket='/private/var/tmp/s36-hosted-12345678/postgrest.sock';
+  assert.ok(createHostedBinding(plan,socket));
+  for (const path of ['/tmp/postgrest.sock','/run/postgrest.sock','/private/var/tmp/s36-hosted-12345678/other.sock'])
+    assert.throws(()=>createHostedBinding(plan,path),/PRIVATE_TEST_SOCKET_REQUIRED/);
 });
 
 test('closed forward SQL retains native current-session and registrar predicates',()=>{
@@ -47,8 +44,7 @@ test('closed forward SQL retains native current-session and registrar predicates
 
 test('first acceptance uses exact read, save, owner isolation and same-key readback contract (synthetic)',async()=>{
   const cfg=configuration(plan);
-  const binding=createBusinessBinding({project:cfg.project,authIssuer:cfg.url+'/auth/v1',privateOrigin:cfg.privateOrigin,
-    registrarHost:'db.'+cfg.project+'.supabase.co',textDraft:true});
+  const binding=createHostedBinding(plan);
   const uid=token=>token==='alice'?cfg.alice:cfg.bob;
   const identity=createIdentityAdapter({issuer:binding.authIssuer,clock:()=>10,
     auth:{getClaims:async token=>({data:{claims:{iss:binding.authIssuer,sub:uid(token),session_id:id(7),
@@ -56,7 +52,7 @@ test('first acceptance uses exact read, save, owner isolation and same-key readb
     getUser:async token=>({data:{user:{id:uid(token),is_anonymous:false,email_confirmed_at:'2026-01-01'}}})}});
   const seed=[{id:cfg.entry,position:0,translations:{zh:'请填写个人介绍。',en:'Add your introduction.'}}];
   let saved,entries=seed,allowedWrites=0,denied=0,started=false;
-  const service=createSiteService({textDraft:true,repository:createRpcRepository({binding,enabled:true,identity,
+  const service=createSiteService({repository:createRpcRepository({binding,enabled:true,identity,
     project:cfg.project,endpoint:cfg.privateOrigin,mtls:{fetch:async (url,opts)=>{
       const name=url.split('/').at(-1),args=JSON.parse(opts.body);
       checkRpc(name,args,binding);

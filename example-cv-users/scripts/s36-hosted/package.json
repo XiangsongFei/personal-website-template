@@ -1,0 +1,8 @@
+{
+  "name": "example-cv-hosted-acceptance",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pg": "8.23.1"
+  }
+}

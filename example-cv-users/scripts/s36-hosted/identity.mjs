@@ -1,4 +1,4 @@
-import {createBusinessBinding} from '../../lib/business/binding.mjs';
+import {createHostedBinding} from './compat/binding.mjs';
 import {createIdentityAdapter} from '../../lib/business/identity.mjs';
 
 export async function hostedScope(config,socketPath) {
@@ -10,8 +10,7 @@ export async function hostedScope(config,socketPath) {
   };
   const {auth} = createClient(config.url,config.publishableKey,{global:{fetch:fetchBound},
     auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
-  const binding = createBusinessBinding({project:config.project,authIssuer:config.url+'/auth/v1',
-    privateOrigin:config.privateOrigin,registrarHost:'db.'+config.project+'.supabase.co',
-    textDraft:true,testOnly:true,socketPath});
+  const {url, ...input}=config;
+  const binding = createHostedBinding(input,socketPath);
   return {binding,identity:createIdentityAdapter({auth,issuer:binding.authIssuer})};
 }

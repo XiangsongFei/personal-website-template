@@ -1,30 +1,13 @@
 import assert from 'node:assert/strict';
-import {request as httpsRequest} from 'node:https';
-import {openSync,writeFileSync,fsyncSync,closeSync} from 'node:fs';
-import {Readable} from 'node:stream';
+import {writeOnce} from './r3.mjs';
+import {privateTransport} from './transport.mjs';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {configuration, privateFile} from './target.mjs';
 import {hostedScope} from './identity.mjs';
 import {accountContext} from '../../lib/business/identity.mjs';
-import {createRpcRepository} from '../../lib/business/repository.mjs';
-import {createSiteService} from '../../lib/business/service.mjs';
-
-function privateTransport(origin,tls) {
-  return {fetch(url,options) {
-    if (new URL(url).origin !== origin || options.method !== 'POST' || options.redirect !== 'manual')
-      throw new Error('PRIVATE_ORIGIN_MISMATCH');
-    return new Promise((resolve,reject) => {
-      const req = httpsRequest(url, {...tls, method:'POST', headers:options.headers,
-        signal:options.signal, agent:false, rejectUnauthorized:true, minVersion:'TLSv1.2'}, res => {
-        // Authenticate the server with the private test CA and SAN via Node HTTPS.
-        resolve(new Response(Readable.toWeb(res), {status:res.statusCode}));
-      });
-      req.on('error',reject);
-      req.end(options.body);
-    });
-  }};
-}
+import {createRpcRepository} from './compat/repository.mjs';
+import {createSiteService} from './compat/service.mjs';
 
 export async function firstAcceptance(config, service, handles, onDispatch) {
   const {alice,bob} = handles;
@@ -69,7 +52,7 @@ async function main() {
   if (![ca,cert,key,aliceToken,bobToken].every(v => typeof v === 'string' && v.length>0))
     throw new Error('REAL_SESSIONS_AND_TEST_MTLS_REQUIRED');
   const mtls=privateTransport(config.privateOrigin,{ca,cert,key});
-  const service = createSiteService({textDraft:true,repository:createRpcRepository({binding,enabled:true,
+  const service = createSiteService({repository:createRpcRepository({binding,enabled:true,
     project:config.project,endpoint:config.privateOrigin,identity,mtls})});
   const handles = {alice:await identity.verifyAccount(aliceToken),bob:await identity.verifyAccount(bobToken)};
   const anonymous=await mtls.fetch(config.privateOrigin+'/rpc/read_introduction',
@@ -78,12 +61,8 @@ async function main() {
   assert.equal(anonymous.status,403);
   assert.deepEqual(await anonymous.json(),{code:'42501'});
   const row = await firstAcceptance(config,service,handles,()=>{
-    const fd = openSync(journal,'wx',0o600);
-    try {
-      writeFileSync(fd,JSON.stringify({state:'WRITE_PHASE_ENTERED',project:config.project,
-        requestId:config.requestId,aliceSite:config.aliceSite,bobSite:config.bobSite})+'\n');
-      fsyncSync(fd);
-    } finally { closeSync(fd); }
+    writeOnce(journal,{state:'WRITE_PHASE_ENTERED',project:config.project,
+      requestId:config.requestId,aliceSite:config.aliceSite,bobSite:config.bobSite});
   });
   console.log(JSON.stringify(row));
 }

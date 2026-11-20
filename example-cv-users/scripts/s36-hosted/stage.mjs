@@ -15,6 +15,33 @@ function checked(path, digest) {
   return bytes;
 }
 
+function definition(sql, name) {
+  const offset=sql.search(new RegExp('^CREATE (?:OR REPLACE )?FUNCTION '+name.replace('.','[.]')+'[(]', 'm'));
+  const end=sql.indexOf('$fn$;',offset);
+  if (offset<0 || end<0) throw new Error('FROZEN_FUNCTION_UNAVAILABLE: '+name);
+  return sql.slice(offset,end+5);
+}
+
+export function activation(project,m5,m7,text,template) {
+  const ref=isolatedRef(project);
+  const expectations=[
+    [m7,'site_private.auth_source_identity()','postgres',legacyIssuer,'https://'+ref+'.supabase.co/auth/v1'],
+    [m5,'site_private.check_ticket_claims(jsonb)','ecv_s3_grant_writer',legacyProject,ref],
+    [m7,'site_private.register_business_ticket(jsonb)','ecv_s3_grant_writer'],
+    [m5,'site_private.lock_proof_configuration()','ecv_s3_grant_writer'],
+    [m5,'site_private.lock_business_qualification()','ecv_s3_grant_writer'],
+    [m5,'site_private.business_qualified()','ecv_s3_authz_reader'],
+    [m5,'site_api.apply_business_grant(jsonb)','ecv_s3_grant_writer'],
+    [text,'site_private.s36_apply(uuid,text,jsonb,text,boolean)','ecv_s3_command_writer'],
+    [text,'site_api.save_text_draft(uuid,jsonb,text)','ecv_s3_command_writer']
+  ].map(([sql,signature,owner,before,after])=>{
+    const body=definition(sql,signature.split('(')[0]).split('$fn$')[1];
+    return `('${signature}','${owner}','${sha(before ? body.replace(before,after) : body)}')`;
+  }).join(',\n       ');
+  if (template.split('/* reviewed function definitions */').length!==2) throw new Error('ACTIVATION_TEMPLATE_DRIFT');
+  return template.replace('/* reviewed function definitions */',expectations).replaceAll('@PROJECT@',ref);
+}
+
 export function projectBridge(project, m5, m7) {
   const ref=isolatedRef(project), issuer='https://'+ref+'.supabase.co/auth/v1';
   const functions = [
@@ -22,16 +49,12 @@ export function projectBridge(project, m5, m7) {
       'ce226469471a5b2ac60ac1af7bcdf33caf76187fd43d56c18ac5d83b0d3b385c'],
     [m5,'check_ticket_claims(jsonb)','ecv_s3_grant_writer',legacyProject,ref,null]
   ].map(([sql,signature,owner,oldValue,newValue,pinnedDigest]) => {
-    const start=signature.slice(0,signature.indexOf('('));
-    const header=new RegExp('^CREATE (?:OR REPLACE )?FUNCTION site_private\\.'+start+'\\(', 'm');
-    const offset=sql.search(header), end=sql.indexOf('$fn$;',offset);
-    if (offset<0 || end<0) throw new Error('FROZEN_FUNCTION_UNAVAILABLE');
-    const definition=sql.slice(offset,end+5);
-    const body=definition.split('$fn$')[1];
+    const source=definition(sql,'site_private.'+signature.split('(')[0]);
+    const body=source.split('$fn$')[1];
     if (body.split(oldValue).length!==2 || (pinnedDigest && sha(body)!==pinnedDigest))
       throw new Error('FROZEN_FUNCTION_DRIFT');
     return {signature,owner,bodyHash:sha(body),
-      sql:definition.replace(/^CREATE FUNCTION/,'CREATE OR REPLACE FUNCTION').replace(oldValue,newValue)};
+      sql:source.replace(/^CREATE FUNCTION/,'CREATE OR REPLACE FUNCTION').replace(oldValue,newValue)};
   });
   const checks=functions.map(f=>`('${f.signature}','${f.owner}','${f.bodyHash}')`).join(',\n    ');
   return `-- Hosted closed installation only. Apply after intact M1–M7 and S3.6 01.
@@ -99,10 +122,18 @@ export function stage(project, textSources, output) {
   checked(join(textSources,part02.source),part02.source_sha256); // verified, excluded from first install
   stages.push([part01.source,text]);
   stages.push(['hosted-project-closed.sql',projectBridge(ref,stages[4][1].toString(),stages[6][1].toString())]);
+  const candidates=join(local,'candidates/s36-hosted');
+  const separate=[
+    ['preflight.sql',readFileSync(join(candidates,'preflight.sql'))],
+    ['activate-first-save.sql',activation(ref,stages[4][1].toString(),stages[6][1].toString(),text.toString(),
+      readFileSync(join(candidates,'activate-first-save.sql.in'),'utf8'))],
+    ['observe-first-save.sql',readFileSync(join(candidates,'observe-first-save.sql'))]
+  ];
   mkdirSync(output,{mode:0o700});
-  for(const [name,bytes] of stages) writeFileSync(join(output,name),bytes,{flag:'wx',mode:0o600});
+  for(const [name,bytes] of [...stages,...separate]) writeFileSync(join(output,name),bytes,{flag:'wx',mode:0o600});
   const manifest={project:ref,status:'CLOSED_INSTALLATION_CANDIDATE',
-    order:stages.map(([file,bytes])=>({file,sha256:sha(bytes)})),excluded:[part02.source]};
+    order:stages.map(([file,bytes])=>({file,sha256:sha(bytes)})),approvedSeparateSteps:separate.map(([file,bytes])=>({file,sha256:sha(bytes)})),
+    excluded:[part02.source]};
   writeFileSync(join(output,'manifest.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});
   return manifest;
 }
