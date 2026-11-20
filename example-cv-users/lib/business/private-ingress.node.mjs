@@ -6,7 +6,7 @@ import {businessBinding} from './binding.mjs';
 import { createServer } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { TLSSocket } from 'node:tls';
-import { checkRpc } from './private-rpc.mjs';
+import { checkRpc, isTextDraftRpc, rpcResponseLimit } from './private-rpc.mjs';
 import { boundAccountContext } from './identity.mjs';
 import { BusinessError, deny } from './protocol.mjs';
 
@@ -40,7 +40,7 @@ function postgrestOnce(name, body, token, signal, open = httpRequest,binding) {
     }, async response => {
       try {
         if (response.headers['content-type']?.split(';')[0] !== 'application/json') throw new Error('CONTENT_TYPE');
-        resolve({ status:response.statusCode, json:JSON.parse(await readLimited(response,65536)) });
+        resolve({ status:response.statusCode, json:JSON.parse(await readLimited(response,rpcResponseLimit(name,binding))) });
       } catch { response.destroy(); reject(new Error('UPSTREAM_INCOMPLETE')); }
     });
     req.once('error',reject);
@@ -65,7 +65,7 @@ export async function handlePrivateRpc(req, {binding,peerFingerprint, trustedFin
     const auth = headers.get('authorization');
     if (headers.get('host') !== privateAuthority || headers.get('content-type') !== 'application/json' ||
         !auth || auth.length > 16384 || !/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/.test(auth)) deny();
-    const raw = await readLimited(req,8192);
+    const raw = await readLimited(req,scope.textDraft && isTextDraftRpc(name) ? 262144 : 8192);
     let args;
     try { args = JSON.parse(raw); } catch { deny('INVALID_INPUT',400); }
     // This peer emits JSON.stringify. A byte-for-byte round trip rejects duplicate keys.

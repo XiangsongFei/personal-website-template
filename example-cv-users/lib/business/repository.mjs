@@ -1,6 +1,7 @@
+import {textCommand} from './text-publication.mjs';
 import {businessBinding} from './binding.mjs';
 import { BusinessError, deny } from './protocol.mjs';
-import { checkRpc } from './private-rpc.mjs';
+import { checkRpc, rpcResponseLimit } from './private-rpc.mjs';
 import { boundAccountContext, withCredential } from './identity.mjs';
 const known = new Map([['42501',['BUSINESS_DENIED',403]],['22023',['INVALID_INPUT',400]],
   ['PT409',['REQUEST_CONFLICT',409]],['PT503',['NOT_CONFIGURED',503]]]);
@@ -34,7 +35,7 @@ export function createRpcRepository({ binding, enabled = false, project, endpoin
         const reader = response.body?.getReader(); if (!reader) deny('COMMIT_UNKNOWN', 503);
         const decoder = new TextDecoder('utf-8', { fatal: true }); let text = '', size = 0;
         try { for (;;) { const { value, done } = await reader.read(); if (done) break;
-          size += value.length; if (size > 65536) deny('COMMIT_UNKNOWN', 503); text += decoder.decode(value, { stream: true }); } }
+          size += value.length; if (size > rpcResponseLimit(name, binding)) deny('COMMIT_UNKNOWN', 503); text += decoder.decode(value, { stream: true }); } }
         finally { await reader.cancel().catch(() => {}); }
         const data = JSON.parse(text + decoder.decode());
         if (!response.ok) { const info = known.get(data?.code); if (info && info[1] === response.status) deny(...info); deny('COMMIT_UNKNOWN', 503); }
@@ -43,11 +44,18 @@ export function createRpcRepository({ binding, enabled = false, project, endpoin
       } catch (e) { if (e instanceof BusinessError) throw e; deny('COMMIT_UNKNOWN', 503); }
     }, timeoutMs));
   }
+  function textArgs(target, value) {
+    const input = textCommand('save_text_draft', value);
+    return {target, input, canonical_request:JSON.stringify({operation:'save_text_draft', ...input})};
+  }
   return Object.freeze({
     grant: (h, e) => rpc(h, 'apply_business_grant', { envelope: e }),
     create: (h, p) => rpc(h, 'create_site', { input: p }),
     readOperation: (h, p) => rpc(h, 'read_create_operation', { input: p }),
     mine: h => rpc(h, 'get_my_site', {}),
-    readIntroduction: (h, target) => rpc(h, 'read_introduction', { target })
+    readIntroduction: (h, target) => rpc(h, 'read_introduction', { target }),
+    saveTextDraft: (h, target, value) => rpc(h, 'save_text_draft', textArgs(target, value)),
+    readTextDraftOperation: (h, target, value) => rpc(h, 'read_text_publication_operation',
+      {...textArgs(target, value), operation:'save_text_draft'})
   });
 }

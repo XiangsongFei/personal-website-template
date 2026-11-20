@@ -46,7 +46,7 @@ export function textPayload(value){
   return freeze(payload);
 }
 
-function command(operation,value){
+export function textCommand(operation,value){
   if(!operations.has(operation))deny('INVALID_INPUT',400);
   const fields=operation==='save_text_draft'?['expected_draft_revision','payload']:
     operation==='publish_site'?['expected_draft_revision','expected_publication_revision','snapshot_id']:
@@ -231,7 +231,7 @@ function checkReceiptInput(s,operation,input,prior){
 }
 
 export async function readTextPublicationOperation(state,actor,operation,value){
-  const input=command(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
+  const input=textCommand(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
   const prior=priorFor(s,a,operation,input);
   if(!prior)return unknown(input); // Absence never proves an earlier write failed.
   if(prior.payload_digest!==await requestDigest(operation,input))conflict();
@@ -244,7 +244,7 @@ export async function readTextPublicationOperation(state,actor,operation,value){
 // CAS the expected revisions, and commit all effects together. No such adapter
 // is enabled here. Failure before this function returns leaves state untouched.
 export async function planTextPublication(state,actor,operation,value,{now,snapshot_id=null}={}){
-  const input=command(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
+  const input=textCommand(operation,value),who={...exact(actor,['uid','sid'])},s=await checkedState(state),a=actorFor(s,who);
   if(!revision(now))deny('INVALID_INPUT',400);
   const hash=await requestDigest(operation,input),prior=priorFor(s,a,operation,input);
   if(prior){

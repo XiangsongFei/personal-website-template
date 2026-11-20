@@ -17,7 +17,7 @@ test('same R3 verifier suite in pinned workerd, with zero listeners and denied o
   const lock = JSON.parse(readFileSync(join(root,'package-lock.json')));
   assert.equal(JSON.parse(readFileSync(join(installed,'package.json'))).version,lock.packages['node_modules/workerd'].version);
   const tmp = await mkdtemp(join(tmpdir(),'s33-r3-workerd-'));
-  const files=['tests/s3/r3-verifier.test.mjs',...['r3-verifier','private-rpc','r3-intent-ledger','r3-intent-object','identity','protocol','binding'].map(x=>'lib/business/'+x+'.mjs'),...['binding','test-proof','verifier','ledger'].map(x=>'tests/s3/fixtures/'+x+'.mjs')];
+  const files=['tests/s3/r3-verifier.test.mjs',...['r3-verifier','private-rpc','r3-intent-ledger','r3-intent-object','identity','protocol','binding','text-publication'].map(x=>'lib/business/'+x+'.mjs'),...['binding','test-proof','verifier','ledger'].map(x=>'tests/s3/fixtures/'+x+'.mjs')];
   try {
     for (const file of files) {
       await mkdir(dirname(join(tmp,file)),{ recursive:true });await copyFile(join(root,file),join(tmp,file));
