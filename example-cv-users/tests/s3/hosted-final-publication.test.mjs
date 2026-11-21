@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ownerFixtureSql,verifyDomainRestoration} from '../../scripts/s36-hosted/hosted-final-publication.mjs';
+import {ownerFixtureSql,runHttpsContrast,verifyDomainRestoration} from '../../scripts/s36-hosted/hosted-final-publication.mjs';
 import {bindR24} from '../../scripts/s36-hosted/r24-plan.mjs';
 
 const id=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -43,4 +43,29 @@ test('restore allows audit timestamp advance only, preserving domain state and i
   verifyDomainRestoration([before],[after]);
   assert.throws(()=>verifyDomainRestoration([before],[{...after,state:'active'}]));
   assert.throws(()=>verifyDomainRestoration([before],[{...after,id:id(5)}]));
+});
+
+test('both open-gate HTTPS preflights precede dispatch; each publish is followed by an immediate content check',async()=>{
+ const steps=[];
+ const hooks={publication:async label=>steps.push(label),afterPreflight:()=>steps.push('admitted'),
+   readHttp:async(name,stage,state)=>{
+     steps.push([name,stage,state]);
+     return {snapshotId:name,projectionSha256:name,bodySha256:name};
+   }};
+ await runHttpsContrast(hooks);
+ assert.deepEqual(steps,[['alice','preflight','unpublished'],['bob','preflight','unpublished'],'admitted',
+   'alicePublish',['alice','published','published'],'bobPublish',['bob','published','published'],
+   ['alice','both-published','published'],'aliceWithdraw',['alice','withdrawn','unpublished'],
+   'bobWithdraw',['bob','withdrawn','unpublished']]);
+});
+
+test('a failed preflight dispatches no publication, and a failed content check prevents the next publish',async()=>{
+ for(const stage of ['preflight','published']) {
+   const dispatched=[];
+   await assert.rejects(runHttpsContrast({publication:async label=>dispatched.push(label),afterPreflight:()=>{},
+     readHttp:async(name,phase)=>{
+       if(phase===stage&&(stage==='published'||name==='bob')) throw Error('HTTPS_NOT_VERIFIED');
+     }}),/HTTPS_NOT_VERIFIED/);
+   assert.deepEqual(dispatched,stage==='preflight'?[]:['alicePublish']);
+ }
 });

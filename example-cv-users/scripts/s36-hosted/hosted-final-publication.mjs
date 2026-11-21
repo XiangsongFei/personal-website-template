@@ -17,7 +17,7 @@ import {createRegistrar} from './database.mjs';
 import {hostedScope} from './identity.mjs';
 import {privateTransport} from './transport.mjs';
 import {issueGrant,generation,writeOnce} from './r3.mjs';
-import {runPublicProbe,verifyPublicProbeMaterial} from './hosted-public-http-probe.mjs';
+import {runPublicProbe,startPublicProbe,verifyPublicProbeMaterial} from './hosted-public-http-probe.mjs';
 import {configuration,connectionScope,privateFile,publicationProject} from './target.mjs';
 
 const read=path=>JSON.parse(privateFile(path));
@@ -155,7 +155,24 @@ export function verifyPublicationDelta(before,after,actor,operation,input,result
  for(const key of ['domains','members','drafts','site_total','user_total','acl']) assert.deepEqual(after[key],before[key],key);
 }
 
-async function runBatch(dir,psql,manifestHash,native) {
+export async function runHttpsContrast({publication,readHttp,afterPreflight}) {
+ for(const name of actorNames) await readHttp(name,'preflight','unpublished');
+ afterPreflight();
+ const positive=[];
+ for(const name of actorNames) {
+   await publication(name+'Publish');
+   positive.push(await readHttp(name,'published','published'));
+ }
+ assert.notEqual(positive[0].projectionSha256,positive[1].projectionSha256);
+ assert.notEqual(positive[0].snapshotId,positive[1].snapshotId);
+ assert.equal((await readHttp('alice','both-published','published')).bodySha256,positive[0].bodySha256);
+ for(const name of actorNames) {
+   await publication(name+'Withdraw');
+   await readHttp(name,'withdrawn','unpublished');
+ }
+}
+
+async function runBatch(dir,psql,manifestHash,native,contrast) {
  assert.ok(isAbsolute(dir)&&isAbsolute(psql)&&isAbsolute(native));
  const material=name=>join(dir,'private',name+'.json');
  const journal=join(dir,'journal');
@@ -166,13 +183,14 @@ async function runBatch(dir,psql,manifestHash,native) {
  assert.equal(sha(planBytes),manifestHash);
  const plan=exact(JSON.parse(planBytes),['project','baselineSha256','sourceManifestSha256','requests']);
  assert.equal(plan.project,publicationProject);
- exact(plan.requests,names);
- assert.ok(Object.values(plan.requests).every(uuid)&&new Set(Object.values(plan.requests)).size===names.length);
+ const requestNames=contrast?names.filter(name=>name!=='ownerProbe'):names;
+ exact(plan.requests,requestNames);
+ assert.ok(Object.values(plan.requests).every(uuid)&&new Set(Object.values(plan.requests)).size===requestNames.length);
  const baselineFile=privateFile(join(dir,'baseline.json'));
  assert.equal(sha(baselineFile),plan.baselineSha256);
  const baseline=JSON.parse(baselineFile);
  assert.deepEqual(baseline.acl,[false,false]);
- assert.equal(baseline.outbox.length,5);
+ assert.equal(baseline.outbox.length,contrast?9:5);
  assert.equal(baseline.site_total,2);
  assert.equal(baseline.user_total,2);
  assert.ok(baseline.operations.every(x=>!Object.values(plan.requests).includes(x.request_id)));
@@ -239,21 +257,23 @@ async function runBatch(dir,psql,manifestHash,native) {
  }
  const {alice,bob}=actors;
  assert.notEqual(alice.sid,bob.sid);
- const fixtureSql=ownerFixtureSql({target:alice.site,uid:alice.uid,sid:alice.sid,requestKey:plan.requests.ownerProbe});
+ const fixtureSql=contrast?null:ownerFixtureSql({target:alice.site,uid:alice.uid,sid:alice.sid,requestKey:plan.requests.ownerProbe});
  const stamp=Math.floor(Date.now()/1000);
  const keyCandidate={project:fixture.project,id:'s36-final-'+randomBytes(6).toString('hex'),keyHex:randomBytes(32).toString('hex'),
    notBefore:stamp-5,signUntil:stamp+480,verifyUntil:stamp+540};
  const signing=await generation(fixture.project,keyCandidate);
- const snapshot=baseline.snapshots.find(x=>x.site_id===alice.site&&x.source_draft_revision===4);
- assert.ok(uuid(snapshot?.id));
- const versions={alice:{draft:5,before:5},bob:{draft:0,before:0}};
+ const versions={alice:{draft:5,before:contrast?7:5,snapshotDraft:4},bob:{draft:0,before:contrast?2:0,snapshotDraft:0}};
  const inputs={};
  for(const [name,actor] of Object.entries(actors)) {
    const v=versions[name];
-   assert.deepEqual([baseline.sites.find(s=>s.id===actor.site).draft_revision,
-     baseline.sites.find(s=>s.id===actor.site).publication.publication_revision],[v.draft,v.before]);
+   const site=baseline.sites.find(s=>s.id===actor.site);
+   assert.deepEqual([site.draft_revision,site.publication.publication_revision],[v.draft,v.before]);
+   assert.deepEqual([site.publication.state,site.publication.snapshot_id],['unpublished',null]);
+   const snapshots=baseline.snapshots.filter(x=>x.site_id===actor.site&&x.source_draft_revision===v.snapshotDraft);
+   const reuse=name==='alice'||contrast;
+   if(reuse) assert.ok(snapshots.length===1&&uuid(snapshots[0].id));
    inputs[name+'Publish']=textCommand('publish_site',{schema_version:1,request_id:plan.requests[name+'Publish'],
-     expected_draft_revision:v.draft,expected_publication_revision:v.before,snapshot_id:name==='alice'?snapshot.id:null});
+     expected_draft_revision:v.draft,expected_publication_revision:v.before,snapshot_id:reuse?snapshots[0].id:null});
    inputs[name+'Withdraw']=textCommand('unpublish_site',{schema_version:1,request_id:plan.requests[name+'Withdraw'],
      expected_publication_revision:v.before+1});
  }
@@ -285,7 +305,24 @@ async function runBatch(dir,psql,manifestHash,native) {
  ${release}`;
  const sent=new Set();
  const published=new Set();
- let previous=baseline, ownerAttempted=false, generationAttempted=false, publicAttempted=false;
+ let previous=baseline, ownerAttempted=false, generationAttempted=false, publicAttempted=false, completed=false, http=null;
+ function findOperation(readback,label,actor) {
+   const operation=label.endsWith('Publish')?'publish_site':'unpublish_site';
+   const input=inputs[label];
+   const match=readback.operations.find(row=>row.site_id===actor.site&&row.request_id===input.request_id&&row.operation===operation);
+   if(match) assert.deepEqual([match.actor_auth_user_id,match.actor_session_id,match.canonical_request],
+     [actor.uid,actor.sid,JSON.stringify({operation,...input})]);
+   return match;
+ }
+ async function readHttp(name,stage,expectedState) {
+   assert.equal(previous.sites.find(row=>row.id===actors[name].site).publication.state,expectedState);
+   const label='http-'+stage+'-'+name;
+   const readGate=guards(label+'-gate');
+   assert.deepEqual(readGate,{gate:true,fixture:false,delete:false,policy:false});
+   const evidence=await http.probeSite(actors[name].site,previous,label);
+   receipt(label,{...evidence,publicReadGate:readGate.gate,site:actors[name].site});
+   return evidence;
+ }
  async function publication(label) {
    assert.ok(!sent.has(label));
    const actor=label.startsWith('alice')?alice:bob;
@@ -305,8 +342,7 @@ async function runBatch(dir,psql,manifestHash,native) {
      result=match.result;
    }
    const after=observe(label+'-independent');
-   const matched=after.operations.find(row=>row.site_id===actor.site&&row.request_id===input.request_id&&
-      row.operation===operation&&row.actor_auth_user_id===actor.uid&&row.actor_session_id===actor.sid);
+   const matched=findOperation(after,label,actor);
    assert.deepEqual(matched?.result,result);
    assert.deepEqual(after.sites.find(row=>row.id===actor.site)?.publication,result.publication);
    const before=previous;
@@ -329,10 +365,13 @@ async function runBatch(dir,psql,manifestHash,native) {
    INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
      VALUES('${signing.id}',to_timestamp(${signing.notBefore}),to_timestamp(${signing.signUntil}),to_timestamp(${signing.verifyUntil}));
    ${generationRelease}`);
-   ownerAttempted=true;
-   receipt('owner-fixture-bind',{site:alice.site,uid:alice.uid,sid:alice.sid,requestKey:plan.requests.ownerProbe,bodySha256:fixtureSql.bodySha256});
-   change('owner-fixture-install',fixtureSql.install);
-   launch('postgrest','./postgrest.mjs',[material('alice-connection'),material('postgrest-material'),native,'--owner-fixture-rollback']);
+   if(!contrast) {
+     ownerAttempted=true;
+     receipt('owner-fixture-bind',{site:alice.site,uid:alice.uid,sid:alice.sid,requestKey:plan.requests.ownerProbe,bodySha256:fixtureSql.bodySha256});
+     change('owner-fixture-install',fixtureSql.install);
+   }
+   launch('postgrest','./postgrest.mjs',[material('alice-connection'),material('postgrest-material'),native,
+     ...(contrast?[]:['--owner-fixture-rollback'])]);
    await waitFor(()=>existsSync(socketPath));
    await assertPrivateSocket(alice.binding,{uid:process.getuid(),gid:process.getgid()});
    for(const name of actorNames) {
@@ -344,31 +383,42 @@ async function runBatch(dir,psql,manifestHash,native) {
      receipt(name+'-grant',granted);
      assert.equal((await actor.service.introduction(actor.login.handle,actor.site)).draft_revision,versions[name].draft);
    }
-   try {
-     const token=withCredential(alice.login.handle,x=>x);
-     const wire=await apiBySocket(socketPath,token,{target:alice.site,request_key:plan.requests.ownerProbe});
-     receipt('owner-fixture-http',wire);
-     assert.deepEqual(wire,{status:200,preference:'tx=rollback',body:{request_key:plan.requests.ownerProbe,same_transaction:true,missing_row_count:1,
-       rpc_sqlstate:'42501',rpc_denial:'BUSINESS_DENIED',restored:true,draft_revision:5}});
-   } catch(error) {
-     receipt('owner-fixture-stop',{code:error?.code??null});
-   } finally {
-     change('owner-fixture-remove',fixtureSql.remove);
-     ownerAttempted=false;
-     assert.deepEqual(guards('owner-close'),{gate:false,fixture:false,delete:false,policy:false});
-     assert.deepEqual(observe('after-owner'),baseline);
-     assert.equal((await alice.service.introduction(alice.login.handle,alice.site)).draft_revision,5);
+   if(!contrast) {
+     try {
+       const token=withCredential(alice.login.handle,x=>x);
+       const wire=await apiBySocket(socketPath,token,{target:alice.site,request_key:plan.requests.ownerProbe});
+       receipt('owner-fixture-http',wire);
+       assert.deepEqual(wire,{status:200,preference:'tx=rollback',body:{request_key:plan.requests.ownerProbe,same_transaction:true,missing_row_count:1,
+         rpc_sqlstate:'42501',rpc_denial:'BUSINESS_DENIED',restored:true,draft_revision:5}});
+     } catch(error) {
+       receipt('owner-fixture-stop',{code:error?.code??null});
+     } finally {
+       change('owner-fixture-remove',fixtureSql.remove);
+       ownerAttempted=false;
+       assert.deepEqual(guards('owner-close'),{gate:false,fixture:false,delete:false,policy:false});
+       assert.deepEqual(observe('after-owner'),baseline);
+       assert.equal((await alice.service.introduction(alice.login.handle,alice.site)).draft_revision,5);
+     }
+   } else {
+     http=await startPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,baseline,'https-lifecycle',7);
    }
    publicAttempted=true;
    change('publication-open',openPublic);
    previous=observe('publication-open-readback');
    assert.deepEqual(previous.acl,[true,true]);
-   await publication('alicePublish');
-   await publication('bobPublish');
-   await runPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,previous,'http-both-published');
-   await publication('aliceWithdraw');
-   await publication('bobWithdraw');
-   await runPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,previous,'http-both-withdrawn');
+   if(contrast) {
+     assert.deepEqual({...previous,acl:baseline.acl,domains:baseline.domains},baseline);
+     await runHttpsContrast({publication,readHttp,afterPreflight:()=>
+       receipt('https-preflight-complete',{bothUnpublished:true,publicReadGate:true,publicationAcl:previous.acl})});
+   } else {
+     await publication('alicePublish');
+     await publication('bobPublish');
+     await runPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,previous,'http-both-published');
+     await publication('aliceWithdraw');
+     await publication('bobWithdraw');
+     await runPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,previous,'http-both-withdrawn');
+   }
+   completed=true;
    receipt('public-run-complete',{requests:sent.size,published:published.size});
  } catch(error) {
    receipt('publication-phase-stop',{code:error?.code??null,requests:sent.size});
@@ -378,33 +428,67 @@ async function runBatch(dir,psql,manifestHash,native) {
      try {
        if(ownerAttempted&&guards('owner-uncertain-state').fixture) change('owner-fallback-remove',fixtureSql.remove);
        if(publicAttempted) {
-         // Only known committed publish results authorize a still-unsent withdrawal.
+         if(contrast&&sent.size>0&&(sent.size<4||published.size>0)) {
+           const independent=observe('cleanup-current');
+           for(const name of actorNames) {
+             const actor=actors[name];
+             if(!sent.has(name+'Publish')||sent.has(name+'Withdraw')) continue;
+             const match=findOperation(independent,name+'Publish',actor);
+             const pointer=independent.sites.find(row=>row.id===actor.site).publication;
+             if(match&&pointer.state==='published'&&pointer.publication_revision===versions[name].before+1) {
+               assert.deepEqual(match.result.publication,pointer);
+               published.add(name);
+             }
+           }
+           previous=independent;
+         }
          for(const name of published) if(!sent.has(name+'Withdraw')) await publication(name+'Withdraw');
        }
      } finally {
-       if(publicAttempted) change('publication-close',closePublic);
-       if(generationAttempted) change('generation-revoke',`${generationAcl}
-         UPDATE site_private.proof_generations SET revoked_at=clock_timestamp() WHERE key_id='${signing.id}' AND revoked_at IS NULL;
-         ${generationRelease}`);
+       try {if(publicAttempted) change('publication-close',closePublic);}
+       finally {
+         if(generationAttempted) change('generation-revoke',`${generationAcl}
+           UPDATE site_private.proof_generations SET revoked_at=clock_timestamp() WHERE key_id='${signing.id}' AND revoked_at IS NULL;
+           ${generationRelease}`);
+       }
        assert.deepEqual(guards('final-guards'),{gate:false,fixture:false,delete:false,policy:false});
        const final=observe('publication-final');
        assert.deepEqual(final.acl,[false,false]);
        verifyDomainRestoration(baseline.domains,final.domains);
+       if(contrast) {
+         assert.ok(final.sites.every(row=>row.publication.state==='unpublished'&&row.publication.snapshot_id===null));
+         assert.deepEqual(final.outbox.filter(row=>baseline.outbox.some(old=>old.id===row.id)),baseline.outbox);
+         assert.deepEqual(final.snapshots,baseline.snapshots);
+         const newEvents=final.outbox.filter(row=>!baseline.outbox.some(old=>old.id===row.id));
+         assert.ok(newEvents.every(row=>row.state==='pending'&&row.attempt_count===0&&row.lease_generation===0));
+         if(completed) {
+           assert.deepEqual(final.outbox,previous.outbox);
+           assert.deepEqual([final.operations.length-baseline.operations.length,final.history.length-baseline.history.length,
+             final.audits.length-baseline.audits.length,newEvents.length],[4,4,4,4]);
+           assert.deepEqual(actorNames.map(name=>{
+             const row=final.sites.find(site=>site.id===actors[name].site);
+             return [row.draft_revision,row.publication.publication_revision];
+           }),[[5,9],[0,4]]);
+         }
+       }
      }
    } finally {
-     for(const {process:local} of pids) if(local.exitCode===null&&local.signalCode===null) local.kill('SIGTERM');
-     for(const local of pids)
-       await Promise.race([new Promise(yes=>{if(local.process.exitCode!==null||local.process.signalCode!==null) yes();else local.process.once('exit',yes);}),sleep(7000)]);
-     receipt('local-stop',pids.map(x=>({name:x.name,pid:x.process.pid,exit:x.process.exitCode,signal:x.process.signalCode})));
-     assert.ok(pids.every(x=>x.process.exitCode!==null||x.process.signalCode!==null));
+     try {if(http) await http.close();}
+     finally {
+       for(const {process:local} of pids) if(local.exitCode===null&&local.signalCode===null) local.kill('SIGTERM');
+       for(const local of pids)
+         await Promise.race([new Promise(yes=>{if(local.process.exitCode!==null||local.process.signalCode!==null) yes();else local.process.once('exit',yes);}),sleep(7000)]);
+       receipt('local-stop',pids.map(x=>({name:x.name,pid:x.process.pid,exit:x.process.exitCode,signal:x.process.signalCode})));
+       assert.ok(pids.every(x=>x.process.exitCode!==null||x.process.signalCode!==null));
+     }
    }
  }
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  const [mode,dir,psql,hash,native]=process.argv.slice(2);
- assert.equal(mode,'--execute-approved');
- runBatch(dir,psql,hash,native).catch(error=>{
+ assert.ok(['--execute-approved','--execute-https-contrast'].includes(mode));
+ runBatch(dir,psql,hash,native,mode==='--execute-https-contrast').catch(error=>{
    console.error(JSON.stringify({status:'S36_FINAL_PUBLICATION_STOP',code:error?.code??null,
      phase:error?.message?.match(/^[a-zA-Z0-9_-]{2,60}$/)?.[0]??null,
      line:String(error?.stack).match(/hosted-final-publication\.mjs:(\d+):/)?.[1]??null}));

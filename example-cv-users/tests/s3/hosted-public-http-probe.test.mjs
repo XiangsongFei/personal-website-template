@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,mkdirSync,realpathSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {hostedRpcReceipt,verifyPublicProbeMaterial} from '../../scripts/s36-hosted/hosted-public-http-probe.mjs';
+import {hostedRpcReceipt,publicProjection,verifyPublicProbeMaterial} from '../../scripts/s36-hosted/hosted-public-http-probe.mjs';
 
 test('public local acceptance permits only an anonymous call to the fixed test project RPC',()=>{
   const url='https://vellypyadcxkvqftsbrg.supabase.co/rest/v1/rpc/read_public_text';
@@ -34,4 +34,20 @@ test('a missing loopback TLS fixture fails preflight before a publication batch 
       bobSite,entry,requestId,expectedDraftRevision:0}),{mode:0o600});
     assert.throws(()=>verifyPublicProbeMaterial(run,manifest,digest(specification)),{code:'ENOENT'});
   } finally {rmSync(run,{recursive:true,force:true});}
+});
+
+test('the public HTTPS contract projects the selected site snapshot and requested locale only',()=>{
+  const pub={state:'published',publication_revision:8,snapshot_id:'selected'};
+  const snapshot={site_id:'alice',id:'selected',digest:'selected-digest',payload:{entries:[
+    {position:2,translations:{en:'Second',zh:'二'}},
+    {position:1,translations:{en:'First'}},
+    {position:3,translations:{zh:'三'}}
+  ]}};
+  const readback={sites:[{id:'alice',publication:pub}],snapshots:[snapshot]};
+  assert.deepEqual(publicProjection(readback,'alice'),{snapshotId:'selected',snapshotDigest:'selected-digest',
+    expected:{schema_version:1,locale:'en',publication_revision:8,entries:[
+      {position:1,text:'First'},{position:2,text:'Second'}
+    ]}});
+  assert.throws(()=>publicProjection({...readback,snapshots:[{...snapshot,site_id:'bob'}]},'alice'));
+  assert.equal(publicProjection({sites:[{id:'alice',publication:{state:'unpublished',snapshot_id:null}}]},'alice'),null);
 });
