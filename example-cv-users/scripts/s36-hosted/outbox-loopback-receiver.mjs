@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:https';
+import {createHash} from 'node:crypto';
+import {join} from 'node:path';
+import {writeOnce} from './r3.mjs';
 import {assertOutboxReceiptBinding,recordOutboxInvalidation} from './outbox-batch-plan.mjs';
 
 export function checkOutboxReceiverPeer({socket,method,url,headers},authority,fingerprint) {
@@ -20,8 +23,9 @@ function respond(response,status,value) {
 }
 
 // Only a future approved worker batch may call listen(). Importing starts nothing.
-export function isolatedOutboxReceiver({plan,journal,origin,tls,fingerprint}) {
+export function isolatedOutboxReceiver({plan,journal,origin,tls,fingerprint,interruptAfterReceive=false}) {
   assertOutboxReceiptBinding(plan,journal);
+  if(interruptAfterReceive) assert.ok(plan.mode==='reply-loss-after-durable-receive'&&plan.events.length===1);
   const parsed=new URL(origin);
   assert.equal(parsed.origin,origin);
   assert.equal(parsed.protocol,'https:');
@@ -43,8 +47,17 @@ export function isolatedOutboxReceiver({plan,journal,origin,tls,fingerprint}) {
         parts.push(chunk);
       }
       if(res.destroyed||!req.complete) return;
-      const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));
+      const bytes=Buffer.concat(parts);
+      const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
       const receipt=recordOutboxInvalidation(plan,journal,value,req.headers['idempotency-key']);
+      if(interruptAfterReceive) {
+        assert.equal(receipt.duplicate,false);
+        const [,owner,token]=plan.events[0].actions[0].values;
+        writeOnce(join(journal,'receiver-reply-interrupted.json'),{...value,
+          bodySha256:createHash('sha256').update(bytes).digest('hex'),owner,token,generation:1,interruptedBeforeResponse:true});
+        res.destroy();
+        return;
+      }
       respond(res,200,receipt);
     } catch {
       // A lost receipt remains ambiguous for the sender. Do not promise non-delivery.

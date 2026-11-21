@@ -3,13 +3,14 @@ import {lstatSync,realpathSync} from 'node:fs';
 import {isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolve,dirname} from 'node:path';
-import {connectionScope,privateFile} from './target.mjs';
+import {connectionScope,privateFile,publicationProject} from './target.mjs';
 import {databaseOptions,apiRole} from './database.mjs';
 import {createHostedBinding,businessBinding} from './compat/binding.mjs';
 import {exact} from '../../lib/business/protocol.mjs';
 
-export function nativeEnvironment(scope, material, jwks) {
+export function nativeEnvironment(scope, material, jwks, rollbackOverride=false) {
   exact(material,['database','socketPath','caFile']);
+  if(rollbackOverride && scope.project!==publicationProject) throw new Error('POSTGREST_ROLLBACK_SCOPE');
   const binding=businessBinding(createHostedBinding(scope,material.socketPath));
   const db=databaseOptions(scope.project,material.database,apiRole);
   if (!isAbsolute(material.caFile) || realpathSync(material.caFile)!==material.caFile ||
@@ -29,15 +30,15 @@ export function nativeEnvironment(scope, material, jwks) {
   uri.password=db.password;
   for(const [k,v] of Object.entries({sslmode:'verify-full',sslrootcert:material.caFile,connect_timeout:'5'}))
     uri.searchParams.set(k,v);
-  return {PATH:'/usr/bin:/bin',LANG:'C',PGRST_DB_URI:uri.href,PGRST_DB_SCHEMAS:'site_api',
+  return {...(rollbackOverride?{PGRST_DB_TX_END:'commit-allow-override'}:{}),PATH:'/usr/bin:/bin',LANG:'C',PGRST_DB_URI:uri.href,PGRST_DB_SCHEMAS:'site_api',
     PGRST_DB_CONFIG:'false',PGRST_DB_CHANNEL_ENABLED:'false',PGRST_DB_POOL:'2',
     PGRST_OPENAPI_MODE:'disabled',PGRST_JWT_AUD:'authenticated',PGRST_JWT_SECRET:JSON.stringify(jwks),
     PGRST_SERVER_UNIX_SOCKET:binding.socketPath,PGRST_SERVER_UNIX_SOCKET_MODE:'660',PGRST_LOG_LEVEL:'crit'};
 }
 
 async function main() {
-  const [configurationPath,materialPath,binary]=process.argv.slice(2);
-  if (process.argv.length!==5 || !isAbsolute(binary)) throw new Error('POSTGREST_BIN_REQUIRED');
+  const [configurationPath,materialPath,binary,override]=process.argv.slice(2);
+  if ((process.argv.length!==5 && (process.argv.length!==6 || override!=='--owner-fixture-rollback')) || !isAbsolute(binary)) throw new Error('POSTGREST_BIN_REQUIRED');
   const scope=connectionScope(JSON.parse(privateFile(configurationPath)));
   const material=JSON.parse(privateFile(materialPath));
   // Read the reviewed JWKS from the one approved project's Auth endpoint.
@@ -56,7 +57,7 @@ async function main() {
     }
   } finally {await stream.cancel();}
   const jwks=JSON.parse(Buffer.concat(chunks));
-  const env=nativeEnvironment(scope,material,jwks);
+  const env=nativeEnvironment(scope,material,jwks,override==='--owner-fixture-rollback');
   // Keep the password out of argv and child diagnostics.
   const child=spawn(binary,[],{env,stdio:'ignore'});
   for(const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>child.kill(signal));

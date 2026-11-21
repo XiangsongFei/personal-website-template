@@ -35,7 +35,7 @@ export async function generation(project,value) {
 export function issueGrant(options) { return submitGrant({...options,handle:options.login?.handle,action:'issue'}); }
 export function revokeGrant(options) { return submitGrant({...options,action:'revoke'}); }
 
-async function submitGrant({binding,identity,login,handle=login?.handle,approval,key,registrar,repository,journalDir,action,
+async function submitGrant({binding,identity,login,handle=login?.handle,approval,key,registrar,repository,journalDir,action,expectedEpoch=0,
   clock=()=>Math.floor(Date.now()/1000)}) {
   const scope=businessBinding(binding);
   if (!scope) deny('NOT_CONFIGURED',503);
@@ -46,7 +46,7 @@ async function submitGrant({binding,identity,login,handle=login?.handle,approval
   exact(approval,['uid','proofId','epoch','validFrom','expiresAt']);
   const now=clock();
   if ((issuing && loginContext(receipt).handle!==handle) || approval.uid!==who.uid || !uuid(approval.proofId) ||
-      approval.epoch!==0 || ![approval.validFrom,approval.expiresAt,now].every(Number.isSafeInteger) ||
+      !Number.isSafeInteger(expectedEpoch) || expectedEpoch<0 || approval.epoch!==expectedEpoch || ![approval.validFrom,approval.expiresAt,now].every(Number.isSafeInteger) ||
       !(approval.validFrom<=now && now<approval.expiresAt && approval.expiresAt-approval.validFrom<=1800) ||
       key.project!==project || key.revoked!==false || !(key.notBefore<=now && now<key.signUntil))
     deny('INVALID_INTENT');

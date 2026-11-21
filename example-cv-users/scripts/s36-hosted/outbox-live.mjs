@@ -61,7 +61,7 @@ export function checkEventInventory(plan,rows,recorded) {
   }
 }
 
-async function main(run,psql,hash) {
+async function main(run,psql,hash,replyLoss=false) {
   assert.ok(isAbsolute(run)&&isAbsolute(psql));
   const suffix=run.match(/\/hosted-outbox-live\.([A-Za-z0-9]{8})$/)?.[1].toLowerCase();
   assert.ok(suffix);
@@ -71,7 +71,16 @@ async function main(run,psql,hash) {
   const plan=admitOutboxPlan(join(run,'live-plan.json'),hash);
   const expected=read(join(run,'baseline.json'));
   assert.equal(sha(JSON.stringify(expected)),plan.sourceSha256);
-  assert.equal(plan.workerCallLimit,30);
+  const callLimit=replyLoss?7:30;
+  assert.equal(plan.workerCallLimit,callLimit);
+  if(replyLoss) {
+    assert.equal(plan.mode,'reply-loss-after-durable-receive');
+    assert.equal(expected.outbox.length,9);
+    assert.equal(plan.events.length,1);
+    assert.equal(plan.events[0].publication_revision,7);
+    assert.equal(plan.events[0].event_type,'unpublished');
+    assert.deepEqual(plan.expectedPointer,{publication_revision:7,state:'unpublished'});
+  }
   assert.equal(plan.workerConnectionLimit,2);
   assert.equal(plan.egressLimit,1);
   const transport=read(join(run,'private','receiver.json'));
@@ -109,7 +118,8 @@ async function main(run,psql,hash) {
   assert.equal(initial.outbox_enabled,false);
   assert.equal(initial.worker_edges,1);
   assert.deepEqual(initial.sessions,[]);
-  assert.deepEqual(initial.events,[...expected.outbox].sort((a,b)=>a.publication_revision-b.publication_revision));
+  const byId=rows=>[...rows].sort((a,b)=>a.id.localeCompare(b.id));
+  assert.deepEqual(byId(initial.events),byId(expected.outbox));
 
   const {Client}=await import('pg');
   const clients=[];
@@ -118,8 +128,8 @@ async function main(run,psql,hash) {
     ssl:{ca,servername:host,rejectUnauthorized:true,minVersion:'TLSv1.3',
       checkServerIdentity:(_,certificate)=>checkServerIdentity(host,certificate)},
     connectionTimeoutMillis:8000,query_timeout:8000,application_name:'s36-outbox-'+suffix};
-  const receiver=isolatedOutboxReceiver({plan,journal,origin:transport.origin,tls:transport.server,fingerprint:transport.fingerprint});
-  let created=false,listening=false,calls=0,egress=0;
+  const receiver=isolatedOutboxReceiver({plan,journal,origin:transport.origin,tls:transport.server,fingerprint:transport.fingerprint,interruptAfterReceive:replyLoss});
+  let created=false,listening=false,calls=0,egress=0,verifiedReplyLoss=false;
   const last=new Map(),terminal=new Map();
   const deadline=performance.now()+180000;
   const sendOnce=async (event,attempt)=>{
@@ -132,9 +142,26 @@ async function main(run,psql,hash) {
     const binding={...input,bodySha256:sha(body),owner:attempt.lease_owner,token:attempt.lease_token,generation:attempt.lease_generation};
     record('egress-dispatch',binding);
     egress++;
-    const response=await privateTransport(transport.origin,transport.client).fetch(transport.origin+'/invalidate',{
+    const send=()=>privateTransport(transport.origin,transport.client).fetch(transport.origin+'/invalidate',{
       method:'POST',redirect:'manual',signal:AbortSignal.timeout(2000),
       headers:{'Content-Type':'application/json','Idempotency-Key':event.event_id},body});
+    if(replyLoss) {
+      try {
+        const response=await send();
+        record('r24-unexpected-response',{status:response.status});
+        await response.body?.cancel();
+      } catch(error) {
+        record('r24-sender-no-reply',{event_id:event.event_id,code:error?.code??error?.name});
+        try {
+          assert.equal(error?.code,'ECONNRESET');
+          assert.deepEqual(read(join(journal,'invalidate-'+event.event_id+'.json')),input);
+          assert.deepEqual(read(join(journal,'receiver-reply-interrupted.json')),{...binding,interruptedBeforeResponse:true});
+          verifiedReplyLoss=true;
+        } catch { /* The started attempt must still enter UNKNOWN, without another send. */ }
+      }
+      return;
+    }
+    const response=await send();
     assert.equal(response.status,200);
     assert.deepEqual(await response.json(),{accepted:true,duplicate:false});
     const received=read(join(journal,'invalidate-'+event.event_id+'.json'));
@@ -152,7 +179,7 @@ async function main(run,psql,hash) {
       assert.ok(delay<=1700);
       await sleep(delay);
     }
-    assert.ok(performance.now()<deadline&&calls<30);
+    assert.ok(performance.now()<deadline&&calls<callLimit);
     const client=clients[clientIndex];
     const label='rev'+event.publication_revision+'-'+String(index+1).padStart(2,'0');
     const args=action.values;
@@ -261,18 +288,26 @@ async function main(run,psql,hash) {
         const reply=await dispatch(event,index,action.method==='read'?1:0,winner);
         if(reply.discarded) continue; // only the exact next read may reconcile this event
         accept(event,index,reply,winner);
-        if(action.egressAfterRollback===1) await sendOnce(event,last.get(event.event_id));
+        if(action.egressAfterRollback===1||replyLoss&&action.egressAfterCommit===1)
+          await sendOnce(event,last.get(event.event_id));
       }
       const row=last.get(event.event_id);
       const expectedStates=['superseded','failed','unknown','superseded','delivered'];
-      assert.equal(row.state,expectedStates[event.publication_revision-1]);
+      assert.equal(row.state,replyLoss?'unknown':expectedStates[event.publication_revision-1]);
       assert.equal(row.attempt_count,event.publication_revision===2?3:1);
       terminal.set(event.event_id,row);
       const independent=observe('after-revision-'+event.publication_revision);
       assert.equal(independent.outbox_enabled,true);
-      checkEventInventory(plan,independent.events,terminal);
+      if(replyLoss) {
+        const id=event.event_id;
+        assert.deepEqual(byId(independent.events.filter(x=>x.id!==id)),byId(expected.outbox.filter(x=>x.id!==id)));
+        const found=independent.events.find(x=>x.id===id);
+        assert.deepEqual([found.state,found.attempt_count,found.lease_generation,found.lease_owner,found.lease_token,found.last_code],
+          ['unknown',1,1,row.lease_owner,row.lease_token,'DELIVERY_UNKNOWN']);
+      } else checkEventInventory(plan,independent.events,terminal);
     }
-    assert.deepEqual([calls,egress],[30,1]);
+    assert.deepEqual([calls,egress],[callLimit,1]);
+    if(replyLoss) assert.equal(verifiedReplyLoss,true);
     record('run-complete',{calls,egress,terminal:[...terminal.values()].map(x=>({revision:x.publication_revision,state:x.state,attempts:x.attempt_count}))});
   } finally {
     try {await Promise.allSettled(clients.map(client=>client.end()));}
@@ -308,13 +343,13 @@ async function main(run,psql,hash) {
       if(closeReceiverError) throw closeReceiverError;
     }
   }
-  console.log(JSON.stringify({status:'HOSTED_OUTBOX_REAL_PASS',calls,egress}));
+  console.log(JSON.stringify({status:replyLoss?'HOSTED_R24_REAL_REPLY_LOSS_PASS':'HOSTED_OUTBOX_REAL_PASS',calls,egress}));
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const [flag,run,psql,hash]=process.argv.slice(2);
-  assert.equal(flag,'--execute-approved');
-  main(run,psql,hash).catch(error=>{
+  assert.ok(['--execute-approved','--execute-r24'].includes(flag));
+  main(run,psql,hash,flag==='--execute-r24').catch(error=>{
     console.error(error?.code??(error?.message?.match(/^[a-z-]+-SQL$/)?.[0])??'HOSTED_OUTBOX_STOP');
     process.exitCode=1;
   });

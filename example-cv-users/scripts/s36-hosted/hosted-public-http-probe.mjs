@@ -27,7 +27,7 @@ export function hostedRpcReceipt(url,init,projectKey,allowedHosts) {
   return args;
 }
 
-async function main(run,manifestPath,manifestHash) {
+export async function runPublicProbe(run,manifestPath,manifestHash,fixtureReadback=null,label='public-http-receipt') {
   const manifest=privateFile(manifestPath);
   assert.equal(sha(manifest),manifestHash);
   const {files,workerModule,bindingModule}=JSON.parse(manifest);
@@ -40,7 +40,7 @@ async function main(run,manifestPath,manifestHash) {
   const {createBusinessBinding}=await import(pathToFileURL(bindingModule));
   const config=configuration(read(join(run,'private','fixture.json')));
   assert.equal(config.project,publicationProject);
-  const baseline=read(join(run,'baseline.json'));
+  const baseline=fixtureReadback??read(join(run,'baseline.json'));
   const hosts=[config.aliceSite,config.bobSite].map(id=>{
     const domain=baseline.domains.find(row=>row.site_id===id&&row.is_primary&&row.kind==='test');
     assert.ok(hostPattern.test(domain?.hostname_normalized));
@@ -94,16 +94,32 @@ async function main(run,manifestPath,manifestHash) {
         const code=JSON.parse(result.body)?.code;
         assert.equal(result.headers['x-ecv-test-handler'],'frozen-text-publication-candidate');
         assert.equal(result.headers['cache-control'],'no-store');
-        calls.push({name:probe.name,status:result.status,code,upstreamCalls:upstream.length-observed});
-        assert.equal(result.status,404);
-        assert.equal(code,probe.code);
+        calls.push({name:probe.name,status:result.status,code:code??null,upstreamCalls:upstream.length-observed,
+          bodySha256:sha(result.body),expectedPublishedVersion:probe.expected?.publication_revision??null});
+        assert.equal(result.status,probe.expected?200:404);
+        if(probe.expected) assert.deepEqual(JSON.parse(result.body),probe.expected);
+        else assert.equal(code,probe.code);
         assert.equal(upstream.length-observed,probe.rpc?1:0);
-        if(probe.rpc) assert.deepEqual(upstream.at(-1),{args:{hostname:authority,locale:'en'},status:404,code:'PT404'});
+        if(probe.rpc) assert.deepEqual(upstream.at(-1),{args:{hostname:authority,locale:'en'},
+          status:probe.expected?200:404,code:probe.expected?null:'PT404'});
       }
     } finally {await new Promise((yes,no)=>server.close(err=>err?no(err):yes()));}
   }
   try {
     const missing='PUBLICATION_NOT_FOUND';
+    if(fixtureReadback) {
+      for(const [index,id] of [config.aliceSite,config.bobSite].entries()) {
+        const pub=fixtureReadback.sites.find(row=>row.id===id).publication;
+        const snapshot=fixtureReadback.snapshots.find(row=>row.id===pub.snapshot_id&&row.site_id===id);
+        const expected=pub.state==='published'?{
+          schema_version:1,locale:'en',publication_revision:pub.publication_revision,
+          entries:snapshot.payload.entries.filter(e=>Object.hasOwn(e.translations,'en'))
+            .sort((a,b)=>a.position-b.position).map(e=>({position:e.position,text:e.translations.en}))
+        }:null;
+        await vhost(hosts[index],[{name:'current-'+index,path:path+'?locale=en',code:missing,rpc:true,expected}]);
+      }
+      return;
+    }
     await vhost(hosts[0],[
       {name:'known-alice-authority',path:path+'?locale=en',code:missing,rpc:true},
       {name:'old-snapshot-route',path:path+'/'+baseline.snapshots[0].id,code:'NOT_FOUND'},
@@ -114,14 +130,14 @@ async function main(run,manifestPath,manifestHash) {
       {name:'mismatched-host-authority',path:path+'?locale=en',host:hosts[1],code:missing}
     ]);
     await vhost(hosts[1],[{name:'known-bob-authority',path:path+'?locale=en',code:missing,rpc:true}]);
-  } finally {writeOnce(join(run,'public-http-receipt.json'),{calls,upstream,listenersClosed:true,publicationFixtureChanged:false});}
+  } finally {writeOnce(join(run,label+'.json'),{calls,upstream,listenersClosed:true,publicationFixtureChanged:false,stage:label});}
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const [flag,run,manifest,hash]=process.argv.slice(2);
   assert.equal(flag,'--read-only-http');
   assert.ok(isAbsolute(run)&&isAbsolute(manifest));
-  main(run,manifest,hash).catch(error=>{
+  runPublicProbe(run,manifest,hash).catch(error=>{
     const location=String(error?.stack).match(/hosted-public-http-probe\.mjs:(\d+):\d+/)?.[1];
     console.error(JSON.stringify({status:'HOSTED_PUBLIC_HTTP_STOP',code:error?.code??null,line:location??null}));
     process.exitCode=1;
