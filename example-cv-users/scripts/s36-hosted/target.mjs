@@ -1,6 +1,7 @@
 import {readFileSync, openSync, fstatSync, closeSync, constants} from 'node:fs';
 import {exact, uuid} from '../../lib/business/protocol.mjs';
 
+export const publicationProject = 'vellypyadcxkvqftsbrg';
 const excluded = new Set(['tkehttvppaqkybqehjbn','makwjnbubmrmopjhzror']);
 export function isolatedRef(value) {
   if (typeof value !== 'string' || !/^[a-z]{20}$/.test(value) || excluded.has(value))
@@ -13,8 +14,11 @@ export function connectionScope(value) {
   if (!/^sb_publishable_[A-Za-z0-9_-]+$/.test(value.publishableKey) ||
       origin.protocol !== 'https:' || origin.origin !== value.privateOrigin || origin.hostname !== '127.0.0.1' ||
       !origin.port || Number(origin.port)<1024) throw new Error('INVALID_HOSTED_CONNECTION');
+  const {publicationSite}=value;
+  if(publicationSite!==undefined && (project!==publicationProject || !uuid(publicationSite)))
+    throw new Error('INVALID_HOSTED_PUBLICATION_SCOPE');
   return Object.freeze({project,publishableKey:value.publishableKey,privateOrigin:value.privateOrigin,
-    url:'https://' + project + '.supabase.co'});
+    url:'https://' + project + '.supabase.co',...(publicationSite===undefined?{}:{publicationSite})});
 }
 export function configuration(value) {
   exact(value,['project','publishableKey','privateOrigin','alice','bob','aliceSite','bobSite','entry','requestId','expectedDraftRevision']);

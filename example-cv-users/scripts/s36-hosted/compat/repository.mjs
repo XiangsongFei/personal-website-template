@@ -44,18 +44,22 @@ export function createRpcRepository({ binding, enabled = false, project, endpoin
       } catch (e) { if (e instanceof BusinessError) throw e; deny('COMMIT_UNKNOWN', 503); }
     }, timeoutMs));
   }
-  function textArgs(target, value) {
-    const input = textCommand('save_text_draft', value);
-    return {target, input, canonical_request:JSON.stringify({operation:'save_text_draft', ...input})};
+  function textArgs(operation, target, value) {
+    const input = textCommand(operation,value);
+    return {target,input,canonical_request:JSON.stringify({operation,...input})};
   }
+  const readTextOperation=(h,operation,target,value)=>rpc(h,'read_text_publication_operation',
+    {...textArgs(operation,target,value),operation});
   return Object.freeze({
     grant: (h, e) => rpc(h, 'apply_business_grant', { envelope: e }),
     create: (h, p) => rpc(h, 'create_site', { input: p }),
     readOperation: (h, p) => rpc(h, 'read_create_operation', { input: p }),
     mine: h => rpc(h, 'get_my_site', {}),
     readIntroduction: (h, target) => rpc(h, 'read_introduction', { target }),
-    saveTextDraft: (h, target, value) => rpc(h, 'save_text_draft', textArgs(target, value)),
-    readTextDraftOperation: (h, target, value) => rpc(h, 'read_text_publication_operation',
-      {...textArgs(target, value), operation:'save_text_draft'})
+    saveTextDraft: (h,target,value)=>rpc(h,'save_text_draft',textArgs('save_text_draft',target,value)),
+    publish: (h,target,value)=>rpc(h,'publish_site',textArgs('publish_site',target,value)),
+    unpublish: (h,target,value)=>rpc(h,'unpublish_site',textArgs('unpublish_site',target,value)),
+    readTextDraftOperation: (h,target,value)=>readTextOperation(h,'save_text_draft',target,value),
+    readTextOperation
   });
 }
