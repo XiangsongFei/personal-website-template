@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dropSaveReplyOnce} from '../../scripts/s36-hosted/drop-save-reply.mjs';
+import {dropPublicationReplyOnce,dropSaveReplyOnce} from '../../scripts/s36-hosted/drop-save-reply.mjs';
 
 const origin='https://127.0.0.1:9443', target='fixture-site';
 const input={request_id:'reserved-request'};
@@ -36,4 +36,22 @@ test('response-loss transport preserves a real server failure',async()=>{
     origin,target,input,onDiscard:()=>assert.fail('unexpected simulated success'),
   });
   assert.equal(await fault.fetch(save,options),response);
+});
+
+test('publish and withdraw each discard only their own reply and forward only the original readback',async()=>{
+  for(const operation of ['publish_site','unpublish_site']) {
+    const calls=[];
+    const transport={fetch:async url=>{calls.push(url);return new Response('{}',{status:200});}};
+    const fault=dropPublicationReplyOnce(transport,{origin,target,input,onDiscard:()=>{}},operation);
+    const endpoint=origin+'/rpc/'+operation;
+    const read=origin+'/rpc/read_text_publication_operation';
+    const command={target,input,canonical_request:JSON.stringify({operation,...input})};
+    const opts=args=>({method:'POST',body:JSON.stringify(args)});
+    await assert.rejects(()=>fault.fetch(endpoint,opts(command)),/CONTROLLED_TEST_PUBLICATION_REPLY_LOSS/);
+    await assert.rejects(()=>fault.fetch(endpoint,opts(command)),/DUPLICATE_TEST_PUBLICATION_DISPATCH/);
+    await assert.rejects(()=>fault.fetch(read,opts({...command,target:'unbound',operation})),{code:'ERR_ASSERTION'});
+    await fault.fetch(read,opts({...command,operation}));
+    assert.deepEqual(calls,[endpoint,read]);
+  }
+  assert.throws(()=>dropPublicationReplyOnce(null,{},'save_text_draft'),{code:'ERR_ASSERTION'});
 });

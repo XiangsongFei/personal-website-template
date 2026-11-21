@@ -38,7 +38,7 @@ export function nativeEnvironment(scope, material, jwks, rollbackOverride=false)
 
 async function main() {
   const [configurationPath,materialPath,binary,override]=process.argv.slice(2);
-  if ((process.argv.length!==5 && (process.argv.length!==6 || override!=='--owner-fixture-rollback')) || !isAbsolute(binary)) throw new Error('POSTGREST_BIN_REQUIRED');
+  if ((process.argv.length!==5 && (process.argv.length!==6 || !['--owner-fixture-rollback','--boundary-rollback'].includes(override))) || !isAbsolute(binary)) throw new Error('POSTGREST_BIN_REQUIRED');
   const scope=connectionScope(JSON.parse(privateFile(configurationPath)));
   const material=JSON.parse(privateFile(materialPath));
   // Read the reviewed JWKS from the one approved project's Auth endpoint.
@@ -57,7 +57,7 @@ async function main() {
     }
   } finally {await stream.cancel();}
   const jwks=JSON.parse(Buffer.concat(chunks));
-  const env=nativeEnvironment(scope,material,jwks,override==='--owner-fixture-rollback');
+  const env=nativeEnvironment(scope,material,jwks,Boolean(override));
   // Keep the password out of argv and child diagnostics.
   const child=spawn(binary,[],{env,stdio:'ignore'});
   for(const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>child.kill(signal));
