@@ -3,7 +3,11 @@
 BEGIN;
 \ir publication-target.sql
 SELECT set_config('s36_test.alice_uid',:'alice_uid',true) AS alice,
-       set_config('s36_test.bob_uid',:'bob_uid',true) AS bob
+       set_config('s36_test.bob_uid',:'bob_uid',true) AS bob,
+       set_config('s36_test.key_id',:'key_id',true) AS key_id,
+       set_config('s36_test.not_before',:'not_before',true) AS not_before,
+       set_config('s36_test.sign_until',:'sign_until',true) AS sign_until,
+       set_config('s36_test.verify_until',:'verify_until',true) AS verify_until
 \gset
 SELECT pg_advisory_xact_lock(3303,5) AS qualification_lock
 \gset
@@ -21,13 +25,22 @@ BEGIN
 END;
 $accounts$;
 GRANT ecv_s3_owner TO postgres WITH ADMIN FALSE,INHERIT TRUE,SET FALSE GRANTED BY postgres;
-INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
-SELECT :'key_id',to_timestamp(:'not_before'::bigint),to_timestamp(:'sign_until'::bigint),to_timestamp(:'verify_until'::bigint)
-WHERE :'key_id' ~ '^[a-zA-Z0-9_-]{1,40}$'
-  AND :'not_before'::bigint<=extract(epoch FROM clock_timestamp())
-  AND :'sign_until'::bigint>extract(epoch FROM clock_timestamp())
-  AND :'verify_until'::bigint-:'not_before'::bigint<=1800
-RETURNING key_id AS new_generation
-\gset
+DO $insert$
+DECLARE chosen_key text:=current_setting('s36_test.key_id');
+        starts bigint:=current_setting('s36_test.not_before')::bigint;
+        signs bigint:=current_setting('s36_test.sign_until')::bigint;
+        verifies bigint:=current_setting('s36_test.verify_until')::bigint;
+        inserted integer;
+BEGIN
+  INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
+  SELECT chosen_key,to_timestamp(starts),to_timestamp(signs),to_timestamp(verifies)
+  WHERE chosen_key ~ '^[a-zA-Z0-9_-]{1,40}$'
+    AND starts<=extract(epoch FROM clock_timestamp())
+    AND signs>extract(epoch FROM clock_timestamp())
+    AND starts<signs AND signs<=verifies AND verifies-starts<=1800;
+  GET DIAGNOSTICS inserted=ROW_COUNT;
+  IF inserted<>1 THEN RAISE EXCEPTION 'S36_PUBLICATION_GENERATION_NOT_INSERTED'; END IF;
+END;
+$insert$;
 REVOKE ecv_s3_owner FROM postgres GRANTED BY postgres RESTRICT;
 COMMIT;

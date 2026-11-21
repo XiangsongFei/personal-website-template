@@ -13,6 +13,7 @@ WITH scoped AS (
  JOIN site_data.site_publications p ON p.site_id=s.id
  JOIN site_data.draft_revisions h ON h.site_id=s.id AND h.site_revision=s.draft_revision
  WHERE s.id IN (:'alice_site'::uuid,:'bob_site'::uuid)
+   AND EXISTS(SELECT FROM site_private.business_runtime b WHERE b.singleton AND b.project_ref='vellypyadcxkvqftsbrg')
 ), entitled AS (
  SELECT s.id,s.uid,a.id sid,g.id grant_id
  FROM scoped s
@@ -25,6 +26,16 @@ WITH scoped AS (
  JOIN site_private.user_security_state q ON q.auth_user_id=s.uid AND q.security_epoch=g.security_epoch
    AND q.business_enabled AND NOT q.security_hold
  WHERE (s.id,a.id) IN ((:'alice_site'::uuid,:'alice_sid'::uuid),(:'bob_site'::uuid,:'bob_sid'::uuid))
+), operations AS (
+ SELECT o.* FROM site_private.operation_requests o JOIN scoped s ON s.id=o.site_id ORDER BY o.id LIMIT 10
+), audits AS (
+ SELECT a.* FROM site_private.text_publication_audit a JOIN scoped s ON s.id=a.site_id ORDER BY a.id LIMIT 8
+), snapshots AS (
+ SELECT n.* FROM site_data.published_snapshots n JOIN scoped s ON s.id=n.site_id ORDER BY n.id LIMIT 2
+), history AS (
+ SELECT h.* FROM site_private.publication_revisions h JOIN scoped s ON s.id=h.site_id ORDER BY h.site_id,h.publication_revision LIMIT 3
+), outbox AS (
+ SELECT o.* FROM site_private.publication_outbox o JOIN scoped s ON s.id=o.site_id ORDER BY o.id LIMIT 3
 )
 SELECT jsonb_build_object(
  'target','vellypyadcxkvqftsbrg',
@@ -32,6 +43,11 @@ SELECT jsonb_build_object(
    AND has_function_privilege('authenticated','site_api.publish_site(uuid,jsonb,text)','EXECUTE')
    AND has_function_privilege('authenticated','site_api.unpublish_site(uuid,jsonb,text)','EXECUTE')
    AND (SELECT count(*) FROM site_data.sites)=2 AND (SELECT count(*) FROM auth.users)=2
+   AND (SELECT count(*) FROM operations) BETWEEN 6 AND 9
+   AND (SELECT count(*) FROM audits) BETWEEN 4 AND 7
+   AND (SELECT count(*) FROM snapshots)<=1
+   AND (SELECT count(*) FROM history)<=2
+   AND (SELECT count(*) FROM outbox)<=2
    AND NOT EXISTS(SELECT FROM site_data.site_domains WHERE kind<>'test' OR state<>'reserved' OR verified_at IS NOT NULL),
  'missing_grant',EXISTS(SELECT FROM auth.sessions h JOIN scoped s ON s.uid=h.user_id
    WHERE h.id=:'unqualified_sid'::uuid AND s.id=:'alice_site'::uuid AND h.id<>:'alice_sid'::uuid
@@ -40,9 +56,9 @@ SELECT jsonb_build_object(
       AND revoked_at IS NULL AND expires_at>clock_timestamp()),
  'sites',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM scoped r),
  'entitled',(SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM entitled r),
- 'operations',(SELECT coalesce(jsonb_agg(to_jsonb(o) ORDER BY o.id),'[]') FROM site_private.operation_requests o),
- 'audits',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY a.id),'[]') FROM site_private.text_publication_audit a),
- 'snapshots',(SELECT coalesce(jsonb_agg(to_jsonb(n) ORDER BY n.id),'[]') FROM site_data.published_snapshots n),
- 'history',(SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.site_id,p.publication_revision),'[]') FROM site_private.publication_revisions p),
- 'outbox',(SELECT coalesce(jsonb_agg(to_jsonb(o) ORDER BY o.id),'[]') FROM site_private.publication_outbox o));
+ 'operations',(SELECT coalesce(jsonb_agg(to_jsonb(o) ORDER BY o.id), '[]') FROM operations o),
+ 'audits',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY a.id), '[]') FROM audits a),
+ 'snapshots',(SELECT coalesce(jsonb_agg(to_jsonb(n) ORDER BY n.id), '[]') FROM snapshots n),
+ 'history',(SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.site_id,p.publication_revision), '[]') FROM history p),
+ 'outbox',(SELECT coalesce(jsonb_agg(to_jsonb(o) ORDER BY o.id), '[]') FROM outbox o));
 ROLLBACK;

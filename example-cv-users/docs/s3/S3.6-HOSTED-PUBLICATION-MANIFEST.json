@@ -1,0 +1,32 @@
+{
+  "project": "vellypyadcxkvqftsbrg",
+  "serverVersionNum": 170012,
+  "status": "PUBLICATION_PREPARED_REAL_NOT_RUN",
+  "closedInstall": "02-text-outbox.sql",
+  "sql": {
+    "02-text-outbox.sql": "c6747937f2ea3624b246eea3d004b8f4142f02d52861e9e8a4476aecb38a2d88",
+    "publication-target.sql": "76f2713c623358a99b865292f5b1c96e19e90bda5393864685dc5dd7506c16dc",
+    "publication-catalog.sql": "258be12e4d8ee6cdda83e6faed3e16fd993fc9af4134919a431ecc0325f9a8f6",
+    "publication-generation.sql": "d046fed43feeab890a284292d15218d7cfb5cda0f44d5b0f9e7fc8ff0ed20bf3",
+    "publication-acl.sql": "85591f47dbf46a31d742b923b5b442395f22aa9ca2d42bd67ffec00d2607af2b",
+    "publication-observe.sql": "89304fe7c5c5f98a8a13243b44077c25aac3e53756f9e8256436c21db60ac286",
+    "publication-public-probe.sql": "413760cb8d7f3f5bda10d343da03674824e83bcd372c5607a0538125954d5fd8",
+    "publication-outbox-probe.sql": "9ff75d6024bb658890e8fb231aed38c5d301fb0f07dc2468977e2752bac16172"
+  },
+  "budget": {
+    "newAuthUsers": 0,
+    "newSites": 0,
+    "existingUserPasswordLogins": 3,
+    "proofGenerations": 1,
+    "grants": 2,
+    "negativePublishAttempts": 4,
+    "publish": 1,
+    "saveDraft": 1,
+    "withdraw": 1,
+    "publicProbeTransactions": 4,
+    "outboxProbeTransactions": 1,
+    "operatorAclEnable": 1,
+    "operatorAclClose": 1,
+    "externalDestinations": 0
+  }
+}
