@@ -11,7 +11,7 @@ BEGIN
  IF current_database()<>'s36_rebuild' OR inet_server_addr() IS NOT NULL
     OR session_user<>'postgres' OR current_user<>session_user
     OR current_setting('server_version_num')<>'170012'
-    OR current_setting('unix_socket_directories')<>'/private/var/tmp/s36-rebuild/socket'
+    OR current_setting('unix_socket_directories') NOT IN ('/private/var/tmp/s36-rebuild/socket','"/private/var/tmp/s36-rebuild/socket"')
     OR current_setting('port')<>'55436'
     OR NOT EXISTS (SELECT FROM pg_roles WHERE oid=10 AND rolname='supabase_admin' AND rolsuper)
     OR to_regclass('site_data.draft_revisions') IS NULL
