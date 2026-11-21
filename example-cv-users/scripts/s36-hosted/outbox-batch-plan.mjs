@@ -49,7 +49,7 @@ function eventActions(event,workerIds) {
         claim(token,0,false,'one-lease-one-PT409',{parallel:'claim-race'}),
         claim(next,0,false,'one-lease-one-PT409',{parallel:'claim-race'},second),
         read('leased',1),
-        step('finish',[...lease(third,1,'race.owner'),'superseded',5],'PT503',{requires:'resolved-race'}),
+        step('finish',[...lease(third,1,'race.owner'),'superseded',5],'PT409',{requires:'resolved-race'}),
         {...supersede('race.token','race.owner'),requires:'resolved-race'},
         claim(extra,1,false,{claimed:false,state:'superseded'})
       ];
@@ -68,7 +68,7 @@ function eventActions(event,workerIds) {
         claim(token,0,false,{claimed:true,attempt:1},{},first,1500),
         step('start',lease(),{state:'leased',dispatch_started:true},{fault:'stop-before-egress'}),
         claim(next,1,false,{claimed:false,state:'unknown'},{waitForLeaseExpiry:true}),
-        step('finish',[...lease(),'superseded',5],'PT503'),
+        step('finish',[...lease(),'superseded',5],'PT409'),
         claim(third,1,true,{claimed:false,state:'unknown'}),
         read('unknown',1)
       ];
@@ -77,11 +77,11 @@ function eventActions(event,workerIds) {
     case 5:
       return [
         claim(token,0,false,{claimed:true,attempt:1}),pointer(),
-        step('start',lease(),{state:'leased',dispatch_started:true},{egressAfterCommit:1}),
+        step('start',lease(),{state:'leased',dispatch_started:true},{}),
+        step('start',lease(),'PT503',{egressAfterRollback:1}),
         step('finish',[...lease(),'delivered',5],{state:'delivered'},{requires:'unique-loopback-ack',fault:'discard-finish-reply'}),
         read('delivered',1),
-        claim(next,1,true,{claimed:false,state:'delivered'}),
-        read('delivered',1)
+        claim(next,1,true,{claimed:false,state:'delivered'})
       ];
     default: throw new Error('OUTBOX_EVENT_NOT_STAGED');
   }

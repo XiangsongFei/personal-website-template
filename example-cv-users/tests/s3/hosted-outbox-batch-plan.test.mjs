@@ -38,7 +38,7 @@ test('worker queries are parameterized and exclude other events and arbitrary me
   for(const index of [0,1]) {
     const [,owner,token]=outboxCall(plan,outbox[0].id,index).values;
     const wrong=outboxCall(plan,outbox[0].id,3,index);
-    assert.equal(wrong.expected,'PT503');
+    assert.equal(wrong.expected,'PT409');
     assert.equal(wrong.values[1],owner);
     assert.match(wrong.values[2],/^[a-f0-9-]{36}$/);
     assert.notEqual(wrong.values[2],token);
