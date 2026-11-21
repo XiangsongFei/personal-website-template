@@ -1,0 +1,78 @@
+{
+  "project": "vellypyadcxkvqftsbrg",
+  "status": "HOSTED_PG17_12_APPROVED_CONDITIONAL",
+  "order": [
+    {
+      "file": "20261107180504_s3_security_foundation.sql",
+      "sha256": "da5815f259e5fd9d23f811f12eb6d313e7b9011a0f6afb5b51b25436b9888366"
+    },
+    {
+      "file": "20261107180505_s3_site_foundation.sql",
+      "sha256": "0a2e571d435f8301297296e7c07d7db65aef450382e0a2a56e755bf8c0e32ca7"
+    },
+    {
+      "file": "20261109104800_s3_business_grants.sql",
+      "sha256": "c66ec38790f64d0164bd2e60cacae7c7ca4705bfd49089533dd7c7384ce8af08"
+    },
+    {
+      "file": "20261109104802_s3_create_site_commands.sql",
+      "sha256": "90750c451b2051bd457c29d950e774f9fa324fc385c4d73368a1701e56231704"
+    },
+    {
+      "file": "20261110183047_s3_registered_business_proofs.sql",
+      "sha256": "c7c581c7105e8644f1cbf3b8afb4b42b40a89ec3329a47e39ae1566f7833b6e5"
+    },
+    {
+      "file": "20261111045534_s3_closed_service_roles.sql",
+      "sha256": "8301eea2e5f3bcf4aefa7d1cfbf00fd64a86dd74284ac81f8bee235fba64ce6b"
+    },
+    {
+      "file": "20261111045535_s3_private_service_identity.sql",
+      "sha256": "e8407786a504d39c64b912b4c355310a756b57369698d075d40e1f34be6016f6"
+    },
+    {
+      "file": "01-text-publication.sql",
+      "sha256": "97b2017168b197ba6d006050717207535b6a56d3dcd5f1116b386313575bb175"
+    },
+    {
+      "file": "hosted-project-closed.sql",
+      "sha256": "56ab06079207e01ae894bc3818be040d70c5524c41723c44e62b3ba32a3f3a32"
+    }
+  ],
+  "approvedSeparateSteps": [
+    {
+      "file": "preflight.sql",
+      "sha256": "b3dec8497b76e0d8fc92b4fb1cd4fd953c13ac5e5af9411d1a293c41f42612a8"
+    },
+    {
+      "file": "activate-first-save.sql",
+      "sha256": "63f4c218fbd3602ca3d8adc920bbab964482f00417dc9c12d841e01688f3a7d9"
+    },
+    {
+      "file": "observe-first-save.sql",
+      "sha256": "067ad438bfa4e0077c9984e1d502f4ffde8b993211af3193dc75660517deedbb"
+    }
+  ],
+  "excluded": [
+    "02-text-outbox.sql"
+  ],
+  "sourceCommit": "5a890dac33f4f4825fca8027c2b927b3c7cd8f67",
+  "serverVersionNum": 170012,
+  "organization": "Example CV S3 Testing",
+  "organizationId": "hwrahfowwsmukqccyybf",
+  "region": "ap-southeast-1",
+  "originalManifest": {
+    "file": "docs/s3/S3.6-HOSTED-TARGET-MANIFEST.json",
+    "sha256": "18ffd34a6a991bb60e9f5709e2ba70fd1c74b2d7911789847b5e2491339ef2c9"
+  },
+  "m7Adaptation": {
+    "file": "20261111045535_s3_private_service_identity.sql",
+    "originalSha256": "44cbfa6ef26f681abc1604a29bed4f3f15d884533bec5b3043fe919a397018a6",
+    "newSha256": "e8407786a504d39c64b912b4c355310a756b57369698d075d40e1f34be6016f6",
+    "before": "current_setting('server_version_num') <> '170011'",
+    "after": "current_setting('server_version_num') <> '170012'",
+    "diffSha256": "4f8d4b4a5598396fd2ea7b081abaadeb21f0f578a37e3543bafd249aca1db57c",
+    "approvalSha256": "8c524fdb49b5d7a0db10ed964d0aeed8faac826497cd44d8f19c7ce33602a202",
+    "independentReviewSha256": "fc45b7def02fe50600a33d778e66651607bc7cf8499d93a5b6b1ca928c4125b1"
+  }
+}

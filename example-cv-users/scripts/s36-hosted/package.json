@@ -1,0 +1,9 @@
+{
+  "name": "example-cv-hosted-acceptance",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "2.117.2",
+    "pg": "8.23.1"
+  }
+}

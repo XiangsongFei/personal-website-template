@@ -1,0 +1,32 @@
+{
+  "authorized": false,
+  "current_action_budget": 0,
+  "status": "PREPARATION_ONLY",
+  "system_identifier": "NOT_YET_OBSERVED",
+  "candidate_run_id": "e0ea00ca-70cc-4452-a726-e68790298fcd",
+  "reference_run_id": "7183381d-7806-4298-9e48-5659471c6521",
+  "postgres_image": "public.ecr.aws/supabase/postgres@sha256:74996d6d770095c7a95e794a936aeb0726424c6086dd120c5238910b4f0ea88b",
+  "historical_files": {
+    "control/fault/01-rollback.sql": "2ed156e729b2331af7facf5b0780f5f0fa956eebafa1716aabf7d1f4150a096a",
+    "control/fault/02-rollback.sql": "6c1bdb633cffe1adfc9a8167af2e1c635de8e9f6025cf77f38d4b3a66711f58f",
+    "control/install/01-checked.sql": "68a3d2fe529c23e84736daf6b5f59e442b30a9682eb6929ed2541e8254a99605",
+    "control/install/02-checked.sql": "8fb052bf6c8dd3f32c639d0e23fe80bc216c46527744d7109cd67e5b9ed32ccb",
+    "control/pg-only.mjs": "d127b7ae4898c769f16763af59a9b0bd25ce66bd43e2d60a40767a9fbc3ace3b",
+    "control/plan-check.mjs": "d5aa3203eb9dde11dd2ef7d7085d6a0e484091d47010fb90bcfca7e60e624752",
+    "control/psql-session.mjs": "d13cba9c790f153f475ffe77571702f5938b642324e02d3c92433deea4c40a0d",
+    "control/read/00-preflight.sql": "43675c121a0d56528d760e23045402ac961c4a857580b3f4a49ba61a211c6973",
+    "control/read/10-after-rollback.sql": "039cca4d6eb8b045358af224079e9dd67f71f808f09fc2f2c841e3c033371723",
+    "control/read/20-after-rollback.sql": "3bfe5332260f10e0486fab8830196ae8d2586fdb576e7b442d8b5aa55717da3c",
+    "control/read/30-final-catalog.sql": "d81f766487c741ee64fa71d9805064c60feb6249050e67fee39b0ece5e857627",
+    "control/read/40-close-readonly.sql": "70e9be08f40ac9f34d216b87553f032a4194e6854a2a9400c345b3dd809c7562",
+    "control/read/50-unknown-reconcile.sql": "0fee272003bcde85976f6b3d32789d3b36a47b8709249d37de616cf1040629cb",
+    "control/read/target-receipt.sql": "a4f0e9bd6dc34239d75e0d2f4658eb75e381b4c76a8a41051a43f73231224202"
+  },
+  "catalog_expectations": {
+    "A07": null,
+    "A50": null,
+    "approval_sha256": null
+  },
+  "initial_readonly_sha256": "1b3e63f2f364bdcbba312db2a90a9d053c245b3cf84b3926823691204745c941",
+  "projection_sha256": "a4bd3f0a112adc02ff69cf750913bc37262c853085080427be46b2ccd4278eae"
+}
