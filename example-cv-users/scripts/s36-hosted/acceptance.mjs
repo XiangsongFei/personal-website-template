@@ -2,14 +2,30 @@ import assert from 'node:assert/strict';
 import {writeOnce} from './r3.mjs';
 import {privateTransport} from './transport.mjs';
 import {fileURLToPath} from 'node:url';
-import {resolve} from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {isAbsolute,resolve} from 'node:path';
 import {configuration, privateFile} from './target.mjs';
 import {hostedScope} from './identity.mjs';
 import {accountContext} from '../../lib/business/identity.mjs';
 import {createRpcRepository} from './compat/repository.mjs';
 import {createSiteService} from './compat/service.mjs';
 
-export async function firstAcceptance(config, service, handles, onDispatch) {
+const guardSql = fileURLToPath(new URL('./first-save-guard.sql',import.meta.url));
+
+function readSnapshot(psql, config) {
+  const args = ['-X','-w','-qAt','-v','ON_ERROR_STOP=1','-v','project='+config.project,
+    '-v','alice_site='+config.aliceSite,'-v','bob_site='+config.bobSite,
+    '-v','request_id='+config.requestId,'-f',guardSql];
+  const row = JSON.parse(execFileSync(psql,args,{encoding:'utf8',timeout:20000}));
+  assert.equal(row.valid_identity,true);
+  assert.equal(row.site_count,2);
+  assert.equal(row.draft_zero,2);
+  assert.equal(row.unpublished,2);
+  assert.equal(row.request_rows,0);
+  return row;
+}
+
+export async function firstAcceptance(config, service, handles, onDispatch, beforeSave = async () => {}) {
   const {alice,bob} = handles;
   assert.equal(accountContext(alice).uid, config.alice);
   assert.equal(accountContext(bob).uid, config.bob);
@@ -29,6 +45,7 @@ export async function firstAcceptance(config, service, handles, onDispatch) {
   }
   await assert.rejects(() => service.introduction(undefined,config.aliceSite), {code:'IDENTITY_REQUIRED',status:401});
   await assert.rejects(() => service.saveTextDraft(undefined,config.aliceSite,input), {code:'IDENTITY_REQUIRED',status:401});
+  await beforeSave();
   const saved = await service.saveTextDraft(alice,config.aliceSite,input);
   assert.equal(saved.changed,true);
   const after = await service.introduction(alice,config.aliceSite);
@@ -42,9 +59,9 @@ export async function firstAcceptance(config, service, handles, onDispatch) {
 }
 
 async function main() {
-  const [file, credentials, journal] = process.argv.slice(2);
-  if (!file || !credentials || !journal || process.argv.length!==5)
-    throw new Error('Usage: acceptance.mjs <config.json> <private-session-and-tls.json> <new-journal>');
+  const [file, credentials, journal, psql] = process.argv.slice(2);
+  if (!file || !credentials || !journal || !psql || !isAbsolute(psql) || process.argv.length!==6)
+    throw new Error('Usage: acceptance.mjs <config.json> <private-session-and-tls.json> <new-journal> <absolute-psql-wrapper>');
   const config = configuration(JSON.parse(privateFile(file)));
   const material = JSON.parse(privateFile(credentials));
   const {binding,identity} = await hostedScope(config);
@@ -55,15 +72,24 @@ async function main() {
   const service = createSiteService({repository:createRpcRepository({binding,enabled:true,
     project:config.project,endpoint:config.privateOrigin,identity,mtls})});
   const handles = {alice:await identity.verifyAccount(aliceToken),bob:await identity.verifyAccount(bobToken)};
+  const baseline = readSnapshot(psql,config);
+  writeOnce(journal+'.baseline.json',baseline);
   const anonymous=await mtls.fetch(config.privateOrigin+'/rpc/read_introduction',
     {method:'POST',redirect:'manual',signal:AbortSignal.timeout(10000),
       headers:{'Content-Type':'application/json'},body:JSON.stringify({target:config.aliceSite})});
   assert.equal(anonymous.status,403);
   assert.deepEqual(await anonymous.json(),{code:'42501'});
   const row = await firstAcceptance(config,service,handles,()=>{
-    writeOnce(journal,{state:'WRITE_PHASE_ENTERED',project:config.project,
+    writeOnce(journal,{state:'NEGATIVE_PROBES_DISPATCHED',project:config.project,
       requestId:config.requestId,aliceSite:config.aliceSite,bobSite:config.bobSite});
+  },async ()=>{
+    const afterDenials = readSnapshot(psql,config);
+    assert.deepEqual(afterDenials,baseline);
+    writeOnce(journal+'.save-dispatch.json',{state:'SAVE_DISPATCHED',project:config.project,
+      requestId:config.requestId,site:config.aliceSite,actor:config.alice,
+      session:accountContext(handles.alice).session_id,expectedRevision:0});
   });
+  writeOnce(journal+'.application.json',row);
   console.log(JSON.stringify(row));
 }
 

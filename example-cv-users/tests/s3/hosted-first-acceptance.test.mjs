@@ -75,7 +75,17 @@ test('first acceptance uses exact read, save, owner isolation and same-key readb
       return Response.json({status:'succeeded',result:saved});
     }}})});
   const handles={alice:await identity.verifyAccount('alice'),bob:await identity.verifyAccount('bob')};
-  const result=await firstAcceptance(cfg,service,handles,()=>{ started=true; });
+  await assert.rejects(firstAcceptance(cfg,service,handles,()=>{ started=true; },async ()=>{
+    assert.equal(denied,4);
+    assert.equal(allowedWrites,0);
+    throw new Error('INDEPENDENT_SNAPSHOT_MISMATCH');
+  }),/INDEPENDENT_SNAPSHOT_MISMATCH/);
+  assert.equal(allowedWrites,0);
+  denied=0;
+  const result=await firstAcceptance(cfg,service,handles,()=>{ started=true; },async ()=>{
+    assert.equal(denied,4);
+    assert.equal(allowedWrites,0);
+  });
   assert.equal(result.status,'APPLICATION_CHECKS_PASS_AUDIT_PENDING');
   assert.equal(allowedWrites,1);
   assert.equal(denied,4);
