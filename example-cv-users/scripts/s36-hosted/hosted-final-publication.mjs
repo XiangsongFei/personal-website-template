@@ -18,6 +18,7 @@ import {hostedScope} from './identity.mjs';
 import {privateTransport} from './transport.mjs';
 import {issueGrant,generation,writeOnce} from './r3.mjs';
 import {runPublicProbe,startPublicProbe,verifyPublicProbeMaterial} from './hosted-public-http-probe.mjs';
+import {expectPublicationRollback,publicationFaultFixture,reconcilePublicationLoss,recoveryCommands,verifyDraftRecovery} from './publication-recovery.mjs';
 import {literalFixture,runRemainingBoundaries,verifyLiteralRoundTrip} from './remaining-boundaries.mjs';
 import {configuration,connectionScope,privateFile,publicationProject} from './target.mjs';
 
@@ -177,8 +178,9 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  const contrast=mode==='--execute-https-contrast';
  const boundary=mode==='--execute-remaining-boundaries';
  const literal=mode==='--execute-boundary-literal';
- const owner=!contrast&&!boundary&&!literal;
- const activeActors=literal?['alice']:actorNames;
+ const recovery=mode==='--execute-publication-recovery';
+ const owner=!contrast&&!boundary&&!literal&&!recovery;
+ const activeActors=literal||recovery?['alice']:actorNames;
  assert.ok(isAbsolute(dir)&&isAbsolute(psql)&&isAbsolute(native));
  const material=name=>join(dir,'private',name+'.json');
  const journal=join(dir,'journal');
@@ -187,9 +189,9 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  assert.equal(fixture.project,publicationProject);
  const planBytes=privateFile(join(dir,'plan.json'));
  assert.equal(sha(planBytes),manifestHash);
- const plan=exact(JSON.parse(planBytes),['project','baselineSha256','requests',...(boundary||literal?[]:['sourceManifestSha256'])]);
+ const plan=exact(JSON.parse(planBytes),['project','baselineSha256','requests',...(boundary||literal||recovery?[]:['sourceManifestSha256'])]);
  assert.equal(plan.project,publicationProject);
- const requestNames=literal?['aliceProof','boundary']:boundary?['alicePublish','bobPublish','aliceProof','bobProof','boundary']:
+ const requestNames=recovery?['aliceProof','save','faultPublish','publish','faultWithdraw','withdraw']:literal?['aliceProof','boundary']:boundary?['alicePublish','bobPublish','aliceProof','bobProof','boundary']:
    contrast?names.filter(name=>name!=='ownerProbe'):names;
  exact(plan.requests,requestNames);
  assert.ok(Object.values(plan.requests).every(uuid)&&new Set(Object.values(plan.requests)).size===requestNames.length);
@@ -197,11 +199,11 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  assert.equal(sha(baselineFile),plan.baselineSha256);
  const baseline=JSON.parse(baselineFile);
  assert.deepEqual(baseline.acl,[false,false]);
- assert.equal(baseline.outbox.length,boundary||literal?13:contrast?9:5);
+ assert.equal(baseline.outbox.length,boundary||literal||recovery?13:contrast?9:5);
  assert.equal(baseline.site_total,2);
  assert.equal(baseline.user_total,2);
  assert.ok(baseline.operations.every(x=>!Object.values(plan.requests).includes(x.request_id)));
- if(!boundary&&!literal) verifyPublicProbeMaterial(dir,join(dir,'public-source.json'),plan.sourceManifestSha256);
+ if(!boundary&&!literal&&!recovery) verifyPublicProbeMaterial(dir,join(dir,'public-source.json'),plan.sourceManifestSha256);
  const params={alice_site:fixture.aliceSite,bob_site:fixture.bobSite};
  function psqlOnce(label,body,write=false,vars={}) {
    const args=['-X','-w','-v','ON_ERROR_STOP=1','-v','VERBOSITY=verbose',write?'-At':'-qAt',
@@ -217,13 +219,15 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  const change=(label,body)=>psqlOnce(label,`BEGIN;\n${scopeSql}\n${body}\nCOMMIT;\n`,true);
  const guards=(label)=>psqlOnce(label,`BEGIN READ ONLY;\n${scopeSql}
  SELECT jsonb_build_object('gate',(SELECT public_read_enabled FROM site_private.text_publication_runtime WHERE singleton),
+ 'recovery',to_regprocedure('site_private.s36_test_abort_publication()') IS NOT NULL
+ OR EXISTS(SELECT FROM pg_trigger WHERE tgname='s36_test_abort_publication'),
  'literal',to_regprocedure('site_api.s36_literal_boundary()') IS NOT NULL,
  'fixture',to_regprocedure('site_api.s36_owner_fixture(uuid,uuid)') IS NOT NULL,
  'delete',has_table_privilege('ecv_s3_command_writer','site_data.site_members','DELETE'),
  'policy',EXISTS(SELECT FROM pg_policies WHERE schemaname='site_data' AND tablename='site_members' AND policyname='s36_owner_fixture_delete'));
  ROLLBACK;`);
  assert.deepEqual(observe('initial'),baseline);
- assert.deepEqual(guards('closed-admission'),{gate:false,literal:false,fixture:false,delete:false,policy:false});
+ assert.deepEqual(guards('closed-admission'),{gate:false,recovery:false,literal:false,fixture:false,delete:false,policy:false});
  const pids=[];
  const launch=(name,script,args)=>{
    const fd=openSync(join(dir,name+'.log'),'wx',0o600);
@@ -257,10 +261,12 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    const login=await identity.passwordLogin(credentials[name]);
    const who=accountContext(login.handle);
    assert.equal(who.uid,fixture[name]);
-   const repository=createRpcRepository({binding,enabled:true,project:scope.project,endpoint:scope.privateOrigin,
-     identity,mtls:privateTransport(scope.privateOrigin,tls)});
-   actors[name]={name,site:scope.publicationSite,uid:who.uid,sid:who.session_id,epoch:index,binding,identity,login,
-     repository,service:createSiteService({repository,publicationSite:scope.publicationSite})};
+   const transport=privateTransport(scope.privateOrigin,tls);
+   const repositoryFor=mtls=>createSiteService({repository:createRpcRepository({binding,enabled:true,
+     project:scope.project,endpoint:scope.privateOrigin,identity,mtls}),publicationSite:scope.publicationSite});
+   const repository=createRpcRepository({binding,enabled:true,project:scope.project,endpoint:scope.privateOrigin,identity,mtls:transport});
+   actors[name]={name,site:scope.publicationSite,uid:who.uid,sid:who.session_id,epoch:index,binding,identity,login,transport,
+     origin:scope.privateOrigin,repositoryFor,repository,service:repositoryFor(transport)};
    receipt(name+'-identity',{uid:who.uid,sid:who.session_id,epoch:index});
  }
  const {alice,bob}=actors;
@@ -270,14 +276,14 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  const keyCandidate={project:fixture.project,id:'s36-final-'+randomBytes(6).toString('hex'),keyHex:randomBytes(32).toString('hex'),
    notBefore:stamp-5,signUntil:stamp+480,verifyUntil:stamp+540};
  const signing=await generation(fixture.project,keyCandidate);
- const versions={alice:{draft:5,before:boundary||literal?9:contrast?7:5,snapshotDraft:4},bob:{draft:0,before:boundary?4:contrast?2:0,snapshotDraft:0}};
+ const versions={alice:{draft:5,before:boundary||literal||recovery?9:contrast?7:5,snapshotDraft:4},bob:{draft:0,before:boundary?4:contrast?2:0,snapshotDraft:0}};
  const inputs={};
  for(const [name,actor] of Object.entries(actors)) {
    const v=versions[name];
    const site=baseline.sites.find(s=>s.id===actor.site);
    assert.deepEqual([site.draft_revision,site.publication.publication_revision],[v.draft,v.before]);
    assert.deepEqual([site.publication.state,site.publication.snapshot_id],['unpublished',null]);
-   if(boundary||literal) continue;
+   if(boundary||literal||recovery) continue;
    const snapshots=baseline.snapshots.filter(x=>x.site_id===actor.site&&x.source_draft_revision===v.snapshotDraft);
    const reuse=name==='alice'||contrast;
    if(reuse) assert.ok(snapshots.length===1&&uuid(snapshots[0].id));
@@ -320,8 +326,11 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      REVOKE ecv_s3_command_writer FROM postgres GRANTED BY postgres RESTRICT;`;
  const sent=new Set();
  const published=new Set();
+ const recoveryInput=recovery?recoveryCommands(baseline.sites.find(s=>s.id===alice.site),plan.requests):null;
+ const recoverySql=recovery?publicationFaultFixture(alice,recoveryInput):null;
+ const recoverySent=new Set();
  const literalSql=literal?literalFixture(alice,baseline.sites.find(s=>s.id===alice.site),plan.requests.boundary):null;
- let previous=baseline, literalAttempted=false, ownerAttempted=false, generationAttempted=false, publicAttempted=false, completed=false, http=null;
+ let previous=baseline, recoveryAttempted=false, literalAttempted=false, ownerAttempted=false, generationAttempted=false, publicAttempted=false, completed=false, http=null;
  function findOperation(readback,label,actor) {
    const operation=label.endsWith('Publish')?'publish_site':'unpublish_site';
    const input=inputs[label];
@@ -334,7 +343,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    assert.equal(previous.sites.find(row=>row.id===actors[name].site).publication.state,expectedState);
    const label='http-'+stage+'-'+name;
    const readGate=guards(label+'-gate');
-   assert.deepEqual(readGate,{gate:true,literal:false,fixture:false,delete:false,policy:false});
+   assert.deepEqual(readGate,{gate:true,recovery:false,literal:false,fixture:false,delete:false,policy:false});
    const evidence=await http.probeSite(actors[name].site,previous,label);
    receipt(label,{...evidence,publicReadGate:readGate.gate,site:actors[name].site});
    return evidence;
@@ -368,6 +377,42 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    verifyPublicationDelta(before,after,actor,operation,input,result);
    receipt(label+'-response',result);
  }
+ async function recoveryOperation(label,operation,input) {
+   assert.ok(!recoverySent.has(label));
+   receipt(label+'-dispatch',{operation,key:input.request_id,site:alice.site});
+   recoverySent.add(label);
+   const result=await reconcilePublicationLoss(alice,operation,input,{...alice,receipt,label});
+   const after=observe(label+'-independent');
+   verifyPublicationDelta(previous,after,alice,operation,input,result);
+   previous=after;
+ }
+ async function recoveryFault(label,operation,input) {
+   receipt(label+'-dispatch',{operation,key:input.request_id,site:alice.site});
+   const response=await expectPublicationRollback(socketPath,alice,operation,input);
+   receipt(label+'-reply',response);
+   assert.ok(response.status>=400);
+   assert.deepEqual([response.body.code,response.body.message],['PZ365','S36_PUBLICATION_EFFECTS_ROLLBACK']);
+   assert.deepEqual(observe(label+'-independent'),previous);
+ }
+ async function runRecovery() {
+   const {save,faultPublish,publish,faultWithdraw,withdraw}=recoveryInput;
+   receipt('recovery-save-dispatch',{key:save.request_id,expected:5});
+   let result;
+   try {result=await alice.service.saveTextDraft(alice.login.handle,alice.site,save);}
+   catch(error) {
+     const reconciliation=await alice.service.readTextDraftOperation(alice.login.handle,alice.site,save);
+     receipt('recovery-save-same-key',reconciliation);
+     if(reconciliation.status!=='succeeded') throw error;
+     result=reconciliation.result;
+   }
+   const saved=observe('recovery-save-independent');
+   verifyDraftRecovery(previous,saved,alice,save,result);
+   previous=saved;
+   await recoveryFault('fault-publish','publish_site',faultPublish);
+   await recoveryOperation('recovery-publish','publish_site',publish);
+   await recoveryFault('fault-withdraw','unpublish_site',faultWithdraw);
+   await recoveryOperation('recovery-withdraw','unpublish_site',withdraw);
+ }
  try {
    generationAttempted=true;
    change('generation-create',`SELECT pg_advisory_xact_lock(3303,5);
@@ -381,6 +426,11 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
      VALUES('${signing.id}',to_timestamp(${signing.notBefore}),to_timestamp(${signing.signUntil}),to_timestamp(${signing.verifyUntil}));
    ${generationRelease}`);
+   if(recovery) {
+     recoveryAttempted=true;
+     receipt('recovery-fixture-bind',{bodySha:recoverySql.bodySha,keys:plan.requests});
+     change('recovery-fixture-install',recoverySql.install);
+   }
    if(literal) {
      literalAttempted=true;
      receipt('literal-fixture-bind',{bodySha:literalSql.bodySha,requestId:literalSql.input.request_id});
@@ -392,7 +442,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      change('owner-fixture-install',fixtureSql.install);
    }
    launch('postgrest','./postgrest.mjs',[material('alice-connection'),material('postgrest-material'),native,
-     ...(contrast?[]:[boundary||literal?'--boundary-rollback':'--owner-fixture-rollback'])]);
+     ...(contrast||recovery?[]:[boundary||literal?'--boundary-rollback':'--owner-fixture-rollback'])]);
    await waitFor(()=>existsSync(socketPath));
    await assertPrivateSocket(alice.binding,{uid:process.getuid(),gid:process.getgid()});
    for(const name of activeActors) {
@@ -416,7 +466,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      } finally {
        change('owner-fixture-remove',fixtureSql.remove);
        ownerAttempted=false;
-       assert.deepEqual(guards('owner-close'),{gate:false,literal:false,fixture:false,delete:false,policy:false});
+       assert.deepEqual(guards('owner-close'),{gate:false,recovery:false,literal:false,fixture:false,delete:false,policy:false});
        assert.deepEqual(observe('after-owner'),baseline);
        assert.equal((await alice.service.introduction(alice.login.handle,alice.site)).draft_revision,5);
      }
@@ -429,10 +479,13 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      return;
    }
    publicAttempted=true;
-   change('publication-open',boundary?setBoundaryAcl(true):openPublic);
+   change('publication-open',boundary||recovery?setBoundaryAcl(true):openPublic);
    previous=observe('publication-open-readback');
    assert.deepEqual(previous.acl,[true,true]);
-   if(boundary) {
+   if(recovery) {
+     assert.deepEqual({...previous,acl:baseline.acl},baseline);
+     await runRecovery();
+   } else if(boundary) {
      assert.deepEqual({...previous,acl:baseline.acl},baseline);
      await runRemainingBoundaries({actors,baseline:previous,keys:plan.requests,observe,receipt,socketPath});
    } else if(contrast) {
@@ -455,6 +508,22 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  } finally {
    try {
      try {
+       if(recovery&&recoverySent.has('recovery-publish')) {
+         const actual=observe('recovery-cleanup-pointer');
+         const pointer=actual.sites.find(s=>s.id===alice.site).publication;
+         if(pointer.state==='published'&&!recoverySent.has('recovery-withdraw')) {
+           const proof=actual.operations.find(row=>row.site_id===alice.site&&row.actor_auth_user_id===alice.uid
+             &&row.actor_session_id===alice.sid&&row.operation==='publish_site'
+             &&row.request_id===recoveryInput.publish.request_id);
+           assert.deepEqual(proof?.result?.publication,pointer);
+           previous=actual;
+           await recoveryOperation('recovery-withdraw','unpublish_site',recoveryInput.withdraw);
+         } else if(pointer.state==='published') {
+           const reconciliation=await alice.service.readPublicationOperation('unpublish_site',alice.login.handle,alice.site,recoveryInput.withdraw);
+           receipt('recovery-close-original-key',reconciliation);
+           throw Error('S36_RECOVERY_WITHDRAW_UNRESOLVED');
+         }
+       }
        if(literalAttempted&&guards('literal-cleanup-status').literal) change('literal-fixture-cleanup',literalSql.remove);
        if(ownerAttempted&&guards('owner-uncertain-state').fixture) change('owner-fallback-remove',fixtureSql.remove);
        if(publicAttempted) {
@@ -475,17 +544,23 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
          for(const name of published) if(!sent.has(name+'Withdraw')) await publication(name+'Withdraw');
        }
      } finally {
-       try {if(publicAttempted) change('publication-close',boundary?setBoundaryAcl(false):closePublic);}
-       finally {
+       try {
+         try {if(recoveryAttempted&&guards('recovery-cleanup-fixture').recovery) change('recovery-fixture-remove',recoverySql.remove);}
+         finally {if(publicAttempted) change('publication-close',boundary||recovery?setBoundaryAcl(false):closePublic);}
+       } finally {
          if(generationAttempted) change('generation-revoke',`${generationAcl}
            UPDATE site_private.proof_generations SET revoked_at=clock_timestamp() WHERE key_id='${signing.id}' AND revoked_at IS NULL;
            ${generationRelease}`);
        }
-       assert.deepEqual(guards('final-guards'),{gate:false,literal:false,fixture:false,delete:false,policy:false});
+       assert.deepEqual(guards('final-guards'),{gate:false,recovery:false,literal:false,fixture:false,delete:false,policy:false});
        const final=observe('publication-final');
        assert.deepEqual(final.acl,[false,false]);
        verifyDomainRestoration(baseline.domains,final.domains);
        if(literal) assert.deepEqual(final,baseline);
+       if(recovery) {
+         assert.ok(final.sites.every(s=>s.publication.state==='unpublished'&&s.publication.snapshot_id===null));
+         if(completed) assert.deepEqual(final,{...previous,acl:baseline.acl});
+       }
        if(boundary) {
          assert.deepEqual({...final,operations:baseline.operations},baseline);
          assert.deepEqual(final.operations.filter(x=>baseline.operations.some(old=>old.id===x.id)),baseline.operations);
@@ -525,7 +600,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  const [mode,dir,psql,hash,native]=process.argv.slice(2);
- assert.ok(['--execute-approved','--execute-https-contrast','--execute-remaining-boundaries','--execute-boundary-literal'].includes(mode));
+ assert.ok(['--execute-approved','--execute-https-contrast','--execute-remaining-boundaries','--execute-boundary-literal','--execute-publication-recovery'].includes(mode));
  runBatch(dir,psql,hash,native,mode).catch(error=>{
    console.error(JSON.stringify({status:'S36_FINAL_PUBLICATION_STOP',code:error?.code??null,
      phase:error?.message?.match(/^[a-zA-Z0-9_-]{2,60}$/)?.[0]??null,

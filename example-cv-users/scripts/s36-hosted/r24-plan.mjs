@@ -49,6 +49,36 @@ export function bindR24(after,before,aliceSite,bobSite,requestId) {
      publication_revision:7,egress:1,actions}],workerCallLimit:actions.length,workerConnectionLimit:2,egressLimit:1};
 }
 
+export function bindR24Start(observed,bobSite) {
+ assert.equal(observed.target,publicationProject);
+ assert.deepEqual(observed.acl,[false,false]);
+ assert.equal(observed.outbox.length,13);
+ const subject=observed.sites.find(s=>s.id===bobSite);
+ assert.deepEqual([subject?.draft_revision,subject?.publication.state,subject?.publication.snapshot_id,
+   subject?.publication.publication_revision],[0,'unpublished',null,4]);
+ const bound=observed.outbox.filter(row=>row.site_id===bobSite&&row.publication_revision===4);
+ assert.equal(bound.length,1);
+ const [row]=bound;
+ assert.ok(uuid(row.id)&&uuid(row.operation_id)&&uuid(bobSite));
+ assert.deepEqual([row.state,row.event_type,row.attempt_count,row.lease_generation],['pending','unpublished',0,0]);
+ for(const key of ['lease_owner','lease_token','lease_until','dispatch_started_at','completed_at','last_code'])
+   assert.equal(row[key],null);
+ assert.ok(observed.operations.some(o=>o.id===row.operation_id&&o.site_id===bobSite&&o.operation==='unpublish_site'));
+ const owner=randomUUID(), token=randomUUID(), lease=[row.id,owner,token,1];
+ const actions=[
+   {method:'claim',values:[row.id,owner,token,0,false,30000],expected:{claimed:true,state:'leased',attempt:1}},
+   {method:'current',values:[bobSite],expected:{publication_revision:4,state:'unpublished'}},
+   {method:'start',values:lease,expected:{state:'leased',attempt:1,dispatch_started:true},fault:'discard-start-reply'},
+   {method:'read',values:[row.id],expected:{state:'leased',attempt:1,dispatch_started:true}},
+   {method:'unknown',values:lease,expected:{state:'unknown',attempt:1,code:'DELIVERY_UNKNOWN',dispatch_started:true}},
+   {method:'read',values:[row.id],expected:{state:'unknown',attempt:1,code:'DELIVERY_UNKNOWN',dispatch_started:true}}
+ ];
+ return {mode:'start-ack-and-cleanup-failure',project:publicationProject,aliceSite:bobSite,worker:'ecv_s36_outbox_worker',
+   requiresSeparateApproval:true,expectedPointer:{publication_revision:4,state:'unpublished'},
+   sourceSha256:sha(JSON.stringify(observed)),events:[{event_id:row.id,site_id:bobSite,event_type:'unpublished',
+     publication_revision:4,egress:0,actions}],workerCallLimit:6,workerConnectionLimit:2,egressLimit:0};
+}
+
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  const [run,worker]=process.argv.slice(2);
  const after=read(join(run,'journal/publication-final.json')), before=read(join(run,'baseline.json'));

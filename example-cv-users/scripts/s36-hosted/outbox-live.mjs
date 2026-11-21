@@ -5,9 +5,11 @@ import {checkServerIdentity} from 'node:tls';
 import {join,isAbsolute,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as sleep} from 'node:timers/promises';
+import {uuid} from '../../lib/business/protocol.mjs';
 import {privateFile,publicationProject} from './target.mjs';
 import {writeOnce} from './r3.mjs';
 import {admitOutboxPlan,outboxCall,verifyOutboxCurrent} from './outbox-batch-plan.mjs';
+import {bindR24Start} from './r24-plan.mjs';
 import {isolatedOutboxReceiver} from './outbox-loopback-receiver.mjs';
 import {privateTransport} from './transport.mjs';
 
@@ -42,6 +44,13 @@ export function expectedWorkerReply(value,expected,event) {
   return row;
 }
 
+export function verifyCleanupRollback(before,after) {
+  const {clock:beforeClock,...beforeState}=before;
+  const {clock:afterClock,...afterState}=after;
+  assert.ok(Number.isSafeInteger(beforeClock)&&Number.isSafeInteger(afterClock)&&afterClock>=beforeClock);
+  assert.deepEqual(afterState,beforeState);
+}
+
 export function checkEventInventory(plan,rows,recorded) {
   assert.equal(rows.length,5);
   for(const event of plan.events) {
@@ -61,7 +70,9 @@ export function checkEventInventory(plan,rows,recorded) {
   }
 }
 
-async function main(run,psql,hash,replyLoss=false) {
+async function main(run,psql,hash,mode) {
+  const replyLoss=mode==='--execute-r24';
+  const startLoss=mode==='--execute-r24-start';
   assert.ok(isAbsolute(run)&&isAbsolute(psql));
   const suffix=run.match(/\/hosted-outbox-live\.([A-Za-z0-9]{8})$/)?.[1].toLowerCase();
   assert.ok(suffix);
@@ -71,7 +82,7 @@ async function main(run,psql,hash,replyLoss=false) {
   const plan=admitOutboxPlan(join(run,'live-plan.json'),hash);
   const expected=read(join(run,'baseline.json'));
   assert.equal(sha(JSON.stringify(expected)),plan.sourceSha256);
-  const callLimit=replyLoss?7:30;
+  const callLimit=startLoss?6:replyLoss?7:30;
   assert.equal(plan.workerCallLimit,callLimit);
   if(replyLoss) {
     assert.equal(plan.mode,'reply-loss-after-durable-receive');
@@ -81,13 +92,25 @@ async function main(run,psql,hash,replyLoss=false) {
     assert.equal(plan.events[0].event_type,'unpublished');
     assert.deepEqual(plan.expectedPointer,{publication_revision:7,state:'unpublished'});
   }
+  if(startLoss) {
+    const canonical=bindR24Start(expected,plan.aliceSite);
+    const events=structuredClone(canonical.events);
+    const [,owner,token]=plan.events[0].actions[0].values;
+    for(const action of events[0].actions) {
+      if(['claim','start','unknown'].includes(action.method)) {
+        action.values[1]=owner;
+        action.values[2]=token;
+      }
+    }
+    assert.ok(uuid(owner)&&uuid(token)&&owner!==token);
+    assert.deepEqual(plan,{...canonical,events});
+  }
   assert.equal(plan.workerConnectionLimit,2);
-  assert.equal(plan.egressLimit,1);
-  const transport=read(join(run,'private','receiver.json'));
+  assert.equal(plan.egressLimit,startLoss?0:1);
+  const transport=startLoss?null:read(join(run,'private','receiver.json'));
   const ca=privateFile(join(run,'private','db-ca.crt'));
   assert.equal(sha(new X509Certificate(ca).raw),rootHash);
-  const clientCertificate=new X509Certificate(transport.client.cert);
-  assert.equal(clientCertificate.fingerprint256,transport.fingerprint);
+  if(transport) assert.equal(new X509Certificate(transport.client.cert).fingerprint256,transport.fingerprint);
   const password=randomBytes(36).toString('base64url');
   const roleGuard=`DO $guard$ BEGIN
     IF (SELECT shobj_description(oid,'pg_authid') FROM pg_roles WHERE rolname='${login}')
@@ -103,7 +126,11 @@ async function main(run,psql,hash,replyLoss=false) {
     const acknowledged=(result.stdout??'').trimEnd().endsWith('\nCOMMIT');
     record(label+'-sql',{exitCode:result.status,commit:sql?acknowledged:null,
       codes:[...(result.stderr??'').matchAll(/(?:ERROR|FATAL):\s+([A-Z0-9]{5}):/g)].map(match=>match[1])});
-    if(result.status!==0||sql&&!acknowledged) throw new Error(label+'-SQL');
+    if(result.status!==0||sql&&!acknowledged) {
+      const error=new Error(label+'-SQL');
+      error.sqlstates=[...(result.stderr??'').matchAll(/(?:ERROR|FATAL):\s+([0-9A-Z]{5}):/g)].map(match=>match[1]);
+      throw error;
+    }
     if(!sql) return JSON.parse(result.stdout);
   }
   const observe=label=>{
@@ -128,7 +155,7 @@ async function main(run,psql,hash,replyLoss=false) {
     ssl:{ca,servername:host,rejectUnauthorized:true,minVersion:'TLSv1.3',
       checkServerIdentity:(_,certificate)=>checkServerIdentity(host,certificate)},
     connectionTimeoutMillis:8000,query_timeout:8000,application_name:'s36-outbox-'+suffix};
-  const receiver=isolatedOutboxReceiver({plan,journal,origin:transport.origin,tls:transport.server,fingerprint:transport.fingerprint,interruptAfterReceive:replyLoss});
+  const receiver=transport&&isolatedOutboxReceiver({plan,journal,origin:transport.origin,tls:transport.server,fingerprint:transport.fingerprint,interruptAfterReceive:replyLoss});
   let created=false,listening=false,calls=0,egress=0,verifiedReplyLoss=false;
   const last=new Map(),terminal=new Map();
   const deadline=performance.now()+180000;
@@ -200,9 +227,10 @@ async function main(run,psql,hash,replyLoss=false) {
       const clock=Number((await client.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000) AS ms')).rows[0].ms);
       commitSent=true;
       assert.equal((await client.query('COMMIT')).command,'COMMIT');
-      if(action.conditions.fault==='discard-finish-reply') {
+      if(['discard-finish-reply','discard-start-reply'].includes(action.conditions.fault)) {
         // DB ACK was observed. Drop only the result handed to the application.
-        record(label+'-lost-app-reply',{simulation:'after-real-commit',event:event.event_id,owner:args[1],token:args[2],generation:args[3]});
+        if(action.conditions.fault==='discard-start-reply') expectedWorkerReply(value,action.expected,event);
+        record(label+'-lost-app-reply',{simulation:'after-real-commit',fault:action.conditions.fault,event:event.event_id,owner:args[1],token:args[2],generation:args[3]});
         return {discarded:true};
       }
       record(label+'-commit',{pid:pids[clientIndex],value,clock});
@@ -263,8 +291,7 @@ async function main(run,psql,hash,replyLoss=false) {
       pids.push(who.pid);
       record('worker-'+i,who);
     }
-    await receiver.listen();
-    listening=true;
+    if(receiver) {await receiver.listen();listening=true;}
     change('gate-open',roleGuard+putGate(true));
     for(const event of plan.events) {
       let index=0,winner;
@@ -286,19 +313,19 @@ async function main(run,psql,hash,replyLoss=false) {
         // Readbacks use the other physical connection.
         const action=event.actions[index];
         const reply=await dispatch(event,index,action.method==='read'?1:0,winner);
-        if(reply.discarded) continue; // only the exact next read may reconcile this event
+        if(reply.discarded) {if(startLoss) assert.equal(action.method,'start'); continue;} // only the exact next read may reconcile this event
         accept(event,index,reply,winner);
         if(action.egressAfterRollback===1||replyLoss&&action.egressAfterCommit===1)
           await sendOnce(event,last.get(event.event_id));
       }
       const row=last.get(event.event_id);
       const expectedStates=['superseded','failed','unknown','superseded','delivered'];
-      assert.equal(row.state,replyLoss?'unknown':expectedStates[event.publication_revision-1]);
+      assert.equal(row.state,replyLoss||startLoss?'unknown':expectedStates[event.publication_revision-1]);
       assert.equal(row.attempt_count,event.publication_revision===2?3:1);
       terminal.set(event.event_id,row);
       const independent=observe('after-revision-'+event.publication_revision);
       assert.equal(independent.outbox_enabled,true);
-      if(replyLoss) {
+      if(replyLoss||startLoss) {
         const id=event.event_id;
         assert.deepEqual(byId(independent.events.filter(x=>x.id!==id)),byId(expected.outbox.filter(x=>x.id!==id)));
         const found=independent.events.find(x=>x.id===id);
@@ -306,18 +333,32 @@ async function main(run,psql,hash,replyLoss=false) {
           ['unknown',1,1,row.lease_owner,row.lease_token,'DELIVERY_UNKNOWN']);
       } else checkEventInventory(plan,independent.events,terminal);
     }
-    assert.deepEqual([calls,egress],[callLimit,1]);
+    assert.deepEqual([calls,egress],[callLimit,startLoss?0:1]);
     if(replyLoss) assert.equal(verifiedReplyLoss,true);
     record('run-complete',{calls,egress,terminal:[...terminal.values()].map(x=>({revision:x.publication_revision,state:x.state,attempts:x.attempt_count}))});
   } finally {
     try {await Promise.allSettled(clients.map(client=>client.end()));}
     finally {
-      let closeReceiverError;
+      let closeReceiverError,cleanupProbeError;
       if(listening) try { await receiver.close(); } catch(error) { closeReceiverError=error; }
       const current=observe('before-close');
       if(created&&current.worker_login?.mark===mark) {
-        change('gate-and-login-close',roleGuard+putGate(false)+`ALTER ROLE ${login} NOLOGIN PASSWORD NULL;
-          REVOKE ecv_s36_outbox_worker FROM ${login} GRANTED BY postgres RESTRICT;`);
+        const disable=roleGuard+putGate(false)+`ALTER ROLE ${login} NOLOGIN PASSWORD NULL;
+          REVOKE ecv_s36_outbox_worker FROM ${login} GRANTED BY postgres RESTRICT;`;
+        if(startLoss) {
+          let failure;
+          try {
+            change('gate-and-login-close-fault',disable+`
+              DO $fault$ BEGIN RAISE EXCEPTION 'S36_OUTBOX_CLEANUP_FAULT' USING ERRCODE='PZ364'; END; $fault$;`);
+          } catch(error) {failure=error;}
+          try {
+            assert.deepEqual(failure?.sqlstates,['PZ364']);
+            const rolledBack=observe('after-cleanup-fault');
+            verifyCleanupRollback(current,rolledBack);
+            record('cleanup-fault',{code:'PZ364',rollbackVerified:true,firstFailure:failure.message});
+          } catch(error) {cleanupProbeError=error;}
+        }
+        change('gate-and-login-close',disable);
         const disabled=observe('closed-before-drop');
         assert.equal(disabled.outbox_enabled,false);
         assert.equal(disabled.worker_edges,1);
@@ -341,15 +382,16 @@ async function main(run,psql,hash,replyLoss=false) {
         {project:publicationProject,closed_02_check:true});
       record('counters',{calls,egress});
       if(closeReceiverError) throw closeReceiverError;
+      if(cleanupProbeError) throw cleanupProbeError;
     }
   }
-  console.log(JSON.stringify({status:replyLoss?'HOSTED_R24_REAL_REPLY_LOSS_PASS':'HOSTED_OUTBOX_REAL_PASS',calls,egress}));
+  console.log(JSON.stringify({status:startLoss?'HOSTED_R24_REAL_START_AND_CLEANUP_PASS':replyLoss?'HOSTED_R24_REAL_REPLY_LOSS_PASS':'HOSTED_OUTBOX_REAL_PASS',calls,egress}));
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const [flag,run,psql,hash]=process.argv.slice(2);
-  assert.ok(['--execute-approved','--execute-r24'].includes(flag));
-  main(run,psql,hash,flag==='--execute-r24').catch(error=>{
+  assert.ok(['--execute-approved','--execute-r24','--execute-r24-start'].includes(flag));
+  main(run,psql,hash,flag).catch(error=>{
     console.error(error?.code??(error?.message?.match(/^[a-z-]+-SQL$/)?.[0])??'HOSTED_OUTBOX_STOP');
     process.exitCode=1;
   });
