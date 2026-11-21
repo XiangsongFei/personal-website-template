@@ -17,7 +17,7 @@ import {createRegistrar} from './database.mjs';
 import {hostedScope} from './identity.mjs';
 import {privateTransport} from './transport.mjs';
 import {issueGrant,generation,writeOnce} from './r3.mjs';
-import {runPublicProbe} from './hosted-public-http-probe.mjs';
+import {runPublicProbe,verifyPublicProbeMaterial} from './hosted-public-http-probe.mjs';
 import {configuration,connectionScope,privateFile,publicationProject} from './target.mjs';
 
 const read=path=>JSON.parse(privateFile(path));
@@ -97,6 +97,15 @@ export function ownerFixtureSql({target,uid,sid,requestKey}) {
  return {install,remove,bodySha256:sha(body)};
 }
 
+export function verifyDomainRestoration(before,after) {
+ assert.equal(after.length,before.length);
+ for(const [index,original] of before.entries()) {
+   const restored=after[index];
+   assert.ok(Number.isFinite(Date.parse(original.updated_at))&&Date.parse(restored.updated_at)>=Date.parse(original.updated_at));
+   assert.deepEqual({...restored,updated_at:original.updated_at},original);
+ }
+}
+
 export function verifyPublicationDelta(before,after,actor,operation,input,result) {
  const {site,uid,sid}=actor;
  const isPublish=operation==='publish_site';
@@ -167,6 +176,7 @@ async function runBatch(dir,psql,manifestHash,native) {
  assert.equal(baseline.site_total,2);
  assert.equal(baseline.user_total,2);
  assert.ok(baseline.operations.every(x=>!Object.values(plan.requests).includes(x.request_id)));
+ verifyPublicProbeMaterial(dir,join(dir,'public-source.json'),plan.sourceManifestSha256);
  const params={alice_site:fixture.aliceSite,bob_site:fixture.bobSite};
  function psqlOnce(label,body,write=false,vars={}) {
    const args=['-X','-w','-v','ON_ERROR_STOP=1','-v','VERBOSITY=verbose',write?'-At':'-qAt',
@@ -360,6 +370,9 @@ async function runBatch(dir,psql,manifestHash,native) {
    await publication('bobWithdraw');
    await runPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,previous,'http-both-withdrawn');
    receipt('public-run-complete',{requests:sent.size,published:published.size});
+ } catch(error) {
+   receipt('publication-phase-stop',{code:error?.code??null,requests:sent.size});
+   throw error;
  } finally {
    try {
      try {
@@ -376,7 +389,7 @@ async function runBatch(dir,psql,manifestHash,native) {
        assert.deepEqual(guards('final-guards'),{gate:false,fixture:false,delete:false,policy:false});
        const final=observe('publication-final');
        assert.deepEqual(final.acl,[false,false]);
-       assert.deepEqual(final.domains,baseline.domains);
+       verifyDomainRestoration(baseline.domains,final.domains);
      }
    } finally {
      for(const {process:local} of pids) if(local.exitCode===null&&local.signalCode===null) local.kill('SIGTERM');

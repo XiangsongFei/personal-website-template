@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ownerFixtureSql} from '../../scripts/s36-hosted/hosted-final-publication.mjs';
+import {ownerFixtureSql,verifyDomainRestoration} from '../../scripts/s36-hosted/hosted-final-publication.mjs';
 import {bindR24} from '../../scripts/s36-hosted/r24-plan.mjs';
 
 const id=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -35,4 +35,12 @@ test('R24 binds only the current Alice withdrawal; prior UNKNOWN and FAILED rema
   assert.throws(()=>bindR24({...after,outbox:[{...after.outbox[0],state:'pending'},...after.outbox.slice(1)]},
     before,alice,bob,request));
   assert.throws(()=>bindR24(after,before,alice,bob,id(99)));
+});
+
+test('restore allows audit timestamp advance only, preserving domain state and identity',()=>{
+  const before={id:id(4),state:'reserved',verified_at:null,updated_at:'2026-11-21T00:00:00Z'};
+  const after={...before,updated_at:'2026-11-21T00:10:00Z'};
+  verifyDomainRestoration([before],[after]);
+  assert.throws(()=>verifyDomainRestoration([before],[{...after,state:'active'}]));
+  assert.throws(()=>verifyDomainRestoration([before],[{...after,id:id(5)}]));
 });

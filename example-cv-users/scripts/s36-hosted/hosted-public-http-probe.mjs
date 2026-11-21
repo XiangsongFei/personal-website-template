@@ -1,9 +1,9 @@
 // Isolated host bridge for the frozen root Worker candidate. Never deploys the Worker.
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {createHash,X509Certificate} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {createServer,request as httpsRequest} from 'node:https';
-import {checkServerIdentity} from 'node:tls';
+import {checkServerIdentity,createSecureContext} from 'node:tls';
 import {isAbsolute,join,resolve} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {configuration,privateFile,publicationProject} from './target.mjs';
@@ -27,7 +27,7 @@ export function hostedRpcReceipt(url,init,projectKey,allowedHosts) {
   return args;
 }
 
-export async function runPublicProbe(run,manifestPath,manifestHash,fixtureReadback=null,label='public-http-receipt') {
+export function verifyPublicProbeMaterial(run,manifestPath,manifestHash) {
   const manifest=privateFile(manifestPath);
   assert.equal(sha(manifest),manifestHash);
   const {files,workerModule,bindingModule}=JSON.parse(manifest);
@@ -36,17 +36,26 @@ export async function runPublicProbe(run,manifestPath,manifestHash,fixtureReadba
     assert.ok(isAbsolute(file));
     assert.equal(sha(readFileSync(file)),hash);
   }
-  const {createTextPublicationWorkerCandidate}=await import(pathToFileURL(workerModule));
-  const {createBusinessBinding}=await import(pathToFileURL(bindingModule));
   const config=configuration(read(join(run,'private','fixture.json')));
   assert.equal(config.project,publicationProject);
+  const tls=read(join(run,'private','receiver.json'));
+  assert.ok(tls.client.ca);
+  assert.equal(new X509Certificate(tls.server.cert).checkIP('127.0.0.1'),'127.0.0.1');
+  createSecureContext({...tls.server});
+  createSecureContext({ca:tls.client.ca});
+  return {config,tls,workerModule,bindingModule};
+}
+
+export async function runPublicProbe(run,manifestPath,manifestHash,fixtureReadback=null,label='public-http-receipt') {
+  const {config,tls,workerModule,bindingModule}=verifyPublicProbeMaterial(run,manifestPath,manifestHash);
+  const {createTextPublicationWorkerCandidate}=await import(pathToFileURL(workerModule));
+  const {createBusinessBinding}=await import(pathToFileURL(bindingModule));
   const baseline=fixtureReadback??read(join(run,'baseline.json'));
   const hosts=[config.aliceSite,config.bobSite].map(id=>{
     const domain=baseline.domains.find(row=>row.site_id===id&&row.is_primary&&row.kind==='test');
     assert.ok(hostPattern.test(domain?.hostname_normalized));
     return domain.hostname_normalized;
   });
-  const tls=read(join(run,'private','receiver.json'));
   const upstream=[];
   const binding=createBusinessBinding({project:config.project,authIssuer:config.url+'/auth/v1',
     privateOrigin:config.privateOrigin,registrarHost:'db.'+config.project+'.supabase.co',testOnly:true});
