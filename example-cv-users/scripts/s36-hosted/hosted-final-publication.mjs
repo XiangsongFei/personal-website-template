@@ -16,9 +16,11 @@ import {textCommand} from './compat/command.mjs';
 import {createRegistrar} from './database.mjs';
 import {hostedScope} from './identity.mjs';
 import {privateTransport} from './transport.mjs';
-import {issueGrant,generation,writeOnce} from './r3.mjs';
+import {issueGrant,generation,revokeGrant,writeOnce} from './r3.mjs';
 import {runPublicProbe,startPublicProbe,verifyPublicProbeMaterial} from './hosted-public-http-probe.mjs';
 import {expectPublicationRollback,publicationFaultFixture,reconcilePublicationLoss,recoveryCommands,verifyDraftRecovery} from './publication-recovery.mjs';
+import {buildTimeboxMigration,pinnedRegistrar,runNaturalExpiry,timeboxManagement,verifyTimeboxCatalog,withPlatformTimebox,zeroPolicy} from './session-timebox.mjs';
+import {scopedSignOut} from './save-revoke-acceptance.mjs';
 import {literalFixture,runRemainingBoundaries,verifyLiteralRoundTrip} from './remaining-boundaries.mjs';
 import {configuration,connectionScope,privateFile,publicationProject} from './target.mjs';
 
@@ -36,10 +38,11 @@ const observeQuery=readFileSync(sqlFile('publication-boundaries-observe.sql'),'u
  .replace('\\ir publication-target.sql',`\\i '${sqlFile('final-live-scope.sql')}'`);
 const scopeSql=`\\i '${sqlFile('final-live-scope.sql')}'`;
 
-function apiBySocket(socketPath,token,args) {
+function apiBySocket(socketPath,token,args,rpc='s36_owner_fixture') {
+ assert.ok(['s36_owner_fixture','read_introduction'].includes(rpc));
  const body=JSON.stringify(args);
  return new Promise((yes,no)=>{
-   const req=request({socketPath,path:'/rpc/s36_owner_fixture',method:'POST',agent:false,signal:AbortSignal.timeout(9000),
+   const req=request({socketPath,path:'/rpc/'+rpc,method:'POST',agent:false,signal:AbortSignal.timeout(9000),
      headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','Content-Profile':'site_api',
       'Accept-Profile':'site_api',Prefer:'tx=rollback','Content-Length':Buffer.byteLength(body)}},res=>{
       let raw='';
@@ -179,8 +182,9 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  const boundary=mode==='--execute-remaining-boundaries';
  const literal=mode==='--execute-boundary-literal';
  const recovery=mode==='--execute-publication-recovery';
- const owner=!contrast&&!boundary&&!literal&&!recovery;
- const activeActors=literal||recovery?['alice']:actorNames;
+ const timebox=mode==='--execute-r05-timebox';
+ const owner=!contrast&&!boundary&&!literal&&!recovery&&!timebox;
+ const activeActors=literal||recovery||timebox?['alice']:actorNames;
  assert.ok(isAbsolute(dir)&&isAbsolute(psql)&&isAbsolute(native));
  const material=name=>join(dir,'private',name+'.json');
  const journal=join(dir,'journal');
@@ -189,9 +193,9 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  assert.equal(fixture.project,publicationProject);
  const planBytes=privateFile(join(dir,'plan.json'));
  assert.equal(sha(planBytes),manifestHash);
- const plan=exact(JSON.parse(planBytes),['project','baselineSha256','requests',...(boundary||literal||recovery?[]:['sourceManifestSha256'])]);
+ const plan=exact(JSON.parse(planBytes),['project','baselineSha256','requests',...(boundary||literal||recovery||timebox?[]:['sourceManifestSha256'])]);
  assert.equal(plan.project,publicationProject);
- const requestNames=recovery?['aliceProof','save','faultPublish','publish','faultWithdraw','withdraw']:literal?['aliceProof','boundary']:boundary?['alicePublish','bobPublish','aliceProof','bobProof','boundary']:
+ const requestNames=timebox?['aliceProof','revokeProof']:recovery?['aliceProof','save','faultPublish','publish','faultWithdraw','withdraw']:literal?['aliceProof','boundary']:boundary?['alicePublish','bobPublish','aliceProof','bobProof','boundary']:
    contrast?names.filter(name=>name!=='ownerProbe'):names;
  exact(plan.requests,requestNames);
  assert.ok(Object.values(plan.requests).every(uuid)&&new Set(Object.values(plan.requests)).size===requestNames.length);
@@ -199,18 +203,24 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  assert.equal(sha(baselineFile),plan.baselineSha256);
  const baseline=JSON.parse(baselineFile);
  assert.deepEqual(baseline.acl,[false,false]);
- assert.equal(baseline.outbox.length,boundary||literal||recovery?13:contrast?9:5);
+ assert.equal(baseline.outbox.length,timebox?15:boundary||literal||recovery?13:contrast?9:5);
  assert.equal(baseline.site_total,2);
  assert.equal(baseline.user_total,2);
  assert.ok(baseline.operations.every(x=>!Object.values(plan.requests).includes(x.request_id)));
- if(!boundary&&!literal&&!recovery) verifyPublicProbeMaterial(dir,join(dir,'public-source.json'),plan.sourceManifestSha256);
+ if(!boundary&&!literal&&!recovery&&!timebox) verifyPublicProbeMaterial(dir,join(dir,'public-source.json'),plan.sourceManifestSha256);
  const params={alice_site:fixture.aliceSite,bob_site:fixture.bobSite};
  function psqlOnce(label,body,write=false,vars={}) {
    const args=['-X','-w','-v','ON_ERROR_STOP=1','-v','VERBOSITY=verbose',write?'-At':'-qAt',
      ...Object.entries(vars).flatMap(([k,v])=>['-v',k+'='+v]),'-f','-'];
-   const result=spawnSync(psql,args,{input:body,encoding:'utf8',timeout:20000,maxBuffer:1024*1024});
+   const run=()=>spawnSync(psql,args,{input:body,encoding:'utf8',timeout:timebox?35000:20000,maxBuffer:1024*1024});
+   const transportError=result=>result.status===2||result.error?.code==='ETIMEDOUT';
+   let result=run();
+   if(timebox&&!write&&transportError(result)) {
+     receipt(label+'-read-transport',{exitCode:result.status,timedOut:result.error?.code==='ETIMEDOUT'});
+     result=run();
+   }
    const commit=write&&(result.stdout??'').trimEnd().endsWith('\nCOMMIT');
-   receipt(label+'-sql',{exitCode:result.status,commit,
+   receipt(label+'-sql',{exitCode:result.status,commit,transportError:transportError(result),
      codes:[...(result.stderr??'').matchAll(/(?:ERROR|FATAL):\s+([0-9A-Z]{5}):/g)].map(x=>x[1])});
    if(result.status!==0||write&&!commit) throw Error(label+'-SQL');
    if(!write) return JSON.parse(result.stdout);
@@ -247,11 +257,33 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    }
    throw Error('S36_FINAL_LOCAL_START');
  }
+ const admin=timebox?timeboxManagement():null;
+ if(timebox) {
+   assert.deepEqual(await admin.read(),zeroPolicy);
+   const delta=buildTimeboxMigration(readFileSync(here('../../supabase/migrations/20261111045535_s3_private_service_identity.sql'),'utf8'));
+   receipt('r05-migration-candidate',{functionBodySha:delta.sha,sqlSha:sha(delta.sql)});
+   const installed=psqlOnce('r05-catalog-before',`BEGIN READ ONLY;
+${scopeSql}
+SELECT to_jsonb(to_regclass('site_private.hosted_session_timebox') IS NOT NULL);
+ROLLBACK;`);
+   if(!installed) change('r05-migration-install',delta.sql);
+   assert.deepEqual(psqlOnce('r05-catalog-installed',`BEGIN READ ONLY;
+${scopeSql}
+     ${verifyTimeboxCatalog(delta.sha)}
+     SELECT seconds FROM site_private.hosted_session_timebox WHERE singleton; ROLLBACK;`),0);
+   const readLocal=label=>psqlOnce(label,`BEGIN READ ONLY;\n${scopeSql}
+     SELECT seconds FROM site_private.hosted_session_timebox WHERE singleton; ROLLBACK;`);
+   const target=read(material('registrar-database'));
+   const registrar=await pinnedRegistrar(target,read(material('registrar-address')).ip,dir,read(material('postgrest-material')).caFile);
+   return await withPlatformTimebox({admin,change,readLocal,receipt,action:restore=>exercise(restore,registrar)});
+ }
+ return await exercise();
+ async function exercise(restorePolicy,timeboxRegistrar) {
  const credentials=read(material('account-material'));
  const tls=read(material('mtls-client'));
  const socketPath=read(material('postgrest-material')).socketPath;
  const {Client}=await import('pg');
- const registrar=createRegistrar(fixture.project,read(material('registrar-database')),Client);
+ const registrar=timebox?timeboxRegistrar:createRegistrar(fixture.project,read(material('registrar-database')),Client);
  const actors={};
  for(const [index,name] of activeActors.entries()) {
    const scope=connectionScope(read(material(name+'-connection')));
@@ -268,6 +300,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
    actors[name]={name,site:scope.publicationSite,uid:who.uid,sid:who.session_id,epoch:index,binding,identity,login,transport,
      origin:scope.privateOrigin,repositoryFor,repository,service:repositoryFor(transport)};
    receipt(name+'-identity',{uid:who.uid,sid:who.session_id,epoch:index});
+   if(timebox) writeOnce(material('session-recovery'),{token:withCredential(login.handle,token=>token)});
  }
  const {alice,bob}=actors;
  if(bob) assert.notEqual(alice.sid,bob.sid);
@@ -276,14 +309,14 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
  const keyCandidate={project:fixture.project,id:'s36-final-'+randomBytes(6).toString('hex'),keyHex:randomBytes(32).toString('hex'),
    notBefore:stamp-5,signUntil:stamp+480,verifyUntil:stamp+540};
  const signing=await generation(fixture.project,keyCandidate);
- const versions={alice:{draft:5,before:boundary||literal||recovery?9:contrast?7:5,snapshotDraft:4},bob:{draft:0,before:boundary?4:contrast?2:0,snapshotDraft:0}};
+ const versions={alice:{draft:timebox?6:5,before:timebox?11:boundary||literal||recovery?9:contrast?7:5,snapshotDraft:4},bob:{draft:0,before:boundary?4:contrast?2:0,snapshotDraft:0}};
  const inputs={};
  for(const [name,actor] of Object.entries(actors)) {
    const v=versions[name];
    const site=baseline.sites.find(s=>s.id===actor.site);
    assert.deepEqual([site.draft_revision,site.publication.publication_revision],[v.draft,v.before]);
    assert.deepEqual([site.publication.state,site.publication.snapshot_id],['unpublished',null]);
-   if(boundary||literal||recovery) continue;
+   if(boundary||literal||recovery||timebox) continue;
    const snapshots=baseline.snapshots.filter(x=>x.site_id===actor.site&&x.source_draft_revision===v.snapshotDraft);
    const reuse=name==='alice'||contrast;
    if(reuse) assert.ok(snapshots.length===1&&uuid(snapshots[0].id));
@@ -442,15 +475,32 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      change('owner-fixture-install',fixtureSql.install);
    }
    launch('postgrest','./postgrest.mjs',[material('alice-connection'),material('postgrest-material'),native,
-     ...(contrast||recovery?[]:[boundary||literal?'--boundary-rollback':'--owner-fixture-rollback'])]);
+     ...(contrast||recovery||timebox?[]:[boundary||literal?'--boundary-rollback':'--owner-fixture-rollback'])]);
    await waitFor(()=>existsSync(socketPath));
    await assertPrivateSocket(alice.binding,{uid:process.getuid(),gid:process.getgid()});
    for(const name of activeActors) {
      launch(name+'-ingress','./ingress.mjs',[material(name+'-connection'),material('ingress')]);
      await waitFor(()=>existsSync(join(dir,name+'-ingress.log'))&&readFileSync(join(dir,name+'-ingress.log'),'utf8').includes('HOSTED_TEST_INGRESS_LISTENING'));
      const actor=actors[name];
-     const granted=await issueGrant({...actor,approval:{uid:actor.uid,proofId:plan.requests[name+'Proof'],epoch:actor.epoch,
-       validFrom:signing.notBefore,expiresAt:signing.verifyUntil},expectedEpoch:actor.epoch,key:signing,registrar,journalDir:journal});
+     const proofId=plan.requests[name+'Proof'];
+     let granted;
+     try {
+       granted=await issueGrant({...actor,approval:{uid:actor.uid,proofId,epoch:actor.epoch,
+        validFrom:signing.notBefore,expiresAt:signing.verifyUntil},expectedEpoch:actor.epoch,key:signing,registrar,journalDir:journal});
+     } catch(error) {
+       if(!timebox||error?.code!=='COMMIT_UNKNOWN') throw error;
+       granted=psqlOnce('r05-original-grant',`BEGIN READ ONLY;
+${scopeSql}
+        SELECT p.grant_result FROM site_private.grant_proofs p
+        JOIN site_private.business_session_grants g ON g.id::text=p.grant_result->>'grant_id'
+        WHERE p.proof_id=:'proof'::uuid AND p.auth_user_id=:'uid'::uuid AND p.auth_session_id=:'sid'::uuid
+          AND p.key_id=:'key' AND p.action='issue' AND p.security_epoch=:'epoch'::bigint AND g.revoked_at IS NULL
+          AND g.auth_user_id=p.auth_user_id AND g.auth_session_id=p.auth_session_id
+          AND g.issuer_version='r3-ticket-v1:'||p.key_id; ROLLBACK;`,false,
+        {proof:proofId,uid:actor.uid,sid:actor.sid,key:signing.id,epoch:actor.epoch});
+       assert.equal(granted.status,'active');
+       receipt('r05-grant-response-reconciled',{proofId,grantId:granted.grant_id,transportCode:error.code});
+     }
      receipt(name+'-grant',granted);
      assert.equal((await actor.service.introduction(actor.login.handle,actor.site)).draft_revision,versions[name].draft);
    }
@@ -472,6 +522,50 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      }
    } else if(contrast) {
      http=await startPublicProbe(dir,join(dir,'public-source.json'),plan.sourceManifestSha256,baseline,'https-lifecycle',7);
+   }
+   if(timebox) {
+     const {site,uid,sid}=alice;
+     const opts={uid,sid,site,key:signing.id};
+     const window=label=>{
+       const fact=psqlOnce(label,`BEGIN READ ONLY;
+${scopeSql}
+        SELECT jsonb_build_object('sid',:'sid'::uuid,'present',s.id IS NOT NULL,
+          'native_unexpired',s.id IS NOT NULL AND (s.not_after IS NULL OR s.not_after>clock_timestamp()),
+          'deadline',ceil(extract(epoch FROM s.created_at)+p.seconds)::bigint,
+          'obs',floor(extract(epoch FROM clock_timestamp()))::bigint,
+          'owner',EXISTS(SELECT FROM site_data.site_members WHERE site_id=:'site'::uuid AND auth_user_id=:'uid'::uuid AND role='owner' AND state='active'),
+          'grant_live',g.id IS NOT NULL AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
+            AND g.absolute_expires_at>clock_timestamp() AND NOT u.security_hold AND u.business_enabled AND g.security_epoch=u.security_epoch,
+          'grant_exp',floor(extract(epoch FROM g.expires_at))::bigint,
+          'grant_id',g.id,'grant_revoked',g.revoked_at IS NOT NULL,
+          'generation_live',k.revoked_at IS NULL AND k.verify_until>clock_timestamp(),
+          'generation_exp',floor(extract(epoch FROM k.verify_until))::bigint,'key_id',k.key_id,'policy_seconds',p.seconds)
+        FROM site_private.hosted_session_timebox p
+        JOIN site_private.proof_generations k ON k.key_id=:'key'
+        LEFT JOIN auth.sessions s ON s.id=:'sid'::uuid AND s.user_id=:'uid'::uuid
+        LEFT JOIN site_private.business_session_grants g ON g.auth_user_id=:'uid'::uuid AND g.auth_session_id=:'sid'::uuid
+            AND g.issuer_version='r3-ticket-v1:'||k.key_id
+        LEFT JOIN site_private.user_security_state u ON u.auth_user_id=g.auth_user_id WHERE p.singleton;
+        ROLLBACK;`,false,opts);
+       receipt(label+'-fact',fact);
+       return fact;
+     };
+     try {
+       await runNaturalExpiry(alice,window,receipt,admin,token=>apiBySocket(socketPath,token,{target:site},'read_introduction'));
+     } finally {
+       try {
+         await restorePolicy();
+         const result=await revokeGrant({...alice,handle:alice.login.handle,approval:{uid,proofId:plan.requests.revokeProof,epoch:0,
+           validFrom:signing.notBefore,expiresAt:signing.verifyUntil},expectedEpoch:0,key:signing,registrar,journalDir:journal});
+         receipt('r05-grant-revoked',result);
+       } finally {
+         await scopedSignOut({project:fixture.project,publishableKey:fixture.publishableKey},withCredential(alice.login.handle,token=>token));
+       }
+       const removed=window('r05-session-closed');
+       assert.deepEqual([removed.present,removed.grant_revoked,removed.policy_seconds],[false,true,0]);
+     }
+     assert.deepEqual(observe('r05-business-unchanged'),baseline);
+     return;
    }
    if(literal) {
      await verifyLiteralRoundTrip(socketPath,alice,literalSql,receipt);
@@ -556,7 +650,7 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
        const final=observe('publication-final');
        assert.deepEqual(final.acl,[false,false]);
        verifyDomainRestoration(baseline.domains,final.domains);
-       if(literal) assert.deepEqual(final,baseline);
+       if(literal||timebox) assert.deepEqual(final,baseline);
        if(recovery) {
          assert.ok(final.sites.every(s=>s.publication.state==='unpublished'&&s.publication.snapshot_id===null));
          if(completed) assert.deepEqual(final,{...previous,acl:baseline.acl});
@@ -596,11 +690,12 @@ async function runBatch(dir,psql,manifestHash,native,mode) {
      }
    }
  }
+ }
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  const [mode,dir,psql,hash,native]=process.argv.slice(2);
- assert.ok(['--execute-approved','--execute-https-contrast','--execute-remaining-boundaries','--execute-boundary-literal','--execute-publication-recovery'].includes(mode));
+ assert.ok(['--execute-approved','--execute-https-contrast','--execute-remaining-boundaries','--execute-boundary-literal','--execute-publication-recovery','--execute-r05-timebox'].includes(mode));
  runBatch(dir,psql,hash,native,mode).catch(error=>{
    console.error(JSON.stringify({status:'S36_FINAL_PUBLICATION_STOP',code:error?.code??null,
      phase:error?.message?.match(/^[a-zA-Z0-9_-]{2,60}$/)?.[0]??null,

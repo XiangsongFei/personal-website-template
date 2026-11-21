@@ -40,3 +40,32 @@ test('natural expiry rehearsal requires the same qualified session after the req
   assert.throws(()=>calculateTimeboxWindow({...fixture,session:{...fixture.session,notAfter:1250}}));
   assert.throws(()=>calculateTimeboxWindow({...fixture,policy:{...fixture.policy,timeboxSeconds:0}}));
 });
+
+test('timebox migration is derived only from the exact frozen M7 and trusted session age',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const {buildTimeboxMigration}=await import('../../scripts/s36-hosted/session-timebox.mjs');
+  const source=await readFile(new URL('../../supabase/migrations/20261111045535_s3_private_service_identity.sql',import.meta.url),'utf8');
+  const {sql,sha}=buildTimeboxMigration(source);
+  assert.match(sha,/^[a-f0-9]{64}$/);
+  assert.match(sql,/SELECT a.created_at INTO born FROM auth.sessions a WHERE a.id=s AND a.user_id=u/);
+  assert.match(sql,/WHERE w.singleton AND w.project_ref='vellypyadcxkvqftsbrg' FOR SHARE/);
+  assert.match(sql,/R05_SESSION_TIMEBOX_EXPIRED/);
+  assert.throws(()=>buildTimeboxMigration(source.replace('RETURN QUERY SELECT u,s;', 'RETURN QUERY SELECT s,u;')));
+});
+
+test('timebox restores both authoritative policy and checked DB readback after an action error',async()=>{
+  const {withPlatformTimebox,zeroPolicy}=await import('../../scripts/s36-hosted/session-timebox.mjs');
+  let hosted=0, db=0, changes=[];
+  const admin={read:async()=>({...zeroPolicy,seconds:hosted}),set:async seconds=>{hosted=seconds;}};
+  const testError=new Error('action failed');
+  await assert.rejects(withPlatformTimebox({admin,change:label=>{
+    changes.push(label);
+    if(label==='timebox-policy-restore') throw Error('first reset did not commit');
+    db=label==='timebox-policy-activate'?300:0;
+  },readLocal:()=>db,receipt:()=>{},action:async()=>{
+    assert.deepEqual([hosted,db],[300,300]);
+    throw testError;
+  }}),error=>error===testError);
+  assert.deepEqual([hosted,db],[0,0]);
+  assert.deepEqual(changes,['timebox-policy-activate','timebox-policy-restore','timebox-policy-recover']);
+});
