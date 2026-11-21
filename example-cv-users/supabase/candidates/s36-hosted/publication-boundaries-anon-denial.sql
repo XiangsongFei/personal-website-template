@@ -1,0 +1,11 @@
+DO $denial$
+BEGIN
+ IF current_user<>'anon' THEN RAISE EXCEPTION 'S36_EXPECT_ANON'; END IF;
+ BEGIN
+  PERFORM public.read_public_text(current_setting('s36_test.a_host'),'en');
+  RAISE EXCEPTION 'S36_PUBLIC_BOUNDARY_NEGATIVE_ACCEPTED';
+ EXCEPTION WHEN SQLSTATE 'PT404' THEN
+  IF SQLERRM<>'PUBLIC_NOT_FOUND' THEN RAISE; END IF;
+ END;
+END;
+$denial$;

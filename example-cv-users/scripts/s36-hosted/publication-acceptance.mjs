@@ -118,8 +118,13 @@ export function transition(config,before,after,operation,input,result,sid) {
   assert.equal(event.state,'pending');
   assert.equal(event.attempt_count,0);
   assert.equal(event.lease_token,null);
-  assert.equal(snapshots.length,operation===publish?1:0);
-  if(operation===publish) {
+  const createsSnapshot=operation===publish && input.snapshot_id===null;
+  assert.equal(snapshots.length,createsSnapshot?1:0);
+  if(operation===publish && !createsSnapshot) {
+    const snap=before.snapshots.find(row=>row.id===input.snapshot_id && row.site_id===config.aliceSite);
+    assert.equal(result.publication.snapshot_id,snap?.id);
+  }
+  if(createsSnapshot) {
     const [snap]=snapshots;
     assert.equal(snap.site_id,config.aliceSite);
     assert.equal(snap.id,result.publication.snapshot_id);
