@@ -49,7 +49,7 @@ function postgrestOnce(name, body, token, signal, open = httpRequest,binding) {
 }
 
 // Split only for socket-free tests; the listener below obtains its peer from the TLS engine.
-export async function handlePrivateRpc(req, {binding,peerFingerprint, trustedFingerprint, identity, signal, openUnixRequest = httpRequest, send = postgrestOnce}) {
+export async function handlePrivateRpc(req, {binding,peerFingerprint, trustedFingerprint, identity, signal, openUnixRequest = httpRequest, send = postgrestOnce, observeFault}) {
   let issued = false;
   try {
     const scope=businessBinding(binding);if(!scope)deny('NOT_CONFIGURED',503);const {privateAuthority,authIssuer}=scope;
@@ -82,6 +82,8 @@ export async function handlePrivateRpc(req, {binding,peerFingerprint, trustedFin
     const { status, json } = await send(name,raw,token,signal,openUnixRequest,binding);
     if (signal.aborted || !json || Array.isArray(json) || typeof json !== 'object') throw new Error('INCOMPLETE');
     if (status === 200) return { status, json };
+    if (name==='save_text_draft' && status>=400 && status<=599 && json.code==='PT536' &&
+        json.message==='S36_TEST_DEFERRED_AFTER_SAVE_EFFECTS') observeFault?.({args,who,status});
     if (refusals.has(json.code) && refusals.get(json.code) === status) return { status,json:{code:json.code} };
   } catch (error) {
     if (!issued && error instanceof BusinessError) {
@@ -92,7 +94,7 @@ export async function handlePrivateRpc(req, {binding,peerFingerprint, trustedFin
   return {status:503,json:{code:'RESULT_UNKNOWN'}};
 }
 
-export function createPrivateRpcServer({ binding,tls, trustedFingerprint, identity } = {}) {
+export function createPrivateRpcServer({ binding,tls, trustedFingerprint, identity, observeFault } = {}) {
   if (!businessBinding(binding) || !tls || ![tls.ca,tls.cert,tls.key].every(x => typeof x === 'string' && x.length) ||
       typeof identity?.verifyAccount !== 'function' || !/^(?:[A-F0-9]{2}:){31}[A-F0-9]{2}$/.test(trustedFingerprint))
     deny('NOT_CONFIGURED',503);
@@ -108,7 +110,7 @@ export function createPrivateRpcServer({ binding,tls, trustedFingerprint, identi
     res.once('close',stop);
     const timer = setTimeout(() => { stop(); res.destroy(); },9000);
     try {
-      const result = await handlePrivateRpc(req,{binding,peerFingerprint,trustedFingerprint,identity,signal:controller.signal});
+      const result = await handlePrivateRpc(req,{binding,peerFingerprint,trustedFingerprint,identity,observeFault,signal:controller.signal});
       if (!res.destroyed) {
         res.writeHead(result.status,{'Content-Type':'application/json','Cache-Control':'no-store'});
         res.end(JSON.stringify(result.json));
@@ -135,8 +137,8 @@ export async function assertPrivateSocket(binding,policy,inspect=lstat) {
  }catch{deny('PRIVATE_SOCKET_UNSAFE',503);}
 }
 export async function privateRpcPreflight(options={},inspect=lstat) {
- const {enabled=false,binding,peerPolicy,listenHost,listenPort,identity,trustedFingerprint,tls}=options;
- const config=Object.freeze({binding,identity,trustedFingerprint,listenHost,listenPort,
+ const {enabled=false,binding,peerPolicy,listenHost,listenPort,identity,trustedFingerprint,tls,observeFault}=options;
+ const config=Object.freeze({binding,identity,trustedFingerprint,listenHost,listenPort,observeFault,
   peerPolicy:peerPolicy&&Object.freeze({uid:peerPolicy.uid,gid:peerPolicy.gid}),
   tls:tls&&Object.freeze({ca:tls.ca,cert:tls.cert,key:tls.key})});
  if(enabled!==true||listenHost!=='127.0.0.1'||!Number.isSafeInteger(listenPort)||listenPort<1024||listenPort>65535)deny('NOT_CONFIGURED',503);
