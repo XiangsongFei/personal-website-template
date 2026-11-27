@@ -42,6 +42,13 @@ function freezePlan(plan, scope) {
     validator_sha256: plan.validator_sha256, seal_role: plan.seal_role, complete_role: plan.complete_role });
 }
 
+export function bindPrivatePngLifecyclePlan(binding, input) {
+  const scope = businessBinding(binding);
+  if (!scope) deny('NOT_CONFIGURED', 503);
+  const plan = freezePlan(input, scope);
+  return Object.freeze({ plan, planSha256: hash(['ecv.private-png.lifecycle.v1', plan]) });
+}
+
 function exactAsset(plan, reply, previous, native) {
   if (!reply || !assetFields.every(key => uuid(reply[key])) ||
       previous && assetFields.some(key => reply[key] !== previous[key])) fail();
@@ -97,8 +104,7 @@ export function createPrivatePngLifecycle({ binding, identity, authorization, ob
   const { publishableKey } = storage;
   const { seal, complete, close } = Object.fromEntries(['seal', 'complete', 'close']
     .map(step => [step, writer[step].bind(writer)]));
-  const plan = freezePlan(input, scope);
-  const planHash = hash(['ecv.private-png.lifecycle.v1', plan]);
+  const { plan, planSha256: planHash } = bindPrivatePngLifecyclePlan(binding, input);
   const intents = Object.fromEntries([...steps, 'close'].map(step => [step, Object.freeze({
     plan, plan_sha256: planHash, step, request_id: plan.requests[step], intent_sha256: hash([planHash, step]),
   })]));

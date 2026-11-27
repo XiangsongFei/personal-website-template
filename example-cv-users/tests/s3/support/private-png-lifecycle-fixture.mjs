@@ -40,13 +40,13 @@ export async function memoryStore() {
   };
 }
 
-export async function lifecycleFixture({ root, authRoot, python, store, fault, calls = [] }) {
+export async function lifecycleFixture({ root, authRoot, python, store, fault, calls = [], createTail, roles = { seal: 'fixture_verify', complete: 'fixture_complete' } }) {
   const { prepare: png } = await preparePrivatePng({
     original_filename: 'fixture.png', site_id: id(4), request_id: requests.prepare,
   }, 'image/png', bytes);
   const plan = { owner_uid: actor.uid, owner_sid: actor.session_id, worker_uid: worker.uid, worker_sid: worker.session_id,
     run_id: id(32), grant_id: id(33), epoch: 4, generation: 'fixture-v1', png, requests,
-    validator_sha256: verifierDigest, seal_role: 'fixture_verify', complete_role: 'fixture_complete' };
+    validator_sha256: verifierDigest, seal_role: roles.seal, complete_role: roles.complete };
   const nativeVersion = id(36);
   const asset = {
     id: id(37), intent_id: id(38), asset_id: id(34), object_version: id(35), native_version: null,
@@ -110,9 +110,12 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
     await store.add(requests[step], value, effect);
     if (fault?.kill === step) process.kill(process.pid, 'SIGKILL');
   }
+  const tail = await createTail?.({ binding, plan, asset: uploaded, requests });
+  const tailSteps = ['seal', 'complete', 'close'];
   const lifecycle = createPrivatePngLifecycle({ binding, identity, authorization, plan, directory: root, python,
     observer: {
-      async lookup(intent) {
+      async lookup(intent, signal) {
+        if (tail && tailSteps.includes(intent.step)) return tail.observer.lookup(intent, signal);
         const row = await store.get(intent.request_id);
         const mutates = intent.step !== 'verify';
         const witness = fault?.alter === intent.step && row ? { ...row, ...fault.changed } : row;
@@ -122,7 +125,7 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
           xid: row && mutates ? row.xid : null, receipt_sha256: hash([intent.request_id, row ?? null]),
           qualification_current: !fault?.revokedAfterRead || !calls.includes('verify') };
       },
-      async closed(intent) {
+      async closed(intent, options) {
         const count = await store.countLeases();
         const retained = await store.get(requests.post);
         const ready = await store.get(requests.complete);
@@ -131,9 +134,10 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
           command_leases: Number(await store.hasLease(requests[step])), in_flight: 0,
           late_write_possible: fault?.innerLate === step,
         })));
-        return { closed: count === 0, project: binding.project, command_status,
-          retained_ready: ready ? { complete_xid: ready.xid, seal_xid: ready.seal_xid,
-            verifier_sha256: ready.verifier_sha256 } : null,
+        const actualTail = await tail?.observer.closed(intent, options);
+        return { closed: count === 0 && (actualTail?.closed ?? !tail), project: binding.project, command_status,
+          retained_ready: tail ? actualTail.retained_ready :
+            ready ? { complete_xid: ready.xid, seal_xid: ready.seal_xid, verifier_sha256: ready.verifier_sha256 } : null,
           retained_png: fault?.retainedDrift ? pending : retained?.asset ?? null,
           retained_post_xid: retained?.xid ?? null, intent_sha256: intent.intent_sha256,
           request_id: intent.request_id, late_write_possible: false, protection_preserved: !fault?.drift,
@@ -169,23 +173,30 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
           storage_request_id: readRequest, validator_sha256: verifierDigest,
           bytes: fault?.corrupt ? bytes.subarray(1) : bytes };
       },
-      async recordVerified(_intent, receipt, sha) {
+      async recordVerified(intent, receipt, sha) {
         await record('verify', { verifier_receipt: receipt, verifier_sha256: sha });
+        await tail?.registerFixtureReceipt(intent, receipt, sha);
       },
     },
     writer: {
-      async seal(_intent, _receipt, sha) {
+      async seal(intent, receipt, sha, signal) {
         calls.push('seal');
+        if (tail) return tail.writer.seal(intent, receipt, sha, signal);
         await record('seal', { asset: uploaded, verifier_sha256: sha, state: 'sealed', execution_role: plan.seal_role });
         if (fault?.lost === 'seal') throw Error('fixture Seal receipt lost');
       },
-      async complete(_intent, _receipt, sha, seal) {
+      async complete(intent, receipt, sha, seal, signal) {
         calls.push('complete');
+        if (tail) return tail.writer.complete(intent, receipt, sha, seal, signal);
         assert.deepEqual(seal, { request_id: requests.seal, xid: (await store.get(requests.seal)).xid });
         await record('complete', { asset: uploaded, verifier_sha256: sha, state: 'ready', execution_role: plan.complete_role,
           seal_request_id: seal.request_id, seal_xid: fault?.otherSeal ? '999999' : seal.xid });
       },
-      async close() { calls.push('close'); await record('close', {}, 'close'); },
+      async close(intent, signal) {
+        calls.push('close');
+        if (tail) await tail.writer.close(intent, signal);
+        await record('close', {}, 'close');
+      },
     },
   });
   return { lifecycle, requests, owner: await identity.verifyAccount('fixture-owner'),
