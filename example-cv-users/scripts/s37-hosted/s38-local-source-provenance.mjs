@@ -38,6 +38,8 @@ export function correlateLocalS38Denials({ raw, requests, fixtureId, definitions
     if (!request || linked.has(evidence.requestId) || evidence.fixtureId !== fixtureId || !uuid(evidence.requestId) ||
         !uuid(evidence.uid) || !uuid(evidence.sid) || !role(evidence.decisionRole) ||
         !digest(evidence.statementSha256) || evidence.requestSha256 !== request.requestSha256 ||
+        (request.bodySha256 !== undefined &&
+          (!digest(request.bodySha256) || evidence.bodySha256 !== request.bodySha256)) ||
         !definition || evidence.definitionSha256 !== definition.originalSha256 ||
         !definition.branches.includes(evidence.branch) || evidence.function !== request.decisionFunction ||
         !request.branches.includes(evidence.branch) ||
