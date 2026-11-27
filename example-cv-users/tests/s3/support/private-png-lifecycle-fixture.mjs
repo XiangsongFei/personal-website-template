@@ -110,12 +110,17 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
     await store.add(requests[step], value, effect);
     if (fault?.kill === step) process.kill(process.pid, 'SIGKILL');
   }
-  const tail = await createTail?.({ binding, plan, asset: uploaded, requests });
+  const tail = await createTail?.({ binding, plan, asset: uploaded, requests, pending });
+  const front = tail?.authorization;
   const tailSteps = ['seal', 'complete', 'close'];
-  const lifecycle = createPrivatePngLifecycle({ binding, identity, authorization, plan, directory: root, python,
+  const lifecycle = createPrivatePngLifecycle({ binding, identity, authorization: front ?
+    { ...front, journalRoot: authRoot } : authorization, plan, directory: root, python,
     observer: {
       async lookup(intent, signal) {
-        if (tail && tailSteps.includes(intent.step)) return tail.observer.lookup(intent, signal);
+        if (tail && (tailSteps.includes(intent.step) || (front &&
+            ['prepare', 'claim', 'authorize-verify'].includes(intent.step)))) return tail.observer.lookup(intent, signal);
+        if (front && intent.step === 'post') return tail.readFixturePost(intent, signal);
+        if (front && intent.step === 'verify') return tail.readVerified(intent);
         const row = await store.get(intent.request_id);
         const mutates = intent.step !== 'verify';
         const witness = fault?.alter === intent.step && row ? { ...row, ...fault.changed } : row;
@@ -127,9 +132,10 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
       },
       async closed(intent, options) {
         const count = await store.countLeases();
-        const retained = await store.get(requests.post);
+        const retained = front ? await tail.readRetainedPost() : await store.get(requests.post);
         const ready = await store.get(requests.complete);
-        const command_status = await Promise.all(['prepare', 'claim', 'authorize-verify'].map(async step => ({
+        const command_status = front ? await tail.closeCommandStates() :
+          await Promise.all(['prepare', 'claim', 'authorize-verify'].map(async step => ({
           request_id: requests[step], close_request_id: requests[step + '-close'],
           command_leases: Number(await store.hasLease(requests[step])), in_flight: 0,
           late_write_possible: fault?.innerLate === step,
@@ -142,7 +148,8 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
           retained_post_xid: retained?.xid ?? null, intent_sha256: intent.intent_sha256,
           request_id: intent.request_id, late_write_possible: false, protection_preserved: !fault?.drift,
           sessions: 0, refresh: 0, grants: 0, permits: 0, generations: 0, active_runs: 0,
-          connected: 0, leases: count, temporary_permissions: 0, receipt_sha256: hash([intent.request_id, count]) };
+          connected: 0, leases: count, temporary_permissions: 0, receipt_sha256: hash([intent.request_id, count]),
+          ...(front ? await tail.scopeClosure() : {}) };
       },
     },
     storage: {
@@ -155,13 +162,15 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
         assert.equal(options.headers.Authorization, 'Bearer fixture-worker');
         assert.equal(options.headers['x-upsert'], 'false');
         assert.equal(Buffer.from(options.body).toString('hex'), digest);
-        const claim = await store.get(requests.claim);
+        const claim = front ? await tail.readClaim() : await store.get(requests.claim);
         assert.equal(context.intent.request_id, claim.upload_request_id);
         assert.equal(context.claim_xid, claim.xid);
-        await record('post', { asset: uploaded, state: 'pending', upload_request_id: requests.post,
+        const effect = { asset: uploaded, state: 'pending', upload_request_id: requests.post,
           claim_xid: fault?.otherClaim ? '99999' : claim.xid, permit_consumed: !fault?.badPermit,
           storage_request_id: createdRequest, storage_request_role: 'authenticated',
-          native_session_user: 'supabase_storage_admin', native_effective_role: 'service_role' }, 'open');
+          native_session_user: 'supabase_storage_admin', native_effective_role: 'service_role' };
+        if (front) await tail.recordFixturePost(context, effect, worker);
+        else await record('post', effect, 'open');
         if (fault?.lost === 'post') throw Error('fixture POST receipt lost');
         return new Response(null, { status: 200, headers: { 'sb-request-id': createdRequest } });
       },
