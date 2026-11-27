@@ -50,6 +50,14 @@ async function lock(directory, python) {
   return { signal: lease.signal, release };
 }
 
+const MAX_RECORD_BYTES = 8192;
+
+function encodeRecord(value) {
+  const encoded = JSON.stringify(value) + '\n';
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_RECORD_BYTES) fail('RECORD_TOO_LARGE');
+  return encoded;
+}
+
 function read(path) {
   let fd;
   try {
@@ -60,7 +68,7 @@ function read(path) {
   }
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o7777) !== 0o600 || stat.size > 8192)
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o7777) !== 0o600 || stat.size > MAX_RECORD_BYTES)
       fail('UNSAFE_RECORD');
     const record = JSON.parse(readFileSync(fd, 'utf8'));
     if (!record || typeof record !== 'object' || Array.isArray(record)) fail('UNSAFE_RECORD');
@@ -72,11 +80,12 @@ function read(path) {
 
 // A complete, fsynced record is visible before the caller can dispatch.
 function write(directory, name, value) {
+  const encoded = encodeRecord(value);
   const temporary = join(directory, '.record-' + randomUUID());
   const fd = openSync(temporary, 'wx', 0o600);
   try {
     try {
-      writeFileSync(fd, JSON.stringify(value) + '\n');
+      writeFileSync(fd, encoded, 'utf8');
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -111,6 +120,7 @@ export async function runPrivateRecovery({
   if (realpathSync(directory) !== directory || !stat.isDirectory() || stat.uid !== process.getuid() ||
       (stat.mode & 0o7777) !== 0o700) fail('DIRECTORY');
   const config = { scopeSha256, operations: lanes };
+  const encodedConfig = encodeRecord(config);
   const lease = await lock(directory, python);
   const workSignal = signal ? AbortSignal.any([signal, lease.signal]) : lease.signal;
   let current = null;
@@ -177,7 +187,7 @@ export async function runPrivateRecovery({
   try {
     const old = read(join(directory, 'run.json'));
     const priorClosure = read(join(directory, 'closed.json'));
-    if ((old && JSON.stringify(old) !== JSON.stringify(config)) || (!old && priorClosure)) fail('BINDING');
+    if ((old && encodeRecord(old) !== encodedConfig) || (!old && priorClosure)) fail('BINDING');
     if (priorClosure) {
       if (priorClosure.scopeSha256 !== scopeSha256 || !digest(priorClosure.receiptSha256)) fail('INCONSISTENT');
       return { recovered: true, alreadyClosed: true, receiptSha256: priorClosure.receiptSha256 };

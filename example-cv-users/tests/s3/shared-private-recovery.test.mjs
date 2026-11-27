@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -21,6 +21,30 @@ const config = directory => ({
   directory, python, scopeSha256: scope, operations: { business: ['business'], close: ['close'] },
   work() {}, close() {}, observeClosed: () => closure,
 });
+
+function sizedOperations(bytes) {
+  const slots = bytes === 9222 ? 140 : 124;
+  const ids = Array.from({ length: slots }, (_, i) => ('id-' + i).padEnd(62, 'x'));
+  const operations = { business: bytes === 9222 ? ids : ['business', ...ids], close: ['close'] };
+  const size = () => Buffer.byteLength(JSON.stringify({ scopeSha256: scope, operations }) + '\n', 'utf8');
+  const last = operations.business.length - 1;
+  const excess = size() - bytes;
+  assert.ok(excess > 0 && excess < 20);
+  operations.business[last] = operations.business[last].slice(0, -excess);
+  assert.equal(size(), bytes);
+  return operations;
+}
+
+for (const bytes of [8193, 9222]) {
+  test(bytes + '-byte configuration is rejected before any journal files or adapters', async t => {
+    const directory = temp(t);
+    await assert.rejects(runPrivateRecovery({
+      ...config(directory), operations: sizedOperations(bytes),
+      work: assert.fail, close: assert.fail, observeClosed: () => assert.fail('closure observer ran'),
+    }), /PRIVATE_JOURNAL_RECORD_TOO_LARGE/);
+    assert.deepEqual(readdirSync(directory), []);
+  });
+}
 
 test('writes the exact intent before dispatch and resolves it once', async t => {
   const options = config(temp(t));
@@ -106,20 +130,25 @@ test('abort leaves uncertainty for independent reconciliation and keeps closure 
   assert.equal(observed, true);
 });
 
-test('a killed process releases the kernel lock but its intent stays non-replayable', { timeout: 10000 }, async t => {
+test('an 8192-byte run recovers its original intent after a killed process', { timeout: 10000 }, async t => {
   const options = config(temp(t));
+  options.operations = sizedOperations(8192);
+  const effectPath = join(options.directory, 'synthetic-effect');
   const launcher = [
     'import { runPrivateRecovery } from ' + JSON.stringify(new URL('../../scripts/shared/recovery-journal.node.mjs', import.meta.url).href) + ';',
+    'import { writeFileSync } from "node:fs";',
     'await runPrivateRecovery({ ...JSON.parse(process.argv[1]),',
     'work: journal => journal.dispatch("business", "' + operation + '", () => {',
+    'writeFileSync(process.argv[2], "committed", {flag:"wx", mode:0o600});',
     'console.log("dispatched"); return new Promise(() => {});',
     '}), close() {}, observeClosed() {} });',
   ].join('\n');
-  const child = spawn(process.execPath, ['--input-type=module', '-e', launcher, JSON.stringify(options)],
+  const child = spawn(process.execPath, ['--input-type=module', '-e', launcher, JSON.stringify(options), effectPath],
     { stdio: ['ignore', 'pipe', 'ignore'] });
   t.after(() => child.kill('SIGKILL'));
   const [ready] = await once(child.stdout, 'data');
   assert.match(ready.toString(), /dispatched/);
+  assert.equal(readFileSync(join(options.directory, 'run.json')).length, 8192);
   await assert.rejects(runPrivateRecovery(options), /BUSY/);
   const finished = once(child, 'exit');
   child.kill('SIGKILL');
@@ -129,9 +158,19 @@ test('a killed process releases the kernel lock but its intent stays non-replaya
     try {
       outcome = await runPrivateRecovery({
         ...options, work: assert.fail,
-        close(journal) {
-          assert.equal(journal.inspect('business').state, 'unknown');
-          journal.reconcile('business', { disposition: 'absent', receiptSha256: receipt.receiptSha256 });
+        async close(journal) {
+          const original = journal.inspect('business');
+          assert.equal(original.state, 'unknown');
+          assert.equal(original.intentSha256, operation);
+          assert.equal(readFileSync(effectPath, 'utf8'), 'committed');
+          assert.throws(() => journal.dispatch('business', operation, assert.fail), /OPERATION/);
+          journal.reconcile('business', receipt);
+          await journal.dispatch('close', operation, () => receipt);
+        },
+        observeClosed(journal) {
+          assert.equal(journal.inspect('business').disposition, 'committed');
+          assert.equal(journal.inspect('close').state, 'resolved');
+          return closure;
         },
       });
     } catch (error) {
@@ -140,6 +179,7 @@ test('a killed process releases the kernel lock but its intent stays non-replaya
     }
   }
   assert.equal(outcome?.recovered, true);
+  assert.equal((await runPrivateRecovery({ ...options, work: assert.fail, close: assert.fail })).alreadyClosed, true);
 });
 
 test('refuses an outcome detached from the original intent', async t => {
