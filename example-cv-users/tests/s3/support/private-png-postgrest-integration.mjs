@@ -9,6 +9,8 @@ import { bindPrivatePngLifecyclePlan } from '../../../lib/business/private-png-l
 import { createPrivatePngPostgrestAdapters } from '../../../lib/business/private-png-postgrest.node.mjs';
 import { prepareAssetDigest } from '../../../lib/business/asset-protocol.mjs';
 import { id } from './private-png-authorization-fixture.mjs';
+import { closeProjectAuthority, installProjectAuthority, readProjectAuthority, revokeProjectGrant,
+  seedProjectAuthority } from './private-png-project-authority.mjs';
 import { startPrivatePostgrest } from '../../../scripts/shared/private-postgrest.node.mjs';
 import { bytes, lifecycleFixture, memoryStore } from './private-png-lifecycle-fixture.mjs';
 
@@ -27,7 +29,7 @@ const sha = value => createHash('sha256').update(JSON.stringify(value)).digest('
 const literal = value => "'" + value.replaceAll("'", "''") + "'";
 const writerSteps = ['seal', 'complete', 'close'];
 
-async function fixture(t, fault, front = false, existing) {
+async function fixture(t, fault, front = false, existing, projectAuthority = false) {
   const tmp = realpathSync('/tmp');
   const root = existing?.root ?? mkdtempSync(join(tmp, 'ecv-png-tail-'));
   const marker = join(root, 'fixture-nonce');
@@ -59,18 +61,30 @@ async function fixture(t, fault, front = false, existing) {
     }
   });
   const port = '54838';
+  const adminRole = projectAuthority ? 'supabase_admin' : 'fixture_admin';
   if (!existing) {
-    pg('initdb', ['-D', data, '-U', 'fixture_admin', '--no-locale', '--encoding=UTF8',
+    pg('initdb', ['-D', data, '-U', adminRole, '--no-locale', '--encoding=UTF8',
       '--auth-local=trust', '--auth-host=reject']);
     pg('pg_ctl', ['-D', data, '-l', join(root, 'server.log'), '-o',
-      '-c listen_addresses= -k ' + root + ' -p ' + port, '-w', 'start']);
+      '-c listen_addresses= -k ' + root + ' -p ' + port +
+        (projectAuthority ? ' -c s35.png_authority=' + nonce : ''), '-w', 'start']);
     started = true;
   }
-  const admin = query => pg('psql', ['-XqAt', '--no-password', '-v', 'ON_ERROR_STOP=1',
-    '-h', root, '-p', port, '-U', 'fixture_admin', '-d', 'postgres'], query).trim();
+  const sql = (role, query) => pg('psql', ['-XqAt', '--no-password', '-v', 'ON_ERROR_STOP=1',
+    '-h', root, '-p', port, '-U', role, '-d', 'postgres'], query).trim();
+  const admin = query => sql(adminRole, query);
+  let authority;
   if (!existing) {
+    if (projectAuthority) {
+      installProjectAuthority(sql);
+      authority = seedProjectAuthority(sql, fault === 'project-expired' ? 'expired' :
+        fault === 'project-no-grant' ? 'no-grant' : undefined);
+    }
     admin(sqlFixture);
     if (front) admin(commandSQL);
+    if (projectAuthority) admin(readFileSync(new URL('./private-png-project-authority.sql', import.meta.url), 'utf8'));
+  } else if (projectAuthority) {
+    authority = readProjectAuthority(sql);
   }
   const reader = query => pg('psql', ['-XqAt', '--no-password', '-v', 'ON_ERROR_STOP=1',
     '-h', root, '-p', port, '-U', 'fixture_png_reader', '-d', 'postgres'],
@@ -159,7 +173,7 @@ async function fixture(t, fault, front = false, existing) {
           const actor = { uid: plan.owner_uid, sid: plan.owner_sid, site: plan.png.site_id,
             issuer: binding.authIssuer, grant: plan.grant_id, epoch: plan.epoch, generation: plan.generation,
             prepare: plan.requests.prepare, sha256: plan.png.sha256, size: plan.png.byte_size, mime: plan.png.mime_type };
-          for (const mismatch of [{ uid: id(75) }, { sid: id(76) }, { site: id(77) },
+          for (const mismatch of [{ uid: id(75) }, { sid: id(76) }, { site: authority?.otherSite ?? id(77) },
             { grant: id(78) }, { epoch: plan.epoch - 1 }, { generation: 'retired' }]) {
             const denied = admin(`BEGIN; SET LOCAL SESSION AUTHORIZATION fixture_png_writer;
               SET LOCAL ROLE fixture_png_command;
@@ -174,6 +188,14 @@ async function fixture(t, fault, front = false, existing) {
           ...adapters.authorization.writer,
           async applyAtomically(bound, signal) {
             calls.push(bound.intent.operation);
+            if (projectAuthority && bound.intent.operation === 'claim') {
+              if (fault === 'project-revocation') revokeProjectGrant(sql);
+              if (fault === 'project-epoch') admin(`UPDATE site_private.user_security_state SET security_epoch=security_epoch+1
+                WHERE auth_user_id=${literal(plan.owner_uid)};`);
+              if (fault === 'project-generation') admin(`UPDATE site_private.proof_generations SET revoked_at=clock_timestamp()
+                WHERE key_id=${literal(plan.generation)};`);
+              if (fault === 'project-stale-sid') admin(`DELETE FROM auth.sessions WHERE id=${literal(plan.owner_sid)};`);
+            }
             if (fault === 'expired' && bound.intent.operation === 'claim') {
               admin(`BEGIN; SELECT pg_advisory_xact_lock(hashtextextended(${run},35));
                 UPDATE fixture_png.scope SET valid_to=clock_timestamp() WHERE run_id=${run}; COMMIT;`);
@@ -274,14 +296,16 @@ async function fixture(t, fault, front = false, existing) {
     return integrated;
   }
   const makeLifecycle = () => lifecycleFixture({ root: journal, authRoot: join(journal, 'commands'),
-    python: realpathSync('/usr/bin/python3'), store, calls, createTail,
+    python: realpathSync('/usr/bin/python3'), store, calls, createTail, authority,
     fault: fault === 'corrupt-verifier' ? { corrupt: true } : undefined,
     roles: { seal: 'fixture_png_seal', complete: 'fixture_png_complete' } });
   return { ...(await makeLifecycle()), calls, admin, makeLifecycle, captured: () => captured,
+    finishProjectAuthority: projectAuthority ? () => closeProjectAuthority(sql) : undefined,
     recoverInNewProcess() {
       const receipt = JSON.parse(execFileSync(process.execPath, [fileURLToPath(import.meta.url), 'recover'], {
         timeout: 25_000, encoding: 'utf8', env: { ...systemEnv, S35_TEST_PG17_BIN: pgBin,
-          S35_TEST_POSTGREST: binary, S35_FRONT_RECOVER_ROOT: root, S35_FRONT_RECOVER_NONCE: nonce },
+          S35_TEST_POSTGREST: binary, S35_FRONT_RECOVER_ROOT: root, S35_FRONT_RECOVER_NONCE: nonce,
+          S35_PROJECT_AUTHORITY: projectAuthority ? '1' : '0' },
       }));
       assert.notEqual(receipt.pid, process.pid);
       assert.equal(receipt.recovered, true);
@@ -296,7 +320,7 @@ if (process.argv[2] === 'recover') {
   try {
     const local = await fixture({ after: task => cleanup.push(task) }, undefined, true, {
       root: process.env.S35_FRONT_RECOVER_ROOT, nonce: process.env.S35_FRONT_RECOVER_NONCE,
-    });
+    }, process.env.S35_PROJECT_AUTHORITY === '1');
     const { recovered } = await local.lifecycle.recover();
     console.log(JSON.stringify({ recovered, calls: local.calls, pid: process.pid }));
   } finally {
@@ -457,4 +481,58 @@ test('a corrupt Verifier body fences the missing receipt and retains only the or
   assert.equal(local.admin("SELECT string_agg(step,',' ORDER BY step) FROM fixture_png.effects;"), 'close');
   assert.equal(local.admin('SELECT count(*) FROM fixture_png.pin WHERE receipt IS NOT NULL;'), '0');
 });
+
+test('original project migrations source prepare and one claim through the full PNG lifecycle', { timeout: 50000 }, async t => {
+  const local = await fixture(t, 'competing-claim', true, undefined, true);
+  local.captured().proveWrongActors();
+  const run = await local.lifecycle.run({ owner: local.owner, worker: local.worker, bytes });
+  assert.equal(local.admin("SELECT count(*) FROM fixture_png.command_effect WHERE step='claim' AND accepted;"), '1');
+  assert.equal(local.admin("SELECT count(*) FROM site_private.grant_proofs WHERE action='issue' AND consumed_at IS NOT NULL;"), '2');
+  assert.equal(local.admin(`SELECT count(*) FROM fixture_png.scope f JOIN site_private.business_session_grants g ON g.id=f.grant_id
+    JOIN site_data.sites s ON s.owner_auth_user_id=g.auth_user_id WHERE s.id::text=f.asset->>'site_id';`), '1');
+  assert.equal(local.admin('SELECT count(*) FROM fixture_png.lease;'), '0');
+  assert.match(run.completed.completeXid, /^\d+$/);
+  local.finishProjectAuthority();
+  assert.equal(local.admin("SELECT enabled OR proof_verifier_ready FROM site_private.business_runtime;"), 'f');
+  assert.equal(local.admin("SELECT count(*) FROM pg_roles WHERE rolname IN ('ecv_s3_internal_api_login','ecv_s3_registration_login') AND rolcanlogin;"), '0');
+});
+
+for (const fault of ['project-revocation', 'project-epoch', 'project-generation', 'project-stale-sid']) {
+  test(`authoritative ${fault} fences the pending claim`, { timeout: 50000 }, async t => {
+    const local = await fixture(t, fault, true, undefined, true);
+    await assert.rejects(local.lifecycle.run({ owner: local.owner, worker: local.worker, bytes }));
+    assert.equal(local.admin("SELECT accepted FROM fixture_png.command_effect WHERE step='claim';"), 'f');
+    assert.equal(local.admin('SELECT count(*) FROM fixture_png.upload;'), '0');
+    assert.equal(local.admin('SELECT lifecycle_open FROM fixture_png.pin;'), 'f');
+    local.finishProjectAuthority();
+  });
+}
+
+for (const fault of ['project-no-grant', 'project-expired']) {
+  test(`authoritative ${fault} denies prepare without a persisted asset`, { timeout: 50000 }, async t => {
+    const local = await fixture(t, fault, true, undefined, true);
+    await assert.rejects(local.lifecycle.run({ owner: local.owner, worker: local.worker, bytes }));
+    assert.equal(local.admin("SELECT accepted FROM fixture_png.command_effect WHERE step='prepare';"), 'f');
+    assert.equal(local.admin('SELECT count(*) FROM fixture_png.prepared_asset;'), '0');
+    assert.deepEqual(local.calls, ['prepare', 'close']);
+    local.finishProjectAuthority();
+  });
+}
+
+for (const stage of ['post', 'seal']) {
+  test(`the original-project lifecycle recovers lost ${stage} through a fresh process`, { timeout: 50000 }, async t => {
+    const local = await fixture(t, 'lost-' + stage, true, undefined, true);
+    await assert.rejects(local.lifecycle.run({ owner: local.owner, worker: local.worker, bytes }));
+    const query = stage === 'post' ? 'SELECT xid FROM fixture_png.upload;' :
+      "SELECT txid FROM fixture_png.effects WHERE step='seal';";
+    const original = local.admin(query);
+    local.recoverInNewProcess();
+    assert.match(original, /^\d+$/);
+    assert.equal(local.admin(query), original);
+    assert.equal(local.admin("SELECT string_agg(step,',' ORDER BY step) FROM fixture_png.effects;"),
+      stage === 'post' ? 'close' : 'close,seal');
+    assert.equal(local.calls.filter(step => step === stage).length, 1);
+    local.finishProjectAuthority();
+  });
+}
 }

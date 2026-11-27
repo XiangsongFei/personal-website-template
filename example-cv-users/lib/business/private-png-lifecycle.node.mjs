@@ -186,7 +186,7 @@ export function createPrivatePngLifecycle({ binding, identity, authorization, ob
       method: 'POST', redirect: 'error', signal, body: bytes,
       headers: { apikey: publishableKey, Authorization: 'Bearer ' + token,
         'Content-Type': plan.png.mime_type, 'x-upsert': 'false' },
-    }, Object.freeze({ intent: intents.post, asset, claim_xid: claim.xid })));
+    }, Object.freeze({ intent: intents.post, asset, claim_xid: claim.xid, worker })));
     const requestId = reply?.headers?.get('sb-request-id');
     if (reply?.body) await reply.body.cancel();
     if (![200, 201].includes(reply?.status) || reply.redirected || !uuid(requestId)) fail();

@@ -8,7 +8,7 @@ CREATE ROLE fixture_png_observe NOLOGIN NOBYPASSRLS;
 GRANT fixture_png_seal, fixture_png_complete, fixture_png_close TO fixture_png_writer;
 GRANT fixture_png_observe TO fixture_png_reader;
 
-CREATE SCHEMA site_api;
+CREATE SCHEMA IF NOT EXISTS site_api;
 CREATE SCHEMA fixture_png;
 REVOKE ALL ON SCHEMA site_api, fixture_png FROM PUBLIC;
 GRANT USAGE ON SCHEMA site_api, fixture_png TO
