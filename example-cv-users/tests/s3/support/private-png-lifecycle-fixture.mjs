@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createPrivatePngLifecycle } from '../../../lib/business/private-png-lifecycle.node.mjs';
 import { preparePrivatePng } from '../../../lib/business/private-png-content.node.mjs';
+import { createPrivatePngStorageTransport } from '../../../lib/business/private-png-storage.node.mjs';
 import { ASSET_BUCKET, assetObjectKey } from '../../../lib/business/asset-protocol.mjs';
 import { createIdentityAdapter } from '../../../lib/business/identity.mjs';
-import { binding, id, now, originalAccount, qualification } from './private-png-authorization-fixture.mjs';
+import { binding as fixtureBinding, id, now, originalAccount, qualification } from './private-png-authorization-fixture.mjs';
 
 export const bytes = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108000000003a7e9b55' +
@@ -40,12 +41,15 @@ export async function memoryStore() {
   };
 }
 
-export async function lifecycleFixture({ root, authRoot, python, store, fault, calls = [], createTail, roles = { seal: 'fixture_verify', complete: 'fixture_complete' } }) {
+export async function lifecycleFixture({ root, authRoot, python, store, fault, calls = [], createTail, authority,
+  roles = { seal: 'fixture_verify', complete: 'fixture_complete' } }) {
+  const binding = authority?.binding ?? fixtureBinding;
   const { prepare: png } = await preparePrivatePng({
-    original_filename: 'fixture.png', site_id: id(4), request_id: requests.prepare,
+    original_filename: 'fixture.png', site_id: authority?.siteId ?? id(4), request_id: requests.prepare,
   }, 'image/png', bytes);
   const plan = { owner_uid: actor.uid, owner_sid: actor.session_id, worker_uid: worker.uid, worker_sid: worker.session_id,
-    run_id: id(32), grant_id: id(33), epoch: 4, generation: 'fixture-v1', png, requests,
+    run_id: id(32), grant_id: authority?.grantId ?? id(33), epoch: 4, generation: authority?.generation ?? 'fixture-v1',
+    png, requests,
     validator_sha256: verifierDigest, seal_role: roles.seal, complete_role: roles.complete };
   const nativeVersion = id(36);
   const asset = {
@@ -113,6 +117,26 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
   const tail = await createTail?.({ binding, plan, asset: uploaded, requests, pending });
   const front = tail?.authorization;
   const tailSteps = ['seal', 'complete', 'close'];
+  const storageFor = storage => authority ? createPrivatePngStorageTransport({
+    binding, plan, identity, publishableKey: storage.publishableKey, sendCreateOnly: storage.fetcher,
+    async readNative(request, { token, cache, redirect }) {
+      assert.deepEqual(request, { project: binding.project, requestId: requests.verify, bucket: ASSET_BUCKET,
+        objectKey: uploaded.object_key, nativeVersion });
+      assert.equal(token, 'fixture-worker');
+      assert.equal(cache, 'no-store');
+      assert.equal(redirect, 'error');
+      const result = await storage.readVersion({ asset: uploaded });
+      return new Response(result.bytes, { status: result.status, headers: { 'sb-request-id': result.storage_request_id,
+        'content-length': String(result.bytes.byteLength), 'content-type': result.mime_type } });
+    },
+    async observeNativeRead(request, { requestId }) {
+      const { asset: source } = await tail.readRetainedPost();
+      return { ...request, originalRequestId: request.requestId, requestId,
+        objectKey: source.object_key, nativeVersion: source.native_version,
+        uid: source.worker_uid, sid: source.worker_sid, noCache: true };
+    },
+    recordVerified: storage.recordVerified,
+  }) : storage;
   const lifecycle = createPrivatePngLifecycle({ binding, identity, authorization: front ?
     { ...front, journalRoot: authRoot } : authorization, plan, directory: root, python,
     observer: {
@@ -152,7 +176,7 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
           ...(front ? await tail.scopeClosure() : {}) };
       },
     },
-    storage: {
+    storage: storageFor({
       publishableKey: 'sb_publishable_fixture',
       async fetcher(url, options, context) {
         calls.push('post');
@@ -186,7 +210,7 @@ export async function lifecycleFixture({ root, authRoot, python, store, fault, c
         await record('verify', { verifier_receipt: receipt, verifier_sha256: sha });
         await tail?.registerFixtureReceipt(intent, receipt, sha);
       },
-    },
+    }),
     writer: {
       async seal(intent, receipt, sha, signal) {
         calls.push('seal');
