@@ -154,6 +154,9 @@ export async function startPrivatePostgrest({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [binary] = process.argv.slice(2);
   if (process.argv.length !== 3 || !isAbsolute(binary)) process.exit(1);
+  // The socket must be private from bind(), before PostgREST applies its chmod.
+  // This dedicated supervisor does not change the caller's process mask.
+  process.umask(0o177);
   const child = spawn(binary, [], { env: process.env, stdio: 'ignore' });
   let force;
   function stop() {

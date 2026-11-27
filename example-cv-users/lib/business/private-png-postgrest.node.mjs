@@ -1,9 +1,10 @@
-// Narrow server-side transport for the post-verifier portion of the PNG lifecycle.
+// Narrow server-side transport for the private PNG lifecycle.
 import { createHash } from 'node:crypto';
 import { lstatSync, realpathSync } from 'node:fs';
 import { request } from 'node:http';
 import { dirname, isAbsolute } from 'node:path';
 import { bindPrivatePngLifecyclePlan } from './private-png-lifecycle.node.mjs';
+import { isLocalPrivatePngFixtureBinding } from './private-png-authorization.node.mjs';
 import { ASSET_BUCKET, assetObjectKey } from './asset-protocol.mjs';
 import { deny, exact, uuid } from './protocol.mjs';
 
@@ -12,6 +13,7 @@ const rpcs = Object.freeze({
   lookup: 's35_png_observe', closed: 's35_png_closed',
 });
 const writes = Object.freeze(['seal', 'complete', 'close']);
+const commands = Object.freeze(['prepare', 'claim', 'authorize-verify']);
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const xid = value => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
 const name = value => typeof value === 'string' && /^[a-z_][a-z0-9_]{0,62}$/.test(value);
@@ -96,22 +98,29 @@ async function send(channel, rpc, readOnly, input, signal) {
  * Stage and recovery admission remain owned by the lifecycle journal.
  */
 export function createPrivatePngPostgrestAdapters({ binding, plan: input, targetFingerprint, closeRole,
-  writers, observer } = {}) {
+  writers, observer, authorization } = {}) {
   if (!digest(targetFingerprint) || !name(closeRole)) deny('NOT_CONFIGURED', 503);
+  if (authorization !== undefined) {
+    if (!isLocalPrivatePngFixtureBinding(binding)) deny('NOT_CONFIGURED', 503);
+    exact(authorization, ['command', 'close', 'commandRole', 'closeRole']);
+  }
   const { plan, planSha256 } = bindPrivatePngLifecyclePlan(binding, input);
   const keys = plan.requests;
   exact(writers, writes);
   const mutate = Object.fromEntries(writes.map(step => [step, channel(writers[step], targetFingerprint)]));
   const observe = channel(observer, targetFingerprint);
-  const channels = [...Object.values(mutate), observe];
+  const command = authorization && channel(authorization.command, targetFingerprint);
+  const commandClose = authorization && channel(authorization.close, targetFingerprint);
+  const channels = [...Object.values(mutate), ...(command ? [command, commandClose] : []), observe];
   const unique = field => new Set(channels.map(lane => lane[field])).size === channels.length;
   if (mutate.seal.role !== plan.seal_role || mutate.complete.role !== plan.complete_role ||
       mutate.close.role !== closeRole || !unique('role') || !unique('path') || !unique('socket') ||
-      Object.values(mutate).some(lane => lane.connection === observe.connection))
+      (command && (command.role !== authorization.commandRole || commandClose.role !== authorization.closeRole)) ||
+      channels.some(lane => lane !== observe && lane.connection === observe.connection))
     deny('NOT_CONFIGURED', 503);
 
   function parameters(intent, step) {
-    if (!writes.includes(step) || intent?.step !== step || intent.request_id !== keys[step] ||
+    if (intent?.step !== step || !keys[step] || intent.request_id !== keys[step] ||
         intent.plan_sha256 !== planSha256 || intent.intent_sha256 !== sha([planSha256, step]) ||
         sha(['ecv.private-png.lifecycle.v1', intent.plan]) !== planSha256) unproven();
     return { p_project: plan.project, p_run: plan.run_id, p_request: keys[step], p_intent: intent.intent_sha256 };
@@ -133,11 +142,29 @@ export function createPrivatePngPostgrestAdapters({ binding, plan: input, target
     return { p_receipt: bound, p_receipt_sha: receiptSha256 };
   }
 
-  async function write(step, input, signal) {
-    const lane = mutate[step];
-    const ack = await send(lane, rpcs[step], false, input, signal);
+  async function write(lane, rpc, input, signal) {
+    const ack = await send(lane, rpc, false, input, signal);
     if (ack?.request_id !== input.p_request || ack?.accepted !== true || ack.execution_role !== lane.role ||
         ack.connection_role !== lane.connection) unproven();
+  }
+
+  function commandParameters(bound) {
+    const intent = bound?.intent;
+    const step = intent?.operation;
+    if (!commands.includes(step) || intent.request_id !== keys[step] || !digest(bound.intentSha256) ||
+        intent.project !== plan.project || intent.issuer !== binding.authIssuer ||
+        intent.uid !== plan.owner_uid || intent.sid !== plan.owner_sid || intent.site_id !== plan.png.site_id ||
+        intent.grant_id !== plan.grant_id || intent.epoch !== plan.epoch || intent.generation !== plan.generation ||
+        sha(intent.png) !== sha(plan.png)) unproven();
+    return { p_project: plan.project, p_run: plan.run_id, p_request: keys[step], p_intent: bound.intentSha256,
+      p_step: step };
+  }
+
+  function commandObservation(bound, requestId, lane) {
+    const input = commandParameters(bound);
+    if (requestId !== (lane === 'close' ? keys[input.p_step + '-close'] : input.p_request) ||
+        !['command', 'close'].includes(lane)) unproven();
+    return { ...input, p_request: requestId, p_lane: lane };
   }
 
   async function read(rpc, input, signal) {
@@ -145,25 +172,36 @@ export function createPrivatePngPostgrestAdapters({ binding, plan: input, target
     if (row?.reader !== observe.role || row.connection_role !== observe.connection || row.readonly !== 'on' ||
         row.project !== input.p_project || row.run_id !== input.p_run || row.request_id !== input.p_request ||
         row.intent_sha256 !== input.p_intent) unproven();
-    return { ...row, receipt_sha256: sha(row) };
+    // Live qualification is checked separately from the immutable commit receipt.
+    const { qualification_current, ...receipt } = row;
+    return { ...row, receipt_sha256: sha(receipt) };
   }
 
   return Object.freeze({
     writer: Object.freeze({
       seal(intent, receipt, receiptSha256, signal) {
-        return write('seal', { ...parameters(intent, 'seal'), ...receiptParameters(intent, receipt, receiptSha256) }, signal);
+        return write(mutate.seal, rpcs.seal,
+          { ...parameters(intent, 'seal'), ...receiptParameters(intent, receipt, receiptSha256) }, signal);
       },
       complete(intent, receipt, receiptSha256, committedSeal, signal) {
         exact(committedSeal, ['request_id', 'xid']);
         if (committedSeal.request_id !== keys.seal || !xid(committedSeal.xid)) unproven();
-        return write('complete', { ...parameters(intent, 'complete'), ...receiptParameters(intent, receipt, receiptSha256),
+        return write(mutate.complete, rpcs.complete,
+          { ...parameters(intent, 'complete'), ...receiptParameters(intent, receipt, receiptSha256),
           p_seal_request: committedSeal.request_id, p_seal_xid: committedSeal.xid }, signal);
       },
-      close(intent, signal) { return write('close', parameters(intent, 'close'), signal); },
+      close(intent, signal) { return write(mutate.close, rpcs.close, parameters(intent, 'close'), signal); },
     }),
     observer: Object.freeze({
       async lookup(intent, signal) {
         const step = intent?.step;
+        if (command && commands.includes(step)) {
+          const row = await read('s35_png_command_effect', { ...parameters(intent, step), p_step: step }, signal);
+          if (row.step !== step || (row.disposition === 'committed' && row.execution_role !== command.role))
+            unproven();
+          return row;
+        }
+        if (!writes.includes(step)) unproven();
         const row = await read(rpcs.lookup, { ...parameters(intent, step), p_step: step }, signal);
         if (row.step !== step || (row.disposition === 'committed' && row.execution_role !== mutate[step].role))
           unproven();
@@ -171,5 +209,34 @@ export function createPrivatePngPostgrestAdapters({ binding, plan: input, target
       },
       closed(intent, { signal } = {}) { return read(rpcs.closed, parameters(intent, 'close'), signal); },
     }),
+    ...(command ? { authorization: Object.freeze({
+      writer: Object.freeze({
+        applyAtomically(bound, signal) {
+          const { intent } = bound;
+          return write(command, 's35_png_command', { ...commandParameters(bound), p_permit: intent.permit,
+            p_actor: { uid: intent.uid, sid: intent.sid, site: intent.site_id, issuer: intent.issuer,
+              grant: intent.grant_id, epoch: intent.epoch, generation: intent.generation,
+              prepare: intent.png.request_id, sha256: intent.png.sha256, size: intent.png.byte_size,
+              mime: intent.png.mime_type } }, signal);
+        },
+        close(bound, requestId, signal) {
+          return write(commandClose, 's35_png_command_close', commandObservation(bound, requestId, 'close'), signal);
+        },
+      }),
+      observer: Object.freeze({
+        async lookup(bound, { request_id, lane, signal }) {
+          const row = await read('s35_png_command_status', commandObservation(bound, request_id, lane), signal);
+          if (row.lane !== lane || (row.disposition === 'committed' &&
+              row.execution_role !== (lane === 'close' ? commandClose.role : command.role))) unproven();
+          return row;
+        },
+        async closed(bound, { request_id, signal }) {
+          const row = await read('s35_png_command_status', commandObservation(bound, request_id, 'close'), signal);
+          if (row.lane !== 'close' || (row.disposition === 'committed' && row.execution_role !== commandClose.role))
+            unproven();
+          return row;
+        },
+      }),
+    }) } : {}),
   });
 }

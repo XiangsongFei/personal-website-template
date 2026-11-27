@@ -13,6 +13,13 @@ const epoch = value => Number.isSafeInteger(value) && value >= 0;
 const xid = value => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
 const hash = value => sha256(new TextEncoder().encode(JSON.stringify(value)));
 
+export function isLocalPrivatePngFixtureBinding(binding) {
+  const scope = businessBinding(binding);
+  if (scope?.testOnly !== true) return false;
+  const issuer = new URL(scope.authIssuer).hostname;
+  return issuer === 'localhost' || issuer === '127.0.0.1' || issuer.endsWith('.internal.test');
+}
+
 function permitScope(input, png) {
   if (input.operation === 'prepare') {
     if (input.permit !== null || png.request_id !== input.request_id) deny('INVALID_INPUT', 400);
@@ -94,14 +101,20 @@ function observation(bound, evidence, requestId, lane) {
  * the same locks used by revocation and the mutation, using the original
  * account handle. Store the exact request UUID and intent digest atomically
  * with the effect. A distinct observer proves settlement and request ownership.
+ * Local fixtures may use applyAtomically to exercise qualification and effect
+ * in one PostgREST request without a production source-schema binding.
  * Keep the adapters, journal root, and original recovery plan server-owned.
  */
 export function createPrivatePngAuthorization({ binding, identity, writer, observer, journalRoot, python } = {}) {
   const scope = businessBinding(binding);
-  if (!scope || !identity || ![writer?.transaction, writer?.close, observer?.lookup, observer?.closed]
+  const atomic = typeof writer?.applyAtomically === 'function';
+  const callback = typeof writer?.transaction === 'function';
+  if (!scope || !identity || atomic === callback || (atomic && !isLocalPrivatePngFixtureBinding(binding)) ||
+      ![writer?.close, observer?.lookup, observer?.closed]
     .every(fn => typeof fn === 'function') || writer === observer ||
     !isAbsolute(journalRoot ?? '') || !isAbsolute(python ?? '')) deny('NOT_CONFIGURED', 503);
-  const transaction = writer.transaction.bind(writer);
+  const applyAtomically = atomic ? writer.applyAtomically.bind(writer) : null;
+  const transaction = callback ? writer.transaction.bind(writer) : null;
   const close = writer.close.bind(writer);
   const lookup = observer.lookup.bind(observer);
   const closed = observer.closed.bind(observer);
@@ -138,13 +151,19 @@ export function createPrivatePngAuthorization({ binding, identity, writer, obser
       work: journal => {
         if (recoveryAccount) deny('RECOVERY_REQUIRED', 409);
         return journal.dispatch('command', intentSha256, async workSignal => {
-          await transaction(bound, { handle, signal: workSignal }, async locked => {
-            const proof = await locked.qualification();
+          if (applyAtomically) {
             workSignal.throwIfAborted();
             account();
-            enforceQualification(intent, proof);
-            await locked.apply();
-          });
+            await applyAtomically(bound, workSignal);
+          } else {
+            await transaction(bound, { handle, signal: workSignal }, async locked => {
+              const proof = await locked.qualification();
+              workSignal.throwIfAborted();
+              account();
+              enforceQualification(intent, proof);
+              await locked.apply();
+            });
+          }
           const result = await observed('command', workSignal);
           if (result.disposition !== 'committed') deny('COMMIT_UNKNOWN', 503);
           return result;
