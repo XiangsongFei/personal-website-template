@@ -124,8 +124,9 @@ export async function runPrivateRecovery({
   const lease = await lock(directory, python);
   const workSignal = signal ? AbortSignal.any([signal, lease.signal]) : lease.signal;
   let current = null;
-  let pending;
-  let pendingOperation;
+  let accepting = false;
+  let invoking = false;
+  const pending = new Map();
 
   const inspect = id => {
     if (!names.includes(id)) fail('OPERATION');
@@ -147,6 +148,10 @@ export async function runPrivateRecovery({
       if (current !== lane) fail('INACTIVE');
       laneSignal.throwIfAborted();
     };
+    const admit = () => {
+      active();
+      if (!accepting) fail('INACTIVE');
+    };
     const record = (id, receipt) => {
       active();
       const intent = inspect(id);
@@ -161,27 +166,61 @@ export async function runPrivateRecovery({
       // A recovery observer resolves the original intent. It cannot dispatch it.
       reconcile(id, receipt) {
         if (lane !== 'close') fail('LANE');
-        if (pendingOperation === id) fail('IN_FLIGHT');
+        admit();
+        if (pending.has(id)) fail('IN_FLIGHT');
         return record(id, receipt);
       },
       dispatch(id, intentSha256, effect) {
-        active();
+        admit();
         if (!lanes[lane].includes(id) || !digest(intentSha256) || typeof effect !== 'function') fail('OPERATION');
-        if (pending) fail('IN_FLIGHT');
+        if (pending.size) fail('IN_FLIGHT');
         if (inspect(id).state !== 'not-started') fail('ALREADY_RESERVED');
-        write(directory, id + '.intent.json', { scopeSha256, id, intentSha256 });
-        active();
+        const entry = { admitted: false };
+        const reserve = () => {
+          admit();
+          entry.admitted = true;
+          write(directory, id + '.intent.json', { scopeSha256, id, intentSha256 });
+        };
+        if (invoking) reserve();
         const dispatched = Promise.resolve().then(() => {
+          // A detached microtask may arrive ahead of the callback's settlement reaction.
+          // Recheck admission before reserving its intent once that reaction can run.
+          if (!entry.admitted) reserve();
           active();
           return effect(laneSignal);
         }).then(receipt => record(id, receipt));
-        pending = dispatched;
-        pendingOperation = id;
-        const settled = () => { pending = undefined; pendingOperation = undefined; };
+        entry.promise = dispatched;
+        pending.set(id, entry);
+        const settled = () => pending.delete(id);
         dispatched.then(settled, settled);
         return dispatched;
       },
     });
+  }
+
+  async function runLane(lane, laneSignal, callback, failures) {
+    current = lane;
+    accepting = true;
+    invoking = true;
+    try {
+      laneSignal.throwIfAborted();
+      const finished = callback(interfaceFor(lane, laneSignal));
+      invoking = false;
+      if (typeof finished?.then === 'function') await finished;
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      invoking = false;
+      accepting = false;
+    }
+    // After sealing admission, every outstanding attempt is in this batch.
+    // Keep the lane active until accepted effects have settled and recorded.
+    const batch = [...pending.values()];
+    const outcomes = await Promise.allSettled(batch.map(entry => entry.promise));
+    for (const [index, outcome] of outcomes.entries()) {
+      if (batch[index].admitted && outcome.status === 'rejected') failures.push(outcome.reason);
+    }
+    current = null;
   }
 
   try {
@@ -194,21 +233,8 @@ export async function runPrivateRecovery({
     }
     if (!old) write(directory, 'run.json', config);
     const failures = [];
-    if (!old) {
-      current = 'business';
-      try {
-        workSignal.throwIfAborted();
-        await work(interfaceFor('business', workSignal));
-      } catch (error) { failures.push(error); }
-      try { await pending; } catch (error) { failures.push(error); }
-    }
-    current = 'close';
-    try {
-      lease.signal.throwIfAborted();
-      await close(interfaceFor('close', lease.signal));
-    } catch (error) { failures.push(error); }
-    try { await pending; } catch (error) { failures.push(error); }
-    current = null;
+    if (!old) await runLane('business', workSignal, work, failures);
+    await runLane('close', lease.signal, close, failures);
     let receiptSha256;
     try {
       lease.signal.throwIfAborted();

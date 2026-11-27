@@ -96,6 +96,126 @@ test('does not let an unawaited effect race close or a second dispatch', async t
   assert.deepEqual(calls, ['effect completed', 'close']);
 });
 
+test('seals business and close intake before detached continuations can reserve intents', async t => {
+  const directory = temp(t);
+  const calls = [];
+  const permissions = new Set();
+  let lateBusiness;
+  let lateClose;
+  await runPrivateRecovery({
+    ...config(directory),
+    operations: { business: ['first', 'second', 'late-business'], close: ['close', 'late-close'] },
+    async work(journal) {
+      await journal.dispatch('first', operation, () => {
+        calls.push('first');
+        permissions.add('first');
+        return receipt;
+      });
+      const second = journal.dispatch('second', operation, async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        calls.push('second');
+        permissions.add('second');
+        return receipt;
+      });
+      lateBusiness = second.then(() => assert.rejects(
+        async () => journal.dispatch('late-business', operation, assert.fail), /INACTIVE/,
+      ));
+    },
+    close(journal) {
+      calls.push('close-started');
+      assert.equal(journal.inspect('first').state, 'resolved');
+      assert.equal(journal.inspect('second').state, 'resolved');
+      const closing = journal.dispatch('close', operation, async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        permissions.clear();
+        calls.push('close-completed');
+        return receipt;
+      });
+      lateClose = closing.then(() => assert.rejects(
+        async () => journal.dispatch('late-close', operation, assert.fail), /INACTIVE/,
+      ));
+    },
+    observeClosed(journal) {
+      calls.push('observe');
+      assert.equal(journal.inspect('close').state, 'resolved');
+      assert.equal(journal.inspect('late-business').state, 'not-started');
+      assert.equal(journal.inspect('late-close').state, 'not-started');
+      assert.equal(permissions.size, 0);
+      return closure;
+    },
+  });
+  await Promise.all([lateBusiness, lateClose]);
+  assert.deepEqual(calls, ['first', 'second', 'close-started', 'close-completed', 'observe']);
+  for (const id of ['late-business', 'late-close']) {
+    assert.ok(!readdirSync(directory).includes(id + '.intent.json'));
+  }
+});
+
+test('rejects detached microtasks queued before an async callback settles', async t => {
+  const directory = temp(t);
+  const late = [];
+  function checkDetached(journal, id) {
+    late.push(new Promise((resolve, reject) => queueMicrotask(() => {
+      assert.rejects(async () => journal.dispatch(id, operation, assert.fail), /INACTIVE/)
+        .then(resolve, reject);
+    })));
+  }
+  await runPrivateRecovery({
+    ...config(directory),
+    operations: { business: ['business'], close: ['close'] },
+    async work(journal) { checkDetached(journal, 'business'); },
+    async close(journal) { checkDetached(journal, 'close'); },
+    observeClosed(journal) {
+      assert.equal(journal.inspect('business').state, 'not-started');
+      assert.equal(journal.inspect('close').state, 'not-started');
+      return closure;
+    },
+  });
+  await Promise.all(late);
+  assert.ok(!readdirSync(directory).some(name => name.endsWith('.intent.json')));
+});
+
+test('drains an accepted effect on callback failure and reconciles its lost receipt before closing', async t => {
+  const directory = temp(t);
+  const evidence = join(directory, 'observed-effect');
+  const options = config(directory);
+  const calls = [];
+  await assert.rejects(runPrivateRecovery({
+    ...options,
+    work(journal) {
+      void journal.dispatch('business', operation, async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        writeFileSync(evidence, 'committed', { flag: 'wx' });
+        calls.push('effect');
+        throw new Error('receipt lost');
+      });
+      throw new Error('work stopped');
+    },
+    async close(journal) {
+      const original = journal.inspect('business');
+      assert.equal(original.state, 'unknown');
+      assert.equal(original.intentSha256, operation);
+      assert.equal(readFileSync(evidence, 'utf8'), 'committed');
+      journal.reconcile('business', receipt);
+      await journal.dispatch('close', operation, () => {
+        calls.push('close');
+        return receipt;
+      });
+    },
+    observeClosed(journal) {
+      assert.equal(journal.inspect('business').disposition, 'committed');
+      assert.equal(journal.inspect('close').state, 'resolved');
+      return closure;
+    },
+  }), error => error instanceof AggregateError &&
+    error.errors.some(cause => cause.message === 'receipt lost'));
+  assert.deepEqual(calls, ['effect', 'close']);
+  const reopened = await runPrivateRecovery({
+    ...options, work: assert.fail, close: assert.fail, observeClosed: () => assert.fail('already closed'),
+  });
+  assert.equal(reopened.alreadyClosed, true);
+});
+
 test('abort leaves uncertainty for independent reconciliation and keeps closure authority', async t => {
   const signal = new AbortController();
   const options = config(temp(t));
@@ -138,10 +258,10 @@ test('an 8192-byte run recovers its original intent after a killed process', { t
     'import { runPrivateRecovery } from ' + JSON.stringify(new URL('../../scripts/shared/recovery-journal.node.mjs', import.meta.url).href) + ';',
     'import { writeFileSync } from "node:fs";',
     'await runPrivateRecovery({ ...JSON.parse(process.argv[1]),',
-    'work: journal => journal.dispatch("business", "' + operation + '", () => {',
+    'work: journal => { void journal.dispatch("business", "' + operation + '", () => {',
     'writeFileSync(process.argv[2], "committed", {flag:"wx", mode:0o600});',
     'console.log("dispatched"); return new Promise(() => {});',
-    '}), close() {}, observeClosed() {} });',
+    '}); }, close() {}, observeClosed() {} });',
   ].join('\n');
   const child = spawn(process.execPath, ['--input-type=module', '-e', launcher, JSON.stringify(options), effectPath],
     { stdio: ['ignore', 'pipe', 'ignore'] });
