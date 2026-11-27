@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { boundAccountContext, withCredential } from '../../lib/business/identity.mjs';
 import { startPrivatePostgrest } from '../shared/private-postgrest.node.mjs';
 import { runPrivateRecovery } from '../shared/recovery-journal.node.mjs';
+import { freezeS38ClosedCases } from './s38-closed-case-plan.mjs';
 import { correlateLocalS38Denials } from './s38-local-source-provenance.mjs';
 
 const issuer = 'https://s38.fixture.invalid/auth/v1';
@@ -14,49 +15,8 @@ const connectionRole = 'ecv_s3_internal_api_login';
 const executionRole = 'authenticated';
 const sha = value => createHash('sha256').update(value).digest('hex');
 const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
-const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value);
-const name = value => typeof value === 'string' && /^[a-z_][a-z0-9_]{0,62}$/.test(value);
 const fail = code => { throw Error('S38_CLOSED_EXECUTOR_' + code); };
 const expectedStatus = Object.freeze({ '42501': 403, PT503: 503 });
-
-const lanes = Object.freeze({ A: { max: 14, prefixes: ['s37e1', 's37e2'] },
-  B: { max: 52, prefixes: ['s37h1', 's37h2'] } });
-const prefixes = [...lanes.A.prefixes, ...lanes.B.prefixes];
-const rpcKinds = new Map([['read_introduction', 'text'], ...prefixes.flatMap(prefix => [
-  [prefix + '_read_file', 'read'], [prefix + '_file_access', 'history'], [prefix + '_file_command', 'prepare'],
-])]);
-
-function freezeBody(rpc, args, sqlstate, reason) {
-  const kind = rpcKinds.get(rpc);
-  if (!kind || !args || Object.getPrototypeOf(args) !== Object.prototype) fail('PLAN');
-  const pinned = kind === 'text' ? { target: args.target } : kind === 'read' ?
-    { target: args.target, asset_id: args.asset_id, storage_version: args.storage_version } :
-    { target_run: args.target_run, target_site: args.target_site, operation: kind, input: {} };
-  const expected = kind === 'text' ? ['PT503', 'NOT_CONFIGURED'] : ['42501', 'BUSINESS_DENIED'];
-  if (Object.keys(args).length !== Object.keys(pinned).length ||
-      Object.entries(pinned).some(([key, value]) => key === 'input' ?
-        (!args.input || Object.getPrototypeOf(args.input) !== Object.prototype || Object.keys(args.input).length !== 0) :
-        (key === 'operation' ? args.operation !== value : !uuid(value))) ||
-      expected[0] !== sqlstate || expected[1] !== reason) fail('PLAN');
-  return JSON.stringify(pinned);
-}
-
-function freezePlan(cases, lane) {
-  if (!lane || !Array.isArray(cases) || !cases.length || cases.length > lane.max ||
-      new Set(cases.map(item => item?.requestId)).size !== cases.length) fail('PLAN');
-  return cases.map(item => {
-    const { caseId, requestId, uid, sid, rpc, args, sqlstate, reason, branches, definitionSha256, decisionRole,
-      identityBasis } = item ?? {};
-    if (![requestId, uid, sid].every(uuid) || !name(rpc) || !name(decisionRole) ||
-        !digest(definitionSha256) || typeof caseId !== 'string' || !/^[a-z0-9-]{1,80}$/.test(caseId) ||
-        !Array.isArray(branches) || !branches.length || !branches.every(name) || !name(identityBasis)) fail('PLAN');
-    if (rpc !== 'read_introduction' && !lane.prefixes.some(prefix => rpc.startsWith(prefix + '_'))) fail('PLAN');
-    const body = freezeBody(rpc, args, sqlstate, reason);
-    const bound = Object.freeze({ caseId, requestId, uid, sid, rpc, sqlstate, reason, branches: Object.freeze([...branches]),
-      definitionSha256, decisionFunction: schema + '.' + rpc, decisionRole, identityBasis, bodySha256: sha(body) });
-    return Object.freeze({ ...bound, body, requestSha256: sha(JSON.stringify(bound)) });
-  });
-}
 
 function fixtureRoot(directory) {
   if (!isAbsolute(directory ?? '')) fail('FIXTURE_DIRECTORY');
@@ -118,7 +78,7 @@ function invoke(socketPath, plan, token, signal) {
 // A reopened journal acquires no JWT and cannot enter the dispatch lane.
 export async function runS38ClosedFixture({ lane, cases, fixtureId, targetFingerprint, protectedSha256,
   directory, python, runtime, identity, handles, readSource, readClosure, signal } = {}) {
-  const plan = freezePlan(cases, Object.hasOwn(lanes, lane) ? lanes[lane] : null);
+  const plan = freezeS38ClosedCases(lane, cases, { fixture: true });
   if (!/^[0-9a-f]{32}$/.test(fixtureId ?? '') || !digest(targetFingerprint) || !digest(protectedSha256) ||
       typeof readSource !== 'function' || typeof readClosure !== 'function' || readSource === readClosure)
     fail('SCOPE');

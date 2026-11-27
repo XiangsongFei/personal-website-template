@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { createIdentityAdapter } from '../../../lib/business/identity.mjs';
+import { freezeS38ClosedCases } from '../../../scripts/s37-hosted/s38-closed-case-plan.mjs';
+import { checkS38IndependentSourceReview } from '../../../scripts/s37-hosted/s38-reviewed-source.mjs';
 import { runS38ClosedFixture } from '../../../scripts/s37-hosted/s38-closed-executor.node.mjs';
 
 const pgBin = process.env.S38_TEST_PG17_BIN;
@@ -25,6 +27,10 @@ function fixture(t) {
   const data = join(root, 'db');
   const directory = join(root, 'journal');
   mkdirSync(directory, { mode: 0o700 });
+  // Make the private socket 0600 at bind time, before PostgREST's chmod.
+  const restrictedPostgrest = join(root, 'postgrest');
+  const executable = "'" + binary.replaceAll("'", "'\\''") + "'";
+  writeFileSync(restrictedPostgrest, '#!/bin/sh\numask 0177\nexec ' + executable + ' "$@"\n', { mode: 0o700 });
   const fixtureId = randomBytes(16).toString('hex');
   const port = '54837';
   const sql = (who, statement) => postgres('psql', '-XqAt', '--no-password', '-v', 'ON_ERROR_STOP=1',
@@ -38,7 +44,7 @@ function fixture(t) {
     '--no-locale', '--encoding=UTF8');
   postgres('pg_ctl', '-D', data, '-l', join(root, 'startup.log'), '-o',
     '-c listen_addresses= -k ' + root + ' -p ' + port +
-    ' -c logging_collector=on -c log_destination=jsonlog -c log_min_error_statement=panic -c log_directory=log',
+    ' -c logging_collector=on -c log_destination=jsonlog -c log_min_error_statement=panic -c log_directory=log -c log_timezone=UTC',
     '-w', 'start');
   started = true;
   const admin = statement => sql('fixture_admin', statement);
@@ -174,7 +180,7 @@ function fixture(t) {
       const handles = await Promise.all(tokens.map(token => identity.verifyAccount(token)));
       return { lane: 'A', cases, fixtureId, targetFingerprint, protectedSha256, directory, python, identity,
         handles: new Map(cases.map((item, index) => [item.sid, handles[index]])),
-        runtime: { binary, jwtSecret, identityToken: tokens[0],
+        runtime: { binary: restrictedPostgrest, jwtSecret, identityToken: tokens[0],
           databaseUri: 'postgresql://ecv_s3_internal_api_login@localhost/postgres?host=' +
             encodeURIComponent(root) + '&port=' + port },
         readSource, readClosure };
@@ -240,4 +246,49 @@ test('real denial can settle original mutation absence from a fresh process with
   assert.equal(result.recovered, true);
   assert.deepEqual(result.denials.map(item => [item.requestId, item.wire, item.event.sqlstate]), [[id(10), null, '42501']]);
   assert.equal(local.logs().filter(line => line.includes('S38_LOCAL_DB_SOURCE')).length, 1);
+});
+
+
+test('a separate local review binds genuine PostgreSQL log slices to #64 wire receipts', { timeout: 30000 }, async t => {
+  const local = fixture(t);
+  const options = await local.options();
+  const beforeAt = new Date().toISOString();
+  const { denials } = await runS38ClosedFixture(options);
+  const plan = freezeS38ClosedCases(options.lane, options.cases, { fixture: true });
+  const artifacts = await Promise.all(denials.map(item => local.readSource({ requestId: item.requestId,
+    signal: AbortSignal.timeout(3000) })));
+  const original = Buffer.concat(artifacts);
+  const artifactSha256 = sha(original);
+  const contract = { realm: 'local-fixture', lane: options.lane, project: 's38-local-fixture', authIssuer: issuer,
+    databaseSha256: options.targetFingerprint, collectorId: 'fixture-reviewer', beforeAt, afterAt: new Date().toISOString() };
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const approved = { ...contract, reviewerKeySha256: sha(publicKey.export({ type: 'spki', format: 'der' })),
+    contractSha256: sha(JSON.stringify({ ...contract, caseSha256: plan.map(item => item.requestSha256) })) };
+  const transportReceipts = denials.map(({ wire }, index) => ({ caseId: plan[index].caseId,
+    requestId: plan[index].requestId, requestSha256: plan[index].requestSha256,
+    requestBodySha256: plan[index].bodySha256, status: wire.status, replySha256: wire.bodySha256 }));
+  let position = 0;
+  const rows = denials.map(({ event }, index) => {
+    const item = plan[index];
+    const start = position;
+    position += artifacts[index].length;
+    return { caseId: event.caseId, requestId: event.requestId, uid: item.uid, sid: item.sid,
+      requestSha256: event.requestSha256, bodySha256: item.bodySha256, sourceId: event.sourceId,
+      recordedAt: new Date(event.nativeLoggedAt).toISOString(), connectionRole: event.connectionRole,
+      callerRole: event.callerRole, decisionRole: event.decisionRole, decisionFunction: event.decisionFunction,
+      definitionSha256: item.definitionSha256, branch: event.branch, identityBasis: event.identityBasis,
+      sqlstate: event.sqlstate, reason: event.reason, statementSha256: event.statementSha256,
+      backendId: event.backendSession, transactionId: event.nativeTransaction,
+      original: { artifactSha256, start, end: position, sha256: sha(artifacts[index]) } };
+  });
+  const archive = Buffer.from(JSON.stringify({ collectorId: approved.collectorId, databaseSha256: approved.databaseSha256, rows }));
+  const review = Buffer.from(JSON.stringify({ version: 1, realm: approved.realm, project: approved.project, lane: approved.lane,
+    contractSha256: approved.contractSha256, transportSha256: sha(JSON.stringify(transportReceipts)), archiveSha256: sha(archive),
+    artifacts: [{ kind: 'LOCAL_POSTGRES_JSONLOG', sha256: artifactSha256 }] }));
+  const result = checkS38IndependentSourceReview({ approved, cases: options.cases, transportReceipts, archive, originals: [original],
+    review, signature: sign(null, review, privateKey), reviewerPublicKey: publicKey.export({ type: 'spki', format: 'pem' }) });
+  assert.equal(result.realm, 'local-fixture');
+  assert.equal(result.linkedCases, 2);
+  assert.equal(result.hostedAcceptance, false);
+  assert.equal(local.connections(), 0);
 });
