@@ -6,9 +6,11 @@ import { isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import { createIdentityAdapter } from '../../../lib/business/identity.mjs';
+import { createS38AuthBinding, proveS38AuthClosed } from '../../../scripts/s37-hosted/s38-auth-binding.node.mjs';
 import { freezeS38ClosedCases } from '../../../scripts/s37-hosted/s38-closed-case-plan.mjs';
 import { checkS38IndependentSourceReview } from '../../../scripts/s37-hosted/s38-reviewed-source.mjs';
 import { runS38ClosedFixture } from '../../../scripts/s37-hosted/s38-closed-executor.node.mjs';
+import { runPrivateRecovery } from '../../../scripts/shared/recovery-journal.node.mjs';
 
 const pgBin = process.env.S38_TEST_PG17_BIN;
 const binary = process.env.S38_TEST_POSTGREST;
@@ -175,7 +177,7 @@ function fixture(t) {
   }
 
   return {
-    logs, tokens, identity, cases, connections, state, readSource, readClosure, directory,
+    logs, tokens, identity, cases, connections, state, readSource, readClosure, directory, admin, observe,
     async options() {
       const handles = await Promise.all(tokens.map(token => identity.verifyAccount(token)));
       return { lane: 'A', cases, fixtureId, targetFingerprint, protectedSha256, directory, python, identity,
@@ -200,6 +202,111 @@ test('local PG17.12/PostgREST 16.6 correlates both wire denials and proves indep
     const bytes = readFileSync(join(local.directory, entry), 'utf8');
     assert.ok(local.tokens.every(token => !bytes.includes(token)));
   }
+});
+
+test('pinned ES256 synthetic Auth plus independent PG UID/SID drives real PostgREST and zero-Actor closure', { timeout: 30000 }, async t => {
+  const local = fixture(t);
+  const options = await local.options();
+  const { targetFingerprint, protectedSha256 } = options;
+  const [probe] = options.cases;
+  const { uid, sid } = probe;
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const key = { ...publicKey.export({ format: 'jwk' }), alg: 'ES256', kid: 's38-local-es256', use: 'sig' };
+  const jwks = Buffer.from(JSON.stringify({ keys: [key] }));
+  const now = Math.floor(Date.now() / 1000);
+  const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const unsigned = encode({ alg: 'ES256', kid: key.kid }) + '.' + encode({
+    iss: issuer, aud: 'authenticated', role: 'authenticated', sub: uid, session_id: sid,
+    iat: now, exp: now + 120, is_anonymous: false, amr: [{ method: 'password' }],
+  });
+  const token = unsigned + '.' + sign('sha256', Buffer.from(unsigned), {
+    key: privateKey, dsaEncoding: 'ieee-p1363',
+  }).toString('base64url');
+  const user = { id: uid, email: 'actor@example.invalid', is_anonymous: false, email_confirmed_at: '2026-01-01' };
+  local.admin(`
+    CREATE TABLE fixture_guard.actors(uid uuid PRIMARY KEY);
+    CREATE TABLE fixture_guard.sessions(sid uuid PRIMARY KEY, uid uuid NOT NULL REFERENCES fixture_guard.actors,
+      created_at bigint NOT NULL DEFAULT floor(extract(epoch FROM clock_timestamp())), refresh boolean NOT NULL);
+    CREATE VIEW fixture_guard.closed_role AS
+      SELECT rolcanlogin, rolpassword IS NULL AS password_null
+      FROM pg_catalog.pg_authid WHERE rolname='ecv_s3_internal_api_login';
+    REVOKE ALL ON fixture_guard.actors, fixture_guard.sessions FROM PUBLIC;
+    REVOKE ALL ON fixture_guard.closed_role FROM PUBLIC;
+    GRANT SELECT ON fixture_guard.actors, fixture_guard.sessions, fixture_guard.closed_role TO fixture_observer;
+    ALTER ROLE fixture_observer SET default_transaction_read_only=on;
+  `);
+  const counts = () => JSON.parse(local.observe(`SELECT json_build_object(
+    'accountCount',(SELECT count(*) FROM fixture_guard.actors),
+    'sessions',(SELECT count(*) FROM fixture_guard.sessions),
+    'refresh',(SELECT count(*) FROM fixture_guard.sessions WHERE refresh));`));
+  assert.deepEqual(counts(), { accountCount: 0, sessions: 0, refresh: 0 });
+  const calls = [];
+  const auth = createS38AuthBinding({ issuer, targetFingerprint, jwks, jwksSha256: sha(jwks), maxLifetimeSeconds: 180,
+    async transport({ method, path, token: bearer, requestId }) {
+      calls.push([method, path, requestId]);
+      if (method === 'POST') {
+        local.admin(`BEGIN; INSERT INTO fixture_guard.actors VALUES ('${uid}');
+          INSERT INTO fixture_guard.sessions (sid,uid,refresh) VALUES ('${sid}','${uid}',true); COMMIT;`);
+        return { status: 200, body: { access_token: token, user } };
+      }
+      assert.equal(bearer, token);
+      return { status: 200, body: user };
+    },
+    async readSession({ uid: requestedUid, sid: requestedSid, requestId }) {
+      assert.equal(requestedUid, uid);
+      assert.equal(requestedSid, sid);
+      const data = local.observe(`SELECT json_build_object('uid',uid,'sid',sid,'createdAt',created_at,
+        'active',true,'refreshPresent',refresh,'observedAt',floor(extract(epoch FROM clock_timestamp())),
+        'observer',current_user,'readOnly',current_setting('transaction_read_only'),
+        'targetFingerprint',encode(sha256(convert_to((SELECT system_identifier::text FROM pg_control_system())
+          || '/' || (SELECT oid::text FROM pg_database WHERE datname=current_database()),'UTF8')),'hex'))
+        FROM fixture_guard.sessions WHERE uid='${uid}' AND sid='${sid}';`);
+      const row = JSON.parse(data);
+      assert.equal(row.observer, 'fixture_observer');
+      assert.equal(row.readOnly, 'on');
+      return { ...row, requestId, receiptSha256: sha(data) };
+    },
+  });
+  const directory = join(local.directory, 'auth-journal');
+  mkdirSync(directory, { mode: 0o700 });
+  const lifecycle = await runPrivateRecovery({ directory, python, scopeSha256: auth.scopeSha256,
+    operations: { business: ['signin'], close: ['revoke'] },
+    async work(journal) {
+      const actor = await auth.openPasswordActor({ uid, email: user.email, requestId: id(70), userRequestId: id(73),
+        baselineAt: now - 1, retiredSids: [id(72)],
+        operation: 'signin', dispatch: journal.dispatch, credentials: { email: user.email, password: 'synthetic fixture' } });
+      const { denials } = await runS38ClosedFixture({ ...options, cases: [probe], identity: undefined,
+        handles: new Map([[sid, actor.handle]]), authBinding: auth, authScopeSha256: auth.scopeSha256,
+        runtime: { ...options.runtime, jwtSecret: jwks.toString('utf8'), identityToken: token } });
+      assert.deepEqual(denials.map(item => [item.requestId, item.event.sqlstate]), [[probe.requestId, '42501']]);
+      const marker = 'S38_LOCAL_DB_SOURCE ';
+      const events = local.logs().map(line => JSON.parse(line).message).filter(message => message?.startsWith(marker))
+        .map(message => JSON.parse(message.slice(marker.length)));
+      assert.deepEqual(events.map(item => [item.requestId, item.uid, item.sid]), [[probe.requestId, uid, sid]]);
+    },
+    async close(journal) {
+      await journal.dispatch('revoke', sha(JSON.stringify([targetFingerprint, uid, sid, id(71)])), async () => {
+        local.admin(`BEGIN; DELETE FROM fixture_guard.sessions WHERE uid='${uid}' AND sid='${sid}';
+          DELETE FROM fixture_guard.actors WHERE uid='${uid}';
+          ALTER ROLE ecv_s3_internal_api_login NOLOGIN PASSWORD NULL; COMMIT;`);
+        return { disposition: 'committed', receiptSha256: sha(JSON.stringify(counts())) };
+      });
+    },
+    async observeClosed({ inspect }) {
+      const end = await local.readClosure({ requestIds: [probe.requestId] });
+      const role = JSON.parse(local.observe(`SELECT json_build_object('roleLogins',rolcanlogin::int,
+        'rolePasswordNull',password_null) FROM fixture_guard.closed_role;`));
+      const state = { ...end, ...counts(), accounts: [], grants: 0, permits: 0, generations: 0, openRuns: 0,
+        ...role };
+      return proveS38AuthClosed({ lane: 'A', row: { ...state, receiptSha256: sha(JSON.stringify(state)) },
+        targetFingerprint, protectedSha256, expectedDisabledUids: [],
+        unresolved: ['signin', 'revoke'].filter(id => inspect(id).state === 'unknown') });
+    },
+  });
+  assert.match(lifecycle.receiptSha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(calls, [['POST', '/token?grant_type=password', id(70)], ['GET', '/user', id(73)]]);
+  assert.equal(local.connections(), 0);
+  assert.deepEqual(counts(), { accountCount: 0, sessions: 0, refresh: 0 });
 });
 
 test('loss of source ACK stops later dispatch, requires closure and reopens on the original request only', { timeout: 30000 }, async t => {

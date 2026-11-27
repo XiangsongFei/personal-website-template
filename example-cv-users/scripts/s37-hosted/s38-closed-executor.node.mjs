@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { boundAccountContext, withCredential } from '../../lib/business/identity.mjs';
 import { startPrivatePostgrest } from '../shared/private-postgrest.node.mjs';
 import { runPrivateRecovery } from '../shared/recovery-journal.node.mjs';
+import { isS38AuthBinding } from './s38-auth-binding.node.mjs';
 import { freezeS38ClosedCases } from './s38-closed-case-plan.mjs';
 import { correlateLocalS38Denials } from './s38-local-source-provenance.mjs';
 
@@ -77,16 +78,20 @@ function invoke(socketPath, plan, token, signal) {
 // The source and closure callbacks belong to an independent fixture observer.
 // A reopened journal acquires no JWT and cannot enter the dispatch lane.
 export async function runS38ClosedFixture({ lane, cases, fixtureId, targetFingerprint, protectedSha256,
-  directory, python, runtime, identity, handles, readSource, readClosure, signal } = {}) {
+  directory, python, runtime, identity, handles, authBinding, authScopeSha256, readSource, readClosure, signal } = {}) {
   const plan = freezeS38ClosedCases(lane, cases, { fixture: true });
   if (!/^[0-9a-f]{32}$/.test(fixtureId ?? '') || !digest(targetFingerprint) || !digest(protectedSha256) ||
-      typeof readSource !== 'function' || typeof readClosure !== 'function' || readSource === readClosure)
+      typeof readSource !== 'function' || typeof readClosure !== 'function' || readSource === readClosure ||
+      (authScopeSha256 !== undefined && !digest(authScopeSha256)) ||
+      (authBinding && (!isS38AuthBinding(authBinding) || authBinding.scopeSha256 !== authScopeSha256 ||
+        authBinding.targetFingerprint !== targetFingerprint ||
+        authBinding.issuer !== issuer)))
     fail('SCOPE');
 
   const root = fixtureRoot(directory);
   const operations = plan.map(item => 'case-' + item.requestId);
   const scopeSha256 = sha(JSON.stringify(['s38.closed.fixture.v1', lane, fixtureId, targetFingerprint,
-    protectedSha256, plan.map(item => item.requestSha256)]));
+    protectedSha256, plan.map(item => item.requestSha256), ...(authScopeSha256 ? [authScopeSha256] : [])]));
   const requestIds = Object.freeze(plan.map(item => item.requestId));
   const denials = [];
   async function source(item, sourceSignal) {
@@ -100,6 +105,8 @@ export async function runS38ClosedFixture({ lane, cases, fixtureId, targetFinger
     directory, python, signal, scopeSha256, operations: { business: operations, close: [] },
     async work(journal) {
       requireFixtureDatabase(runtime?.databaseUri, root);
+      if (authScopeSha256 && (!authBinding || typeof runtime.jwtSecret !== 'string' ||
+        sha(runtime.jwtSecret) !== authBinding.jwksSha256)) fail('IDENTITY');
       if (!(handles instanceof Map) || handles.size !== new Set(plan.map(item => item.sid)).size) fail('IDENTITY');
       for (const item of plan) verifyIdentity(item);
       const socketPath = join(root, 'api', 'rpc.sock');
@@ -114,6 +121,8 @@ export async function runS38ClosedFixture({ lane, cases, fixtureId, targetFinger
         originalDirectory = lstatSync(dirname(socketPath));
         for (const [index, item] of plan.entries()) {
           const accountHandle = verifyIdentity(item);
+          if (authBinding) await authBinding.observeActor({ handle: accountHandle, uid: item.uid, sid: item.sid,
+            requestId: item.requestId, signal: AbortSignal.any([journal.signal, AbortSignal.timeout(3000)]) });
           await journal.dispatch(operations[index], item.requestSha256, async dispatchSignal => {
             const socket = lstatSync(socketPath);
             if (!socket.isSocket() || socket.dev !== originalSocket.dev || socket.ino !== originalSocket.ino ||
@@ -168,7 +177,7 @@ export async function runS38ClosedFixture({ lane, cases, fixtureId, targetFinger
 
   function verifyIdentity(item) {
     const handle = handles.get(item.sid);
-    const who = boundAccountContext(handle, identity, issuer);
+    const who = authBinding ? authBinding.verifyActor(handle) : boundAccountContext(handle, identity, issuer);
     if (who.uid !== item.uid || who.session_id !== item.sid) fail('IDENTITY');
     return handle;
   }
