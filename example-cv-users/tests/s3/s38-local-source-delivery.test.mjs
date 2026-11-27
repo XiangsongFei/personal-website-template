@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { correlateLocalS38Denials, instrumentLocalS38Denials } from '../../scripts/s37-hosted/s38-local-source-provenance.mjs';
+import * as provenance from '../../scripts/s37-hosted/s38-local-source-provenance.mjs';
+
+const { correlateLocalS38Denials } = provenance;
 
 const fixtureId = '1'.repeat(32);
 const decisionFunction = 'site_private.lock_proof_configuration';
@@ -63,29 +65,13 @@ test('refuses duplicate engine events for one source position', () => {
   assert.throws(() => verify([branchEvent, engineError, engineError]), /S38_LOCAL_DB_SOURCE_DUPLICATE_ENGINE_EVENT/);
 });
 
-const localDefinition = `CREATE OR REPLACE FUNCTION ${decisionFunction}()
-RETURNS void LANGUAGE plpgsql AS $function$
-BEGIN
-  RAISE EXCEPTION 'NOT_CONFIGURED' USING ERRCODE = 'PT503';
-END
-$function$;`;
-
-test('keeps function replacement inside the guarded PostgreSQL statement', () => {
-  const { sql, branches } = instrumentLocalS38Denials({
-    name: decisionFunction, definition: localDefinition, fixtureId,
-  });
-  const [prefix, statement, suffix] = sql.split('$s38_source_local$');
-  assert.equal(prefix, 'DO ');
-  assert.equal(suffix, ';');
-  assert.match(statement, /RAISE EXCEPTION 'S38_LOCAL_DB_SOURCE_TARGET'; END IF;\s*EXECUTE \$s38_source_definition\$CREATE OR REPLACE FUNCTION/);
-  assert.match(statement, /RAISE LOG/);
-  assert.deepEqual(branches, [branch]);
+test('publishes only the standalone evidence correlator', () => {
+  assert.deepEqual(Object.keys(provenance), ['correlateLocalS38Denials']);
 });
 
-test('rejects definitions that would delimit the guarded statement', () => {
-  for (const tag of ['$s38_source_local$', '$s38_source_definition$']) {
-    assert.throws(() => instrumentLocalS38Denials({
-      name: decisionFunction, definition: localDefinition + '\n-- ' + tag, fixtureId,
-    }), /S38_LOCAL_DB_SOURCE_DEFINITION/);
-  }
+test('rejects a decision claimed for a different request digest', () => {
+  const source = JSON.parse(branchEvent.message.slice('S38_LOCAL_DB_SOURCE '.length));
+  const mismatched = { ...branchEvent, message: 'S38_LOCAL_DB_SOURCE ' +
+    JSON.stringify({ ...source, requestSha256: '5'.repeat(64) }) };
+  assert.throws(() => verify([mismatched, engineError]), /S38_LOCAL_DB_SOURCE_MISMATCH/);
 });
