@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { runS38ClosedFixture } from '../../scripts/s37-hosted/s38-closed-executor.node.mjs';
 import * as provenance from '../../scripts/s37-hosted/s38-local-source-provenance.mjs';
 
 const { correlateLocalS38Denials } = provenance;
@@ -35,9 +36,9 @@ const engineError = {
   message: request.reason, context: 'PL/pgSQL function ' + decisionFunction + '()',
 };
 
-function verify(events) {
+function verify(events, expectedRequest = request) {
   return correlateLocalS38Denials({
-    fixtureId, requests: [request],
+    fixtureId, requests: [expectedRequest],
     raw: Buffer.from(events.map(event => JSON.stringify(event)).join('\n')),
     definitions: { [decisionFunction]: { originalSha256: definitionSha256, branches: [branch] } },
   });
@@ -74,4 +75,29 @@ test('rejects a decision claimed for a different request digest', () => {
   const mismatched = { ...branchEvent, message: 'S38_LOCAL_DB_SOURCE ' +
     JSON.stringify({ ...source, requestSha256: '5'.repeat(64) }) };
   assert.throws(() => verify([mismatched, engineError]), /S38_LOCAL_DB_SOURCE_MISMATCH/);
+});
+
+
+test('refuses missing or changed database argument evidence for new executor receipts', () => {
+  const bodySha256 = '8'.repeat(64);
+  const bound = { ...request, bodySha256 };
+  const event = JSON.parse(branchEvent.message.slice('S38_LOCAL_DB_SOURCE '.length));
+  const actual = { ...branchEvent, message: 'S38_LOCAL_DB_SOURCE ' + JSON.stringify({ ...event, bodySha256 }) };
+  assert.equal(verify([actual, engineError], bound)[0].requestId, request.requestId);
+  assert.throws(() => verify([branchEvent, engineError], bound), /S38_LOCAL_DB_SOURCE_MISMATCH/);
+  assert.throws(() => verify([actual, engineError], { ...bound, bodySha256: '9'.repeat(64) }),
+    /S38_LOCAL_DB_SOURCE_MISMATCH/);
+});
+
+test('executor rejects unknown routes, cross-lane namespaces, action widening and additional parameters', async () => {
+  const valid = { ...request, rpc: 'read_introduction', args: { target: request.uid }, definitionSha256,
+    identityBasis: 'jwt_claims' };
+  for (const item of [
+    { ...valid, rpc: 'unapproved_rpc' },
+    { ...valid, rpc: 's37h1_read_file' },
+    { ...valid, rpc: 's37e1_file_command', sqlstate: '42501', reason: 'BUSINESS_DENIED', args: {
+      target_run: request.sid, target_site: request.uid, operation: 'seal', input: {},
+    } },
+    { ...valid, args: { ...valid.args, extra: null } },
+  ]) await assert.rejects(runS38ClosedFixture({ lane: 'A', cases: [item] }), /S38_CLOSED_EXECUTOR_PLAN/);
 });
