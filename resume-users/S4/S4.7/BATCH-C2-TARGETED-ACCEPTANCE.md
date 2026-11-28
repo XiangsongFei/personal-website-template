@@ -46,6 +46,10 @@ Codex CLI 独立审查再次因当前账户不支持所选模型未完成。已�
 
 真实补验须单独授权新运行 `s47-all-text-acceptance-followup-r02`。建议沿用同样的本机边界与上限，只跑 C2.2、C2.4、C2.5、C2.6 和未执行的 C2.7。复用 C2.1 和 C2.3 的真实证据。新运行使用独立数据目录。
 
+已准备 `--follow-up-r02`。该入口保留旧运行的一次性保护，核对并在新清单绑定旧回执与清单的 SHA-256。新站只保留复测需要的初始写入与剩余用例，省去已真实通过的同键回放和标题矩阵。Firefox 或 WebKit 的读回缺口会单独登记，余下授权复查仍继续执行，最终结果保留未通过状态。运行前须重查生产版本和新目标运行边界。新入口尚未真实启动。
+
+使用构建后的 Users Worker、本机合成 Auth 与内存 Repository 直接演练了新入口的剩余场景。Chrome 通过两条重叠保存的原键独立恢复、继续编辑和跨栏目 dirty 保留、Skills 稳定 UUID 及 revision 2 回读、退出重登后回读、旧 Session 拒绝。Firefox 和 Playwright WebKit 均收到 Bob 的实际 Worker HTTP 200 与 revision 0。撤权和过期用例通过模型演练，其独立 SQL 合同仍待真库验证。GoTrue 的真实退出需观察旧 Session 行和刷新令牌状态。[Supabase 会话文档](https://supabase.com/docs/guides/auth/sessions)
+
 达到手动准入后，另行批准启动。拟使用本机专用 `https://localhost:19147`。启动预检须确认该端口空闲，在新目录建立本机 PostgreSQL、GoTrue、PostgREST 及当前 Dashboard。两套一次性合成 Owner，各自建站，密码只在当次本机交付，报告只留脱敏证据。建议每个会话与 Grant 各 15 分钟，操作窗口 20 分钟，支持一次正常重新登录。建议上限 240 次文本 HTTP，含内部请求，以及 30 次用户显式保存，实际阈值随批准固化。
 
 手动路径为 Chrome 或原生 Safari 登录，读写全部文本栏目，检查双语及时回读及标题，执行多记录新增、修改、删除和排序，再刷新、退出、重新登录及换另一账号。遇到待核对先按原键和当前 Session 查回执。操作窗口终止后先关闸、撤权、清零 Session 和代次，独立观察确认后停止浏览器、Worker、GoTrue 与 PostgREST，再停止数据库并移除数据目录和 socket。保留脱敏报告及预算清单。当前未启动用户手动验收环境。

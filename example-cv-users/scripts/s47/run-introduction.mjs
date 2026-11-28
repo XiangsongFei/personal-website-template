@@ -21,10 +21,11 @@ import {runTargeted} from './targeted.mjs';
 import {assertBudgetHeadroom} from './budget.mjs';
 
 const mode=process.argv[2];
-assert.ok(mode===undefined||mode==='--all-text'||mode==='--follow-up','UNRECOGNIZED_MODE');
-const followUp=mode==='--follow-up';
+assert.ok(mode===undefined||mode==='--all-text'||mode==='--follow-up'||mode==='--follow-up-r02','UNRECOGNIZED_MODE');
+const remainingOnly=mode==='--follow-up-r02';
+const followUp=mode==='--follow-up'||remainingOnly;
 const full=mode==='--all-text'||followUp;
-const project=followUp?'s47-all-text-acceptance-followup-r01':full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
+const project=remainingOnly?'s47-all-text-acceptance-followup-r02':followUp?'s47-all-text-acceptance-followup-r01':full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
 const issuer='https://users.auth.example.invalid/auth/v1';
 const privateOrigin='https://users.draft.example.invalid';
 const oldProject='ecv-s33a-20261109-7dd22a81', oldIssuer='http://127.0.0.1:56321/auth/v1';
@@ -333,6 +334,15 @@ function validateBoundary() {
 }
 try {
   validateBoundary();
+  let priorC2;
+  if(remainingOnly){
+    const evidenceRun='s47-all-text-acceptance-followup-r01';
+    const receiptSHA256=sha(readFileSync('.runtime/s4-7/'+evidenceRun+'/receipt.json'));
+    const manifestSHA256=sha(readFileSync('.runtime/s4-7/'+evidenceRun+'/manifest.json'));
+    assert.equal(receiptSHA256,'7ecb0902f89f9e3320ef895682c268253ab166e22d4c578b99793d583b85fbc0');
+    assert.equal(manifestSHA256,'fdbb1afb1d5f4ddaa330cf1be98a4d844152343e895595817ef5fbc0207ec7a5');
+    priorC2={cases:['C2.1','C2.3'],evidenceRun,receiptSHA256,manifestSHA256};
+  }
   root=mkdtempSync('/private/tmp/s47-');
   db=join(root,'db');
   restSock=join(root,'rest.sock');
@@ -350,6 +360,7 @@ try {
         maximumOwnerSites:2,cloudUSD:0},
       fullTextHarnessSHA256:sha(readFileSync(new URL('./full-text.mjs',import.meta.url))),
       ...(followUp?{targetedHarnessSHA256:sha(readFileSync(new URL('./targeted.mjs',import.meta.url))),
+        ...(priorC2?{reusedEvidence:priorC2}:{}),
         roles:{postgrest:'ecv_s3_internal_api_login',request:'authenticated',authBootstrap:'supabase_auth_admin'},
         productionBaseline:{deployment:'9af7cb4e-3e42-4a7a-bbf3-c6e2f4fafadd',
           version:'08768067-69e7-4e7c-8813-12cf7b8ccc0e',percent:100}}:{}),
@@ -614,7 +625,7 @@ try {
       return actor;
     }
     const result=await (followUp?runTargeted:runFullText)({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
-      followUp,ensureBudget,journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
+      followUp,remainingOnly,ensureBudget,journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
       resumeAfterProof:()=>{assert.ok(writesFrozen && !stopRequested);writesFrozen=false;}});
     witness.gRead=result.gRead;
     witness.gSave=result.gSave;

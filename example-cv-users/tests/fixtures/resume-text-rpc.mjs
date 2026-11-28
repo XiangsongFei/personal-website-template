@@ -3,9 +3,7 @@ import {realAuthority,TEST_KEY,TEST_ORIGIN} from '../auth-fixture.mjs';
 import {runtime} from '../runtime.mjs';
 import {emptyTextContent, textCommand, textCommandDigest,wireRecordScopes} from '../../lib/editor/resume-text.ts';
 
-export async function resumeTextRuntime({port,enabled=true,origin=TEST_ORIGIN}={}) {
-  const auth=await realAuthority();
-  const sites=new Map([[auth.ids.A,crypto.randomUUID()],[auth.ids.B,crypto.randomUUID()]]);
+export function createResumeTextRpc(auth,sites) {
   const states=new Map(), receipts=new Map(), records=new Map();
   const controls={lost:false, delay:0, denied:new Set()};
   let writes=0;
@@ -56,10 +54,17 @@ export async function resumeTextRuntime({port,enabled=true,origin=TEST_ORIGIN}={
     }
     return Response.json(value);
   };
+  return {rpc,controls,receipts,get writes(){return writes;}};
+}
+
+export async function resumeTextRuntime({port,enabled=true,origin=TEST_ORIGIN}={}) {
+  const auth=await realAuthority();
+  const sites=new Map([[auth.ids.A,crypto.randomUUID()],[auth.ids.B,crypto.randomUUID()]]);
+  const fixture=createResumeTextRpc(auth,sites);
   const mf=runtime({...(port===undefined?{}:{port}),https:origin.startsWith('https:'),
     bindings:{USERS_CURRENT_PASSWORD_POLICY:'ON',USERS_MODE:'isolated',USERS_PROJECT_REF:'isolated-users',
       USERS_SUPABASE_URL:'https://users.auth.example.invalid',USERS_PUBLISHABLE_KEY:TEST_KEY,USERS_APP_ORIGIN:origin,
       ...(enabled?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
-    serviceBindings:{USERS_RESUME_TEXT_RPC:rpc},outboundService:r=>auth.fetch(r)});
-  return {mf,auth,sites,controls,get writes(){return writes;}};
+    serviceBindings:{USERS_RESUME_TEXT_RPC:fixture.rpc},outboundService:r=>auth.fetch(r)});
+  return {mf,auth,sites,controls:fixture.controls,get writes(){return fixture.writes;}};
 }

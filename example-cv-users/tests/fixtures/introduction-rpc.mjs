@@ -4,13 +4,15 @@ import {initialTextPublication, planTextPublication, readTextPublicationOperatio
 import {BusinessError} from '../../lib/business/protocol.mjs';
 import {runtime} from '../runtime.mjs';
 import {realAuthority, TEST_KEY, TEST_ORIGIN} from '../auth-fixture.mjs';
+import {createResumeTextRpc} from './resume-text-rpc.mjs';
 
 const save = 'save_text_draft';
 const lookup = 'read_text_publication_operation';
 const siteIds = ['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002'];
 const recordIds = ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002'];
 
-export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN, receiptRecovery = false} = {}) {
+export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN, receiptRecovery = false,
+  combinedText = false, passwordSession} = {}) {
   const auth = await realAuthority();
   const accounts = [auth.ids.A, auth.ids.B];
   const sites = new Map(await Promise.all(accounts.map(async (uid, i) => [
@@ -20,6 +22,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
     ]}}),
   ])));
   const controls = {denied: new Set(), readsFail: false, rollback: false, lost: false, corrupt: false, normalize: false, delay: 0};
+  const textFixture=combinedText?createResumeTextRpc(auth,new Map(accounts.map((uid,i)=>[uid,siteIds[i]]))):undefined;
   const hits = [];
   let writes = Promise.resolve();
   async function rpc(request) {
@@ -81,6 +84,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
   async function receiptRpc(request){
     const url=new URL(request.url);
     assert.equal(url.origin,'https://users.resume.example.invalid');
+    if(textFixture && url.pathname!=='/rpc/read_introduction_receipt')return textFixture.rpc(request);
     const actor=auth.principal(request);
     if(!actor||controls.denied.has(actor.id))return Response.json({code:'42501'},{status:403});
     const site=sites.get(actor.id);
@@ -105,7 +109,14 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
       USERS_SUPABASE_URL:'https://users.auth.example.invalid', USERS_PUBLISHABLE_KEY:TEST_KEY, USERS_APP_ORIGIN:origin,
       ...(enabled ? {USERS_INTRODUCTION_MODE:'synthetic'} : {}),
       ...(receiptRecovery?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
-    serviceBindings:{USERS_INTRODUCTION_RPC:rpc,...(receiptRecovery?{USERS_RESUME_TEXT_RPC:receiptRpc}:{})}, outboundService:request=>auth.fetch(request),
+    serviceBindings:{USERS_INTRODUCTION_RPC:rpc,...(receiptRecovery?{USERS_RESUME_TEXT_RPC:receiptRpc}:{})},
+    outboundService:async request=>{
+      if(!passwordSession||!request.url.endsWith('/token?grant_type=password'))return auth.fetch(request);
+      const {email}=await request.clone().json();
+      const reply=await auth.fetch(request);
+      if(reply.ok)passwordSession(email,await reply.clone().json());
+      return reply;
+    },
   });
-  return {mf, auth, jar:new Map(), sites, siteIds, recordIds, hits, controls};
+  return {mf, auth, jar:new Map(), sites, siteIds, recordIds, hits, controls,rpc,textFixture};
 }

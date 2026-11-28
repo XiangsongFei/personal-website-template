@@ -45,7 +45,7 @@ function receiptState(obs,a,b){
     'outbox',(SELECT count(*) FROM site_private.publication_outbox));`);
 }
 
-export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,witness,adoptBrowserSession,ensureBudget,journal,freeze,resumeAfterProof}){
+export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,witness,adoptBrowserSession,ensureBudget,journal,freeze,resumeAfterProof,remainingOnly=false}){
   ensureBudget({textHTTP:165,allSaveEntrances:16,lookups:7,sqlObservation:9,passwordLogins:2,grants:2},'C2');
   const {chromium,firefox,webkit}=await import(pathToFileURL(process.env.S47_PLAYWRIGHT_MODULE).href);
   const verifyPayload=(command,snapshot)=>{
@@ -58,7 +58,8 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     const rows=obs(`SELECT json_build_object(
       'rows',(SELECT json_agg(json_build_object('section',v.section,'revision',v.revision,'content',v.content,
         'hasReceipt',r.request_id IS NOT NULL AND r.actor_uid=v.actor_uid AND r.basis_revision=v.revision-1,
-        'audited',v.occurred_at IS NOT NULL AND v.actor_uid='${a.uid}'))
+        'audited',v.occurred_at IS NOT NULL AND v.actor_uid='${a.uid}')
+        ORDER BY v.section,v.revision)
         FROM site_private.resume_text_revisions v LEFT JOIN site_private.resume_text_receipts r
           USING(site_id,section,revision,request_id) WHERE v.site_id='${a.site}'),
       'bob',(SELECT count(*) FROM site_private.resume_text_revisions WHERE site_id='${b.site}'),
@@ -83,8 +84,8 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     expected.set(section+':1',command.content);
   };
   phase('C2-titles-fixtures');
-  await seed('site-text');
-  await seed('contact');
+  if(!remainingOnly||process.env.S47_SAFARI_DRIVER)await seed('site-text');
+  if(!remainingOnly)await seed('contact');
 
   const savedPosts=[], lookups=[];
   let activeOwner, safariOwner;
@@ -144,7 +145,7 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     activeOwner=await login(page);
     const firstOwner=activeOwner;
 
-    phase('C2-native-idempotency');
+    phase(remainingOnly?'C2-seed-relogin-draft':'C2-native-idempotency');
     await editor(page,'introduction');
     for(const [locale,text] of Object.entries(intro))await field(page,'introduction',locale).fill(text);
     const firstResponse=page.waitForResponse(response=>response.url()===origin+introductionPath &&
@@ -156,57 +157,59 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     const body=original.request().postDataJSON();
     assert.deepEqual(introductionText(receipt.draft),intro);
     assert.equal(receipt.draft.revision,1);
-    const args=textDraftArgs(a.site,body.command);
-    const before=receiptState(obs,a,b);
-    assert.deepEqual(Object.values(before.sites).sort(),[0,1]);
-    assert.equal(before.audits,1);
-    const duplicate=await rest('save_text_draft',args,firstOwner.token);
-    assert.equal(duplicate.status,200,duplicate.value.code);
-    assert.equal(duplicate.value.request_id,receipt.requestId);
-    assert.equal(duplicate.value.draft_revision,receipt.draft.revision);
-    assert.equal(duplicate.value.changed,receipt.changed);
-    assert.equal(await textCommandDigestIntroduction(args.canonical_request),receipt.digest);
-    assert.deepEqual(receiptState(obs,a,b),before);
-    mark('C2.1 same canonical command reached native save; PostgreSQL state unchanged',
-      {rpc:'save_text_draft',requestId:receipt.requestId,digest:receipt.digest,revision:1,
-        sites:before.sites,history:before.history,audits:before.audits,operations:before.operations,records:before.records});
+    if(!remainingOnly){
+      const args=textDraftArgs(a.site,body.command);
+      const before=receiptState(obs,a,b);
+      assert.deepEqual(Object.values(before.sites).sort(),[0,1]);
+      assert.equal(before.audits,1);
+      const duplicate=await rest('save_text_draft',args,firstOwner.token);
+      assert.equal(duplicate.status,200,duplicate.value.code);
+      assert.equal(duplicate.value.request_id,receipt.requestId);
+      assert.equal(duplicate.value.draft_revision,receipt.draft.revision);
+      assert.equal(duplicate.value.changed,receipt.changed);
+      assert.equal(await textCommandDigestIntroduction(args.canonical_request),receipt.digest);
+      assert.deepEqual(receiptState(obs,a,b),before);
+      mark('C2.1 same canonical command reached native save; PostgreSQL state unchanged',
+        {rpc:'save_text_draft',requestId:receipt.requestId,digest:receipt.digest,revision:1,
+          sites:before.sites,history:before.history,audits:before.audits,operations:before.operations,records:before.records});
 
-    phase('C2-bilingual-titles');
-    const titles=sampleText('site-text').translations;
-    const contacts=sampleText('contact').translations;
-    const visitTitles=async locale=>{
-      for(const [section,key] of [...Object.entries(sectionTitleFields),['contact','contactLabel']]){
-        const label=section==='contact'?contacts[locale].contactLabel:titles[locale][key];
-        const link=page.locator('.dashboard-sidebar a[href="#'+section+'"]');
-        await link.click();
-        await page.waitForFunction(label=>document.querySelector('.editor-heading h1')?.textContent===label,label,{timeout:8000});
-        assert.ok((await link.innerText()).includes(label));
-        assert.ok((await page.locator('.dashboard-breadcrumb').innerText()).includes(label));
-        const heading=page.locator('.editor-preview [data-site-section="'+section+'"] [data-preview-value="'+key+'"]');
-        await heading.waitFor({timeout:8000});
-        assert.equal((await heading.textContent())?.trim(),label);
-      }
-    };
-    await editor(page,'experience');
-    await visitTitles('zh');
-    await select(page,'experience');
-    await page.locator('button.record-add').click();
-    await field(page,'title','zh').fill('本地记录名称');
-    await status(page,'未保存：'+titles.zh.experienceLabel);
-    assert.equal(await page.locator('.editor-heading h1').innerText(),titles.zh.experienceLabel);
-    await button(page,'撤销修改').click();
-    await page.locator('.dashboard-header .ui-locale-switch').getByRole('button',{name:'English',exact:true}).click();
-    await page.locator('.public-nav-language').click();
-    await visitTitles('en');
-    await select(page,'experience');
-    await page.locator('button.record-add').click();
-    await field(page,'title','en').fill('A local record name');
-    await status(page,'Unsaved: '+titles.en.experienceLabel);
-    assert.equal(await page.locator('.editor-heading h1').innerText(),titles.en.experienceLabel);
-    await button(page,'Undo changes').click();
-    await page.locator('.public-nav-language').click();
-    await page.locator('.dashboard-header .ui-locale-switch').getByRole('button',{name:'中文',exact:true}).click();
-    mark('C2.3 six native-backed titles in both locales and unsaved labels; row name stays independent',{titleCount:6});
+      phase('C2-bilingual-titles');
+      const titles=sampleText('site-text').translations;
+      const contacts=sampleText('contact').translations;
+      const visitTitles=async locale=>{
+        for(const [section,key] of [...Object.entries(sectionTitleFields),['contact','contactLabel']]){
+          const label=section==='contact'?contacts[locale].contactLabel:titles[locale][key];
+          const link=page.locator('.dashboard-sidebar a[href="#'+section+'"]');
+          await link.click();
+          await page.waitForFunction(label=>document.querySelector('.editor-heading h1')?.textContent===label,label,{timeout:8000});
+          assert.ok((await link.innerText()).includes(label));
+          assert.ok((await page.locator('.dashboard-breadcrumb').innerText()).includes(label));
+          const heading=page.locator('.editor-preview [data-site-section="'+section+'"] [data-preview-value="'+key+'"]');
+          await heading.waitFor({timeout:8000});
+          assert.equal((await heading.textContent())?.trim(),label);
+        }
+      };
+      await editor(page,'experience');
+      await visitTitles('zh');
+      await select(page,'experience');
+      await page.locator('button.record-add').click();
+      await field(page,'title','zh').fill('本地记录名称');
+      await status(page,'未保存：'+titles.zh.experienceLabel);
+      assert.equal(await page.locator('.editor-heading h1').innerText(),titles.zh.experienceLabel);
+      await button(page,'撤销修改').click();
+      await page.locator('.dashboard-header .ui-locale-switch').getByRole('button',{name:'English',exact:true}).click();
+      await page.locator('.public-nav-language').click();
+      await visitTitles('en');
+      await select(page,'experience');
+      await page.locator('button.record-add').click();
+      await field(page,'title','en').fill('A local record name');
+      await status(page,'Unsaved: '+titles.en.experienceLabel);
+      assert.equal(await page.locator('.editor-heading h1').innerText(),titles.en.experienceLabel);
+      await button(page,'Undo changes').click();
+      await page.locator('.public-nav-language').click();
+      await page.locator('.dashboard-header .ui-locale-switch').getByRole('button',{name:'中文',exact:true}).click();
+      mark('C2.3 six native-backed titles in both locales and unsaved labels; row name stays independent',{titleCount:6});
+    }
 
     phase('C2-skills-and-overlap');
     const other=await context.newPage();
@@ -330,7 +333,8 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
   } finally {await chrome.close();}
 
   phase('C2-browser-bob');
-  await verifyBobBrowsers();
+  const unconfirmedBrowsers=await verifyBobBrowsers();
+  if(unconfirmedBrowsers.length)witness.unconfirmedBrowsers=unconfirmedBrowsers;
   if(process.env.S47_SAFARI_DRIVER){
     ensureBudget({textHTTP:10,allSaveEntrances:2,sqlObservation:2},'C2_SAFARI_AND_DENIALS');
     try{
@@ -364,13 +368,16 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
   mark('C2.6 native read and save denied after Grant revocation or Session expiry',
     {sqlstate:'42501',versionsAndReceiptsUnchanged:true});
 
+  if(unconfirmedBrowsers.length)throw Error('BOB_BROWSER_READ_UNCONFIRMED');
   return {gRead:'LOCAL_PASS',gSave:'LOCAL_PASS'};
 
   async function verifyBobBrowsers(){
+    const unconfirmed=[];
     for(const [name,engine] of [['Firefox',firefox],['Playwright WebKit',webkit]]){
-      ensureBudget({textHTTP:14,allSaveEntrances:2},'C2_BROWSER_READ');
-      const browser=await engine.launch({timeout:10000});
+      let browser;
       try{
+        ensureBudget({textHTTP:14,allSaveEntrances:2,sqlObservation:2},'C2_BROWSER_READ');
+        browser=await engine.launch({timeout:10000});
         const context=await browser.newContext({ignoreHTTPSErrors:true});
         await attach(context);
         await context.addCookies(b.cookie.split('; ').map(fragment=>{
@@ -378,14 +385,15 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
           return {name:fragment.slice(0,i),value:fragment.slice(i+1),url:origin,secure:true,httpOnly:true};
         }));
         const page=await context.newPage();
-        const pending=readOn(page,resumeTextPath+'/profile');
-        await editor(page,'profile');
-        const response=await pending;
+        const [response]=await Promise.all([readOn(page,resumeTextPath+'/profile'),editor(page,'profile')]);
         assert.equal(response.status(),200);
         assert.deepEqual(await response.json(),{siteId:b.site,section:'profile',revision:0,content:emptyTextContent('profile')});
         mark('C2.7 '+name+' actual Bob HTTP read',{revision:0,status:200});
-      } finally {await browser.close();}
+      } catch(error){
+        unconfirmed.push({name,error:error.name});
+      } finally {await browser?.close();}
     }
+    return unconfirmed;
   }
 
   async function verifyNativeSafari(driver,owner){
