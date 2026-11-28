@@ -68,7 +68,7 @@ async page => {
   await waitForPath('/dashboard/editor#profile');
   await profile.waitFor();
   check(await profile.inputValue() === '' && !!await profile.getAttribute('placeholder'), 'guidance was written into the field');
-  check(await preview.getAttribute('data-preview-source') === 'guide', 'an empty draft did not show the guide');
+  check(await preview.getAttribute('data-preview-source') === 'mixed', 'an empty draft did not show examples');
   check(await preview.getByText('周晨', {exact: true}).count() > 0, 'Chinese example missing');
   check(await preview.locator('a[href^="https://example.org"], a[href^="mailto:"]').count() === 0, 'example contact links are active');
   await preview.locator('.public-nav-language').click();
@@ -95,16 +95,17 @@ async page => {
   await editor.locator('.record-add').click();
   const program = editor.locator('[data-edit-field="program"][data-edit-locale="en"]');
   check(await program.inputValue() === '' && !!await program.getAttribute('placeholder'), 'new records did not keep placeholders separate');
-  check(await preview.getAttribute('data-preview-source') === 'guide', 'adding an empty record replaced the guide');
+  check(await preview.locator('[data-site-section="education"] [data-preview-example-record]').count() === 0,
+    'adding a real row kept fictional records in the same collection');
   await editor.getByRole('button', {name: '撤销修改'}).click();
 
   await observedSection(() => sidebarSection('profile'), 'profile');
   await profile.fill('我的实际姓名');
-  check(await preview.getAttribute('data-preview-source') === 'draft', 'typing did not select the real draft');
-  check(await preview.getByText('周晨', {exact: true}).count() === 0 && await preview.getByText('Chen Zhou', {exact: true}).count() === 0, 'real draft and guide were mixed');
-  await preview.getByRole('button', {name: '查看填写示例'}).click();
-  check(await preview.getAttribute('data-preview-source') === 'guide' && await profile.inputValue() === '我的实际姓名', 'reopening the example changed the draft');
-  await preview.getByRole('button', {name: '查看我的草稿'}).click();
+  check(await preview.getAttribute('data-preview-source') === 'mixed', 'typing turned off all examples');
+  await preview.getByRole('button', {name: '隐藏示例'}).click();
+  check(await preview.getAttribute('data-preview-source') === 'draft' && await profile.inputValue() === '我的实际姓名', 'hiding examples changed the draft');
+  check(await preview.locator('[data-preview-example], [data-preview-example-record]').count() === 0, 'draft-only mode contains fictional content');
+  await preview.getByRole('button', {name: '显示示例'}).click();
   await observedSection(() => sidebarSection('introduction'), 'introduction');
   await observedSection(() => sidebarSection('profile'), 'profile');
   check(await profile.inputValue() === '我的实际姓名' && await editor.getByText('请检查英文', {exact: true}).isVisible(), 'navigation lost draft or bilingual review');
@@ -146,7 +147,7 @@ async page => {
   await login('user-b@example.invalid');
   await navigation.locator('a[href="/dashboard/editor#profile"]').click();
   await waitForPath('/dashboard/editor#profile');
-  check(await profile.inputValue() === '' && await preview.getAttribute('data-preview-source') === 'guide', 'draft crossed accounts');
+  check(await profile.inputValue() === '' && await preview.getAttribute('data-preview-source') === 'mixed', 'draft crossed accounts');
 
   const documentRestorations = [];
   page.on('console', message => {

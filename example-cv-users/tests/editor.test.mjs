@@ -71,7 +71,11 @@ test('only a current server session can render the editor, including HEAD and RS
     assert.match(html, /class="public-hero"[^>]*data-site-section="profile"[\s\S]+?class="public-intro" data-site-section="introduction"/);
     const publicPage = html.split('class="site-preview-page public-canvas"')[1]?.split('class="public-preview-scroll-space"')[0];
     assert.ok(publicPage);
-    assert.doesNotMatch(publicPage, /<a\b|<iframe\b|<img\b|<time\b/);
+    assert.doesNotMatch(publicPage, /<iframe\b|<img\b|<time\b/);
+    const previewLinks = [...publicPage.matchAll(/<a\b[^>]*>/g)].map(match => match[0]);
+    assert.deepEqual([...new Set(previewLinks.map(link => link.match(/href="([^"]+)"/)?.[1]))].sort(),
+      ['https://github.com/', 'https://www.linkedin.com/']);
+    for (const link of previewLinks) assert.match(link, /target="_blank" rel="noopener noreferrer"/);
     assert.match(html, /class="editor-save [^"]*" disabled=""/);
     assert.doesNotMatch(html, /保存服务尚未开放|Saving is unavailable|editor-language|editor-preview-heading|本地预览 · 未保存、未发布/);
     assert.equal([...html.matchAll(/class="public-nav-language"/g)].length, 1);

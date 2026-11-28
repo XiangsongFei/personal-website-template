@@ -129,8 +129,9 @@ export function updateProjectMethods(project: ProjectDraft, locale: ContentLocal
 }
 
 export function safeHttpUrl(value: string | undefined): string | undefined {
-  const input = value?.trim();
-  if (!input || !/^https?:\/\/[^/]/i.test(input) || /[\u0000-\u0020\u007f\\]/u.test(input)) return;
+  if (!value || /[\p{Cc}\p{Cf}\\]/u.test(value)) return;
+  const input = value.trim();
+  if (!/^https?:\/\/[^/?#@]+(?:[/?#]|$)/i.test(input) || /\s/u.test(input)) return;
   try {
     const url = new URL(input);
     if ((url.protocol === 'https:' || url.protocol === 'http:') && url.hostname && !url.username && !url.password) {

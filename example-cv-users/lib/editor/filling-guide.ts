@@ -1,5 +1,6 @@
 import {collectEditorFields} from './bilingual-review.ts';
 import {editorModules, type ContentLocale, type EditorModule, type LocalDraft} from './draft.ts';
+import {educationCategory, skillCategory, type DraftTranslations} from './records.ts';
 
 // Product copy for the read-only filling guide. Only the editor's real draft is editable.
 export const fillingGuide: LocalDraft = {
@@ -89,12 +90,12 @@ export const fillingGuide: LocalDraft = {
   },
   links: {
     shared: {
-      email: 'chen@example.org', emailLabel: 'Email', github: 'https://example.org/github', githubLabel: 'GitHub',
+      email: 'chen@example.org', emailLabel: 'Email', github: 'https://github.com/', githubLabel: 'GitHub',
       linkedInDisplayName: 'Chen Zhou', linkedInLabel: 'LinkedIn',
     },
     translations: {
-      zh: {linkedInLabel: '领英职业档案', linkedInHref: 'https://example.org/profile/zh'},
-      en: {linkedInLabel: 'LinkedIn profile', linkedInHref: 'https://example.org/profile/en'},
+      zh: {linkedInLabel: '领英职业档案', linkedInHref: 'https://www.linkedin.com/'},
+      en: {linkedInLabel: 'LinkedIn profile', linkedInHref: 'https://www.linkedin.com/'},
     },
   },
   'site-text': {
@@ -114,7 +115,68 @@ export const fillingGuide: LocalDraft = {
 const modules = Object.keys(editorModules) as EditorModule[];
 const exampleFields = new Map(modules.map(module => [module, [...collectEditorFields(fillingGuide, module).values()]]));
 
-export function guidePlaceholder(module: EditorModule, field: string, locale: ContentLocale | 'shared', item?: string) {
+type RecordExample = DraftTranslations<Record<string, string | null>>;
+
+const skillExamples = {
+  programming: {zh: 'Python：清理数据并编写自动化脚本', en: 'Python: clean data and automate routine tasks'},
+  dataSystems: {zh: 'SQL：查询、校验与维护数据集', en: 'SQL: query, validate, and maintain datasets'},
+  analytics: {zh: '指标分析：定义关键指标并比较变化', en: 'Analytics: define key metrics and compare trends'},
+  tools: {zh: 'Git：协作、版本记录与代码审查', en: 'Git: collaborate, track changes, and review code'},
+  languages: {zh: '英语：专业工作沟通与报告写作', en: 'English: professional communication and report writing'},
+};
+
+export function guideRecord(module: EditorModule, draft: LocalDraft, item: string): RecordExample | undefined {
+  switch (module) {
+    case 'education': {
+      const row = draft.education.find(row => row.clientId === item);
+      if (!row) return;
+      const category = educationCategory(row);
+      if (category === 'summerSchool') return fillingGuide.education.find(row => educationCategory(row) === category)?.translations;
+      const program = category === 'undergraduate' ? ['信息科学 · 本科', 'BSc in Information Science']
+        : category === 'graduate' ? ['信息科学 · 理学硕士', 'MSc in Information Science']
+        : category === 'doctoral' ? ['信息科学 · 博士', 'PhD in Information Science']
+        : ['信息科学与服务设计', 'Information Science and Service Design'];
+      const [degree] = fillingGuide.education;
+      const zh = {...degree.translations.zh, program: program[0], ...(category === 'custom' && {customCategoryLabel: '继续教育'})};
+      const en = {...degree.translations.en, program: program[1], ...(category === 'custom' && {customCategoryLabel: 'Continuing education'})};
+      return {zh, en};
+    }
+    case 'experience': return fillingGuide.experience[0]?.translations;
+    case 'projects': return fillingGuide.projects[0]?.translations;
+    case 'awards': return fillingGuide.awards[0]?.translations;
+    case 'skills': {
+      const row = draft.skills.find(row => row.clientId === item);
+      if (!row) return;
+      const category = skillCategory(row);
+      if (category === 'custom') return fillingGuide.skills[0]?.translations;
+      const items = skillExamples[category];
+      return {zh: {items: items.zh}, en: {items: items.en}};
+    }
+    case 'contact': {
+      if (item.startsWith('focus:')) return fillingGuide.contact.focus[0]?.translations;
+      const status = draft.contact.status.find(row => 'status:' + row.clientId === item)?.statusType;
+      if (status === 'study') return {
+        zh: {title: '在读', detail: '正在完成信息科学课程和研究项目。'},
+        en: {title: 'Currently studying', detail: 'Completing coursework and research in information science.'},
+      };
+      if (status === 'graduation') return {
+        zh: {title: '即将毕业', detail: '毕业后可参与公共信息与数据分析项目。'},
+        en: {title: 'Graduating soon', detail: 'Available for public information and analytics projects after graduation.'},
+      };
+      return fillingGuide.contact.status[0]?.translations;
+    }
+  }
+}
+
+export function guideMethod(locale: ContentLocale) {
+  return fillingGuide.projects[0]?.methods[locale][0]?.value;
+}
+
+export function guidePlaceholder(module: EditorModule, field: string, locale: ContentLocale | 'shared', item?: string, draft?: LocalDraft) {
+  if (item && draft && locale !== 'shared') {
+    if (module === 'projects' && field.startsWith('method:' + locale + ':')) return guideMethod(locale);
+    return guideRecord(module, draft, item)?.[locale]?.[field] ?? undefined;
+  }
   const key = locale === 'shared' ? 'shared:' + field : field;
   const group = module === 'contact' ? item?.split(':')[0] : undefined;
   const example = exampleFields.get(module)?.find(entry => (
@@ -122,13 +184,4 @@ export function guidePlaceholder(module: EditorModule, field: string, locale: Co
     (!group || entry.item?.startsWith(group + ':')) && (entry.editValues ?? entry.values)[locale]?.trim()
   ));
   return example && (example.editValues ?? example.values)[locale];
-}
-
-export function hasPreviewContent(draft: LocalDraft) {
-  return modules.some(module => [...collectEditorFields(draft, module).values()].some(entry => {
-    // The aggregate methods field includes IDs, and category defaults can appear on an empty row.
-    if (entry.field === 'methods' || (entry.field === 'shared:category' && entry.values.shared === 'custom') ||
-      (entry.field === 'shared:statusType' && entry.values.shared === 'open')) return false;
-    return Object.values(entry.editValues ?? entry.values).some(value => !!value?.trim());
-  }));
 }

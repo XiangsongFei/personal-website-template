@@ -58,17 +58,12 @@
 }
 .editor-form-grid { width: 100%; }
 /* Draft-only decoration. It must not influence the public layout or hit testing. */
-.editor-preview [data-preview-edit-feedback] { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-.editor-preview [data-preview-edit-feedback="modified"] { background-color: rgb(70 100 83 / 4.5%); }
-.editor-preview [data-preview-edit-feedback="active"] { background-color: rgb(70 100 83 / 8%); }
-.editor-preview :is(.public-intro, .public-bullets)[data-preview-edit-feedback] {
-  background-color: rgb(70 100 83 / 2.5%);
-  box-shadow: inset -2px 0 rgb(70 100 83 / 28%);
+.editor-preview [data-preview-ink][data-preview-edit-feedback] {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  background-color: rgba(245,183,66,.42);
 }
-.editor-preview :is(.public-intro, .public-bullets)[data-preview-edit-feedback="active"] {
-  background-color: rgb(70 100 83 / 4%);
-  box-shadow: inset -2px 0 rgb(70 100 83 / 58%);
-}
+.editor-preview [data-preview-ink][data-preview-edit-feedback="active"] { background-color: rgba(245,183,66,.56); }
 .site-preview-viewport:focus-visible { outline-offset: -2px; }
 .editor-pane[data-mode=preview], .editor-preview:not([data-mode=preview]) { display: none; }
 
