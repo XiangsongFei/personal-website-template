@@ -43,17 +43,14 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
   const review = feedback.reminderId && feedback.acknowledge &&
     <ReviewField id={feedback.reminderId} onConfirm={feedback.acknowledge}>{feedback.reminder}</ReviewField>;
 
-  function paste(event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  function paste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const pasted = event.clipboardData.getData('text');
-    const address = type !== 'text';
-    if (!/[\r\n]/.test(pasted) && (!address || pasted === pasted.trim())) return;
+    if (!/[\r\n]/.test(pasted)) return;
     event.preventDefault();
     const input = event.currentTarget;
-    const selectionStart = input.selectionStart ?? input.value.length;
-    const selectionEnd = input.selectionEnd ?? selectionStart;
+    const {selectionStart, selectionEnd} = input;
     const remaining = limit - input.value.length + selectionEnd - selectionStart;
-    const normalized = address ? pasted.trim().replace(/[\r\n]/g, '') : singleLine(pasted);
-    const data = normalized.slice(0, Math.max(0, remaining));
+    const data = singleLine(pasted).slice(0, Math.max(0, remaining));
     if (!data) return;
     // Use the browser's editing command to preserve selection, input events and undo history.
     if (!document.execCommand('insertText', false, data)) {
@@ -62,8 +59,15 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
     }
   }
 
-  const kind = multiline ? long ? 'long' : 'multiline' : compact ? 'short' : type === 'text' ? 'growing' : 'address';
+  function pasteAddress(event: ClipboardEvent<HTMLInputElement>) {
+    const pasted = event.clipboardData.getData('text');
+    const normalized = pasted.trim().replace(/[\r\n]/g, '');
+    if (normalized === pasted) return;
+    if (!normalized || document.execCommand('insertText', false, normalized)) event.preventDefault();
+  }
+
   const addressMode = type !== 'text' ? type : undefined;
+  const kind = multiline ? long ? 'long' : 'multiline' : addressMode ? 'address' : compact ? 'short' : 'growing';
   const reviewAfterControl = matrix || sharedRow || Boolean(addressMode) || reviewBelow;
   return <div className={multiline ? 'editor-field record-description' : 'editor-field'} data-text-kind={kind}
     data-shared-row={sharedRow || undefined} data-matrix-control={matrix || undefined}
@@ -71,27 +75,21 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
     <div className="editor-field-label"><label htmlFor={id}>{label}</label>
       {!reviewAfterControl && review}
     </div>
-    {compact ? <input {...props} type="text" inputMode={addressMode} autoComplete="off" autoCapitalize={addressMode ? 'none' : undefined}
-      spellCheck={addressMode ? false : undefined} onPaste={addressMode ? paste : undefined}
+    {!multiline && (compact || addressMode) ? <input {...props} type={type} autoComplete="off" autoCapitalize={addressMode ? 'none' : undefined}
+      spellCheck={addressMode ? false : undefined} onPaste={addressMode ? pasteAddress : undefined}
       onChange={event => onChange(event.target.value)}/> :
       <div className="editor-grow" data-value={value}>
-        <textarea {...props} rows={1} aria-multiline={multiline} inputMode={addressMode} autoComplete="off" autoCapitalize={addressMode ? 'none' : undefined}
-          spellCheck={addressMode ? false : undefined}
+        <textarea {...props} rows={1} aria-multiline={multiline} autoComplete="off"
           onPaste={multiline ? undefined : paste}
           onKeyDown={multiline ? undefined : event => {
             if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.preventDefault();
           }}
           onChange={event => {
             const control = event.currentTarget;
-            const next = multiline ? control.value : addressMode ? control.value.replace(/[\r\n]/g, '') : singleLine(control.value);
+            const next = multiline ? control.value : singleLine(control.value);
             if (next !== control.value) {
-              const from = control.selectionStart;
-              const to = control.selectionEnd;
-              const preserve = (offset: number) => addressMode
-                ? control.value.slice(0, offset).replace(/[\r\n]/g, '').length
-                : singleLine(control.value.slice(0, offset)).length;
-              const start = preserve(from);
-              const end = preserve(to);
+              const start = singleLine(control.value.slice(0, control.selectionStart)).length;
+              const end = singleLine(control.value.slice(0, control.selectionEnd)).length;
               control.value = next;
               control.setSelectionRange(start, end);
             }

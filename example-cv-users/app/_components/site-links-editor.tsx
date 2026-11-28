@@ -44,7 +44,7 @@ export function SiteLinksEditor({draft, onChange}: {
       : (language === 'zh' ? text('中文联系标签', 'Chinese contact label') : text('英文联系标签', 'English contact label'));
     return <RecordField key={language} identity={{field}} language={language} label={label}
       lang={language === 'zh' ? 'zh-CN' : 'en'} type={address ? 'url' : 'text'} maxLength={address ? 2048 : undefined}
-      value={value} error={address ? urlError(value) : undefined} compact={address} reviewBelow
+      value={value} error={address ? urlError(value) : undefined} reviewBelow
       onChange={next => onChange({...draft, translations: editTranslation(draft.translations, language, {[field]: next})})}/>;
   }
 

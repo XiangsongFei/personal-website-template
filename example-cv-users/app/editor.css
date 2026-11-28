@@ -195,7 +195,6 @@
 .editor-field[data-address] { grid-column: 1 / -1; }
 .editor-field[data-address=email] { max-inline-size: 360px; }
 .editor-field[data-address=url] { max-inline-size: 420px; }
-.editor-field[data-address] .editor-grow { max-height: 12rem; }
 .editor-field[data-shared-row] {
   grid-column: 1 / -1;
   grid-template-columns: var(--editor-matrix-columns);
