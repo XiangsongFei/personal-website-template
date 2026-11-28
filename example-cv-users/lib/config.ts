@@ -17,6 +17,8 @@ export interface UsersEnv {
     USERS_CONTROLLED_EGRESS?: Fetcher;
     USERS_INTRODUCTION_MODE?: string;
     USERS_INTRODUCTION_RPC?: Fetcher;
+    USERS_RESUME_TEXT_MODE?: string;
+    USERS_RESUME_TEXT_RPC?: Fetcher;
     USERS_RECOVERY_STATE: DurableObjectNamespace<RecoveryState>;
     ASSETS: Fetcher;
 }

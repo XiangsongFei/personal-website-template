@@ -21,10 +21,11 @@ import {DashboardShell, UnsavedDot} from './dashboard';
 import {FullSitePreview} from './full-site-preview';
 import {useUiLocale} from './ui-locale';
 import {FieldFeedbackContext} from './field-feedback';
+import {isTextSection} from '../../lib/editor/resume-text';
 import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
 import {mountEditorSections, selectEditorSection} from './editor-section-history';
-import {buildPreview} from '../../lib/editor/preview-model';
+import {resumePreviewSource} from '../../lib/editor/resume-preview-source';
 import {customSectionTitle, sectionTitleField, type SiteTextDraft} from '../../lib/editor/site-text';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
@@ -86,7 +87,11 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   </section>;
 }
 
-export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = false}: {initialDraft?: LocalDraft; introductionEnabled?: boolean}) {
+function TextEditGate({disabled,children}: {disabled:boolean;children:ReactNode}) {
+  return disabled ? <fieldset disabled style={{display:'contents'}}>{children}</fieldset> : <>{children}</>;
+}
+
+export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = false, resumeTextEnabled = false}: {initialDraft?: LocalDraft; introductionEnabled?: boolean; resumeTextEnabled?: boolean}) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const [module, setModule] = useState<EditorModule>('profile');
@@ -97,11 +102,11 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields, persistence} = useWorkspaceDraft(initialDraft, module, introductionEnabled);
+  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields, siteTextReady, persistence, textPersistence} = useWorkspaceDraft(initialDraft, module, introductionEnabled, resumeTextEnabled);
   const intro = introductionEnabled && module === 'introduction' ? persistence.state : undefined;
   const readiness = intro?.state;
   const outcome = intro?.state === 'ready' ? intro.outcome : undefined;
-  const pending = intro?.state === 'ready' && !!intro.attempt;
+  const pending = intro?.state === 'ready' && !!(intro.attempt||intro.pending);
   const retryUnsent = intro?.state === 'ready' && intro.retryUnsent;
   const saveAction = intro?.state === 'ready' ? {
     label: pending && !retryUnsent && outcome !== 'saving' ? text('核对保存结果', 'Check save status') : text('保存草稿', 'Save draft'),
@@ -129,7 +134,32 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
     saved: text('已保存个人介绍。', 'Introduction saved.'),
     ready: undefined,
   }[outcome ?? readiness ?? 'loading']) : undefined;
-  const preview = useMemo(() => buildPreview(draft, guideOverrides, showExamples), [draft, guideOverrides, showExamples]);
+  const usesText = resumeTextEnabled && isTextSection(module);
+  const textState=textPersistence.state;
+  const textReady=!!textState?.snapshot;
+  const textAction=usesText ? {
+    label:textState?.pending ? text('核对保存结果','Check save status') :
+      textReady ? text('保存草稿','Save draft') : text('重新读取','Retry read'),
+    run:()=>void (textReady?textPersistence.save():textPersistence.refresh()),
+    enabled:textReady ? textState?.phase!=='saving' && textState?.phase!=='conflict' &&
+      (!!textState?.pending||textPersistence.dirty) :
+      ['failure','renewal'].includes(textState?.phase??'loading'),
+  } : undefined;
+  const textMessage=usesText ? ({
+    loading:text('正在读取草稿。','Reading your draft.'),
+    failure:text('暂时无法读取草稿。','Your draft could not be read.'),
+    'no-site':text('此账户没有可编辑的网站。','This account has no editable website.'),
+    renewal:text('请在另一个标签页打开工作台以续期，然后返回本页重试。','Open the dashboard in another tab to renew your session, then retry.'),
+    denied:text('当前权限无法访问此草稿。','Your current permissions do not allow access to this draft.'),
+    saving:text('正在核对保存回执。','Confirming the save receipt.'),
+    unknown:text('保存结果待核对。','The save is unconfirmed.'),
+    conflict:text('另一个会话已更新草稿。请保留当前修改，再读取最新版本。','Another session updated the draft. Keep a copy of your edits before reloading.'),
+    invalid:text('提交内容无效或超过限制。','The submission is invalid or exceeds its limits.'),
+    saved:text('已保存草稿。','Draft saved.'),
+    ready:undefined,
+  }[textState?.phase??'loading']) : undefined;
+  const preview=useMemo(()=>resumePreviewSource({kind:'local',draft,guides:guideOverrides,showExamples},previewLocale)!.preview,
+    [draft,guideOverrides,showExamples,previewLocale]);
   const heading = sectionTitleField(module);
   const updateSiteText = (siteText: SiteTextDraft) => setDraft(current => ({...current, 'site-text': siteText}));
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
@@ -173,7 +203,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
       <div className="editor-columns" data-mode={mode}>
         <FieldFeedbackContext.Provider value={fields}>
           <EditorPanel mode={mode} module={module} dirtyModules={dirtyModules} titles={titles} setFocused={setFocused}
-            saveAction={saveAction} saveMessage={saveMessage}
+            saveAction={textAction??saveAction} saveMessage={textMessage??saveMessage}
             hasCustomNames={dirtyModules.some(key => customSectionTitle(draft, key, locale))}
             canUndo={dirtyModules.includes(module) || !!guideOverrides[module]} cancel={undo}
             subNavigation={contactArea && <div className="editor-contact-areas">
@@ -181,12 +211,14 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
                 ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')], ['site-text', text('网站文字', 'Site text')],
               ]} selected={module} dirty={dirtyModules} select={selectEditorSection} label={text('联系与链接区域', 'Contact and links areas')}/>
             </div>}>
+            <TextEditGate disabled={usesText&&!textReady}>
             {heading && <FieldFeedbackContext.Provider value={siteTextFields}>
-              <fieldset className="editor-fields">
+              <fieldset className="editor-fields" disabled={!siteTextReady}>
                 <legend>{text('栏目标题', 'Section title')}</legend>
                 <FieldMatrix>
                   <SiteTextField draft={draft['site-text']} onChange={updateSiteText} field={heading} label={text('栏目标题', 'Section title')}/>
                 </FieldMatrix>
+                {resumeTextEnabled && <p className="editor-note">{text('在「网站文字」中保存栏目标题。','Save section titles in Site text.')}</p>}
               </fieldset>
             </FieldFeedbackContext.Provider>}
             {module === 'profile' ? <ProfileFields profile={draft.profile}
@@ -221,6 +253,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
                   error={value => validIntroduction(value) ? undefined : text('内容含无效字符或超过长度上限。',
                     'The introduction contains invalid characters or exceeds the length limit.')}/>
               </div>}
+            </TextEditGate>
           </EditorPanel>
         </FieldFeedbackContext.Provider>
         <section className="editor-preview" data-mode={mode} data-preview-source={showExamples ? 'mixed' : 'draft'} aria-label={text('网站预览', 'Website preview')}>

@@ -4,13 +4,15 @@ import {initialTextPublication, planTextPublication, readTextPublicationOperatio
 import {BusinessError} from '../../lib/business/protocol.mjs';
 import {runtime} from '../runtime.mjs';
 import {realAuthority, TEST_KEY, TEST_ORIGIN} from '../auth-fixture.mjs';
+import {createResumeTextRpc} from './resume-text-rpc.mjs';
 
 const save = 'save_text_draft';
 const lookup = 'read_text_publication_operation';
 const siteIds = ['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002'];
 const recordIds = ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002'];
 
-export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN} = {}) {
+export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN, receiptRecovery = false,
+  combinedText = false, passwordSession,onRpc} = {}) {
   const auth = await realAuthority();
   const accounts = [auth.ids.A, auth.ids.B];
   const sites = new Map(await Promise.all(accounts.map(async (uid, i) => [
@@ -20,6 +22,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
     ]}}),
   ])));
   const controls = {denied: new Set(), readsFail: false, rollback: false, lost: false, corrupt: false, normalize: false, delay: 0};
+  const textFixture=combinedText?createResumeTextRpc(auth,new Map(accounts.map((uid,i)=>[uid,siteIds[i]])),onRpc):undefined;
   const hits = [];
   let writes = Promise.resolve();
   async function rpc(request) {
@@ -28,6 +31,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
     assert.equal(request.method, 'POST');
     assert.equal(request.headers.has('Cookie'), false);
     const operation = url.pathname.replace('/rpc/', '');
+    onRpc?.(operation);
     const principal = auth.principal(request);
     if (!principal || controls.denied.has(principal.id)) return Response.json({code: '42501'}, {status:403});
     const who = {uid: principal.id, sid: principal.sid};
@@ -78,12 +82,42 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
       return Response.json({code: new Map([[409,'PT409'], [403,'42501'], [400,'22023']]).get(error.status)}, {status:error.status});
     }
   }
+  async function receiptRpc(request){
+    const url=new URL(request.url);
+    assert.equal(url.origin,'https://users.resume.example.invalid');
+    if(textFixture && url.pathname!=='/rpc/read_introduction_receipt')return textFixture.rpc(request);
+    const actor=auth.principal(request);
+    if(!actor||controls.denied.has(actor.id))return Response.json({code:'42501'},{status:403});
+    const site=sites.get(actor.id);
+    if(url.pathname==='/rpc/get_my_site')return Response.json({schema_version:1,site:{id:site.site_id}});
+    const {target,operation_id,request_digest,basis,section_key}=await request.json();
+    if(site?.site_id!==target)return Response.json({code:'42501'},{status:403});
+    if(url.pathname==='/rpc/read_resume_text' && section_key==='site-text')
+      return Response.json({siteId:target,section:section_key,revision:0,content:null});
+    assert.equal(url.pathname,'/rpc/read_introduction_receipt');
+    const operation=site.operations.find(o=>o.request_id===operation_id&&o.actor_uid===actor.id&&o.actor_sid===actor.sid&&o.state==='succeeded');
+    if(!operation)return Response.json({state:'unknown'});
+    if(operation.payload_digest!==request_digest||operation.basis.draft_revision!==basis)
+      return Response.json({code:'PT409'},{status:409});
+    const revision=operation.result.draft_revision;
+    const history=site.draft_revisions.find(r=>r.site_revision===revision);
+    return Response.json({state:'saved',requestId:operation_id,digest:request_digest,
+      draft:{state:'ready',siteId:target,revision,record:history.payload.entries[0]??null}});
+  }
   const mf = runtime({
     ...(port === undefined ? {} : {port}), https:origin.startsWith('https:'),
     bindings: {USERS_CURRENT_PASSWORD_POLICY:'ON', USERS_MODE:'isolated', USERS_PROJECT_REF:'isolated-users',
       USERS_SUPABASE_URL:'https://users.auth.example.invalid', USERS_PUBLISHABLE_KEY:TEST_KEY, USERS_APP_ORIGIN:origin,
-      ...(enabled ? {USERS_INTRODUCTION_MODE:'synthetic'} : {})},
-    serviceBindings:{USERS_INTRODUCTION_RPC:rpc}, outboundService:request=>auth.fetch(request),
+      ...(enabled ? {USERS_INTRODUCTION_MODE:'synthetic'} : {}),
+      ...(receiptRecovery?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
+    serviceBindings:{USERS_INTRODUCTION_RPC:rpc,...(receiptRecovery?{USERS_RESUME_TEXT_RPC:receiptRpc}:{})},
+    outboundService:async request=>{
+      if(!passwordSession||!request.url.endsWith('/token?grant_type=password'))return auth.fetch(request);
+      const {email}=await request.clone().json();
+      const reply=await auth.fetch(request);
+      if(reply.ok)passwordSession(email,await reply.clone().json());
+      return reply;
+    },
   });
-  return {mf, auth, jar:new Map(), sites, siteIds, recordIds, hits, controls};
+  return {mf, auth, jar:new Map(), sites, siteIds, recordIds, hits, controls,rpc,textFixture};
 }

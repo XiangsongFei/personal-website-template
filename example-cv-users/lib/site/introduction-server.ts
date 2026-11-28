@@ -17,7 +17,7 @@ export function introductionEnabled(env: UsersEnv) {
     typeof env.USERS_INTRODUCTION_RPC?.fetch === 'function';
 }
 
-async function authorize(env: UsersEnv, session: Session) {
+export async function authorizeDraft(env: UsersEnv, session: Session) {
   const config = configuration(env);
   const {data, error} = await session.client.auth.getSession();
   if (session.refreshRequired()) deny('SESSION_REFRESH_REQUIRED', 503);
@@ -33,9 +33,13 @@ async function authorize(env: UsersEnv, session: Session) {
   }
   const {uid, session_id: sid} = accountContext(handle);
   const scope = await workspaceScope(uid, sid);
-  const repository = createIntroductionRepository({project: config.project, authIssuer, endpoint,
-    mtls: env.USERS_INTRODUCTION_RPC!, identity});
-  return {service: createIntroductionService(repository), handle, uid, scope};
+  return {identity,handle,uid,scope,project:config.project,authIssuer};
+}
+
+async function authorize(env: UsersEnv, session: Session) {
+  const auth=await authorizeDraft(env,session);
+  const repository=createIntroductionRepository({...auth,endpoint,mtls:env.USERS_INTRODUCTION_RPC!});
+  return {...auth,service:createIntroductionService(repository)};
 }
 
 export async function readIntroductionSite(env: UsersEnv, session: Session, uid: string, scope: string): Promise<SiteViewModel> {
@@ -57,7 +61,7 @@ export async function readIntroductionSite(env: UsersEnv, session: Session, uid:
   }
 }
 
-async function readCommand(request: Request) {
+export async function readDraftCommand(request: Request, byteLimit=66000) {
   const reader = request.body?.getReader();
   if (!reader) return deny('INVALID_INPUT', 400);
   const decoder = new TextDecoder('utf-8', {fatal: true});
@@ -67,7 +71,7 @@ async function readCommand(request: Request) {
       const {done, value} = await reader.read();
       if (done) break;
       bytes += value.length;
-      if (bytes > 66000) return deny('INVALID_INPUT', 400);
+      if (bytes > byteLimit) return deny('INVALID_INPUT', 400);
       raw += decoder.decode(value, {stream: true});
     }
     raw += decoder.decode();
@@ -103,7 +107,7 @@ export async function introductionAPI(request: Request, env: UsersEnv) {
     // Avoid late Set-Cookie writes overwriting a switched account.
     if (request.method === 'HEAD') return new Response(null, {headers});
     if (read) return Response.json(await service.read(handle), {headers});
-    const command = await readCommand(request);
+    const command = await readDraftCommand(request);
     return Response.json(await (save ? service.save(handle, command) : service.reconcile(handle, command)), {headers});
   } catch (error) {
     const status = error instanceof BusinessError ? error.status : 503;

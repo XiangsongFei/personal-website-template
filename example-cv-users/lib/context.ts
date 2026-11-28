@@ -3,6 +3,7 @@ import type {SiteViewModel} from './site/model.ts';
 export const requestContext = new AsyncLocalStorage<{
     dashboard?: boolean;
     introduction?: boolean;
+    resumeText?: boolean;
     readSite?: () => Promise<SiteViewModel>;
     workspaceDraftScope?: string;
     workspacePath?: string;

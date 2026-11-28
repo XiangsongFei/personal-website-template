@@ -1,5 +1,5 @@
 'use client';
-import {clearWorkspaceDraft} from './workspace-draft';
+import {clearWorkspaceDraft, leaveWorkspace} from './workspace-draft';
 import {WorkspaceLink} from './workspace-link';
 import {useRef, useState} from 'react';
 import {useUiLocale} from './ui-locale';
@@ -37,7 +37,7 @@ export function AccountHome({email, passwordOpen}: {email: string; passwordOpen:
     try {
       const response = await sendAccountAction(action, {});
       if (action === 'logout' && response.ok) {
-        clearWorkspaceDraft();
+        leaveWorkspace();
         window.location.replace('/login');
         return;
       }
