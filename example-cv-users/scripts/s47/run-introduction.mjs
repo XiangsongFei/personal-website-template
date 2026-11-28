@@ -19,18 +19,25 @@ import {textDraftArgs} from '../../lib/business/introduction-repository.mjs';
 import {runFullText,s47Functions,s47RpcNames} from './full-text.mjs';
 import {runTargeted} from './targeted.mjs';
 import {assertBudgetHeadroom} from './budget.mjs';
+import {nativeSafari,openDelegatedBrowser,runDelegated,writeScreenshotIndex} from './delegated.mjs';
+import {textCommand,textCommandDigest} from '../../lib/editor/resume-text.ts';
 
 const mode=process.argv[2];
-assert.ok(mode===undefined||mode==='--all-text'||mode==='--follow-up'||mode==='--follow-up-r02','UNRECOGNIZED_MODE');
+assert.ok(mode===undefined||mode==='--all-text'||mode==='--follow-up'||mode==='--follow-up-r02'||mode==='--delegated','UNRECOGNIZED_MODE');
+const delegated=mode==='--delegated';
 const remainingOnly=mode==='--follow-up-r02';
 const followUp=mode==='--follow-up'||remainingOnly;
-const full=mode==='--all-text'||followUp;
-const project=remainingOnly?'s47-all-text-acceptance-followup-r02':followUp?'s47-all-text-acceptance-followup-r01':full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
+const full=mode==='--all-text'||followUp||delegated;
+const project=delegated?'s47-user-acceptance-r01':remainingOnly?'s47-all-text-acceptance-followup-r02':followUp?'s47-all-text-acceptance-followup-r01':full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
 const issuer='https://users.auth.example.invalid/auth/v1';
 const privateOrigin='https://users.draft.example.invalid';
 const oldProject='ecv-s33a-20261109-7dd22a81', oldIssuer='http://127.0.0.1:56321/auth/v1';
 const stageDir=realpathSync('.runtime/s4-7/'+project), build=join(stageDir,'build');
 assert.ok(!existsSync(join(stageDir,'manifest.json')), 'one shot');
+if(delegated){
+  assert.equal(stageDir,join(realpathSync('.runtime/s4-7'),project));
+  assert.ok(lstatSync(build).isDirectory()&&lstatSync(build).uid===process.getuid());
+}
 const authBin=join(build,'auth');
 const pgBin='/private/var/tmp/ecv-s37-pg-build.mjCv9PFm/installed/bin';
 const restBin=realpathSync('../../s35-hosted-acceptance-20261122-58ae9ac7/example-cv-users/.runtime/s37-b-chain-20261126/postgrest');
@@ -47,7 +54,7 @@ const json=v=>literal(JSON.stringify(v))+'::jsonb';
 const beforeMigrations=JSON.parse(read('tests/s3/migration-source-contract.json'));
 const m7=JSON.parse(read('docs/s3/S3.6-HOSTED-TARGET-MANIFEST.PG17.12.json')).m7Adaptation;
 const textDigest='97b2017168b197ba6d006050717207535b6a56d3dcd5f1116b386313575bb175';
-const limits=followUp?{textHTTP:180,workerSaves:16,nativeSaves:16,allSaveEntrances:16,lookups:12,sqlObservation:24,passwordLogins:4,grants:4,generations:1}:full?{textHTTP:180,workerSaves:36,nativeSaves:36,allSaveEntrances:36,lookups:16,sqlObservation:40,passwordLogins:4,grants:4,generations:1}:{textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
+const limits=delegated?{textHTTP:360,workerSaves:30,nativeSaves:30,allSaveEntrances:60,lookups:12,sqlObservation:24,passwordLogins:4,grants:4,generations:1}:followUp?{textHTTP:180,workerSaves:16,nativeSaves:16,allSaveEntrances:16,lookups:12,sqlObservation:24,passwordLogins:4,grants:4,generations:1}:full?{textHTTP:180,workerSaves:36,nativeSaves:36,allSaveEntrances:36,lookups:16,sqlObservation:40,passwordLogins:4,grants:4,generations:1}:{textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
 const textCandidates=full?['01-resume-text','02-repeatable-text','03-introduction-receipt'].map(file=>{
   const path='supabase/candidates/s47/'+file+'.sql';
   const source=read(path);
@@ -66,10 +73,14 @@ function ensureBudget(allocation,label) {
   try {assertBudgetHeadroom(counts,ceiling,allocation,label);}
   catch(error){witness.budgetStop={stage:witness.stage,reason:error.message,allocation};report();throw error;}
 }
+const delegatedHttpReserve=24;
 function take(...kinds) {
-  if(stopRequested && witness.stage!=='cleanup')throw Error('STOP_REQUESTED');
+  if(stopRequested&&witness.stage!=='cleanup'&&!(delegated&&witness.stage==='delegated-original-key'&&
+    kinds.length===1&&kinds[0]==='sqlObservation'))throw Error('STOP_REQUESTED');
   const allocation=Object.create(null);
   for(const kind of kinds) allocation[kind]=(allocation[kind]??0)+1;
+  if(delegated&&allocation.textHTTP&&witness.stage!=='delegated-original-key')
+    ensureBudget({textHTTP:allocation.textHTTP+delegatedHttpReserve},'DELEGATED_RESERVE');
   ensureBudget(allocation,'REQUEST');
   for(const [kind,amount] of Object.entries(allocation))counts[kind]+=amount;
   report();
@@ -131,6 +142,7 @@ COMMIT;
 `;
 
 let started=false, authority=false, armed=false, changedAcl=false, mf, authChild, restChild, authBase, authPort, origin, appPort;
+let sessionBrowser, safariChild, safariPort, delegatedTimer;
 let failed=false, cleanupFailed=false, loseFor, fingerprint, restEnv, writesFrozen=false, s47GateOpen=false, s47AclOpened=false;
 const users=[];
 const loginReplies=new Map();
@@ -146,9 +158,11 @@ async function stop(child) {
   const timer=setTimeout(()=>child.kill('SIGKILL'),2500);
   try {await done;} finally {clearTimeout(timer);}
 }
-async function availablePort() {
-  const server=createServer().listen(0,'127.0.0.1');
-  await once(server,'listening');
+async function availablePort(preferred=0) {
+  const server=createServer();
+  const listening=once(server,'listening');
+  server.listen(preferred,'127.0.0.1');
+  await listening;
   const port=server.address().port;
   await new Promise((res,rej)=>server.close(e=>e?rej(e):res()));
   return port;
@@ -317,6 +331,87 @@ function authenticate(token) {
   assert.equal(claims.iss,issuer);
   return claims;
 }
+function delegatedReadback(a,b,receipts,bobExpected) {
+  const observed=obs(`SELECT json_build_object(
+    'owners',(SELECT count(*) FROM site_data.sites WHERE (id,owner_auth_user_id) IN (('${a.site}','${a.uid}'),('${b.site}','${b.uid}'))),
+    'outbox',(SELECT count(*) FROM site_private.publication_outbox),
+    'published',(SELECT count(*) FROM site_data.site_publications WHERE state<>'unpublished'),
+    'records',(SELECT coalesce(json_agg(json_build_object('siteId',v.site_id,'section',v.section,
+      'revision',v.revision,'content',v.content,'requestId',v.request_id,'digest',r.digest,
+      'ownerMatched',v.actor_uid=r.actor_uid AND v.actor_uid=CASE WHEN v.site_id='${a.site}' THEN '${a.uid}'::uuid ELSE '${b.uid}'::uuid END,
+      'basis',r.basis_revision,'occurred',v.occurred_at IS NOT NULL) ORDER BY v.site_id,v.section,v.revision),'[]')
+      FROM site_private.resume_text_revisions v LEFT JOIN site_private.resume_text_receipts r
+        USING(site_id,section,revision,request_id)),
+    'receiptCount',(SELECT count(*) FROM site_private.resume_text_receipts),
+    'introductions',(SELECT coalesce(json_agg(json_build_object('siteId',h.site_id,'record',h.payload->'entries'->0,
+      'revision',h.section_revision,'requestId',r.request_id,'digest',r.payload_digest,
+      'audit',EXISTS(SELECT FROM site_private.text_publication_audit e WHERE e.site_id=r.site_id AND e.operation_id=r.id),
+      'ownerMatched',h.actor_auth_user_id=r.actor_auth_user_id AND h.actor_auth_user_id='${a.uid}')),'[]')
+      FROM site_data.draft_revisions h JOIN site_private.operation_requests r ON (h.site_id,h.operation_id)=(r.site_id,r.id)
+        WHERE h.section_key='introduction' AND h.site_revision>0));`);
+  witness.databaseReadback??=[];
+  witness.databaseReadback.push(observed);
+  report();
+  assert.equal(observed.owners,2);
+  assert.equal(observed.outbox,0);
+  assert.equal(observed.published,0);
+  assert.equal(observed.records.filter(row=>row.siteId===b.site).length,bobExpected);
+  const text=receipts.filter(receipt=>receipt.section!=='introduction');
+  const introductions=receipts.filter(receipt=>receipt.section==='introduction');
+  assert.equal(observed.records.length,text.length);
+  assert.equal(observed.receiptCount,text.length);
+  assert.equal(observed.introductions.length,introductions.length);
+  for(const expected of text){
+    const found=observed.records.find(row=>row.requestId===expected.requestId);
+    assert.deepEqual(found,{siteId:expected.siteId,section:expected.section,revision:expected.revision,
+      content:expected.content,requestId:expected.requestId,digest:expected.digest,ownerMatched:true,basis:expected.revision-1,occurred:true});
+  }
+  for(const expected of introductions){
+    const found=observed.introductions.find(row=>row.requestId===expected.requestId);
+    assert.deepEqual(found,{siteId:expected.siteId,record:expected.content,revision:expected.revision,
+      requestId:expected.requestId,digest:expected.digest,audit:true,ownerMatched:true});
+  }
+  mark('independent PostgreSQL content, owner, version and receipt readback',
+    {resumeText:text.length,introductions:introductions.length,bobRevisions:bobExpected,outbox:0});
+}
+function verifyDelegatedLogout(oldActor,newActor) {
+  assert.notEqual(oldActor.sid,newActor.sid);
+  const state=obs(`SELECT json_build_object(
+    'oldSessionGone',NOT EXISTS(SELECT FROM auth.sessions WHERE id='${oldActor.sid}'),
+    'oldRefreshUsable',EXISTS(SELECT FROM auth.refresh_tokens WHERE session_id='${oldActor.sid}' AND NOT revoked),
+    'newSessionPresent',EXISTS(SELECT FROM auth.sessions WHERE id='${newActor.sid}' AND user_id='${newActor.uid}'
+      AND not_after>clock_timestamp()+interval '25 minutes'),
+    'newGrantActive',EXISTS(SELECT FROM site_private.business_session_grants WHERE id='${newActor.grant}'
+      AND auth_session_id='${newActor.sid}' AND revoked_at IS NULL AND expires_at>clock_timestamp()+interval '25 minutes'));`);
+  assert.deepEqual(state,{oldSessionGone:true,oldRefreshUsable:false,newSessionPresent:true,newGrantActive:true});
+  mark('independent native logout and new qualified session',{previousOwner:oldActor.name,currentOwner:newActor.name,...state});
+}
+async function reconcileDelegated(){
+  writesFrozen=true;
+  phase('delegated-original-key');
+  for(const {owner,requestId,command} of sessionBrowser.pending.values()){
+    if(!uuid(requestId)||!uuid(owner.site))continue;
+    try {
+      const intro=!!command.command;
+      const basis=intro?command.command.expected_draft_revision:command.expectedRevision;
+      const digest=intro?sha(JSON.stringify({operation:'save_text_draft',...command.command})):await textCommandDigest(textCommand(command));
+      assert.ok(Number.isSafeInteger(basis) && basis>=0);
+      let lookupStatus=null;
+      if(!stopRequested){
+        const result=await rest(intro?'read_introduction_receipt':'read_resume_text_operation',{
+          target:owner.site,operation_id:requestId,request_digest:digest,basis,...(intro?{}:{section_key:command.section}),
+        },owner.token);
+        lookupStatus=result.status;
+      }
+      const checked=obs(intro?receiptQuery({requestId,digest,uid:owner.uid,sid:owner.sid,siteId:owner.site,basisRevision:basis}):
+        `SELECT json_build_object('state',CASE WHEN EXISTS(SELECT FROM site_private.resume_text_receipts r
+          WHERE r.site_id='${owner.site}' AND r.request_id='${requestId}' AND r.digest='${digest}'
+            AND r.basis_revision=${basis} AND r.actor_uid='${owner.uid}' AND r.actor_sid='${owner.sid}')
+          THEN 'committed' ELSE 'unobserved' END);`);
+      note({requestId,digest,basis,lookupStatus,checked});
+    } catch(error){note({requestId,state:'UNKNOWN',assertion:error.name});}
+  }
+}
 function validateBoundary() {
 
   assert.equal(pg('postgres',['--version']),'postgres (PostgreSQL) 17.12');
@@ -326,6 +421,12 @@ function validateBoundary() {
   for(const [name,source] of Object.entries(migrations)) assert.equal(sha(source),beforeMigrations[name]);
   assert.equal(sha(bound(migrations[m7.file],m7.before,m7.after)),m7.newSha256);
   assert.equal(execute('/usr/bin/git',['rev-parse','origin/main']),baseline);
+  if(delegated){
+    const base='c8459d6fe6d112bdcdf7015a4aa539d84e4b770f';
+    const changed=execute('/usr/bin/git',['diff','--name-only',base,'HEAD']).split('\n').filter(Boolean);
+    assert.ok(changed.every(path=>/^(?:example-cv-users\/(?:scripts\/s47\/|tests\/browser\/)|resume-users\/S4\/S4\.7\/)/.test(path)),'DELEGATED_BASELINE_CHANGED');
+    assert.equal(execute('/usr/bin/git',['branch','--show-current']),'codex/s4-7-complete-text-persistence-20261128');
+  }
   if(full){
     assert.equal(execute('/usr/bin/git',['status','--porcelain']),'');
     assert.equal(sha(readFileSync(authBin)),'0d9fed811548b67c45b6a97306ca4eefcb6714011e5294c836e8abdaacfaeda1');
@@ -343,18 +444,24 @@ try {
     assert.equal(manifestSHA256,'fdbb1afb1d5f4ddaa330cf1be98a4d844152343e895595817ef5fbc0207ec7a5');
     priorC2={cases:['C2.1','C2.3'],evidenceRun,receiptSHA256,manifestSHA256};
   }
+  if(delegated){
+    appPort=await availablePort(19147);
+    safariPort=await availablePort();
+  }
   root=mkdtempSync('/private/tmp/s47-');
   db=join(root,'db');
   restSock=join(root,'rest.sock');
   assert.equal(lstatSync(root).mode&0o777,0o700);
-  authPort=await availablePort(); appPort=await availablePort();
+  authPort=await availablePort(); appPort??=await availablePort();
   assert.notEqual(authPort,appPort);
   authBase='http://127.0.0.1:'+authPort; origin=(full?'https://localhost:':'http://127.0.0.1:')+appPort;
   const rollbackSource=bound(textSql,'\nCOMMIT;','\nROLLBACK;');
   const manifest={project,sourceHead,instance:sha(root),origin,authBase,pgTcp:false,privateRestUnix:true,
     postgresSocketPort:dbPort,limits,
+    ...(delegated?{delegated:{port:appPort,safariPort,operationWindowSeconds:1200,authorityLifetimeSeconds:1800,
+      minimumRemainingAtOpenSeconds:1500,chromeChannel:'chrome',harnessSHA256:sha(readFileSync(new URL('./delegated.mjs',import.meta.url)))}}:{}),
     ...(full?{baseline,executionOrder:[...Object.keys(migrations),textSqlPath,...textCandidates.map(c=>c.path)],
-      budgetAllocation:{workerAndNativeBusiness:limits.textHTTP-8,reconciliationHttpReserve:8,
+      budgetAllocation:{workerAndNativeBusiness:limits.textHTTP-(delegated?delegatedHttpReserve:8),reconciliationHttpReserve:delegated?delegatedHttpReserve:8,
         savesIncludingWorkerAndNative:limits.allSaveEntrances,lookups:limits.lookups,
         sqlCasesAndObservations:limits.sqlObservation-2,independentCloseReserve:2,
         maximumOwnerSites:2,cloudUSD:0},
@@ -409,7 +516,8 @@ try {
   const key={...pair.privateKey.export({format:'jwk'}),kid:'s47-intro-es256',alg:'ES256',use:'sig',key_ops:['sign']};
   const dsn=p=>`postgresql://${p}@localhost:${dbPort}/postgres?host=${encodeURIComponent(root)}&sslmode=disable`;
   const authEnv={GOTRUE_JWT_SECRET:randomBytes(32).toString('hex'),GOTRUE_JWT_KEYS:JSON.stringify([key]),
-    GOTRUE_JWT_ISSUER:issuer,GOTRUE_JWT_EXP:'900',GOTRUE_JWT_AUD:'authenticated',GOTRUE_JWT_DEFAULT_GROUP_NAME:'authenticated',
+    ...(delegated?{GOTRUE_SESSIONS_TIMEBOX:'30m'}:{}),
+    GOTRUE_JWT_ISSUER:issuer,GOTRUE_JWT_EXP:delegated?'1800':'900',GOTRUE_JWT_AUD:'authenticated',GOTRUE_JWT_DEFAULT_GROUP_NAME:'authenticated',
     GOTRUE_JWT_ADMIN_ROLES:'service_role',GOTRUE_DB_DRIVER:'postgres',DB_NAMESPACE:'auth',DATABASE_URL:dsn(primary.auth),
     API_EXTERNAL_URL:authBase,GOTRUE_API_HOST:'127.0.0.1',PORT:String(authPort),GOTRUE_SITE_URL:origin,
     GOTRUE_EXTERNAL_EMAIL_ENABLED:'true',GOTRUE_DISABLE_SIGNUP:'true',GOTRUE_MAILER_AUTOCONFIRM:'true',
@@ -465,12 +573,7 @@ try {
     USERS_INTRODUCTION_MODE:'synthetic',...(full?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
     serviceBindings:{USERS_INTRODUCTION_RPC:rpcProxy,...(full?{USERS_RESUME_TEXT_RPC:rpcProxy}:{})},outboundService:authProxy});
   await mf.ready;
-  for(const actor of users) {
-    const r=await mf.dispatchFetch(origin+'/api/account/login',{method:'POST',
-      headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({email:actor.email,password:actor.password})});
-    assert.equal(r.status,200,(await r.clone().json()).code);
-    actor.cookie=r.headers.getSetCookie().map(line=>line.split(';',1)[0]).join('; ');
-    assert.ok(actor.cookie.startsWith('__Host-ecv-users-session'));
+  function bindNativeLogin(actor){
     const captured=loginReplies.get(actor.email);
     assert.equal(captured.user.id,actor.uid);
     actor.token=captured.access_token;
@@ -479,6 +582,39 @@ try {
     assert.ok(claims.sub===actor.uid && uuid(claims.session_id) && claims.amr.some(x=>x.method==='password'));
     actor.sid=claims.session_id;
     actor.scope=sha(JSON.stringify(['workspace-draft',actor.uid,actor.sid]));
+    if(delegated){
+      assert.equal(claims.exp-claims.iat,1800);
+      actor.jwtExpires=claims.exp;
+      // Pin the native deadline used by the SQL eligibility contract. GoTrue's
+      // configured time-box is retained and this can only narrow the deadline.
+      sql(`UPDATE auth.sessions SET not_after=least(coalesce(not_after,created_at+interval '30 minutes'),created_at+interval '30 minutes')
+        WHERE id='${actor.sid}' AND user_id='${actor.uid}';`);
+    }
+  }
+  const browserBudget=(planned=1)=>ensureBudget({textHTTP:delegatedHttpReserve+planned},'DELEGATED_BROWSER');
+  if(delegated){
+    sessionBrowser=await openDelegatedBrowser({origin,stageDir,take,witness,checkBudget:browserBudget});
+    await sessionBrowser.signIn(b);
+    bindNativeLogin(b);
+    await sessionBrowser.context.clearCookies();
+    await sessionBrowser.signIn(a);
+    bindNativeLogin(a);
+    safariChild=start('/usr/bin/safaridriver',['-p',String(safariPort)],{});
+    const driver='http://127.0.0.1:'+safariPort;
+    for(let attempt=0;attempt<30;attempt++){
+      assert.equal(safariChild.exitCode,null);
+      try {await fetch(driver+'/status',{signal:AbortSignal.timeout(500)});break;} catch {
+        if(attempt===29)throw Error('SAFARI_LISTENER_UNAVAILABLE');
+        await wait(75);
+      }
+    }
+  } else for(const actor of users) {
+    const r=await mf.dispatchFetch(origin+'/api/account/login',{method:'POST',
+      headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({email:actor.email,password:actor.password})});
+    assert.equal(r.status,200,(await r.clone().json()).code);
+    actor.cookie=r.headers.getSetCookie().map(line=>line.split(';',1)[0]).join('; ');
+    assert.ok(actor.cookie.startsWith('__Host-ecv-users-session'));
+    bindNativeLogin(actor);
   }
   loginReplies.clear();
   const nativeSessions=obs(`SELECT json_build_object('accounts',(SELECT count(*) FROM auth.users),
@@ -490,10 +626,11 @@ try {
 
   phase('M3-original-transaction');
   const now=Math.floor(Date.now()/1000);
+  const signingUntil=now+(delegated?1800:600), verifyingUntil=now+(delegated?1860:720);
   take('generations');
   sql(`BEGIN;
     INSERT INTO site_private.proof_generations(key_id,not_before,sign_until,verify_until)
-      VALUES('${gen}',to_timestamp(${now-10}),to_timestamp(${now+600}),to_timestamp(${now+720}));
+      VALUES('${gen}',to_timestamp(${now-10}),to_timestamp(${signingUntil}),to_timestamp(${verifyingUntil}));
     INSERT INTO site_private.user_security_state(auth_user_id,business_enabled,security_hold,hold_reason)
       VALUES('${a.uid}',true,false,'none'),('${b.uid}',true,false,'none');
     ALTER ROLE ${primary.api} LOGIN; ALTER ROLE ${primary.reg} LOGIN;
@@ -504,7 +641,7 @@ try {
   await startRest();
   gate(true);
   const macKey=await crypto.subtle.importKey('raw',randomBytes(32),{name:'HMAC',hash:'SHA-256'},false,['sign']);
-  const signing={project,id:gen,notBefore:now-10,signUntil:now+600,verifyUntil:now+720,revoked:false,macKey};
+  const signing={project,id:gen,notBefore:now-10,signUntil:signingUntil,verifyUntil:verifyingUntil,revoked:false,macKey};
   const identity=createIdentityAdapter({issuer,auth:{
     getClaims:async token=>({data:{claims:authenticate(token)}}),
     getUser:async token=>{const r=await authWire('/user',{token});assert.equal(r.status,200);return {data:{user:await r.json()}};}
@@ -609,7 +746,32 @@ try {
       COMMIT;`);
     s47GateOpen=true;
   }
+  if(delegated){
+    const qualification=obs(`SELECT coalesce(json_agg(json_build_object(
+      'sessionSeconds',floor(extract(epoch FROM s.not_after-clock_timestamp())),
+      'sessionLifetimeSeconds',floor(extract(epoch FROM s.not_after-s.created_at)),
+      'grantSeconds',floor(extract(epoch FROM g.expires_at-clock_timestamp())),
+      'grantLifetimeSeconds',floor(extract(epoch FROM g.expires_at-g.issued_at)))),'[]')
+      FROM auth.sessions s JOIN site_private.business_session_grants g ON (g.auth_session_id,g.auth_user_id)=(s.id,s.user_id)
+      WHERE s.id IN ('${a.sid}','${b.sid}') AND g.revoked_at IS NULL;`);
+    const nowSeconds=Math.floor(Date.now()/1000);
+    const jwtSeconds=[a,b].map(actor=>actor.jwtExpires-nowSeconds);
+    assert.equal(qualification.length,2);
+    assert.ok(qualification.every(row=>row.sessionSeconds>=1500 && row.sessionLifetimeSeconds===1800 &&
+      row.grantSeconds>=1500 && row.grantLifetimeSeconds===1800) && jwtSeconds.every(seconds=>seconds>=1500));
+    mark('delegated closed preflight with at least 25 minutes of native qualification',{qualification,jwtSeconds});
+  }
   gate(true,true);
+  if(delegated){
+    witness.operationWindow={openedAt:new Date().toISOString(),seconds:1200};
+    delegatedTimer=setTimeout(()=>{
+      stopRequested=true;
+      writesFrozen=true;
+      try {gate(false,true);} catch {witness.deadlineGateError='CLOSE_RETRIED_IN_FINALLY';report();}
+      void sessionBrowser.close().catch(()=>{});
+      void stop(safariChild).catch(()=>{});
+    },1200_000);
+  }
 
   if(full){
     async function adoptBrowserSession(owner){
@@ -617,14 +779,16 @@ try {
       assert.ok(captured && captured.user.id===owner.uid);
       const claims=authenticate(captured.access_token);
       assert.ok(claims.sub===owner.uid&&uuid(claims.session_id)&&claims.session_id!==owner.sid);
-      const actor={...owner,token:captured.access_token,sid:claims.session_id,
-        scope:sha(JSON.stringify(['workspace-draft',owner.uid,claims.session_id]))};
+      const actor={...owner};
+      bindNativeLogin(actor);
       loginReplies.delete(owner.email);
-      trustedTokens.add(actor.token);
       await grant(actor);
       return actor;
     }
-    const result=await (followUp?runTargeted:runFullText)({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
+    const result=delegated?await runDelegated({a,b,origin,browser:sessionBrowser,phase,mark,adoptBrowserSession,
+      observe:delegatedReadback,verifyLogout:verifyDelegatedLogout,
+      runSafari:(owner,cookies)=>nativeSafari({driver:'http://127.0.0.1:'+safariPort,origin,browser:sessionBrowser,owner,cookies,take,checkBudget:browserBudget,mark}),
+    }):await (followUp?runTargeted:runFullText)({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
       followUp,remainingOnly,ensureBudget,journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
       resumeAfterProof:()=>{assert.ok(writesFrozen && !stopRequested);writesFrozen=false;}});
     witness.gRead=result.gRead;
@@ -738,9 +902,13 @@ try {
      /^[A-Z_0-9]+$/.test(error?.message??'')?error.message:undefined,
     ...(error?.code==='ERR_ASSERTION' && typeof error.actual==='number' && typeof error.expected==='number'?
       {actual:error.actual,expected:error.expected}:{}),
+    ...(delegated?{browserStep:error?.stack?.match(/(?:run-introduction|delegated)\.mjs:\d+:\d+/)?.[0]}:{}),
     sourceLine:error?.stack?.match(/(?:run-introduction|full-text|targeted)\.mjs:(\d+):/)?.[1]};
+  if(delegated&&sessionBrowser?.pending.size)await reconcileDelegated();
   console.error('STOP',JSON.stringify(witness.failure));
 } finally {
+  clearTimeout(delegatedTimer);
+  if(witness.operationWindow)witness.operationWindow.closedAt=new Date().toISOString();
   phase('cleanup');
   if(started) {
     try {
@@ -817,6 +985,12 @@ try {
     try {pg('pg_ctl',['-D',db,'-m','fast','-w','stop']); started=false;} catch {cleanupFailed=true;witness.pgStopError=true;}
   }
   try {await mf?.dispose();await stop(restChild);await stop(authChild);} catch {cleanupFailed=true;witness.childStopError=true;}
+  if(delegated){
+    try {await sessionBrowser?.close();await stop(safariChild);}
+    catch {cleanupFailed=true;witness.browserStopError=true;}
+    if(sessionBrowser)writeScreenshotIndex(stageDir,sessionBrowser.index);
+    if(!safariChild||safariChild.exitCode!==null||safariChild.signalCode!==null)rmSync(build,{recursive:true,force:true});
+  }
   if(root&&!started){
     const real=realpathSync(root);
     assert.ok(/^\/private\/tmp\/s47-[A-Za-z0-9]{6}$/.test(real) && lstatSync(real).uid===process.getuid());
@@ -827,6 +1001,9 @@ try {
   witness.cleanup={dbDirectoryRemoved:!root||!existsSync(root),postgresSocketRemoved:!root||!existsSync(join(root,'.s.PGSQL.'+dbPort)),
     postgrestSocketRemoved:!existsSync(restSock),authPortClosed:!portStillBound(authPort),workerPortClosed:!portStillBound(appPort),
     authExited:!authChild||authChild.exitCode!==null||authChild.signalCode!==null,
+    ...(delegated?{chromeExited:!sessionBrowser||!sessionBrowser.browser.isConnected(),
+      safariDriverExited:!safariChild||safariChild.exitCode!==null||safariChild.signalCode!==null,
+      safariDriverPortClosed:!portStillBound(safariPort),temporaryBuildRemoved:!existsSync(build)}:{}),
     postgrestExited:!restChild||restChild.exitCode!==null||restChild.signalCode!==null,dockerCommands:0,hostedRequests:0};
   cleanupFailed ||= Object.values(witness.cleanup).some(v=>typeof v==='boolean'&&!v);
   witness.nativeRpcCounts=nativeCounts;
