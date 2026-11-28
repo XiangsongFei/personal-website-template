@@ -82,8 +82,11 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
   const {chromium,firefox,webkit}=await import(pathToFileURL(process.env.S47_PLAYWRIGHT_MODULE).href);
   // Includes a lost reply, a second tab, reload, receipt-only recovery, duplicate POST and logout/re-login.
   const titlesToVerify=followUp?Object.keys(sectionTitleFields):['experience'];
-  ensureBudget({textHTTP:74+(titlesToVerify.length-1)*4,allSaveEntrances:3,lookups:3,
-    sqlObservation:4,passwordLogins:2,grants:2},'CHROME');
+  const secondaryBrowsers=[['Firefox',firefox],['Playwright WebKit',webkit]];
+  const secondaryReadHttp=14, revocationHttp=9;
+  ensureBudget({textHTTP:74+(titlesToVerify.length-1)*4+secondaryBrowsers.length*secondaryReadHttp+revocationHttp,
+    allSaveEntrances:3+(followUp?2:0),lookups:3,sqlObservation:6,passwordLogins:2,grants:2},
+  'BROWSER_AND_REVOCATION');
   const sameHost=await chromium.launch({channel:'chrome'});
   const context=await sameHost.newContext({ignoreHTTPSErrors:true});
   let browserActor;
@@ -202,8 +205,8 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
     mark('Chrome real saved title in editor heading, breadcrumb, navigation and preview',{sections:titlesToVerify});
   } finally {await sameHost.close();}
 
-  for(const [name,engine] of [['Firefox',firefox],['Playwright WebKit',webkit]]){
-    ensureBudget({textHTTP:18},'BROWSER_READ');
+  for(const [name,engine] of secondaryBrowsers){
+    ensureBudget({textHTTP:secondaryReadHttp+revocationHttp},'BROWSER_READ_AND_REVOCATION');
     const browser=await engine.launch();
     try{
       const other=await browser.newContext({ignoreHTTPSErrors:true});
@@ -213,11 +216,14 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
         return {name:fragment.slice(0,index),value:fragment.slice(index+1),url:origin,secure:true,httpOnly:true};
       }));
       const page=await other.newPage();
+      const profileRead=page.waitForResponse(response=>response.url()===origin+resumeTextPath+'/profile' &&
+        response.request().method()==='GET',{timeout:8000});
       await page.goto(origin+'/dashboard/editor#profile');
+      const response=await profileRead;
+      assert.equal(response.status(),200);
+      assert.deepEqual(await response.json(),{siteId:b.site,section:'profile',revision:0,content:emptyTextContent('profile')});
       await value(openField(page,'profile','zh'),'');
-      await page.locator('.dashboard-sidebar a[href="#experience"]').click();
-      await page.getByText('暂无工作记录。',{exact:true}).waitFor({timeout:8000});
-      mark(name+' real Bob private read and cross-account browser isolation');
+      mark(name+' real Bob private profile read and cross-account browser isolation',{revision:0});
     } finally {await browser.close();}
   }
 }
@@ -276,7 +282,7 @@ export async function runFullText(ctx){
   }
   phase('full-ordinary-reads-and-saves');
   assert.equal((await send(null,'profile')).status,401);
-  const sections=followUp?['profile','site-text','experience','skills']:textSections;
+  const sections=followUp?['site-text','experience','skills']:textSections;
   const emptySections=['profile','site-text','experience'];
   for(const section of emptySections)
     assert.deepEqual(await send(b,section),{status:200,value:{siteId:b.site,section,revision:0,content:emptyTextContent(section)}});
@@ -295,23 +301,24 @@ export async function runFullText(ctx){
       created:repeated?3:undefined,modified:repeated?1:undefined,deleted:repeated?1:undefined,reordered:repeated||undefined});
   }
   if(followUp){
-    ensureBudget({textHTTP:17,allSaveEntrances:4,lookups:2,sqlObservation:2},'CONCURRENT_CAS');
-    const profile=final.get('profile');
+    ensureBudget({textHTTP:20,allSaveEntrances:4,lookups:2,sqlObservation:2},'CONCURRENT_CAS');
+    const profile=await send(a,'profile');
+    assert.deepEqual(profile,{status:200,value:{siteId:a.site,section:'profile',revision:0,content:emptyTextContent('profile')}});
     const commands=['Concurrent synthetic A','Concurrent synthetic B'].map(name=>{
-      const content=structuredClone(profile.content);
+      const content=sampleText('profile');
       content.translations.en.name=name;
-      return mk(a,'profile',profile.revision,content);
+      return mk(a,'profile',profile.value.revision,content);
     });
     const results=await Promise.allSettled(commands.map(command=>save(command,{allowConflict:true})));
     const failure=results.find(result=>result.status==='rejected');
     if(failure)throw failure.reason;
     const winners=results.flatMap(result=>result.value?[result.value]:[]);
     assert.equal(winners.length,1);
-    assert.equal(winners[0].revision,2);
+    assert.equal(winners[0].revision,1);
     assert.deepEqual(await send(a,'profile'),{status:200,value:winners[0]});
     final.set('profile',winners[0]);
-    history.get('profile').push(winners[0].content);
-    mark('concurrent ordinary Worker commands from one basis commit one revision', {revision:2});
+    history.set('profile',[winners[0].content]);
+    mark('concurrent ordinary Worker commands from one basis commit one revision', {revision:winners[0].revision});
     const skill=applyTextContent(emptyDraft,'skills',final.get('skills').content).skills[0];
     assert.equal(skillCategory(skill),'analytics');
     mark('native-backed Skills preset restored from its two persisted titles');
@@ -328,7 +335,7 @@ export async function runFullText(ctx){
   const expected=observe();
   assert.equal(expected.foreign,0);
   assert.equal(expected.outbox,0);
-  const revisions=followUp?5:14;
+  const revisions=followUp?4:14;
   assert.equal(expected.revisions.length,revisions);
   for(const rev of expected.revisions){
     assert.ok(rev.audit&&rev.receipt);
@@ -373,7 +380,8 @@ export async function runFullText(ctx){
   assert.equal((await send(a,'profile')).status,403);
   assert.ok([401,403].includes((await send(b,'profile')).status));
   if(followUp){
-    assert.equal((await send(a,'save',mk(a,'profile',1,final.get('profile').content))).status,403);
+    const profile=final.get('profile');
+    assert.equal((await send(a,'save',mk(a,'profile',profile.revision,profile.content))).status,403);
     assert.ok([401,403].includes((await send(b,'save',mk(b,'profile',0,sampleText('profile')))).status));
   }
   assert.deepEqual(observe(),expected);
