@@ -174,6 +174,11 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
     if (!owner || !owner.clientHeight || !target) return false;
     if (addEndSpace) owner.style.removeProperty('--site-preview-end-space');
+    if (section === 'profile' && offset === 0) {
+      owner.scrollTop = 0;
+      anchoredSection.current = section;
+      return true;
+    }
     const distance = () => target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.getBoundingClientRect().height ?? 0) - (section === 'profile' ? 0 : 8) + offset;
     const top = owner.scrollTop + distance();
