@@ -43,27 +43,24 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
   const review = feedback.reminderId && feedback.acknowledge &&
     <ReviewField id={feedback.reminderId} onConfirm={feedback.acknowledge}>{feedback.reminder}</ReviewField>;
 
-  function paste(event: ClipboardEvent<HTMLTextAreaElement>) {
+  function pasteSingleLine(event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const pasted = event.clipboardData.getData('text');
-    if (!/[\r\n]/.test(pasted)) return;
-    event.preventDefault();
     const input = event.currentTarget;
+    const normalized = input instanceof HTMLInputElement
+      ? pasted.trim().replace(/[\r\n]/g, '')
+      : singleLine(pasted);
+    if (normalized === pasted) return;
     const {selectionStart, selectionEnd} = input;
+    if (selectionStart === null || selectionEnd === null) return;
+    event.preventDefault();
     const remaining = limit - input.value.length + selectionEnd - selectionStart;
-    const data = singleLine(pasted).slice(0, Math.max(0, remaining));
+    const data = normalized.slice(0, Math.max(0, remaining));
     if (!data) return;
     // Use the browser's editing command to preserve selection, input events and undo history.
-    if (!document.execCommand('insertText', false, data)) {
+    if (!document.execCommand?.('insertText', false, data)) {
       input.setRangeText(data, selectionStart, selectionEnd, 'end');
-      onChange(input.value);
+      input.dispatchEvent(new Event('input', {bubbles: true}));
     }
-  }
-
-  function pasteAddress(event: ClipboardEvent<HTMLInputElement>) {
-    const pasted = event.clipboardData.getData('text');
-    const normalized = pasted.trim().replace(/[\r\n]/g, '');
-    if (normalized === pasted) return;
-    if (!normalized || document.execCommand('insertText', false, normalized)) event.preventDefault();
   }
 
   const addressMode = type !== 'text' ? type : undefined;
@@ -76,11 +73,11 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
       {!reviewAfterControl && review}
     </div>
     {!multiline && (compact || addressMode) ? <input {...props} type={type} autoComplete="off" autoCapitalize={addressMode ? 'none' : undefined}
-      spellCheck={addressMode ? false : undefined} onPaste={addressMode ? pasteAddress : undefined}
+      spellCheck={addressMode ? false : undefined} onPaste={type === 'url' ? pasteSingleLine : undefined}
       onChange={event => onChange(event.target.value)}/> :
       <div className="editor-grow" data-value={value}>
         <textarea {...props} rows={1} aria-multiline={multiline} autoComplete="off"
-          onPaste={multiline ? undefined : paste}
+          onPaste={multiline ? undefined : pasteSingleLine}
           onKeyDown={multiline ? undefined : event => {
             if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) event.preventDefault();
           }}
