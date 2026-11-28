@@ -38,7 +38,7 @@ async page => {
   const home = () => pane.locator('[data-preview-nav="profile"]').click();
   const language = () => pane.locator('.public-nav-language').click();
   const undo = () => editor.getByRole('button', {name: '撤销修改'}).click();
-  const exampleNodes = pane.locator('[data-preview-example], [data-preview-example-record]');
+  const exampleNodes = pane.locator('[data-preview-example], [data-preview-example-record], [data-preview-example-destination]');
   const unchanged = () => editor.getByRole('status').filter({hasText: '暂无修改'}).isVisible();
   await field('name', 'zh').waitFor();
   check(await field('name', 'zh').inputValue() === '' && await unchanged(), 'opening the guide dirtied the draft');
@@ -177,10 +177,36 @@ async page => {
   await undo();
 
   await section('links', '#contact');
+  await editor.locator('.link-display-toggle').click();
+  for (const [fieldName, marker, previewField, label, home] of [
+    ['githubLabel', 'github', 'githubLabel', '代码主页', 'https://github.com/'],
+    ['linkedInLabel', 'linkedin-action', 'linkedInButtonLabel', '职业主页', 'https://www.linkedin.com/'],
+  ]) {
+    await field(fieldName, 'shared').fill(label);
+    const action = pane.locator('[data-preview-public-link="' + marker + '"][data-preview-example-destination]');
+    const ink = action.locator('[data-preview-value="' + previewField + '"]');
+    check(await action.locator('a').getAttribute('href') === home && await ink.textContent() === label &&
+      !await ink.getAttribute('data-preview-example') && !!await ink.getAttribute('data-preview-edit-feedback'),
+      'real button label inherited its destination example');
+  }
+  await field('linkedInLabel', 'zh').fill('联系标签');
+  await field('linkedInDisplayName', 'shared').fill('显示名称');
+  for (const [key, label] of [['linkedInLabel', '联系标签'], ['linkedInDisplayName', '显示名称']]) {
+    const ink = pane.locator('[data-preview-value="' + key + '"] [data-preview-ink]');
+    check(await ink.textContent() === label && !await ink.getAttribute('data-preview-example') &&
+      !!await ink.getAttribute('data-preview-edit-feedback'), 'real contact copy inherited its destination example');
+  }
+  await shot('05b-link-provenance');
+  await undo();
   await field('github', 'shared').fill('https://example.net/acceptance/github');
   await field('email', 'shared').fill('alex+cv?@example.invalid');
   await field('linkedInHref', 'zh').fill('https://example.net/acceptance/linkedin-zh');
   await field('linkedInHref', 'en').fill('https://example.net/acceptance/linkedin-en');
+  for (const key of ['githubLabel', 'linkedInButtonLabel']) {
+    const ink = pane.locator('[data-preview-value="' + key + '"]');
+    check(await ink.getAttribute('data-preview-example') === 'true' &&
+      !await ink.getAttribute('data-preview-edit-feedback'), 'real URL marked an illustrative label as an edit');
+  }
   check(urls.length === 0, 'preview preloaded an external destination');
   async function follow(marker, path) {
     const link = pane.locator(marker + ' a').first();

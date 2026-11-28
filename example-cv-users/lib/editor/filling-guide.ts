@@ -94,8 +94,8 @@ export const fillingGuide: LocalDraft = {
       linkedInDisplayName: 'Chen Zhou', linkedInLabel: 'LinkedIn',
     },
     translations: {
-      zh: {linkedInLabel: 'LinkedIn 平台示例', linkedInHref: 'https://www.linkedin.com/'},
-      en: {linkedInLabel: 'LinkedIn platform example', linkedInHref: 'https://www.linkedin.com/'},
+      zh: {linkedInLabel: '领英职业档案', linkedInHref: 'https://www.linkedin.com/'},
+      en: {linkedInLabel: 'LinkedIn profile', linkedInHref: 'https://www.linkedin.com/'},
     },
   },
   'site-text': {

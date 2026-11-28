@@ -31,7 +31,7 @@ function Action({kind, children, marker, valueKey, unavailable, href, onActivate
     {status && <small className="public-action-status">{status}</small>}</span><PreviewIcon kind="external"/></>;
   if (onActivate) return <button type="button" className="public-action" data-preview-public-link={marker} title={unavailable} onClick={onActivate}>{contents}</button>;
   const address = marker === 'github' ? 'github' : marker === 'linkedin-action' ? 'linkedInHref' : marker === 'contact-cta' ? 'email' : undefined;
-  if (href) return <span data-preview-public-link={marker} data-preview-value={address} data-preview-example={example} title={unavailable}>
+  if (href) return <span data-preview-public-link={marker} data-preview-value={address} data-preview-example-destination={example} title={unavailable}>
     <PreviewAnchor className="public-action" href={href}>{contents}</PreviewAnchor>
   </span>;
   return <span className="public-action" data-preview-public-link={marker} data-preview-value={address}
@@ -342,7 +342,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     ? text('请检查编辑区的公开邮箱地址。', 'Check the public email address in the editor.')
     : text('请在公开链接中填写邮箱地址以启用邮件。', 'Enter a public email address in Public links to enable email.');
   const exampleLinkedInName = example('links', 'linkedInDisplayName', 'shared');
-  const useLinkedInName = linkedIn?.status !== 'example' && links.linkedInDisplayName.trim() && !exampleLinkedInName;
+  const useLinkedInName = links.linkedInDisplayName.trim() && !exampleLinkedInName;
   const linkedInName = useLinkedInName ? links.linkedInDisplayName : links.linkedInHref ?? 'LinkedIn';
   function goToSection(key: PreviewSection) {
     const expandContact = key === 'contact';
@@ -392,10 +392,12 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
             </span>}
             {linkedIn && <Action kind="linkedin" marker="linkedin-action" unavailable={unavailable(linkedIn)} valueKey="linkedInButtonLabel"
               href={linkedIn.href} example={linkedIn.status === 'example' || undefined}
+              exampleLabel={example('links', 'linkedInLabel', 'shared')}
               status={linkedIn.status === 'example' ? text('平台示例', 'Example') : undefined}>
               {links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
             {github && <Action kind="github" marker="github" unavailable={unavailable(github)} valueKey="githubLabel"
               href={github.href} example={github.status === 'example' || undefined}
+              exampleLabel={example('links', 'githubLabel', 'shared')}
               status={github.status === 'example' ? text('平台示例', 'Example') : undefined}>
               {links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
           </div>
@@ -483,10 +485,13 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
               {email.href ? <PreviewAnchor href={email.href}><PreviewText>{links.email}</PreviewText> <PreviewIcon kind="external"/></PreviewAnchor>
                 : <span aria-disabled="true" title={unavailable(email)}>{links.email ?? text('无效邮箱', 'Invalid email')} <PreviewIcon kind="external"/></span>}
             </dd></div>}
-          {linkedIn && <div><dt data-preview-value="linkedInLabel" data-preview-example={example('links', 'linkedInLabel')}><PreviewText>{linkedIn.status === 'example' ? text('LinkedIn 平台示例', 'LinkedIn platform example') : links.linkedInContactLabel.trim() && !example('links', 'linkedInLabel') ? links.linkedInContactLabel : 'LinkedIn'}</PreviewText></dt>
-            <dd data-preview-public-link="linkedin" data-preview-value="linkedInDisplayName" data-preview-example={linkedIn.status === 'example' || undefined}>
+          {linkedIn && <div><dt data-preview-value="linkedInLabel">
+            <PreviewText example={example('links', 'linkedInLabel')}>{links.linkedInContactLabel.trim() || 'LinkedIn'}</PreviewText>
+            {linkedIn.status === 'example' && <small className="public-action-status">{text('平台示例', 'Example')}</small>}
+          </dt>
+            <dd data-preview-public-link="linkedin" data-preview-value="linkedInDisplayName" data-preview-example-destination={linkedIn.status === 'example' || undefined}>
               <ContactPreviewLink href={linkedIn.href} unavailable={unavailable(linkedIn)}>
-                <PreviewText>{linkedInName}</PreviewText>
+                <PreviewText example={!useLinkedInName && linkedIn.status === 'example' || undefined}>{linkedInName}</PreviewText>
               </ContactPreviewLink>
             </dd></div>}
         </dl>}
