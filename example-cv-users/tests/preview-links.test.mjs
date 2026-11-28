@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {previewDestination, publicEmailMailto} from '../lib/editor/preview-links.ts';
+import {platformPreviewDestination, previewDestination, publicEmailMailto} from '../lib/editor/preview-links.ts';
 
 test('real preview destinations accept HTTP(S) and reject unsafe or malformed addresses', () => {
   assert.deepEqual(previewDestination('https://example.edu/projects/my-work', false), {href: 'https://example.edu/projects/my-work'});
@@ -14,6 +14,14 @@ test('real preview destinations accept HTTP(S) and reject unsafe or malformed ad
   assert.equal(previewDestination('', false), undefined);
   assert.deepEqual(previewDestination('https://example.org/profile/zh', true), {status: 'example'});
   assert.deepEqual(previewDestination('https://example.org/profile/zh', false), {href: 'https://example.org/profile/zh'});
+});
+
+test('only the two exact platform homepages may be opened from guide addresses', () => {
+  assert.deepEqual(platformPreviewDestination('https://github.com/', true, 'github'), {href: 'https://github.com/', status: 'example'});
+  assert.deepEqual(platformPreviewDestination('https://www.linkedin.com/', true, 'linkedin'), {href: 'https://www.linkedin.com/', status: 'example'});
+  assert.deepEqual(platformPreviewDestination('https://github.com/person', true, 'github'), {status: 'example'});
+  assert.deepEqual(platformPreviewDestination('https://person:secret@github.com/', false, 'github'), {status: 'invalid'});
+  assert.equal(platformPreviewDestination('', false, 'github'), undefined);
 });
 
 test('mailto encodes mailbox delimiters and cannot add recipients or headers', () => {

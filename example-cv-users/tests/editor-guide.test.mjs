@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {emptyDraft, moduleIsDirty} from '../lib/editor/draft.ts';
 import {fillingGuide, guidePlaceholder} from '../lib/editor/filling-guide.ts';
-import {buildPreview, updateGuideOverrides} from '../lib/editor/preview-model.ts';
-import {newEducation, newExperience, newProject, newSkill, newAward} from '../lib/editor/records.ts';
+import {buildPreview, guideFieldCleared, updateGuideOverrides} from '../lib/editor/preview-model.ts';
+import {changeEducationCategory, newEducation, newExperience, newProject, newSkill, newAward} from '../lib/editor/records.ts';
 import {newFocus, newStatus} from '../lib/editor/contact.ts';
 
 test('the filling guide provides bilingual guidance without populating the real draft', () => {
@@ -47,14 +47,23 @@ test('field examples are independent by language and stay out of the real draft'
   assert.deepEqual(draft, before);
 });
 
-test('a real collection replaces the whole example and a deleted collection stays empty until undo', () => {
+test('real rows use per-field examples and a deleted collection stays empty until undo', () => {
   const factories = {education: newEducation, experience: newExperience, projects: newProject, skills: newSkill, awards: newAward};
   let overrides = {};
   for (const [module, create] of Object.entries(factories)) {
     const row = create('mine', 0);
     const ownDraft = {...emptyDraft, [module]: [row]};
     const preview = buildPreview(ownDraft, overrides, true);
-    assert.deepEqual(preview.content[module], [row]);
+    assert.deepEqual(preview.content[module].map(row => row.clientId), ['mine']);
+    for (const language of ['zh', 'en']) {
+      const fields = preview.content[module][0].translations[language];
+      assert.ok(Object.keys(fields).length);
+      for (const [field, value] of Object.entries(fields)) {
+        assert.equal(value, guidePlaceholder(module, field, language, 'mine', ownDraft));
+        assert.equal(preview.exampleField(module, field, language, 'mine'), true);
+      }
+    }
+    assert.deepEqual(ownDraft[module], [row]);
     assert.equal(preview.exampleCollection(module, module), undefined);
     overrides = updateGuideOverrides(overrides, ownDraft, emptyDraft, module, false);
     assert.deepEqual(buildPreview(emptyDraft, overrides, true).content[module], []);
@@ -69,7 +78,9 @@ test('a real collection replaces the whole example and a deleted collection stay
   const onlyStatus = {...contact, contact: {...contact.contact, focus: []}};
   const contactOverrides = updateGuideOverrides({}, contact, onlyStatus, 'contact', false);
   assert.deepEqual(buildPreview(onlyStatus, contactOverrides, true).content.contact.focus, []);
-  assert.deepEqual(buildPreview(onlyStatus, contactOverrides, true).content.contact.status, [status]);
+  const preview = buildPreview(onlyStatus, contactOverrides, true);
+  assert.deepEqual(preview.content.contact.status.map(row => row.clientId), ['own-status']);
+  assert.equal(preview.exampleField('contact', 'detail', 'en', 'status:own-status'), true);
   assert.equal(buildPreview(emptyDraft, contactOverrides, true).content.contact.status, fillingGuide.contact.status);
 });
 
@@ -84,8 +95,45 @@ test('explicit field clears survive empty draft, hidden examples and unrelated e
   const preview = buildPreview(emptyDraft, cleared, true);
   assert.equal(preview.content.profile.shared.footerName, '');
   assert.equal(preview.content.profile.translations.en.name, '');
+  assert.equal(guideFieldCleared(cleared, 'profile', 'name', 'en'), true);
   assert.equal(preview.content.profile.translations.zh.name, '周晨');
   assert.equal(buildPreview(real, cleared, true).content.profile.shared.footerName, 'My name');
   const undone = updateGuideOverrides(cleared, emptyDraft, emptyDraft, 'profile', true);
   assert.equal(buildPreview(emptyDraft, undone, true).content.profile.translations.en.name, 'Chen Zhou');
+});
+
+test('record type, stable identity and language decide which hints are displayed', () => {
+  const degree = changeEducationCategory(newEducation('degree', 0), 'undergraduate');
+  const course = changeEducationCategory(newEducation('summer', 1), 'summerSchool');
+  const study = {...newStatus('status', 0), statusType: 'study'};
+  const project = {...newProject('project', 0), methods: {zh: [{clientId: 'method', position: 0, value: ''}], en: []}};
+  const draft = {...emptyDraft, education: [degree, course], projects: [project],
+    skills: [{...newSkill('skills', 0), category: 'programming'}],
+    contact: {...emptyDraft.contact, status: [study]}};
+  const preview = buildPreview(draft, {}, true);
+  assert.equal(preview.content.education[0].translations.en.title, 'Undergraduate Education');
+  assert.match(preview.content.education[0].translations.en.program, /^BSc/);
+  assert.equal(preview.content.education[0].translations.en.courseTitle, undefined);
+  assert.ok(preview.content.education[1].translations.en.courseTitle);
+  assert.match(preview.content.skills[0].translations.en.items, /^Python/);
+  assert.equal(preview.content.skills[0].translations.en.title, undefined);
+  assert.equal(preview.content.contact.status[0].translations.en.title, 'Currently studying');
+  assert.ok(preview.content.projects[0].methods.zh[0].value);
+  assert.equal(preview.exampleField('projects', 'method:zh:method', 'zh', 'project'), true);
+  assert.deepEqual(preview.content.projects[0].methods.en, []);
+});
+
+test('clearing a row field or method suppresses only that stable field and language', () => {
+  const project = (title, method) => ({...newProject('project', 0), translations: {zh: {title}},
+    methods: {zh: [{clientId: 'method', position: 0, value: method}], en: []}});
+  const other = newProject('other', 1);
+  const before = {...emptyDraft, projects: [project('我的项目', '访谈'), other]};
+  const after = {...emptyDraft, projects: [other, project('', '')]};
+  const overrides = updateGuideOverrides({}, before, after, 'projects', false);
+  const preview = buildPreview(after, overrides, true);
+  assert.equal(guideFieldCleared(overrides, 'projects', 'title', 'zh', 'project'), true);
+  assert.equal(preview.content.projects[1].translations.zh.title, '');
+  assert.equal(preview.content.projects[1].methods.zh[0].value, '');
+  assert.ok(preview.content.projects[1].translations.en.title);
+  assert.ok(preview.content.projects[0].translations.zh.title);
 });

@@ -4,7 +4,8 @@ import {createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStor
 import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyUpcomingWorkspaceTraversal, verifyWorkspaceTraversal} from './workspace-history';
 import {bilingualFieldKey, collectEditorFields, modifiedEditorFields, reviewChanges, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
 import {cancelModule, editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
-import {updateGuideOverrides, type GuideOverrides} from '../../lib/editor/preview-model';
+import {guideFieldCleared, updateGuideOverrides, type GuideOverrides} from '../../lib/editor/preview-model';
+import {guidePlaceholder} from '../../lib/editor/filling-guide';
 
 type DraftEntry = {
   scope: string;
@@ -144,6 +145,9 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
     notify();
   };
   const guideOverrides = snapshot?.guideOverrides ?? noGuideOverrides;
+  const placeholder = (field: FieldKey, language: 'zh' | 'en' | 'shared') =>
+    guideFieldCleared(guideOverrides, module, field.field, language, field.item) ? undefined
+      : guidePlaceholder(module, field.field, language, field.item, draft);
   const undo = () => update(current => cancelModule(current, module, initial), true);
-  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, module}};
+  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, placeholder}};
 }

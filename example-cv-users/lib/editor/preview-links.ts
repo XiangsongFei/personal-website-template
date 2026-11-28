@@ -15,9 +15,16 @@ export function previewDestination(
   value: string | undefined, isExample: boolean | undefined, validate = safeHttpUrl,
 ): PreviewDestination | undefined {
   if (!value?.trim()) return;
-  // The filling guide's reserved addresses illustrate what to type. Its
-  // fictional project and contact details have no usable destination.
+  // Fictional project and contact details have no usable destination.
   if (isExample) return {status: 'example'};
   const href = validate(value);
   return href ? {href} : {status: 'invalid'};
+}
+
+const platformHomes = {github: 'https://github.com/', linkedin: 'https://www.linkedin.com/'} as const;
+
+export function platformPreviewDestination(value: string | undefined, isExample: boolean | undefined, platform: keyof typeof platformHomes): PreviewDestination | undefined {
+  const home = platformHomes[platform];
+  if (isExample && value === home) return {href: home, status: 'example'};
+  return previewDestination(value, isExample);
 }
