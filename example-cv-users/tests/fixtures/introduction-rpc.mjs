@@ -10,7 +10,7 @@ const lookup = 'read_text_publication_operation';
 const siteIds = ['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000002'];
 const recordIds = ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002'];
 
-export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN} = {}) {
+export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN, receiptRecovery = false} = {}) {
   const auth = await realAuthority();
   const accounts = [auth.ids.A, auth.ids.B];
   const sites = new Map(await Promise.all(accounts.map(async (uid, i) => [
@@ -78,12 +78,31 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
       return Response.json({code: new Map([[409,'PT409'], [403,'42501'], [400,'22023']]).get(error.status)}, {status:error.status});
     }
   }
+  async function receiptRpc(request){
+    const url=new URL(request.url);
+    assert.equal(url.origin,'https://users.resume.example.invalid');
+    assert.equal(url.pathname,'/rpc/read_introduction_receipt');
+    const actor=auth.principal(request);
+    if(!actor||controls.denied.has(actor.id))return Response.json({code:'42501'},{status:403});
+    const {target,operation_id,request_digest,basis}=await request.json();
+    const site=sites.get(actor.id);
+    if(site?.site_id!==target)return Response.json({code:'42501'},{status:403});
+    const operation=site.operations.find(o=>o.request_id===operation_id&&o.actor_uid===actor.id&&o.actor_sid===actor.sid&&o.state==='succeeded');
+    if(!operation)return Response.json({state:'unknown'});
+    if(operation.payload_digest!==request_digest||operation.basis.draft_revision!==basis)
+      return Response.json({code:'PT409'},{status:409});
+    const revision=operation.result.draft_revision;
+    const history=site.draft_revisions.find(r=>r.site_revision===revision);
+    return Response.json({state:'saved',requestId:operation_id,digest:request_digest,
+      draft:{state:'ready',siteId:target,revision,record:history.payload.entries[0]??null}});
+  }
   const mf = runtime({
     ...(port === undefined ? {} : {port}), https:origin.startsWith('https:'),
     bindings: {USERS_CURRENT_PASSWORD_POLICY:'ON', USERS_MODE:'isolated', USERS_PROJECT_REF:'isolated-users',
       USERS_SUPABASE_URL:'https://users.auth.example.invalid', USERS_PUBLISHABLE_KEY:TEST_KEY, USERS_APP_ORIGIN:origin,
-      ...(enabled ? {USERS_INTRODUCTION_MODE:'synthetic'} : {})},
-    serviceBindings:{USERS_INTRODUCTION_RPC:rpc}, outboundService:request=>auth.fetch(request),
+      ...(enabled ? {USERS_INTRODUCTION_MODE:'synthetic'} : {}),
+      ...(receiptRecovery?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
+    serviceBindings:{USERS_INTRODUCTION_RPC:rpc,...(receiptRecovery?{USERS_RESUME_TEXT_RPC:receiptRpc}:{})}, outboundService:request=>auth.fetch(request),
   });
   return {mf, auth, jar:new Map(), sites, siteIds, recordIds, hits, controls};
 }

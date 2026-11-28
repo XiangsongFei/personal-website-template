@@ -106,7 +106,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
   const intro = introductionEnabled && module === 'introduction' ? persistence.state : undefined;
   const readiness = intro?.state;
   const outcome = intro?.state === 'ready' ? intro.outcome : undefined;
-  const pending = intro?.state === 'ready' && !!intro.attempt;
+  const pending = intro?.state === 'ready' && !!(intro.attempt||intro.pending);
   const retryUnsent = intro?.state === 'ready' && intro.retryUnsent;
   const saveAction = intro?.state === 'ready' ? {
     label: pending && !retryUnsent && outcome !== 'saving' ? text('核对保存结果', 'Check save status') : text('保存草稿', 'Save draft'),

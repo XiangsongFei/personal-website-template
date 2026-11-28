@@ -182,3 +182,26 @@ test('draft API leaves a rotating refresh token untouched and preserves the same
   assert.equal((await api(c,{body:attempt.body})).status,200);
   assert.equal(writeCount(c),1);
 });
+
+test('a reload can reconcile an original Introduction receipt without retaining text or replaying the save',async t=>{
+  const a=await fixture(t,{receiptRecovery:true});
+  await login(a);
+  const original=await draft(a);
+  const attempt=prepare(original,'提交后刷新','Reload after the lost reply');
+  a.controls.lost=true;
+  assert.equal((await api(a,{body:attempt.body})).value.code,'COMMIT_UNKNOWN');
+  const marker={section:'introduction',siteId:attempt.body.siteId,requestId:attempt.body.command.request_id,
+    expectedRevision:attempt.body.command.expected_draft_revision,digest:await attempt.digest};
+  const target='/api/sites/resume-text/introduction-receipt';
+  const confirmed=await api(a,{body:marker,target});
+  assert.equal(confirmed.value.state,'saved');
+  assert.equal(confirmed.value.draft.revision,1);
+  assert.equal(confirmed.value.digest,marker.digest);
+  assert.equal(writeCount(a),1);
+  assert.equal((await api(a,{body:{...marker,digest:'c'.repeat(64)},target})).status,409);
+  const otherSession={...a,jar:new Map()};
+  await login(otherSession);
+  assert.equal((await api(otherSession,{body:marker,target})).value.state,'unknown');
+  await login(otherSession,'b');
+  assert.equal((await api(otherSession,{body:marker,target})).status,403);
+});

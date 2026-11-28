@@ -11,7 +11,7 @@ import {introductionPath, introductionText, mergeSavedIntroduction, parseIntrodu
 
 import {applyTextContent, isTextSection, parseTextSnapshot, resumeTextPath, textCommand, textCommandDigest,
   textContent, type TextReceiptKey, type TextSection, type TextSnapshot} from '../../lib/editor/resume-text';
-import {readPendingText, recordPendingText, removePendingText, removePendingScope} from '../../lib/editor/pending-text';
+import {readPendingText, recordPendingText, removePendingText, removePendingScope, type PendingKey, type PendingSection} from '../../lib/editor/pending-text';
 
 type DraftEntry = {
   scope: string;
@@ -30,7 +30,7 @@ type IntroductionState = {scope: string} & (
   {state: 'loading' | 'no-site' | 'read-error' | 'session-expiring' | 'unavailable' | 'denied' | 'unsupported'} |
   {state: 'ready'; baseline: Introduction;
     outcome?: 'saved' | 'saving' | 'unknown' | 'session-expiring' | 'conflict' | 'advanced' | 'invalid' | 'denied';
-    attempt?: SaveAttempt; retryUnsent?: boolean});
+    attempt?: SaveAttempt; pending?:PendingKey<'introduction'>; retryUnsent?: boolean});
 let introduction: IntroductionState | undefined;
 type TextPersistence = {phase:'loading'|'ready'|'saving'|'unknown'|'failure'|'conflict'|'denied'|'no-site'|'renewal'|'invalid'|'saved';
   snapshot?:TextSnapshot; pending?:TextReceiptKey};
@@ -70,7 +70,6 @@ export function leaveWorkspace() {
 }
 
 function reloadInvalidWorkspace() {
-  forgetTextScope(currentScope);
   currentScope = undefined;
   clearWorkspaceDraft();
   rejectWorkspaceHistory();
@@ -119,7 +118,7 @@ const noDirtyModules: readonly EditorModule[] = [];
 
 function updateDraftGuards() {
   if (entry || introduction || textDrafts.size) window.addEventListener('pagehide', clearWorkspaceDraft);
-  if (entry?.dirtyModules.length || (introduction?.state === 'ready' && introduction.attempt) ||
+  if (entry?.dirtyModules.length || (introduction?.state === 'ready' && (introduction.attempt||introduction.pending)) ||
       [...textDrafts.values()].some(value=>value.pending))
     window.addEventListener('beforeunload', warnBeforeLeaving);
   else window.removeEventListener('beforeunload', warnBeforeLeaving);
@@ -159,14 +158,15 @@ const loadIntroduction = async (scope: string, attempt?: SaveAttempt, reconcile 
   finally { window.clearTimeout(deadline); }
 };
 
-function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: Introduction, saved: Introduction, attempt: SaveAttempt) {
+function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: Introduction, saved: Introduction, submitted: LocalDraft['introduction']) {
+  initial=withSavedText(initial,textDrafts);
   const confirmed = introductionText(saved);
   const previousEntry = entry?.scope === scope ? entry : undefined;
   const {draft, reviews, guideOverrides} = previousEntry ?? {
     draft: {...initial, introduction: introductionText(previous)}, reviews: {}, guideOverrides: noGuideOverrides,
   };
   const baseline = {...initial, introduction: confirmed};
-  const next = {...draft, introduction: mergeSavedIntroduction(draft.introduction, attempt.submitted, confirmed)};
+  const next = {...draft, introduction: mergeSavedIntroduction(draft.introduction, submitted, confirmed)};
   const dirtyModules = modules.filter(owner => moduleIsDirty(next, owner, baseline));
   const introductionReviews = reviewChanges(collectEditorFields(draft, 'introduction'),
     collectEditorFields(next, 'introduction'), collectEditorFields(baseline, 'introduction'),
@@ -180,7 +180,7 @@ function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: I
   setIntroduction({scope, state: 'ready', baseline: saved, outcome: 'saved'});
 }
 
-function useIntroduction(scope: string | undefined, enabled: boolean, initial: LocalDraft) {
+function useIntroduction(scope: string | undefined, enabled: boolean, initial: LocalDraft, recoveryEnabled: boolean) {
   const read = () => enabled && scope && introduction?.scope === scope ? introduction : undefined;
   const state = useSyncExternalStore(subscribe, read, () => undefined);
   async function refresh() {
@@ -195,7 +195,9 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
       // Other modules may have been edited while Introduction was loading.
       if (entry?.scope === scope)
         entry = {...entry, draft: {...entry.draft, introduction: introductionText(baseline)}};
-      return setIntroduction({scope, state: 'ready', baseline});
+      const pending=recoveryEnabled?readMarker(scope,'introduction'):undefined;
+      if(pending?.siteId===baseline.siteId)return setIntroduction({scope,state:'ready',baseline,pending,outcome:'unknown'});
+      return setIntroduction({scope, state:'ready', baseline});
     }
     setIntroduction({scope, state: value?.state === 'no-site' ? 'no-site' :
       code === 'BUSINESS_DENIED' ? 'denied' : code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' : code === 'NOT_CONFIGURED' ? 'unavailable' :
@@ -208,28 +210,70 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
         previous.outcome === 'saving' || previous.outcome === 'conflict' || previous.outcome === 'advanced') return;
     const baseline = introductionText(previous.baseline);
     const text = entry?.scope === scope ? entry.draft.introduction : baseline;
+    const pendingFromStorage=recoveryEnabled?readMarker(scope,'introduction'):undefined;
+    const recovered=(!previous.attempt&&(previous.pending??pendingFromStorage))||undefined;
+    if(recovered){
+      if(recovered.siteId!==previous.baseline.siteId)return setIntroduction({...previous,outcome:'conflict'});
+      const operation={...previous,pending:recovered,outcome:'saving'} as const;
+      setIntroduction(operation);
+      const {value,code}=await requestText('introduction-receipt','introduction',scope,recovered);
+      if(scope!==currentScope||introduction!==operation)return;
+      if(code==='WORKSPACE_CHANGED')return reloadInvalidWorkspace();
+      const saved=parseIntroduction(value?.draft);
+      if(value?.state==='saved'&&value.requestId===recovered.requestId&&value.digest===recovered.digest&&
+         saved?.siteId===recovered.siteId&&[recovered.expectedRevision,recovered.expectedRevision+1].includes(saved.revision)){
+        clearMarker(scope,recovered);
+        return acceptSavedIntroduction(scope,initial,previous.baseline,
+          saved.revision<previous.baseline.revision?previous.baseline:saved,baseline);
+      }
+      return setIntroduction({...previous,pending:recovered,outcome:code==='BUSINESS_DENIED'?'denied':
+        code==='SESSION_REFRESH_REQUIRED'?'session-expiring':'unknown'});
+    }
     if (!previous.attempt && baseline.zh === text.zh && baseline.en === text.en) return;
     let attempt;
-    try { attempt = previous.attempt ?? prepareIntroduction(previous.baseline, text, crypto.randomUUID()); }
-    catch { return setIntroduction({...previous, outcome: 'invalid'}); }
-
-    const operation = {...previous, attempt, outcome: 'saving'} as const;
-    setIntroduction(operation);
+    let pending=previous.pending;
     const lookup = !!previous.attempt && !previous.retryUnsent;
+    try {
+      attempt=previous.attempt??prepareIntroduction(previous.baseline,text,crypto.randomUUID());
+      if(recoveryEnabled&&!lookup){
+        pending={section:'introduction',siteId:attempt.body.siteId,requestId:attempt.body.command.request_id,
+          expectedRevision:attempt.body.command.expected_draft_revision,digest:await attempt.digest};
+        if(read()!==previous||scope!==currentScope)return;
+        if(!recordPendingText(window.localStorage,scope,pending)){
+          const other=readMarker(scope,'introduction');
+          return setIntroduction({...previous,attempt:undefined,pending:other,outcome:other?'unknown':'invalid'});
+        }
+      }
+    } catch {return setIntroduction({...previous,outcome:'invalid'});}
+
+    const operation = {...previous, attempt, pending, outcome:'saving'} as const;
+    setIntroduction(operation);
     const {value, code, beforeDispatch} = await loadIntroduction(scope, attempt, lookup);
     const saved = await parseSaveReceipt(value, attempt).catch(() => undefined);
     if (scope !== currentScope || introduction !== operation) return;
     if (code === 'IDENTITY_REQUIRED') return reloadInvalidWorkspace();
-    if (saved) return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt);
+    if (saved) {
+      if(pending)clearMarker(scope,pending);
+      return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt.submitted);
+    }
     const outcome = code === 'REQUEST_CONFLICT' ? 'conflict' : code === 'DRAFT_ADVANCED' ? 'advanced' :
       code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' :
       code === 'INVALID_INPUT' && !lookup ? 'invalid' :
       code === 'BUSINESS_DENIED' ? 'denied' : 'unknown';
     const unresolved = outcome === 'unknown' || outcome === 'denied' || outcome === 'session-expiring';
-    setIntroduction({...previous, outcome, attempt: unresolved ? attempt : undefined,
-      retryUnsent: outcome === 'session-expiring' && !lookup && beforeDispatch === true});
+    const retryUnsent=outcome==='session-expiring'&&!lookup&&beforeDispatch===true;
+    if(pending&&(!unresolved||retryUnsent))clearMarker(scope,pending);
+    setIntroduction({...previous,outcome,attempt:unresolved?attempt:undefined,
+      pending:unresolved&&!retryUnsent?pending:undefined,retryUnsent});
   }
   return {state, refresh, save};
+}
+
+function readMarker<S extends PendingSection>(scope:string,section:S) {
+  try {return readPendingText(window.localStorage,scope,section);} catch {return undefined;}
+}
+function clearMarker(scope:string,key:PendingKey) {
+  try {removePendingText(window.localStorage,scope,key);} catch {}
 }
 
 function setTextState(section: TextSection, value: TextPersistence) {
@@ -238,7 +282,7 @@ function setTextState(section: TextSection, value: TextPersistence) {
   notify();
 }
 
-async function requestText(suffix: string, section: TextSection, scope: string, body?: unknown) {
+async function requestText(suffix: string, section: PendingSection, scope: string, body?: unknown) {
   const controller = new AbortController();
   const timeout = window.setTimeout(()=>controller.abort(),30_000);
   const headers={[workspaceScopeHeader]:scope};
@@ -248,12 +292,12 @@ async function requestText(suffix: string, section: TextSection, scope: string, 
     const response=await fetch(resumeTextPath+'/'+suffix,{...options,headers:body===undefined?headers:
       {...headers,'Content-Type':'application/json'},method:body===undefined?'GET':'POST',
       ...(body===undefined?{}:{body:JSON.stringify(body)})});
-    const value=await response.json() as {code?: string; state?: string; requestId?:string; digest?:string; snapshot?:unknown};
+    const value=await response.json() as {code?: string; state?: string; requestId?:string; digest?:string; snapshot?:unknown;draft?:unknown};
     if(value?.code==='IDENTITY_REQUIRED'||value?.code==='WORKSPACE_CHANGED')return {code:'WORKSPACE_CHANGED'};
     if(value?.code==='SESSION_REFRESH_REQUIRED')return {code:'SESSION_REFRESH_REQUIRED',beforeDispatch:true};
     if(!headerScope(response))return {code:'BUSINESS_UNAVAILABLE'};
     if(!response.ok)return {code:value?.code ?? 'BUSINESS_UNAVAILABLE'};
-    const check=await fetch(resumeTextPath+'/'+section,{...options,method:'HEAD',headers});
+    const check=await fetch(section==='introduction'?introductionPath:resumeTextPath+'/'+section,{...options,method:'HEAD',headers});
     if(check.status===401||check.status===409)return {code:'WORKSPACE_CHANGED'};
     if(check.headers.get('X-Workspace-Session-Renewal')==='required')return {code:'SESSION_REFRESH_REQUIRED'};
     if(!check.ok||!headerScope(check))return {code:'BUSINESS_UNAVAILABLE'};
@@ -296,7 +340,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
         {...previousEntry,draft,dirtyModules,guideOverrides,reviews:{...previousEntry.reviews,
           [section]:dirtyModules.includes(section)?previousEntry.reviews[section]:noReviews}}:undefined;
     }
-    if(pending && scope) try {removePendingText(window.localStorage,scope,pending);} catch {}
+    if(pending && scope)clearMarker(scope,pending);
     setTextState(section,nextState);
   };
 
@@ -309,8 +353,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     if(code==='WORKSPACE_CHANGED')return reloadInvalidWorkspace();
     const snapshot=parseTextSnapshot(value,section);
     if(snapshot) {
-      let pending;
-      try {pending=readPendingText(window.localStorage,scope,section);} catch {}
+      const pending=readMarker(scope,section);
       if(pending?.siteId===snapshot.siteId) {
         apply(section,snapshot);
         return setTextState(section,{phase:'unknown', snapshot,pending});
@@ -327,10 +370,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     if(!section||!scope||scope!==currentScope||!previous?.snapshot||previous.phase==='saving'||previous.phase==='conflict')return;
     const generation=operationSequence;
     const snapshot=previous.snapshot;
-    let pending=previous.pending;
-    if(!pending){
-      try {pending=readPendingText(window.localStorage,scope,section);} catch {}
-    }
+    let pending=previous.pending??readMarker(scope,section);
     const lookup=!!pending;
     let payload: unknown=pending;
     if(!pending){
@@ -344,7 +384,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
           digest:await textCommandDigest(command)};
         if(!valid(generation)||read()!==previous)return;
         if(!recordPendingText(window.localStorage,scope,pending)){
-          const existing=readPendingText(window.localStorage,scope,section);
+          const existing=readMarker(scope,section);
           return setTextState(section,{phase:existing?'unknown':'failure',snapshot,pending:existing});
         }
         payload=command;
@@ -363,7 +403,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     }
     if(!lookup&&(['REQUEST_CONFLICT','INVALID_INPUT'].includes(code??'')||
         (code==='SESSION_REFRESH_REQUIRED'&&beforeDispatch))){
-      try {removePendingText(window.localStorage,scope,pending);} catch {}
+      clearMarker(scope,pending);
       return setTextState(section,{phase:code==='REQUEST_CONFLICT'?'conflict':code==='SESSION_REFRESH_REQUIRED'?'renewal':'invalid',snapshot});
     }
     setTextState(section,{phase:code==='BUSINESS_DENIED'?'denied':code==='SESSION_REFRESH_REQUIRED'?'renewal':'unknown',snapshot,pending});
@@ -384,7 +424,7 @@ export function useWorkspaceSnapshot() {
 
 export function useWorkspaceDraft(initialDraft: LocalDraft, module: EditorModule, introductionEnabled = false, resumeTextEnabled = false) {
   const scope = useContext(DraftScope);
-  const persistence = useIntroduction(scope, introductionEnabled, initialDraft);
+  const persistence = useIntroduction(scope, introductionEnabled, initialDraft, resumeTextEnabled);
   const saved = persistence.state?.state === 'ready' ? persistence.state.baseline : undefined;
   const introductionBaseline = useMemo(() => saved ? {...initialDraft, introduction: introductionText(saved)} : initialDraft, [initialDraft, saved]);
   const textPersistence=useTextPersistence(scope,resumeTextEnabled&&isTextSection(module)?module:undefined,introductionBaseline);
