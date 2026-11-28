@@ -15,12 +15,14 @@ export function mountEditorSections(scope: string | undefined, select: MountedEd
   mounted = editor;
   function claimCurrentEntry() {
     const url = new URL(location.href);
-    if (mounted !== editor || editor.page || url.pathname !== '/dashboard/editor') return;
-    editor.page = pageKey(url);
+    const page = pageKey(url);
+    if (mounted !== editor || url.pathname !== '/dashboard/editor' || (editor.page && editor.page !== page)) return;
+    editor.page = page;
     const section = sectionAt(url);
     if (!section) return;
     // Vinext's public History API patch retains its route and scroll metadata.
-    history.replaceState({[stateKey]: editor.id}, '', url);
+    if (!isMountedEditorEntry(url, history.state, editor.scope) && !document.documentElement.hasAttribute('data-workspace-verifying'))
+      history.replaceState({[stateKey]: editor.id}, '', url);
     editor.select(section);
   }
   claimCurrentEntry();

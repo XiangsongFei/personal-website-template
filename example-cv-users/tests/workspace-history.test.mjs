@@ -10,6 +10,7 @@ test('only marked history from the current editor mount and verified identity ca
   const requests = [];
   const selections = [];
   const unmounts = [];
+  let frame;
   let invalid = 0;
   let scopeForResponse = 'current';
   const onInvalid = () => { invalid += 1; };
@@ -22,7 +23,7 @@ test('only marked history from the current editor mount and verified identity ca
       replaceState(state) { this.state = state; },
       pushState(state, _, url) { this.state = state; globalThis.location = new URL(url); },
     },
-    requestAnimationFrame: () => 1,
+    requestAnimationFrame: callback => { frame = callback; return 1; },
     cancelAnimationFrame: () => {},
     fetch: async (url, options) => {
       assert.ok('workspaceVerifying' in dataset, 'the old shell is hidden before protected history is restored');
@@ -94,4 +95,16 @@ test('only marked history from the current editor mount and verified identity ca
   assert.ok('workspaceVerifying' in dataset, 'a matching identity alone does not reveal an uncommitted route');
   setWorkspaceHistoryView({path: '/account', scope: 'different-account'}, onInvalid);
   assert.equal(dataset.workspaceVerifying, undefined);
+
+  globalThis.location = new URL('#unknown', editorUrl);
+  history.state = null;
+  setWorkspaceHistoryView({path: page, scope: 'different-account'}, onInvalid);
+  unmounts.push(mountEditorSections('different-account', section => selections.push(section)));
+  assert.equal(history.state, null, 'an invalid initial fragment is not marked as a section');
+  globalThis.location = new URL('#projects', editorUrl);
+  frame();
+  assert.equal(selections.at(-1), 'projects', 'the frame follows the client router’s committed fragment');
+  const loadsBefore = requests.length;
+  await verifyWorkspaceTraversal(onInvalid, location, history.state);
+  assert.equal(requests.length, loadsBefore, 'the valid committed fragment belongs to the current editor');
 });

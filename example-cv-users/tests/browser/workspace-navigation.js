@@ -156,6 +156,11 @@ async page => {
     if (location.pathname === '/dashboard/editor' && event.persisted) console.debug('workspace-bfcache-restored');
   }));
   await page.goto(base + '/login');
+  await page.goto(base + '/dashboard/editor#unknown');
+  await profile.waitFor();
+  await trace();
+  await observedSection(() => sidebarSection('projects'), 'projects');
+  await page.goto(base + '/login');
   await page.goto(base + '/dashboard/editor#projects');
   await editor.getByRole('heading', {name: '项目经历', exact: true}).waitFor();
   await page.goto(base + '/login');
