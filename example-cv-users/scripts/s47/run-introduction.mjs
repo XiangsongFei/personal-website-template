@@ -17,6 +17,7 @@ import {prepareIntroduction,introductionText,parseSaveReceipt} from '../../lib/e
 import {createAcceptanceSave} from './acceptance-save.mjs';
 import {textDraftArgs} from '../../lib/business/introduction-repository.mjs';
 import {runFullText,s47Functions,s47RpcNames} from './full-text.mjs';
+import {runTargeted} from './targeted.mjs';
 import {assertBudgetHeadroom} from './budget.mjs';
 
 const mode=process.argv[2];
@@ -348,6 +349,10 @@ try {
         sqlCasesAndObservations:limits.sqlObservation-2,independentCloseReserve:2,
         maximumOwnerSites:2,cloudUSD:0},
       fullTextHarnessSHA256:sha(readFileSync(new URL('./full-text.mjs',import.meta.url))),
+      ...(followUp?{targetedHarnessSHA256:sha(readFileSync(new URL('./targeted.mjs',import.meta.url))),
+        roles:{postgrest:'ecv_s3_internal_api_login',request:'authenticated',authBootstrap:'supabase_auth_admin'},
+        productionBaseline:{deployment:'9af7cb4e-3e42-4a7a-bbf3-c6e2f4fafadd',
+          version:'08768067-69e7-4e7c-8813-12cf7b8ccc0e',percent:100}}:{}),
       candidateSql:textCandidates.map(({path,sha256})=>({path,sha256}))}:{}),
     authSource:'https://github.com/supabase/auth/releases/tag/v2.198.0',
     versions:{postgres:'17.12',postgrest:'16.6',goTrue:'2.198.0',node:process.versions.node,
@@ -608,7 +613,7 @@ try {
       await grant(actor);
       return actor;
     }
-    const result=await runFullText({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
+    const result=await (followUp?runTargeted:runFullText)({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
       followUp,ensureBudget,journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
       resumeAfterProof:()=>{assert.ok(writesFrozen && !stopRequested);writesFrozen=false;}});
     witness.gRead=result.gRead;
@@ -722,7 +727,7 @@ try {
      /^[A-Z_0-9]+$/.test(error?.message??'')?error.message:undefined,
     ...(error?.code==='ERR_ASSERTION' && typeof error.actual==='number' && typeof error.expected==='number'?
       {actual:error.actual,expected:error.expected}:{}),
-    sourceLine:error?.stack?.match(/(?:run-introduction|full-text)\.mjs:(\d+):/)?.[1]};
+    sourceLine:error?.stack?.match(/(?:run-introduction|full-text|targeted)\.mjs:(\d+):/)?.[1]};
   console.error('STOP',JSON.stringify(witness.failure));
 } finally {
   phase('cleanup');
