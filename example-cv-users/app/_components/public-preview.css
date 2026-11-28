@@ -19,7 +19,13 @@
 .public-preview [data-preview-example-record] :is([data-preview-value]:not([data-preview-value="kaggleLabel"]), [data-preview-method]) {
   color: var(--public-example-ink);
 }
-.public-preview .public-canvas { width: var(--public-canvas-width, min(100%, 1100px)); zoom: var(--public-canvas-scale, 1); margin-inline: auto; }
+.public-preview .public-canvas { width: var(--public-canvas-width, min(100%, 1100px)); margin-inline: auto; }
+.public-preview[data-site-scaled] .public-canvas-frame { overflow: clip; }
+.public-preview[data-site-scaled] .public-canvas {
+  margin-inline: 0;
+  transform: scale(var(--public-canvas-scale));
+  transform-origin: left top;
+}
 .public-preview :is(h1, h2, h3, p, dl, dd) { margin: 0; }
 .public-preview :is(h1, h2, h3, p, dd, span, b, li) { overflow-wrap: anywhere; }
 .public-preview .site-preview-nav { position: sticky; top: 0; z-index: 1; width: 100%; background: rgb(255 255 255 / 92%); backdrop-filter: blur(6px); }

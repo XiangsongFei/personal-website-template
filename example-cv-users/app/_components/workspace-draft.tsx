@@ -93,20 +93,16 @@ export function WorkspaceDraftScope({scope, path, unavailable, children}: {
 const modules = Object.keys(editorModules) as EditorModule[];
 const noDirtyModules: readonly EditorModule[] = [];
 
-function useDraftSnapshot() {
+export function useWorkspaceSnapshot() {
   const scope = useContext(DraftScope);
   const read = () => scope && entry?.scope === scope ? entry : undefined;
   return useSyncExternalStore(subscribe, read, () => undefined);
 }
 
-export function useWorkspaceDirtyModules() {
-  return useDraftSnapshot()?.dirtyModules ?? noDirtyModules;
-}
-
 export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
   const scope = useContext(DraftScope);
   const read = () => scope && entry?.scope === scope ? entry : undefined;
-  const snapshot = useDraftSnapshot();
+  const snapshot = useWorkspaceSnapshot();
   const draft = snapshot?.draft ?? initial;
   const dirtyModules = snapshot?.dirtyModules ?? noDirtyModules;
   const modified = useMemo(() => modifiedEditorFields(draft, initial, dirtyModules), [draft, initial, dirtyModules]);
