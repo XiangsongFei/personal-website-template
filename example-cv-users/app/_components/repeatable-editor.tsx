@@ -35,7 +35,7 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
   const descriptions = [error || hint || count ? feedbackId : undefined, feedback.reminderId, describedBy].filter(Boolean);
   const limit = maxLength ?? (multiline ? 20_000 : 500);
   const props = {
-    id, value, lang, 'aria-label': accessibleLabel, maxLength: limit,
+    id, value, lang, 'aria-label': accessibleLabel, maxLength: limit, placeholder: feedback.placeholder,
     'data-edit-field': identity && (language === 'shared' ? 'shared:' : '') + identity.field,
     'data-edit-item': identity?.item, 'data-edit-locale': language,
     'aria-invalid': error ? true : undefined,

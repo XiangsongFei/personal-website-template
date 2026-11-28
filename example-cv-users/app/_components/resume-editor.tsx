@@ -1,8 +1,8 @@
 'use client';
 
-import {useLayoutEffect, useRef, useState, type ReactNode} from 'react';
+import {useLayoutEffect, useMemo, useRef, useState, type ReactNode} from 'react';
 import {
-  cancelModule, emptyDraft, INTRODUCTION_LIMIT, moduleFromHash,
+  cancelModule, emptyDraft, INTRODUCTION_LIMIT,
   profileLocalized, profileShared, validIntroduction, type ContentLocale,
   type EditorModule, type LocalDraft,
 } from '../../lib/editor/draft';
@@ -23,11 +23,13 @@ import {useUiLocale} from './ui-locale';
 import {FieldFeedbackContext} from './field-feedback';
 import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
+import {mountEditorSections, selectEditorSection} from './editor-section-history';
+import {fillingGuide, hasPreviewContent} from '../../lib/editor/filling-guide';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
 
-function EditorModeSwitcher({options, selected, select, label, dirty = []}: {
-  options: readonly [string, string][]; selected: string; select: (value: string) => void; label: string; dirty?: readonly EditorModule[];
+function EditorModeSwitcher<Choice extends string>({options, selected, select, label, dirty = []}: {
+  options: readonly [Choice, string][]; selected: string; select: (value: Choice) => void; label: string; dirty?: readonly EditorModule[];
 }) {
   return <div className="editor-switch" role="group" aria-label={label}>
     {options.map(([key, caption]) => <button key={key} className="dashboard-action dashboard-action-text" type="button" data-view-option={key}
@@ -78,12 +80,19 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const [module, setModule] = useState<EditorModule>('profile');
   const [previewLocale, setPreviewLocale] = useState<ContentLocale>('zh');
+  const [previewChoice, setPreviewChoice] = useState<'guide' | 'draft'>();
   const [choice, setMode] = useState<Exclude<WorkspaceMode, 'split'>>('edit');
   const [wide, setWide] = useState(false);
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {draft, update: setDraft, dirtyModules, modified, fields} = useWorkspaceDraft(initialDraft, module);
+  const {scope, draft, update, dirtyModules, modified, fields} = useWorkspaceDraft(initialDraft, module);
+  const hasContent = useMemo(() => hasPreviewContent(draft), [draft]);
+  const showingGuide = previewChoice === undefined ? !hasContent : previewChoice === 'guide';
+  const setDraft: typeof update = change => {
+    setPreviewChoice(undefined);
+    update(change);
+  };
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
   const activeSection = contactArea ? 'contact' : module;
   const titles: Record<EditorModule, string> = {
@@ -99,27 +108,7 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
     'site-text': text('网站文案', 'Website copy'),
   };
 
-  useLayoutEffect(() => {
-    // Same-document navigation keeps all module drafts in memory. Other hashes
-    // belong to the existing Dashboard skip and navigation links.
-    const select = () => {
-      const requested = moduleFromHash(location.hash);
-      if (requested) setModule(requested);
-    };
-    select();
-    // The client router can commit a new document fragment after this mount.
-    const frame = requestAnimationFrame(select);
-    const navigation = (window as Window & {navigation?: EventTarget}).navigation;
-    window.addEventListener('hashchange', select);
-    window.addEventListener('popstate', select);
-    navigation?.addEventListener('currententrychange', select);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener('hashchange', select);
-      window.removeEventListener('popstate', select);
-      navigation?.removeEventListener('currententrychange', select);
-    };
-  }, []);
+  useLayoutEffect(() => mountEditorSections(scope, setModule), [scope]);
 
   useLayoutEffect(() => {
     const element = workspace.current;
@@ -146,7 +135,7 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
             subNavigation={contactArea && <div className="editor-contact-areas">
               <EditorModeSwitcher options={[
                 ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')], ['site-text', text('网站文字', 'Site text')],
-              ]} selected={module} dirty={dirtyModules} select={section => {location.hash = section;}} label={text('联系与链接区域', 'Contact and links areas')}/>
+              ]} selected={module} dirty={dirtyModules} select={selectEditorSection} label={text('联系与链接区域', 'Contact and links areas')}/>
             </div>}>
             {module === 'profile' ? <ProfileFields profile={draft.profile}
               onChange={profile => setDraft(current => ({...current, profile}))}/> : module === 'education' ?
@@ -183,8 +172,18 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
               </div>}
           </EditorPanel>
         </FieldFeedbackContext.Provider>
-        <section className="editor-preview" data-mode={mode} aria-label={text('网站预览', 'Website preview')}>
-          <FullSitePreview modified={modified} focused={focused?.module === module ? focused : undefined} interactiveLinks={interactivePreview} draft={draft} locale={previewLocale} module={module === 'links' ? 'profile' : activeSection} onLocaleChange={setPreviewLocale}/>
+        <section className="editor-preview" data-mode={mode} data-preview-source={showingGuide ? 'guide' : 'draft'} aria-label={text('网站预览', 'Website preview')}>
+          <div className="editor-preview-guide">
+            {showingGuide && <span>{text('填写示例 · 虚构资料', 'Filling example · Fictional details')}</span>}
+            <button type="button" className="dashboard-action dashboard-action-text"
+              onClick={() => setPreviewChoice(showingGuide ? 'draft' : 'guide')}>
+              {showingGuide ? text('查看我的草稿', 'View my draft') : text('查看填写示例', 'View filling example')}
+            </button>
+          </div>
+          <FullSitePreview key={showingGuide ? 'guide' : 'draft'} modified={showingGuide ? undefined : modified}
+            focused={!showingGuide && focused?.module === module ? focused : undefined}
+            interactiveLinks={!showingGuide && interactivePreview} draft={showingGuide ? fillingGuide : draft}
+            locale={previewLocale} module={module === 'links' ? 'profile' : activeSection} onLocaleChange={setPreviewLocale}/>
         </section>
       </div>
     </div>

@@ -4,7 +4,8 @@ import {WorkspaceLink} from './workspace-link';
 import {useWorkspaceDirtyModules} from './workspace-draft';
 import {useUiLocale} from './ui-locale';
 
-import type {EditorModule} from '../../lib/editor/draft';
+import {moduleFromHash, type EditorModule} from '../../lib/editor/draft';
+import {selectEditorSection} from './editor-section-history';
 import {siteStatusTitle, type SiteViewModel} from '../../lib/site/model';
 
 export type DashboardSection = 'overview' | 'website' | 'account' | 'password' | EditorModule;
@@ -104,7 +105,13 @@ function DashboardNavigation({onNavigate, section}: {onNavigate?: () => void; se
         const sameEditor = inEditor && item.href?.startsWith('/dashboard/editor#');
         const NavigationLink = sameEditor ? 'a' : WorkspaceLink;
         return <li key={item.id}>
-          {item.href ? <NavigationLink className={`dashboard-nav-item${item.id === section ? ' dashboard-nav-current' : childActive ? ' dashboard-nav-parent' : ''}`} href={sameEditor ? item.href.slice('/dashboard/editor'.length) : item.href} aria-current={item.id === section ? 'page' : undefined} onClick={onNavigate}>{item[locale]}{unsaved && <UnsavedDot/>}</NavigationLink>
+          {item.href ? <NavigationLink className={`dashboard-nav-item${item.id === section ? ' dashboard-nav-current' : childActive ? ' dashboard-nav-parent' : ''}`} href={sameEditor ? item.href.slice('/dashboard/editor'.length) : item.href} aria-current={item.id === section ? 'page' : undefined} onClick={event => {
+            if (sameEditor && !event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+              const target = moduleFromHash(event.currentTarget.hash);
+              if (target && selectEditorSection(target)) event.preventDefault();
+            }
+            onNavigate?.();
+          }}>{item[locale]}{unsaved && <UnsavedDot/>}</NavigationLink>
             : <span className="dashboard-nav-item dashboard-nav-disabled" aria-disabled="true">{item.id === 'ai' && <DashboardIcon kind="ai"/>}{item[locale]}</span>}
           {item.children && (item.id === section || childActive) && <ul className="dashboard-nav-children">
             {item.children.map(child => <li key={child.id}><WorkspaceLink className={`dashboard-nav-item${child.id === section ? ' dashboard-nav-current' : ''}`}

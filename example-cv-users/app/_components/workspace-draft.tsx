@@ -1,7 +1,7 @@
 'use client';
 
 import {createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
-import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyWorkspaceTraversal} from './workspace-history';
+import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyUpcomingWorkspaceTraversal, verifyWorkspaceTraversal} from './workspace-history';
 import {bilingualFieldKey, collectEditorFields, modifiedEditorFields, reviewChanges, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
 import {editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
 
@@ -62,20 +62,25 @@ export function WorkspaceDraftScope({scope, path, unavailable, children}: {
 
   useLayoutEffect(() => {
     const navigation = (window as Window & {navigation?: EventTarget}).navigation;
-    if (navigation) {
-      const verify = (event: Event) => {
-        const {navigationType, destination} = event as Event & {
-          navigationType: string; destination: {url: string; sameDocument: boolean};
-        };
-        if (navigationType === 'traverse' && destination.sameDocument)
-          void verifyWorkspaceTraversal(reloadInvalidWorkspace, destination.url);
+    const verifyUpcoming = (event: Event) => {
+      const {navigationType, destination} = event as Event & {
+        navigationType: string; destination: {url: string; sameDocument: boolean};
       };
-      navigation.addEventListener('navigate', verify);
-      return () => navigation.removeEventListener('navigate', verify);
-    }
-    const verify = () => { void verifyWorkspaceTraversal(reloadInvalidWorkspace); };
+      if (navigationType === 'traverse' && destination.sameDocument)
+        verifyUpcomingWorkspaceTraversal(reloadInvalidWorkspace, new URL(destination.url));
+    };
+    // Run before the client router restores a history entry. Both Safari and
+    // Chromium expose the classic history state on this event.
+    const verify = (event: PopStateEvent) => {
+      const url = new URL(location.href);
+      void verifyWorkspaceTraversal(reloadInvalidWorkspace, url, event.state);
+    };
+    navigation?.addEventListener('navigate', verifyUpcoming);
     window.addEventListener('popstate', verify, {capture: true});
-    return () => window.removeEventListener('popstate', verify, {capture: true});
+    return () => {
+      navigation?.removeEventListener('navigate', verifyUpcoming);
+      window.removeEventListener('popstate', verify, {capture: true});
+    };
   }, []);
 
   return <DraftScope.Provider value={scope}>{children}</DraftScope.Provider>;
@@ -133,5 +138,5 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
     entry = {...previous, reviews: {...previous.reviews, [module]: next}};
     notify();
   };
-  return {draft, update, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge}};
+  return {scope, draft, update, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, module}};
 }
