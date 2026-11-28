@@ -1,3 +1,4 @@
+import {VerifiedWorkspace} from '../../_components/verified-workspace';
 import {requestContext} from '../../../lib/context';
 import {readCurrentSiteStatus} from '../../../lib/site/server';
 import {DashboardShell} from '../../_components/dashboard';
@@ -7,7 +8,7 @@ import '../../website.css';
 
 export default async function WebsitePage() {
   const ctx = requestContext.getStore();
-  if (!ctx?.user) return <section className="dashboard-unavailable"><h1>Example CV</h1><AccountUnavailable failure={ctx?.failure}/></section>;
+  if (!ctx?.user) return <VerifiedWorkspace><section className="dashboard-unavailable"><h1>Example CV</h1><AccountUnavailable failure={ctx?.failure}/></section></VerifiedWorkspace>;
   const model = await readCurrentSiteStatus(ctx.user.id);
-  return <DashboardShell section="website"><WebsiteWorkspace model={model}/></DashboardShell>;
+  return <VerifiedWorkspace><DashboardShell section="website"><WebsiteWorkspace model={model}/></DashboardShell></VerifiedWorkspace>;
 }

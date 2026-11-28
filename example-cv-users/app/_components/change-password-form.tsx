@@ -1,4 +1,6 @@
 'use client';
+import {clearWorkspaceDraft} from './workspace-draft';
+import {WorkspaceLink} from './workspace-link';
 import {useRef, useState, type FormEventHandler} from 'react';
 import {useUiLocale} from './ui-locale';
 import {PasswordField} from './form-fields';
@@ -10,13 +12,16 @@ import {hint, messages} from '../../lib/account/messages';
 export function ChangePasswordFields({ enabled, busy, message, success, onSubmit }: {
   enabled: boolean; busy: boolean; message?: string; success?: boolean; onSubmit: FormEventHandler<HTMLFormElement>;
 }) {
-  const { t } = useUiLocale();
+  const { t, locale } = useUiLocale();
   return <form className="account-form" onSubmit={onSubmit} aria-busy={busy} method="post" action="/change-password">
     <fieldset disabled={!enabled || busy}>
-      <PasswordField id="current-password" label="当前密码" name="currentPassword" placeholder={t('请输入当前密码')} autoComplete="current-password" required minLength={1} maxLength={EXISTING_PASSWORD_MAX_LENGTH} />
-      <PasswordField id="new-password" label="新密码" name="newPassword" placeholder={t('请输入新密码')} autoComplete="new-password" required minLength={NEW_PASSWORD_MIN_LENGTH} maxLength={NEW_PASSWORD_MAX_LENGTH} hint={hint.change} />
-      <PasswordField id="confirm-new-password" label="确认新密码" name="confirmNewPassword" placeholder={t('请再次输入新密码')} autoComplete="new-password" required minLength={NEW_PASSWORD_MIN_LENGTH} maxLength={NEW_PASSWORD_MAX_LENGTH} />
-      <button type="submit">{t(busy ? '正在修改密码…' : '修改密码')}</button>
+      <PasswordField toggleClassName="dashboard-action dashboard-action-icon" id="current-password" label="当前密码" name="currentPassword" placeholder={t('请输入当前密码')} autoComplete="current-password" required minLength={1} maxLength={EXISTING_PASSWORD_MAX_LENGTH} />
+      <PasswordField toggleClassName="dashboard-action dashboard-action-icon" id="new-password" label="新密码" name="newPassword" placeholder={t('请输入新密码')} autoComplete="new-password" required minLength={NEW_PASSWORD_MIN_LENGTH} maxLength={NEW_PASSWORD_MAX_LENGTH} hint={hint.change} />
+      <PasswordField toggleClassName="dashboard-action dashboard-action-icon" id="confirm-new-password" label="确认新密码" name="confirmNewPassword" placeholder={t('请再次输入新密码')} autoComplete="new-password" required minLength={NEW_PASSWORD_MIN_LENGTH} maxLength={NEW_PASSWORD_MAX_LENGTH} />
+      <div className="account-password-actions">
+        <button type="submit" className="dashboard-action dashboard-action-primary">{t(busy ? '正在修改密码…' : '修改密码')}</button>
+        <WorkspaceLink href="/account" className="dashboard-action dashboard-action-text">{locale === 'zh' ? '取消' : 'Cancel'}</WorkspaceLink>
+      </div>
     </fieldset>
     {message && <p role={success ? 'status' : 'alert'} aria-live="polite" className={success ? 'success' : 'feedback'}>{t(message)}</p>}
   </form>;
@@ -43,6 +48,7 @@ export function ChangePasswordForm() {
     try {
       const response = await sendAccountAction('change-password', {currentPassword,newPassword,confirmNewPassword,operation:operation.current});
       setResult(response);
+      if (response.next === '/login' || response.message === messages.expiredSession) clearWorkspaceDraft();
       if (response.ok || response.correctable) operation.current = undefined;
       else setEnded(true);
     } finally {lock.current = false;setBusy(false);}

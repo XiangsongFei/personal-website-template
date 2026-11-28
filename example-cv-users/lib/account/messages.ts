@@ -90,7 +90,6 @@ const english: Readonly<Record<string, string>> = {
   "正在重置密码…": "Resetting password…",
   "个人账户": "Personal account",
   "已登录": "Signed in",
-  "账户标识": "Account identifier",
   "退出登录": "Sign out",
   "正在退出…": "Signing out…",
   "请重新开始恢复": "Start recovery again",

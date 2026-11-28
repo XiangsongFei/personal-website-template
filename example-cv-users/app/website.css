@@ -4,14 +4,8 @@
 .website-status,.website-guide,.website-boundary{margin-top:32px;padding-top:24px;border-top:1px solid var(--dashboard-line)}
 .website-status-heading,.website-guide-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
 .website-state-label{color:var(--dashboard-muted);font-size:12px;white-space:nowrap}
-.website-workspace .website-fixture-note{padding:12px 0;border-bottom:1px solid var(--dashboard-line);font-size:13px}
-.website-workspace .website-primary,.website-workspace .website-secondary,.website-workspace .website-text-button{display:inline-flex;align-items:center;justify-content:center;width:auto;max-width:100%;min-height:44px;margin:8px 16px 0 0;padding:8px 16px;border:1px solid var(--dashboard-brand-dark);border-radius:4px;font-size:14px;line-height:24px;font-weight:500;white-space:normal}
-.website-workspace .website-primary{background:var(--dashboard-brand-dark);color:#FFF}
-.website-workspace .website-secondary{background:#FFF;color:var(--dashboard-text);border-color:var(--dashboard-line)}
-.website-workspace .website-text-button{border:0;background:transparent;color:var(--dashboard-brand-dark);padding:8px 0;text-decoration:underline;text-underline-offset:3px}
 .website-workspace button:disabled{opacity:1;background:#F5F5F5;color:var(--dashboard-muted);border-color:var(--dashboard-line);cursor:not-allowed}
 .website-workspace button:not(:disabled):hover{filter:none;text-decoration:underline;text-underline-offset:3px}
-.website-workspace .website-local-note{margin-top:16px;font-size:13px;max-width:760px}
 .website-steps{display:flex;list-style:none;padding:0;margin:24px 0;gap:24px;color:var(--dashboard-muted);font-size:13px}
 .website-steps li{display:flex;align-items:center;gap:8px;min-width:0}
 .website-steps li>span{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:24px;height:24px;border:1px solid var(--dashboard-line);border-radius:50%;font-size:12px}
@@ -45,4 +39,5 @@
 .website-guide-actions{display:flex;flex-wrap:wrap;gap:16px;margin-top:24px}
 .website-guide-actions button{margin:0!important}
 .website-boundary>a{display:inline-flex;align-items:center;min-height:44px;color:var(--dashboard-brand-dark);font-size:13px}
-@media(max-width:600px){.website-status-heading,.website-guide-heading{align-items:flex-start;flex-wrap:wrap}.website-steps{flex-direction:column;gap:8px;margin:24px 0}.website-review>div,.website-summary dl>div{grid-template-columns:1fr;gap:4px}.website-state-label{display:none}.website-guide-heading .website-text-button{margin:0}.website-guide-form{margin-top:24px}}
+@media(max-width:600px){.website-status-heading,.website-guide-heading{align-items:flex-start;flex-wrap:wrap}.website-steps{flex-direction:column;gap:8px;margin:24px 0}.website-review>div,.website-summary dl>div{grid-template-columns:1fr;gap:4px}.website-state-label{display:none}.website-guide-form{margin-top:24px}}
+.dashboard .website-status > .dashboard-action { margin: 8px 12px 0 0; }

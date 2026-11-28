@@ -4,13 +4,46 @@ import { configuration, type UsersEnv } from '../lib/config';
 import { createSession } from '../lib/auth/session';
 import { requestContext } from '../lib/context';
 export { RecoveryState } from './recovery-state';
+
+const reservedFilePaths = ['/api/assets', '/api/files', '/public/assets', '/private/s35', '/storage/v1'];
+const assetAliases = ['/_next/image', '/_vinext/image'];
+const staticModulePath = /^\/_next\/static\/(?:[A-Za-z0-9._~-]+\/)*[A-Za-z0-9._~-]+$/;
+
+function closedFileRoute(status = 404) {
+    return new Response(null, { status, headers: {
+        'Cache-Control': 'private, no-store',
+        'CDN-Cache-Control': 'no-store',
+        'Cloudflare-CDN-Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Content-Type-Options': 'nosniff',
+    } });
+}
+
 export default {
     async fetch(request: Request, env: UsersEnv, ctx: ExecutionContext) {
         const url = new URL(request.url);
         if (url.origin !== env.USERS_APP_ORIGIN)
-            return new Response('Invalid host', { status: 421 });
-        if (url.pathname.startsWith('/_next/static/') && ['GET', 'HEAD'].includes(request.method))
-            return env.ASSETS.fetch(request);
+            return closedFileRoute(421);
+        // File access requires the scoped Users handler. Until it is wired,
+        // reserve these paths before the static binding or app router.
+        let pagePath: string;
+        try { pagePath = decodeURIComponent(url.pathname).replace(/[\\/]+/g, '/'); }
+        catch { return closedFileRoute(); }
+        // A later decode or dot-segment normalization must not hand a
+        // different route to the static binding or the app router.
+        const namespace = pagePath.toLowerCase().replace(/;[^/]*/g, '').replace(/\/{2,}/g, '/');
+        if (/%[\da-f]{2}/i.test(pagePath) || /[\u0000-\u001f\u007f]/.test(pagePath) ||
+            /(?:^|\/)\.{1,2}(?:\/|$)/.test(namespace) ||
+            [...reservedFilePaths, ...assetAliases].some(prefix => namespace === prefix || namespace.startsWith(prefix + '/')))
+            return closedFileRoute();
+        // Serve only canonical build assets via the static binding. The image
+        // optimizer aliases above can resolve paths without this route guard.
+        if (namespace === '/_next/static' || namespace.startsWith('/_next/static/')) {
+            if (!staticModulePath.test(url.pathname) || pagePath !== url.pathname)
+                return closedFileRoute();
+            if (request.method === 'GET' || request.method === 'HEAD')
+                return env.ASSETS.fetch(request);
+        }
         if (url.pathname === '/')
             return new Response(null, { status: 307, headers: { Location: '/login', 'Cache-Control': 'private, no-store' } });
         if (url.pathname === '/user' || url.pathname.startsWith('/user/'))
@@ -27,12 +60,9 @@ export default {
             return new Response(null, {status: 405, headers: {Allow: 'GET, HEAD', 'Cache-Control':'private, no-store'}});
         }
         let user, session, failure: 'network' | 'limited' | 'unavailable' | undefined;
-        // Match the router's decoded path too, so encoded names/slashes cannot skip authentication.
-        let pagePath: string;
-        try { pagePath = decodeURIComponent(url.pathname).replace(/\/+/g, '/'); }
-        catch { return new Response('Not found', {status: 404, headers: {'Cache-Control': 'private, no-store'}}); }
         const dashboard = pagePath === '/dashboard' || pagePath.startsWith('/dashboard/');
-        if (dashboard || ['/account', '/change-password'].includes(url.pathname)) {
+        const accountWorkspace = ['/account', '/change-password'].includes(url.pathname);
+        if (dashboard || accountWorkspace) {
             try {
                 configuration(env);
                 session = createSession(env, request.headers.get('cookie') ?? '');
@@ -45,10 +75,17 @@ export default {
                 return session ? session.apply(response) : response;
             }
         }
-        const rendered = await requestContext.run({ dashboard, failure, user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
+        // This presentation key scopes in-memory edits. It is never an authorization input.
+        const workspaceDraftScope = user ? Array.from(new Uint8Array(await crypto.subtle.digest(
+            'SHA-256', new TextEncoder().encode(JSON.stringify(['workspace-draft', user.id, user.sessionId]))
+        )), byte => byte.toString(16).padStart(2, '0')).join('') : undefined;
+        const rendered = await requestContext.run({ dashboard, accountWorkspace, failure, workspaceDraftScope, workspacePath: dashboard || accountWorkspace ? pagePath : undefined,
+            user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
         const response = new Response(rendered.body, {headers: rendered.headers, status: failure ? failure === 'limited' ? 429 : 503 : rendered.status});
         response.headers.set('Cache-Control', 'private, no-store');
         response.headers.set('Referrer-Policy', 'no-referrer');
+        if (request.method === 'HEAD' && response.status === 200 && workspaceDraftScope)
+            response.headers.set('X-Workspace-Draft-Scope', workspaceDraftScope);
         response.headers.set('X-Content-Type-Options', 'nosniff');
         response.headers.append('Vary', 'Cookie');
         return session ? session.apply(response) : response;

@@ -7,6 +7,7 @@ import { sendAccountAction, type AccountResult } from '../../lib/account/client'
 import { messages, hint } from '../../lib/account/messages';
 import { EMAIL_MAX_LENGTH, EXISTING_PASSWORD_MAX_LENGTH, NEW_PASSWORD_MIN_LENGTH, NEW_PASSWORD_MAX_LENGTH,
   normalizeEmail, isRealEmail, isOtp, passwordIssue } from '../../lib/account/policy';
+import {safeReturn} from '../../lib/config';
 
 export function ContinueVerification({needed, email}: {needed: boolean; email: string}) {
   const {t} = useUiLocale();
@@ -50,7 +51,15 @@ export function AccountForm({mode}: {mode: FormMode}) {
       let response: AccountResult;
       if (mode === 'signup') response = await sendAccountAction('register', {email, password, confirmPassword});
       else if (mode === 'verify') response = await sendAccountAction('verify-email', {email, token});
-      else response = await sendAccountAction('login', {email, password});
+      else {
+        const requested = new URLSearchParams(location.search).get('returnTo');
+        const returnTo = requested && safeReturn(requested) ? requested : undefined;
+        response = await sendAccountAction('login', {email, password, ...(returnTo ? {returnTo} : {})});
+        if (response.ok && response.next === '/account') {
+          window.location.assign(returnTo ?? '/dashboard');
+          return;
+        }
+      }
       setResult(response);
       if (response.ok && mode === 'signup' && response.next === '/verify-email')
         window.location.assign('/verify-email?email=' + encodeURIComponent(email));

@@ -1,4 +1,4 @@
-:root{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#222;background:#fff;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;line-height:1.65;color-scheme:light}
+:root{--users-font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-family:var(--users-font-family);color:#222;background:#fff;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;line-height:1.65;color-scheme:light}
 *{box-sizing:border-box}
 body{margin:0;min-width:0}
 button,input{font:inherit}
@@ -30,9 +30,9 @@ input[aria-invalid="true"]{border-color:#9a4949}
 input::placeholder{color:#949494;opacity:1}
 input:disabled{background:#fafafa;color:#737373}
 input:-webkit-autofill{-webkit-text-fill-color:#222;transition:background-color 9999s ease-out 0s}
-button,.button-link{display:block;width:100%;min-height:48px;margin-top:26px;padding:11px 15px;border:1px solid #222;border-radius:4px;background:#222;color:#fff;font-size:14px;font-weight:600;line-height:1.6;text-align:center;text-decoration:none}
-button:hover:not(:disabled),.button-link:hover{background:#111;color:#fff}
-.ui-locale-switch button:hover{background:transparent;color:#111}
+:where(.auth-screen) button,:where(.auth-screen) .button-link{display:block;width:100%;min-height:48px;margin-top:26px;padding:11px 15px;border:1px solid #222;border-radius:4px;background:#222;color:#fff;font-size:14px;font-weight:600;line-height:1.6;text-align:center;text-decoration:none}
+:where(.auth-screen) button:hover:not(:disabled),:where(.auth-screen) .button-link:hover{background:#111;color:#fff}
+.auth-screen .ui-locale-switch button:hover{background:transparent;color:#111}
 .password-control{position:relative}
 .password-control input{padding-right:54px}
 .password-toggle{position:absolute;inset:2px 2px auto auto;display:grid;place-items:center;width:44px;min-height:44px;height:44px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#737373}
@@ -61,7 +61,7 @@ button:hover:not(:disabled),.button-link:hover{background:#111;color:#fff}
 .identity-details,.diagnostic-details{margin-top:14px;font-size:12px;color:#737373}
 summary{width:fit-content;max-width:100%;min-height:44px;padding:10px 0;cursor:pointer}
 .user-id{display:block;padding:8px 0;color:#666;font-size:12px;overflow-wrap:anywhere}
-.outline-button{margin-top:12px;border-color:#deddd9;background:#fff;color:#444}
+.outline-button{display:block;width:100%;min-height:44px;margin-top:12px;padding:8px 14px;border:1px solid #deddd9;border-radius:4px;background:#fff;color:#444;font-size:14px;font-weight:550}
 .outline-button:hover:not(:disabled){border-color:#888;background:#fafafa;color:#222}
 footer{margin-top:8px;color:#737373;font-size:11px;line-height:1.6}
 @media(min-width:641px){.auth-screen{padding-top:clamp(100px,calc(23.66vh - 70px),160px)}}
