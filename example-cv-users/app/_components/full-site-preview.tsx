@@ -174,14 +174,26 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
     if (!owner || !owner.clientHeight || !target) return false;
     if (addEndSpace) owner.style.removeProperty('--site-preview-end-space');
-    const top = owner.scrollTop + target.getBoundingClientRect().top - owner.getBoundingClientRect().top
+    const distance = () => target.getBoundingClientRect().top - owner.getBoundingClientRect().top
       - (navigation.current?.getBoundingClientRect().height ?? 0) - (section === 'profile' ? 0 : 8) + offset;
+    const top = owner.scrollTop + distance();
     // Short sections near the end still align under the preview navigation.
     if (addEndSpace && section !== 'profile') {
       const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
       if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
     }
     owner.scrollTop = top;
+    // Older Safari's zoomed canvas may report offsets in different units
+    // from its scroller. Measure the response to the correction before
+    // applying the remaining distance.
+    const remaining = distance();
+    if (Math.abs(remaining) > 1) {
+      const firstScroll = owner.scrollTop;
+      owner.scrollTop += remaining;
+      const last = distance();
+      const slope = (remaining - last) / (owner.scrollTop - firstScroll);
+      if (Math.abs(last) > 1 && Number.isFinite(slope) && slope > 0) owner.scrollTop += last / slope;
+    }
     anchoredSection.current = section;
     return true;
   }
