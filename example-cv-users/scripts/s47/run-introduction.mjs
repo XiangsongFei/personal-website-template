@@ -17,9 +17,13 @@ import {prepareIntroduction,introductionText,parseSaveReceipt} from '../../lib/e
 import {createAcceptanceSave} from './acceptance-save.mjs';
 import {textDraftArgs} from '../../lib/business/introduction-repository.mjs';
 import {runFullText,s47Functions,s47RpcNames} from './full-text.mjs';
+import {assertBudgetHeadroom} from './budget.mjs';
 
-const full=process.argv[2]==='--all-text';
-const project=full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
+const mode=process.argv[2];
+assert.ok(mode===undefined||mode==='--all-text'||mode==='--follow-up','UNRECOGNIZED_MODE');
+const followUp=mode==='--follow-up';
+const full=mode==='--all-text'||followUp;
+const project=followUp?'s47-all-text-acceptance-followup-r01':full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
 const issuer='https://users.auth.example.invalid/auth/v1';
 const privateOrigin='https://users.draft.example.invalid';
 const oldProject='ecv-s33a-20261109-7dd22a81', oldIssuer='http://127.0.0.1:56321/auth/v1';
@@ -41,7 +45,7 @@ const json=v=>literal(JSON.stringify(v))+'::jsonb';
 const beforeMigrations=JSON.parse(read('tests/s3/migration-source-contract.json'));
 const m7=JSON.parse(read('docs/s3/S3.6-HOSTED-TARGET-MANIFEST.PG17.12.json')).m7Adaptation;
 const textDigest='97b2017168b197ba6d006050717207535b6a56d3dcd5f1116b386313575bb175';
-const limits=full?{textHTTP:180,workerSaves:36,nativeSaves:36,allSaveEntrances:36,lookups:16,sqlObservation:40,passwordLogins:4,grants:4,generations:1}:{textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
+const limits=followUp?{textHTTP:180,workerSaves:16,nativeSaves:16,allSaveEntrances:16,lookups:12,sqlObservation:24,passwordLogins:4,grants:4,generations:1}:full?{textHTTP:180,workerSaves:36,nativeSaves:36,allSaveEntrances:36,lookups:16,sqlObservation:40,passwordLogins:4,grants:4,generations:1}:{textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
 const textCandidates=full?['01-resume-text','02-repeatable-text','03-introduction-receipt'].map(file=>{
   const path='supabase/candidates/s47/'+file+'.sql';
   const source=read(path);
@@ -55,11 +59,18 @@ const note=e=>{witness.saves.push(e);report();};
 const report=()=>writeFileSync(join(stageDir,'receipt.json'),JSON.stringify(witness,null,2)+'\n',{mode:0o600});
 const phase=name=>{witness.stage=name;report();console.log('STAGE',name);};
 const mark=(name,data={})=>{witness.cases.push({name,...data});report();console.log('PASS',name);};
-function take(which) {
+function ensureBudget(allocation,label) {
+  const ceiling={...limits,sqlObservation:limits.sqlObservation-(witness.stage==='cleanup'?0:2)};
+  try {assertBudgetHeadroom(counts,ceiling,allocation,label);}
+  catch(error){witness.budgetStop={stage:witness.stage,reason:error.message,allocation};report();throw error;}
+}
+function take(...kinds) {
   if(stopRequested && witness.stage!=='cleanup')throw Error('STOP_REQUESTED');
-  if (counts[which]>=limits[which]-(which==='sqlObservation' && witness.stage!=='cleanup' ? 2 : 0))
-    throw Error('BUDGET_'+which);
-  counts[which]++;report();
+  const allocation=Object.create(null);
+  for(const kind of kinds) allocation[kind]=(allocation[kind]??0)+1;
+  ensureBudget(allocation,'REQUEST');
+  for(const [kind,amount] of Object.entries(allocation))counts[kind]+=amount;
+  report();
 }
 function execute(bin,args,options={}) {
   return execFileSync(bin,args,{env,encoding:'utf8',timeout:25_000,stdio:['pipe','pipe','pipe'],...options}).trim();
@@ -189,10 +200,10 @@ function dbRequest(name,args,token,rollback=false) {
 async function rest(name,args,token,{setup=false,rollback=false}={}) {
   assert.ok(['get_my_site','read_introduction','save_text_draft','read_text_publication_operation',
     'apply_business_grant','create_site',...(full?s47RpcNames:[])].includes(name));
-  if (!setup) take('textHTTP');
-  if(name==='save_text_draft'||name==='save_resume_text'){take('allSaveEntrances');take('nativeSaves');}
-  if(['read_text_publication_operation','read_resume_text_operation','read_introduction_receipt'].includes(name))take('lookups');
-  if(name==='apply_business_grant')take('grants');
+  take(...(!setup?['textHTTP']:[]),
+    ...(['save_text_draft','save_resume_text'].includes(name)?['allSaveEntrances','nativeSaves']:[]),
+    ...(['read_text_publication_operation','read_resume_text_operation','read_introduction_receipt'].includes(name)?['lookups']:[]),
+    ...(name==='apply_business_grant'?['grants']:[]));
   nativeCounts[name]=(nativeCounts[name]??0)+1;
   const r=await dbRequest(name,args,token,rollback);
   witness.upstream.push({phase:witness.stage,rpc:name,status:r.status,
@@ -227,8 +238,7 @@ async function rpcProxy(request) {
 }
 const path='/api/sites/introduction';
 async function dispatch(actor,{attempt,reconcile=false,anonymous=false}={}) {
-  take('textHTTP');
-  if(attempt&&!reconcile){take('workerSaves');take('allSaveEntrances');}
+  take('textHTTP',...(attempt&&!reconcile?['workerSaves','allSaveEntrances']:[]));
   const response=await mf.dispatchFetch(origin+path+(reconcile?'/operation':''),{
     method:attempt?'POST':'GET',redirect:'manual',
     headers:{...(!anonymous?{Cookie:actor.cookie,'X-Workspace-Draft-Scope':actor.scope}:{}),
@@ -333,8 +343,9 @@ try {
   const manifest={project,sourceHead,instance:sha(root),origin,authBase,pgTcp:false,privateRestUnix:true,
     postgresSocketPort:dbPort,limits,
     ...(full?{baseline,executionOrder:[...Object.keys(migrations),textSqlPath,...textCandidates.map(c=>c.path)],
-      budgetAllocation:{workerAndNativeBusiness:160,reconciliationHttpReserve:20,
-        savesIncludingWorkerAndNative:36,lookups:16,sqlCasesAndObservations:38,independentCloseReserve:2,
+      budgetAllocation:{workerAndNativeBusiness:limits.textHTTP-8,reconciliationHttpReserve:8,
+        savesIncludingWorkerAndNative:limits.allSaveEntrances,lookups:limits.lookups,
+        sqlCasesAndObservations:limits.sqlObservation-2,independentCloseReserve:2,
         maximumOwnerSites:2,cloudUSD:0},
       fullTextHarnessSHA256:sha(readFileSync(new URL('./full-text.mjs',import.meta.url))),
       candidateSql:textCandidates.map(({path,sha256})=>({path,sha256}))}:{}),
@@ -598,7 +609,7 @@ try {
       return actor;
     }
     const result=await runFullText({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
-      journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
+      followUp,ensureBudget,journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
       resumeAfterProof:()=>{assert.ok(writesFrozen && !stopRequested);writesFrozen=false;}});
     witness.gRead=result.gRead;
     witness.gSave=result.gSave;

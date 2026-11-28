@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
-import {emptyTextContent,repeatableTextSections,resumeTextPath,textCommand,textCommandDigest,textSections} from '../../lib/editor/resume-text.ts';
+import {applyTextContent,emptyTextContent,repeatableTextSections,resumeTextPath,textCommand,textCommandDigest,textSections} from '../../lib/editor/resume-text.ts';
 import {introductionPath, workspaceScopeHeader} from '../../lib/editor/introduction-dto.ts';
 import {sectionTitleFields} from '../../lib/editor/site-text.ts';
+import {emptyDraft} from '../../lib/editor/draft.ts';
+import {skillCategory,skillPresetTitles} from '../../lib/editor/records.ts';
 
 export const s47Functions=[
   'site_api.read_resume_text(uuid,text)', 'site_api.save_resume_text(jsonb,text)',
@@ -45,8 +47,10 @@ export function sampleText(section){
       const en=(section==='awards'?{name:'Award '+position,year:'2028'}:{title:'Record '+position});
       if(section==='experience')Object.assign(zh,{period:'2028—2030',description:'双语项目经历'});
       if(section==='experience')Object.assign(en,{period:'2028–2030',description:'Bilingual work description'});
-      if(section==='skills')Object.assign(zh,{items:'数据, 写作'});
-      if(section==='skills')Object.assign(en,{items:'Data, Writing'});
+      if(section==='skills'){
+        Object.assign(zh,{title:skillPresetTitles.analytics.zh,items:'数据, 写作'});
+        Object.assign(en,{title:skillPresetTitles.analytics.en,items:'Data, Writing'});
+      }
       if(section==='projects')Object.assign(en,{href:'https://example.invalid/project/'+position,description:'Project details'});
       const extra=section==='education'?{category:'undergraduate'}:section==='projects'?
         {methods:pair([row(0,undefined,{value:'方法'})],[row(0,undefined,{value:'Method'})])}:{};
@@ -68,17 +72,18 @@ export function editRecords(section,content){
 export function countBrowserText(path,method,take) {
   if(path!==introductionPath && !path.startsWith(introductionPath+'/') &&
     !path.startsWith(resumeTextPath+'/'))return false;
-  take('textHTTP');
-  if(method==='POST'&&(path===introductionPath||path===resumeTextPath+'/save')){
-    take('allSaveEntrances');
-    take('workerSaves');
-  }
+  const save=method==='POST'&&(path===introductionPath||path===resumeTextPath+'/save');
+  take('textHTTP',...(save?['allSaveEntrances','workerSaves']:[]));
   return true;
 }
 
-async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,obs,freeze,resumeAfterProof,dispatch,witness,journal}){
+async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,obs,freeze,resumeAfterProof,dispatch,witness,journal,ensureBudget,followUp}){
   assert.ok(process.env.S47_PLAYWRIGHT_MODULE,'PLAYWRIGHT_NOT_CONFIGURED');
   const {chromium,firefox,webkit}=await import(pathToFileURL(process.env.S47_PLAYWRIGHT_MODULE).href);
+  // Includes a lost reply, a second tab, reload, receipt-only recovery, duplicate POST and logout/re-login.
+  const titlesToVerify=followUp?Object.keys(sectionTitleFields):['experience'];
+  ensureBudget({textHTTP:74+(titlesToVerify.length-1)*4,allSaveEntrances:3,lookups:3,
+    sqlObservation:4,passwordLogins:2,grants:2},'CHROME');
   const sameHost=await chromium.launch({channel:'chrome'});
   const context=await sameHost.newContext({ignoreHTTPSErrors:true});
   let browserActor;
@@ -185,14 +190,20 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
     await page.goto(origin+'/dashboard/editor#introduction');
     await value(openField(page,'introduction','en'),introValues.en);
     mark('Chrome real logout, password re-login and persisted bilingual Introduction');
-    await page.locator('.dashboard-sidebar a[href="#experience"]').click();
-    await page.waitForFunction(()=>document.querySelector('.editor-heading h1')?.textContent==='验收 experience');
-    assert.match(await page.locator('.dashboard-sidebar a[href="#experience"]').innerText(),/验收 experience/);
-    assert.match(await page.locator('.editor-preview').innerText(),/验收 experience/);
-    mark('Chrome real saved title in editor heading, navigation and preview');
+    for(const section of titlesToVerify){
+      const title=labels[sectionTitleFields[section]];
+      const link=page.locator('.dashboard-sidebar a[href="#'+section+'"]');
+      await link.click();
+      await page.waitForFunction(expected=>document.querySelector('.editor-heading h1')?.textContent===expected,title);
+      assert.ok((await link.innerText()).includes(title));
+      assert.ok((await page.locator('.dashboard-breadcrumb').innerText()).includes(title));
+      assert.ok((await page.locator('.editor-preview').innerText()).includes(title));
+    }
+    mark('Chrome real saved title in editor heading, breadcrumb, navigation and preview',{sections:titlesToVerify});
   } finally {await sameHost.close();}
 
   for(const [name,engine] of [['Firefox',firefox],['Playwright WebKit',webkit]]){
+    ensureBudget({textHTTP:18},'BROWSER_READ');
     const browser=await engine.launch();
     try{
       const other=await browser.newContext({ignoreHTTPSErrors:true});
@@ -218,7 +229,7 @@ async function textCommandDigestIntroduction(command){
 }
 
 export async function runFullText(ctx){
-  const {a,b,mf,origin,phase,mark,obs,rest,take,counts,witness,sql,journal,freeze,checkDenial,deniedRoles}=ctx;
+  const {a,b,mf,origin,phase,mark,obs,rest,take,counts,witness,sql,journal,freeze,checkDenial,deniedRoles,ensureBudget,followUp}=ctx;
   const send=async(actor,section,body)=>{
     const path=resumeTextPath+'/'+section;
     const method=body?'POST':'GET';
@@ -233,7 +244,8 @@ export async function runFullText(ctx){
     return {status:r.status,value:await r.json()};
   };
   const mk=(actor,section,expectedRevision,content)=>textCommand({siteId:actor.site,section,expectedRevision,content,requestId:randomUUID()});
-  async function save(command){
+  async function save(command,{allowConflict=false}={}){
+    ensureBudget({textHTTP:11,allSaveEntrances:2,lookups:1,sqlObservation:1},'SAVE_WITH_RECONCILIATION');
     const {content,...metadata}=command;
     const digest=await textCommandDigest(command);
     const pending={...metadata,digest,uid:a.uid,sid:a.sid};
@@ -252,6 +264,10 @@ export async function runFullText(ctx){
       }
       throw Error('UNEXPECTED_SAVE_REPLY_STOPPED');
     }
+    if(allowConflict&&reply.status===409&&reply.value.code==='REQUEST_CONFLICT'){
+      journal({...pending,outcome:'rejected'});
+      return;
+    }
     assert.equal(reply.status,200,reply.value.code);
     assert.deepEqual(reply.value,{state:'saved',requestId:command.requestId,digest,
       snapshot:{siteId:a.site,section:command.section,revision:command.expectedRevision+1,content}});
@@ -260,24 +276,45 @@ export async function runFullText(ctx){
   }
   phase('full-ordinary-reads-and-saves');
   assert.equal((await send(null,'profile')).status,401);
-  for(const actor of [a,b]){
-    for(const section of textSections){
-      assert.deepEqual(await send(actor,section),{status:200,value:{siteId:actor.site,section,revision:0,content:emptyTextContent(section)}});
-    }
-  }
+  const sections=followUp?['profile','site-text','experience','skills']:textSections;
+  const emptySections=['profile','site-text','experience'];
+  for(const section of emptySections)
+    assert.deepEqual(await send(b,section),{status:200,value:{siteId:b.site,section,revision:0,content:emptyTextContent(section)}});
   witness.gRead='LOCAL_PASS';
   const final=new Map();
   const history=new Map();
-  for(const section of textSections){
+  for(const section of sections){
     const initial=await save(mk(a,section,0,sampleText(section)));
     history.set(section,[initial.content]);
-    const repeated=repeatableTextSections.includes(section);
+    const repeated=!followUp&&repeatableTextSections.includes(section);
     const snapshot=repeated?await save(mk(a,section,1,editRecords(section,initial.content))):initial;
     if(repeated)history.get(section).push(snapshot.content);
     assert.deepEqual(await send(a,section),{status:200,value:snapshot});
     final.set(section,snapshot);
     mark('ordinary Worker read, save and canonical re-read',{section,revision:snapshot.revision,
       created:repeated?3:undefined,modified:repeated?1:undefined,deleted:repeated?1:undefined,reordered:repeated||undefined});
+  }
+  if(followUp){
+    ensureBudget({textHTTP:17,allSaveEntrances:4,lookups:2,sqlObservation:2},'CONCURRENT_CAS');
+    const profile=final.get('profile');
+    const commands=['Concurrent synthetic A','Concurrent synthetic B'].map(name=>{
+      const content=structuredClone(profile.content);
+      content.translations.en.name=name;
+      return mk(a,'profile',profile.revision,content);
+    });
+    const results=await Promise.allSettled(commands.map(command=>save(command,{allowConflict:true})));
+    const failure=results.find(result=>result.status==='rejected');
+    if(failure)throw failure.reason;
+    const winners=results.flatMap(result=>result.value?[result.value]:[]);
+    assert.equal(winners.length,1);
+    assert.equal(winners[0].revision,2);
+    assert.deepEqual(await send(a,'profile'),{status:200,value:winners[0]});
+    final.set('profile',winners[0]);
+    history.get('profile').push(winners[0].content);
+    mark('concurrent ordinary Worker commands from one basis commit one revision', {revision:2});
+    const skill=applyTextContent(emptyDraft,'skills',final.get('skills').content).skills[0];
+    assert.equal(skillCategory(skill),'analytics');
+    mark('native-backed Skills preset restored from its two persisted titles');
   }
   phase('full-native-durability-and-denials');
   const observe=()=>obs(`SELECT json_build_object(
@@ -291,13 +328,15 @@ export async function runFullText(ctx){
   const expected=observe();
   assert.equal(expected.foreign,0);
   assert.equal(expected.outbox,0);
-  assert.equal(expected.revisions.length,14);
+  const revisions=followUp?5:14;
+  assert.equal(expected.revisions.length,revisions);
   for(const rev of expected.revisions){
     assert.ok(rev.audit&&rev.receipt);
     assert.deepEqual(rev.content,history.get(rev.section)[rev.revision-1]);
   }
   mark('independent PostgreSQL lifecycle, revision, full content, actor and persisted receipts',
-    {revisions:14,matchedAuditFields:14,matchedReceipts:14,bobRevisions:0,outbox:0});
+    {revisions,matchedAuditFields:revisions,matchedReceipts:revisions,bobRevisions:0,outbox:0});
+  if(!followUp){
   for(const role of deniedRoles)
     checkDenial('supabase_admin',`SET SESSION AUTHORIZATION ${role}; SELECT site_api.read_resume_text('${a.site}','profile');`);
   mark('direct database roles rejected for private text read',{roles:deniedRoles,sqlstate:'42501'});
@@ -321,16 +360,22 @@ export async function runFullText(ctx){
   assert.deepEqual(observe(),expected);
   mark('native cross-site read/receipt and record ownership, stale CAS, forced rollback, invalid URL and unchanged database',
     {ownership:'42501',cas:'PT409',rollback:true});
+  }
   witness.gSave='LOCAL_CORE_PASS';
   phase('full-real-browser-and-original-receipt');
   await browserChecks(ctx);
   assert.deepEqual(observe(),expected);
   phase('full-revocation-and-expiry');
+  ensureBudget({textHTTP:9,allSaveEntrances:2,sqlObservation:1},'REVOCATION');
   sql(`UPDATE site_private.business_session_grants SET revoked_at=clock_timestamp(),reason='user_logout'
       WHERE id='${a.grant}' AND auth_user_id='${a.uid}' AND auth_session_id='${a.sid}' AND revoked_at IS NULL;
       UPDATE auth.sessions SET not_after=clock_timestamp()-interval '1 minute' WHERE id='${b.sid}' AND user_id='${b.uid}';`);
   assert.equal((await send(a,'profile')).status,403);
   assert.ok([401,403].includes((await send(b,'profile')).status));
+  if(followUp){
+    assert.equal((await send(a,'save',mk(a,'profile',1,final.get('profile').content))).status,403);
+    assert.ok([401,403].includes((await send(b,'save',mk(b,'profile',0,sampleText('profile')))).status));
+  }
   assert.deepEqual(observe(),expected);
   mark('native-backed read denied after grant revocation and expired Session; unchanged revisions',
     {sqlObservations:counts.sqlObservation});
