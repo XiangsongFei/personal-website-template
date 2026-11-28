@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { build } from "esbuild";
 import { withStagedLocalSupabase } from "./stage-local-supabase.mjs";
-import { candidateWorkerSha, migrations, combinations, verifiedResults, safeResults, waitBoundedChild, candidateStages, safeStageResult, candidateStep, observeCompatibilityStaging } from "./compatibility-contract.mjs";
+import { safeStagingDiagnostic, candidateWorkerSha, migrations, combinations, verifiedResults, safeResults, waitBoundedChild, candidateStages, safeStageResult, candidateStep, observeCompatibilityStaging } from "./compatibility-contract.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const admin = resolve(here, "../..");
@@ -129,7 +129,14 @@ async function supervise() {
   let manifest, current = "staging", cleaned = false, cleanupStatus = "unverified", clients = false;
   const seen = new Set(); let migrationCount = 0; const meta = new Set();
   childProcess.on("message", m => {
-    if (m?.kind === "compat-manifest" && typeof m.path === "string") manifest = m.path;
+    if (m?.kind === "compat-manifest" && typeof m.path === "string") {
+      manifest = m.path;
+      console.log("compat_staging_phase=manifest-delivery status=success manifest_received=true");
+    }
+    if (m?.kind === "staging-diagnostic") {
+      const d = safeStagingDiagnostic(m);
+      console.log(`compat_staging_phase=${d.phase} status=${d.status} resources=${d.resources} manifest=${d.manifest} manifest_received=${typeof manifest === "string"}`);
+    }
     if (m?.kind === "phase" && phases.includes(m.value)) { current = m.value; console.log(`compat_phase=${current}`); }
     if (m?.kind === "matrix" && combinations.includes(m.combination)) {
       if (seen.has(m.combination)) return;
