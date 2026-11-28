@@ -33,7 +33,7 @@ type IntroductionState = {scope: string} & (
     attempt?: SaveAttempt; pending?:PendingKey<'introduction'>; retryUnsent?: boolean});
 let introduction: IntroductionState | undefined;
 type TextPersistence = {phase:'loading'|'ready'|'saving'|'unknown'|'failure'|'conflict'|'denied'|'no-site'|'renewal'|'invalid'|'saved';
-  snapshot?:TextSnapshot; pending?:TextReceiptKey};
+  snapshot?:TextSnapshot; pending?:TextReceiptKey; submitted?:TextSnapshot['content']};
 let textDrafts: ReadonlyMap<TextSection,TextPersistence> = new Map();
 let operationSequence=0;
 
@@ -315,32 +315,39 @@ function withSavedText(draft: LocalDraft, states: ReadonlyMap<TextSection,TextPe
   return draft;
 }
 
+function textContentMatches(section: TextSection, draft: LocalDraft, content: TextSnapshot['content']) {
+  return JSON.stringify(textContent(section,draft))===JSON.stringify(content);
+}
+
 function useTextPersistence(scope: string | undefined, section: TextSection | undefined, initial: LocalDraft) {
   const read=()=>section&&scope===currentScope ? textDrafts.get(section) : undefined;
   const state=useSyncExternalStore(subscribe,read,()=>undefined);
   const savedStates=useSyncExternalStore(subscribe,()=>scope&&scope===currentScope?textDrafts:undefined,()=>undefined);
   const valid=(generation: number)=>scope===currentScope&&operationSequence===generation;
 
-  const apply = (section: TextSection, snapshot: TextSnapshot, pending?: TextReceiptKey) => {
+  const apply = (section: TextSection, snapshot: TextSnapshot, pending?: TextReceiptKey, submitted?: TextSnapshot['content']) => {
     const nextState={snapshot,phase:pending?'saved':'ready'} as const;
-    const previousEntry=entry;
-    if(previousEntry && previousEntry.scope===scope){
+    const previousEntry=entry?.scope===scope?entry:undefined;
+    if(scope && (previousEntry || submitted!==undefined)){
       const previous=textDrafts.get(section)?.snapshot;
-      // Loading a section cannot replace local edits made in other sections.
-      let draft=previousEntry.draft;
+      const lastIntroduction=introduction?.scope===scope&&introduction.state==='ready' ? introductionText(introduction.baseline) : initial.introduction;
+      const oldBaseline=withSavedText({...initial,introduction:lastIntroduction},textDrafts);
+      let draft=previousEntry?.draft??oldBaseline;
       try {
-        if(previous && JSON.stringify(textContent(section,draft))===JSON.stringify(previous.content) && !pending)
-          draft=applyTextContent(draft,section,snapshot.content);
-        else if(!previous && !moduleIsDirty(draft,section,initial))
+        // Compare the section's wire content, excluding titles saved in Site text.
+        // While a save is pending, the submitted values distinguish later edits
+        // from the changes being confirmed, even if the local draft was cleared.
+        const reference=submitted??previous?.content??textContent(section,oldBaseline);
+        if(textContentMatches(section,draft,reference))
           draft=applyTextContent(draft,section,snapshot.content);
       } catch { /* Preserve invalid in-progress input for correction. */ }
-      const baseline=withSavedText(initial,new Map(textDrafts).set(section,nextState));
+      const baseline=applyTextContent(oldBaseline,section,snapshot.content);
       const dirtyModules=modules.filter(owner=>moduleIsDirty(draft,owner,baseline));
-      const guideOverrides={...previousEntry.guideOverrides};
+      const guideOverrides={...previousEntry?.guideOverrides};
       if(!dirtyModules.includes(section)) delete guideOverrides[section];
       entry=dirtyModules.length||Object.keys(guideOverrides).length?
-        {...previousEntry,draft,dirtyModules,guideOverrides,reviews:{...previousEntry.reviews,
-          [section]:dirtyModules.includes(section)?previousEntry.reviews[section]:noReviews}}:undefined;
+        {scope,draft,dirtyModules,guideOverrides,reviews:{...previousEntry?.reviews,
+          [section]:dirtyModules.includes(section)?previousEntry?.reviews[section]:noReviews}}:undefined;
     }
     if(pending&&scope){
       clearMarker(scope,pending);
@@ -379,6 +386,7 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     const snapshot=previous.snapshot;
     let pending=previous.pending??readMarker(scope,section);
     const lookup=!!pending;
+    let submitted=previous.submitted;
     let payload: unknown=pending;
     if(!pending){
       const draft=entry?.scope===scope?entry.draft:withSavedText(initial,textDrafts);
@@ -395,10 +403,11 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
           return setTextState(section,{phase:existing?'unknown':'failure',snapshot,pending:existing});
         }
         payload=command;
+        submitted=command.content;
       } catch {if(valid(generation))setTextState(section,{phase:'invalid',snapshot});return;}
     }
     if(pending.siteId!==snapshot.siteId)return setTextState(section,{phase:'conflict',snapshot});
-    setTextState(section,{phase:'saving',snapshot,pending});
+    setTextState(section,{phase:'saving',snapshot,pending,submitted});
     const {code,value,beforeDispatch}=await requestText(lookup?'operation':'save',section,scope,payload);
     if(!valid(generation))return;
     if(code==='WORKSPACE_CHANGED')return reloadInvalidWorkspace();
@@ -406,18 +415,18 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     if(value?.state==='saved'&&value.requestId===pending.requestId&&value.digest===pending.digest&&
        next?.siteId===pending.siteId&&next.revision===pending.expectedRevision+1){
       // A recovered historical receipt must never replace newer content fetched after reload.
-      return apply(section,next.revision<snapshot.revision?snapshot:next,pending);
+      return apply(section,next.revision<snapshot.revision?snapshot:next,pending,submitted);
     }
     if(!lookup&&(['REQUEST_CONFLICT','INVALID_INPUT'].includes(code??'')||
         (code==='SESSION_REFRESH_REQUIRED'&&beforeDispatch))){
       clearMarker(scope,pending);
       return setTextState(section,{phase:code==='REQUEST_CONFLICT'?'conflict':code==='SESSION_REFRESH_REQUIRED'?'renewal':'invalid',snapshot});
     }
-    setTextState(section,{phase:code==='BUSINESS_DENIED'?'denied':code==='SESSION_REFRESH_REQUIRED'?'renewal':'unknown',snapshot,pending});
+    setTextState(section,{phase:code==='BUSINESS_DENIED'?'denied':code==='SESSION_REFRESH_REQUIRED'?'renewal':'unknown',snapshot,pending,submitted});
   }
   let dirty=false;
   if(section && state?.snapshot && entry?.scope===scope && entry) {
-    try {dirty=JSON.stringify(textContent(section,entry.draft))!==JSON.stringify(state.snapshot.content);}
+    try {dirty=!textContentMatches(section,entry.draft,state.snapshot.content);}
     catch {dirty=moduleIsDirty(entry.draft,section,initial);}
   }
   return {state,savedStates,save,refresh,dirty};
