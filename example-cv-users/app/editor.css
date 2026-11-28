@@ -237,6 +237,7 @@
   position:absolute; z-index:2; bottom:100%; inset-inline-start:0; width:max-content;
   max-width: min(14rem, 70vw); margin:0; padding: 8px 12px 8px 24px;
   background:var(--dashboard-bg); border:1px solid var(--dashboard-line); border-radius:4px;
+  overflow-wrap:anywhere;
 }
 .editor-action-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
 .editor-actions p { margin: 0; color: var(--dashboard-muted); font-size: var(--dashboard-font-caption); }

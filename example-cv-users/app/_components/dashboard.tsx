@@ -1,10 +1,11 @@
 'use client';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {WorkspaceLink} from './workspace-link';
-import {useWorkspaceDirtyModules} from './workspace-draft';
+import {useWorkspaceSnapshot} from './workspace-draft';
 import {useUiLocale} from './ui-locale';
 
-import {moduleFromHash, type EditorModule} from '../../lib/editor/draft';
+import {moduleFromHash, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
+import {customSectionTitle} from '../../lib/editor/site-text';
 import {selectEditorSection} from './editor-section-history';
 import {siteStatusTitle, type SiteViewModel} from '../../lib/site/model';
 
@@ -90,9 +91,10 @@ export function UnsavedDot() {
   return <span className="dashboard-dirty-dot" data-unsaved-dot title={label}><span className="dashboard-visually-hidden"> · {label}</span></span>;
 }
 
-function DashboardNavigation({onNavigate, section}: {onNavigate?: () => void; section: DashboardSection}) {
+function DashboardNavigation({onNavigate, section, draft, dirtyModules}: {
+  onNavigate?: () => void; section: DashboardSection; draft?: LocalDraft; dirtyModules: readonly EditorModule[];
+}) {
   const {locale} = useUiLocale();
-  const dirtyModules = useWorkspaceDirtyModules();
   const inEditor = section !== 'overview' && section !== 'website' && section !== 'account' && section !== 'password';
 
   return <>
@@ -100,6 +102,7 @@ function DashboardNavigation({onNavigate, section}: {onNavigate?: () => void; se
       <summary><DashboardIcon kind={group.id}/><span>{locale === 'zh' ? group.zh : group.en}</span><DashboardIcon kind="chevron"/></summary>
       <ul>{group.items.map(item => {
         const childActive = item.children?.some(child => child.id === section);
+        const custom = customSectionTitle(draft, item.id, locale);
         const unsaved = dirtyModules.some(module => module === item.id ||
           (item.id === 'contact' && (module === 'links' || module === 'site-text')));
         const sameEditor = inEditor && item.href?.startsWith('/dashboard/editor#');
@@ -111,7 +114,7 @@ function DashboardNavigation({onNavigate, section}: {onNavigate?: () => void; se
               if (target && selectEditorSection(target)) event.preventDefault();
             }
             onNavigate?.();
-          }}>{item[locale]}{unsaved && <UnsavedDot/>}</NavigationLink>
+          }}>{custom ? <span className="dashboard-custom-label" title={custom}>{custom}</span> : item[locale]}{unsaved && <UnsavedDot/>}</NavigationLink>
             : <span className="dashboard-nav-item dashboard-nav-disabled" aria-disabled="true">{item.id === 'ai' && <DashboardIcon kind="ai"/>}{item[locale]}</span>}
           {item.children && (item.id === section || childActive) && <ul className="dashboard-nav-children">
             {item.children.map(child => <li key={child.id}><WorkspaceLink className={`dashboard-nav-item${child.id === section ? ' dashboard-nav-current' : ''}`}
@@ -123,9 +126,15 @@ function DashboardNavigation({onNavigate, section}: {onNavigate?: () => void; se
   </>;
 }
 
-export function DashboardShell({children, section = 'overview'}: {children: ReactNode; section?: DashboardSection}) {
+export function DashboardShell({children, section = 'overview', editorDraft}: {
+  children: ReactNode; section?: DashboardSection; editorDraft?: LocalDraft;
+}) {
   const {locale, setLocale} = useUiLocale();
+  const workspace = useWorkspaceSnapshot();
+  const draft = editorDraft ?? workspace?.draft;
+  const dirtyModules = workspace?.dirtyModules ?? [];
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
+  const custom = customSectionTitle(draft, section, locale);
   const sectionLabel = section === 'password' ? text('修改密码', 'Change password')
     : navigation.flatMap(group => group.items).find(item => item.id === section)?.[locale];
   const [open, setOpen] = useState(false);
@@ -160,7 +169,7 @@ export function DashboardShell({children, section = 'overview'}: {children: Reac
     <a className="dashboard-skip" href="#dashboard-main">{text('跳至主要内容', 'Skip to main content')}</a>
     <aside className="dashboard-sidebar">
       <WorkspaceLink className="dashboard-brand" href="/dashboard"><strong>EXAMPLE_CV</strong><span>{text('个人工作台', 'Personal workspace')}</span></WorkspaceLink>
-      <nav aria-label={text('工作台导航', 'Workspace navigation')}><DashboardNavigation section={section}/></nav>
+      <nav aria-label={text('工作台导航', 'Workspace navigation')}><DashboardNavigation section={section} draft={draft} dirtyModules={dirtyModules}/></nav>
     </aside>
     <div className="dashboard-body">
       <header className="dashboard-header">
@@ -170,7 +179,7 @@ export function DashboardShell({children, section = 'overview'}: {children: Reac
             setOpen(!open);
           }}><DashboardIcon kind={open ? 'close' : 'menu'}/></button>
           <WorkspaceLink className="dashboard-mobile-brand" href="/dashboard">EXAMPLE_CV</WorkspaceLink>
-          <span className="dashboard-breadcrumb"><span className="dashboard-breadcrumb-prefix">{text('工作台', 'Workspace')}<span aria-hidden="true"> / </span></span>{section === 'password' && <><WorkspaceLink href="/account">{text('账户与安全', 'Account & security')}</WorkspaceLink><span aria-hidden="true"> / </span></>}{sectionLabel}</span>
+          <span className="dashboard-breadcrumb"><span className="dashboard-breadcrumb-prefix">{text('工作台', 'Workspace')}<span aria-hidden="true"> / </span></span>{section === 'password' && <><WorkspaceLink href="/account">{text('账户与安全', 'Account & security')}</WorkspaceLink><span aria-hidden="true"> / </span></>}{custom ? <span className="dashboard-custom-label" title={custom}>{custom}</span> : sectionLabel}</span>
         </div>
         <div className="dashboard-header-actions">
           <div className="ui-locale-switch" role="group" aria-label={text('界面语言', 'Interface language')}>
@@ -180,7 +189,7 @@ export function DashboardShell({children, section = 'overview'}: {children: Reac
           <WorkspaceLink className="dashboard-account-link dashboard-action dashboard-action-icon" href="/account" aria-label={text('账户与安全', 'Account & security')}><DashboardIcon kind="account"/><span>{text('账户', 'Account')}</span></WorkspaceLink>
         </div>
       </header>
-      <nav className="dashboard-mobile-navigation" id="dashboard-mobile-navigation" hidden={!open} aria-label={text('移动端工作台导航', 'Mobile workspace navigation')}><DashboardNavigation section={section} onNavigate={closeNavigation}/></nav>
+      <nav className="dashboard-mobile-navigation" id="dashboard-mobile-navigation" hidden={!open} aria-label={text('移动端工作台导航', 'Mobile workspace navigation')}><DashboardNavigation section={section} draft={draft} dirtyModules={dirtyModules} onNavigate={closeNavigation}/></nav>
       <main className="dashboard-main" id="dashboard-main" ref={main} tabIndex={-1}>
         {children}
       </main>

@@ -8,7 +8,7 @@ import type {ContentLocale, EditorModule} from '../../lib/editor/draft';
 import {mailPreviewDestination, platformPreviewDestination, previewDestination, type PreviewDestination} from '../../lib/editor/preview-links';
 import type {SitePreview} from '../../lib/editor/preview-model';
 import {publicLinksDisplay} from '../../lib/editor/site-links';
-import {editableNavigationSections, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
+import {customSectionTitle, editableNavigationSections, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
 
 import {PreviewIcon} from './preview-icons';
 import {PreviewContactNetwork} from './preview-contact-network';
@@ -25,8 +25,15 @@ function previewBounds(owner: HTMLElement, nav: HTMLElement | null) {
     bottom: frame.bottom};
 }
 
-// CSS zoom can make a scroller's units differ from the rendered coordinates.
-// Measure the response of this scroller, including when it reaches its end.
+function syncCanvasFrames(owner: HTMLElement) {
+  for (const frame of owner.querySelectorAll<HTMLElement>('.public-canvas-frame')) {
+    const canvas = frame.firstElementChild;
+    if (!owner.hasAttribute('data-site-scaled') || !canvas) frame.style.removeProperty('block-size');
+    else frame.style.blockSize = canvas.getBoundingClientRect().height + 'px';
+  }
+}
+
+// Measure the scroller's response, including when it reaches its end.
 function alignPreview(owner: HTMLElement, distance: () => number) {
   let scale = 1;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -175,10 +182,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const value = section === 'profile' ? profile.navAboutLabel : siteNavigationLabel(draft['site-text'], locale, section);
     return value?.trim() ? value : labels(section);
   };
-  const sectionTitle = (section: keyof typeof sectionTitleFields) => {
-    const value = siteText?.[sectionTitleFields[section]];
-    return value?.trim() ? value : labels(section);
-  };
+  const sectionTitle = (section: PreviewSection) => customSectionTitle(draft, section, locale) ?? labels(section);
   const education = draft.education.flatMap(row => {
     const values = educationDisplay(row, locale);
     return Object.values(values).some(value => value.trim()) ? [{...values, clientId: row.clientId, summerSchool: educationCategory(row) === 'summerSchool', custom: educationCategory(row) === 'custom'}] : [];
@@ -213,6 +217,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     cancelAnimationFrame(correction.current);
     const update = () => {
       if (!target.isConnected || !owner.clientHeight) return;
+      syncCanvasFrames(owner);
       alignPreview(owner, () => target.getBoundingClientRect().top - previewBounds(owner, navigation.current).top + offset);
     };
     update();
@@ -238,26 +243,32 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     if (!owner) return;
     let measuredWidth = 0;
     let measuredHeight = 0;
+    let navHeight = 0;
     const measure = () => {
       const style = getComputedStyle(owner);
       const width = owner.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd);
       const height = owner.clientHeight;
-      if (width === measuredWidth && height === measuredHeight) return;
+      const resized = width !== measuredWidth || height !== measuredHeight;
       if (width > 0 && width !== measuredWidth) {
         const split = style.getPropertyValue('--editor-split').trim() === '1';
         const scaled = split && width < splitCanvasWidth;
         owner.dataset.siteLayout = !split && width <= phoneWidth ? 'mobile' : 'desktop';
+        owner.toggleAttribute('data-site-scaled', scaled);
         owner.style.setProperty('--public-canvas-width', scaled ? splitCanvasWidth + 'px' : 'min(100%, 1100px)');
         owner.style.setProperty('--public-canvas-scale', scaled ? String(width / splitCanvasWidth) : '1');
         fitTimelineDates(owner);
       }
       measuredWidth = width;
       measuredHeight = height;
-      if (followSection.current) position(anchoredSection.current);
+      syncCanvasFrames(owner);
+      const currentNavHeight = navigation.current?.getBoundingClientRect().height ?? 0;
+      if (followSection.current && (resized || currentNavHeight !== navHeight)) position(anchoredSection.current);
+      navHeight = currentNavHeight;
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(owner);
+    for (const canvas of owner.querySelectorAll('.public-canvas')) observer.observe(canvas);
     return () => {
       observer.disconnect();
       cancelAnimationFrame(correction.current);
@@ -293,6 +304,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
   function switchLanguage() {
     const owner = viewport.current;
     if (!owner) return;
+    syncCanvasFrames(owner);
     const {top} = previewBounds(owner, navigation.current);
     const sections = Array.from(owner.querySelectorAll<HTMLElement>('[data-site-section]'));
     const profileSection = sections[0];
@@ -335,6 +347,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     if (!request) return;
     request.target = focused;
     if (request.handled || !owner.clientHeight || (focused.locale !== 'shared' && focused.locale !== locale)) return;
+    syncCanvasFrames(owner);
     const matches = Array.from(previewFieldNodes(owner, focused));
     if (!contactExpanded && (matches.some(node => node.closest('.public-contact-extension[hidden]')) ||
       (focused.module === 'contact' && focused.item))) {
@@ -433,7 +446,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) preserveManualScroll();
     }}
     role="region" aria-label={text('个人网站预览内容', 'Personal website preview content')} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
-    <nav className="site-preview-nav" ref={navigation} aria-label={text('预览网站导航', 'Preview website navigation')}>
+    <nav className="site-preview-nav public-canvas-frame" ref={navigation} aria-label={text('预览网站导航', 'Preview website navigation')}>
       <div className="public-nav public-canvas">
         {navButton('profile', 'public-nav-home')}
         <div className="public-nav-links">{editableNavigationSections.map(key => navButton(key))}</div>
@@ -441,7 +454,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
           onClick={switchLanguage}>{locale === 'zh' ? 'EN' : '中文'}</button>
       </div>
     </nav>
-    <article className="site-preview-page public-canvas">
+    <div className="public-canvas-frame"><article className="site-preview-page public-canvas">
       <header className="public-hero" data-site-section="profile" aria-labelledby="site-preview-name">
         <div className="public-hero-copy">
           <h1 id="site-preview-name"><PreviewText field="name" example={example('profile', 'name')}>{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</PreviewText></h1>
@@ -544,7 +557,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
           </article>)}
       </section>
       <footer className="public-contact" data-site-section="contact">
-        <p className="public-contact-label" data-preview-value="contactLabel" data-preview-example={example('contact', 'contactLabel')}><PreviewText>{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</PreviewText></p>
+        <p className="public-contact-label" data-preview-value="contactLabel" data-preview-example={example('contact', 'contactLabel')}><PreviewText>{sectionTitle('contact')}</PreviewText></p>
         {contact.availability.trim() && <h2 data-preview-value="availability" data-preview-example={example('contact', 'availability')}><PreviewText>{contact.availability}</PreviewText></h2>}
         {(email || linkedIn) && <dl className="public-contact-links">
           {email && <div><dt data-preview-value="emailLabel" data-preview-example={example('links', 'emailLabel', 'shared')}><PreviewText>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</PreviewText></dt>
@@ -595,7 +608,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
             <PreviewContactNetwork/>
           </div>}
       </footer>
-    </article>
+    </article></div>
     <div className="public-preview-scroll-space" aria-hidden="true"/>
   </div>;
 }

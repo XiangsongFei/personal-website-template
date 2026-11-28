@@ -301,22 +301,57 @@ async page => {
     const headings = {
       education: 'educationLabel', experience: 'experienceLabel', projects: 'projectHeading', skills: 'skillsLabel', awards: 'honorsLabel',
     };
+    const pageTitle = editor.locator('.editor-heading h1');
+    const breadcrumb = page.locator('.dashboard-breadcrumb');
+    const pending = editor.locator('.editor-change-summary p');
+    const menu = module => sidebar.locator('a[href="#' + module + '"]');
+    const interfaceLanguage = language => page.locator('.ui-locale-switch').getByRole('button', {name: language, exact: true}).click();
+    async function checkLabels(module, value) {
+      check(await pageTitle.textContent() === value && (await breadcrumb.textContent()).trimEnd().endsWith(value) &&
+        (await menu(module).textContent()).startsWith(value), module + ' sidebar, heading and breadcrumb are out of sync');
+    }
     const aligned = (section, key) => page.waitForFunction(({section, key}) => {
       const nav = document.querySelector('.site-preview-nav').getBoundingClientRect();
       const frame = document.querySelector('.site-preview-viewport').getBoundingClientRect();
       const target = document.querySelector('[data-site-section="' + section + '"] [data-preview-value="' + key + '"]')?.getBoundingClientRect();
-      return target && target.top >= nav.bottom + 4 && target.bottom <= frame.bottom + 1;
+      return target && target.top >= nav.bottom + 4 && target.bottom <= frame.bottom + 1 &&
+        target.left >= frame.left - 1 && target.right <= frame.right + 1;
     }, {section, key}, {timeout: 3000});
     for (const [module, heading] of Object.entries(headings)) {
       await section(module);
       const title = pane.locator('h2[data-preview-value="' + heading + '"]');
+      const siteNav = pane.locator('[data-preview-nav="' + module + '"]');
+      const publicNavLabel = await siteNav.count() ? await siteNav.textContent() : undefined;
       check(await field(heading, 'zh').getAttribute('placeholder') === await title.textContent(), module + ' title is missing guidance');
       await field(heading, 'zh').fill('测试栏目 ' + module);
+      await checkLabels(module, '测试栏目 ' + module);
       check(await title.textContent() === '测试栏目 ' + module && await title.locator('[data-preview-edit-feedback]').count() === 1,
         module + ' custom title or highlight did not update');
       check(await editor.getByRole('status').filter({hasText: '请检查英文'}).isVisible(), module + ' is missing the English review reminder');
       await aligned(module, heading);
+      if (publicNavLabel !== undefined) check(await siteNav.textContent() === publicNavLabel, 'section title changed independent public navigation copy');
+      if (module === 'education') {
+        check((await pending.textContent()).includes('测试栏目 education'), 'unsaved status uses the old title');
+        await interfaceLanguage('English');
+        await checkLabels(module, 'Education');
+        check(await title.textContent() === '测试栏目 education', 'interface language changed the preview language');
+        await field(heading, 'en').fill('UnbrokenEducationName'.repeat(8));
+        const label = menu(module).locator('.dashboard-custom-label');
+        check(await label.evaluate(node => {
+          const link = node.parentElement.getBoundingClientRect();
+          const dot = node.nextElementSibling.getBoundingClientRect();
+          return node.title === node.textContent && node.scrollWidth > node.clientWidth &&
+            getComputedStyle(node).textOverflow === 'ellipsis' && dot.width >= 5 && dot.right <= link.right;
+        }), 'the long title clipped the dirty dot or lost access to its full text');
+        await field(heading, 'en').fill('');
+        await checkLabels(module, 'Education');
+        await interfaceLanguage('中文');
+        await checkLabels(module, '测试栏目 education');
+      }
       await field(heading, 'en').fill('Custom heading: ' + module);
+      await interfaceLanguage('English');
+      await checkLabels(module, 'Custom heading: ' + module);
+      await interfaceLanguage('中文');
       await language();
       check(await title.textContent() === 'Custom heading: ' + module, module + ' English heading is out of sync');
       await language();
@@ -352,12 +387,20 @@ async page => {
     await undo();
     check(await field('educationLabel', 'zh').inputValue() === '' && await education.locator('[data-preview-example-record]').count() > 0,
       'module undo failed to restore both heading and records');
+    await checkLabels('education', '教育经历');
     await page.setViewportSize({width: 1440, height: 900});
     await section('site-text', '#contact');
     check(await field('updatedAtLabel', 'zh').inputValue() === '更新于' &&
       await field('projectHeading', 'zh').inputValue() === '测试栏目 projects', 'module undo reset another heading or website copy');
     await undo();
     check(await unchanged(), 'centralized text undo left phantom dirty sections');
+    await section('contact');
+    await field('contactLabel', 'zh').fill('联系信息');
+    await checkLabels('contact', '联系信息');
+    check((await pending.textContent()).includes('联系信息') &&
+      await pane.locator('.public-contact-label').textContent() === '联系信息', 'contact title did not update');
+    await undo();
+    await checkLabels('contact', '联系与链接');
   }
   return {browser: prefix, clickedDestinations: urls, platformHomepages: platforms, mailtoIntentChecked: true};
 }

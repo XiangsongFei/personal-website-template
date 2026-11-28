@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {cancelModule, emptyDraft, moduleIsDirty} from '../lib/editor/draft.ts';
 import {modifiedEditorFields} from '../lib/editor/bilingual-review.ts';
-import {sectionTitleFields} from '../lib/editor/site-text.ts';
+import {customSectionTitle, sectionTitleFields} from '../lib/editor/site-text.ts';
 import {fillingGuide, guidePlaceholder} from '../lib/editor/filling-guide.ts';
 import {buildPreview, guideFieldCleared, updateGuideOverrides} from '../lib/editor/preview-model.ts';
 import {changeEducationCategory, newEducation, newExperience, newProject, newSkill, newAward} from '../lib/editor/records.ts';
@@ -163,4 +163,18 @@ test('shared section headings make their section dirty and undo only restores it
   const siteUndo = cancelModule(draft, 'site-text', baseline);
   assert.equal(siteUndo['site-text'], baseline['site-text']);
   assert.equal(siteUndo.education, draft.education);
+});
+
+test('custom headings use the requested language and only their own canonical draft field', () => {
+  const draft = {...emptyDraft, 'site-text': {
+    navigation: {zh: {projects: '导航名称'}},
+    translations: {zh: {educationLabel: '  教育背景  '}, en: {educationLabel: '   '}},
+  }, contact: {...emptyDraft.contact, translations: {en: {contactLabel: 'Contact details'}}}};
+  assert.equal(customSectionTitle(draft, 'education', 'zh'), '教育背景');
+  assert.equal(customSectionTitle(draft, 'education', 'en'), undefined);
+  assert.equal(customSectionTitle(draft, 'projects', 'zh'), undefined);
+  assert.equal(customSectionTitle(draft, 'contact', 'en'), 'Contact details');
+  assert.equal(customSectionTitle(draft, 'contact', 'zh'), undefined);
+  assert.equal(customSectionTitle(draft, 'overview', 'zh'), undefined);
+  assert.equal(customSectionTitle(emptyDraft, 'education', 'zh'), undefined);
 });

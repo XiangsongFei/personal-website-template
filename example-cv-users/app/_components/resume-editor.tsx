@@ -25,7 +25,7 @@ import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
 import {mountEditorSections, selectEditorSection} from './editor-section-history';
 import {buildPreview} from '../../lib/editor/preview-model';
-import {sectionTitleField, type SiteTextDraft} from '../../lib/editor/site-text';
+import {customSectionTitle, sectionTitleField, type SiteTextDraft} from '../../lib/editor/site-text';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
 
@@ -38,9 +38,10 @@ function EditorModeSwitcher<Choice extends string>({options, selected, select, l
   </div>;
 }
 
-function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, canUndo, cancel, setFocused}: {
+function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, hasCustomNames, canUndo, cancel, setFocused}: {
   children: ReactNode; subNavigation?: ReactNode; mode: WorkspaceMode; module: EditorModule; dirtyModules: readonly EditorModule[];
-  titles: Record<EditorModule, string>; canUndo: boolean; cancel: () => void; setFocused: (field?: EditFeedback) => void;
+  titles: Record<EditorModule, string>; hasCustomNames: boolean;
+  canUndo: boolean; cancel: () => void; setFocused: (field?: EditFeedback) => void;
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
@@ -49,6 +50,7 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   const separator = locale === 'zh' ? '、' : ', ';
   const concise = names.slice(0, 3).join(separator);
   const remaining = names.length > 3 ? text('，共 ' + names.length + ' 个栏目', ' (' + names.length + ' sections)') : '';
+  const summary = names.length ? text('未保存：', 'Unsaved: ') + concise + remaining : text('暂无修改', 'No changes');
   const revealField = (event: {target: EventTarget}) => {
     if (!(event.target instanceof HTMLElement)) return;
     const {editField: field, editLocale: locale, editItem: item} = event.target.dataset;
@@ -60,10 +62,11 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   return <section className="editor-pane" data-mode={mode} aria-label={text('内容编辑', 'Edit content')}>
     <DraftDeletionScope key={module} actions={<>
       <div className="editor-change-summary">
-        <p role="status" data-dirty={!!names.length}>{names.length ? text('未保存：', 'Unsaved: ') + concise + remaining : text('暂无修改', 'No changes')}</p>
+        <p role="status" data-dirty={!!names.length} className={hasCustomNames ? 'dashboard-custom-label' : undefined}
+          title={hasCustomNames ? names.join(separator) : undefined}>{summary}</p>
         {remaining && <details className="editor-change-details" key={module}>
           <summary>{text('查看全部', 'Show all')}</summary>
-          <ul>{names.map(name => <li key={name}>{name}</li>)}</ul>
+          <ul>{dirtyModules.map(key => <li key={key}>{titles[key]}</li>)}</ul>
         </details>}
       </div>
       <div className="editor-action-buttons">
@@ -97,15 +100,17 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
   const updateSiteText = (siteText: SiteTextDraft) => setDraft(current => ({...current, 'site-text': siteText}));
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
   const activeSection = contactArea ? 'contact' : module;
+  const custom = customSectionTitle(draft, activeSection, locale);
+  const title = (module: EditorModule, zh: string, en: string) => customSectionTitle(draft, module, locale) ?? text(zh, en);
   const titles: Record<EditorModule, string> = {
     profile: text('个人资料', 'Profile'),
     introduction: text('个人介绍', 'Introduction'),
-    education: text('教育经历', 'Education'),
-    experience: text('工作经历', 'Experience'),
-    projects: text('项目经历', 'Projects'),
-    skills: text('技能', 'Skills'),
-    awards: text('荣誉奖项', 'Awards'),
-    contact: text('联系栏', 'Contact'),
+    education: title('education', '教育经历', 'Education'),
+    experience: title('experience', '工作经历', 'Experience'),
+    projects: title('projects', '项目经历', 'Projects'),
+    skills: title('skills', '技能', 'Skills'),
+    awards: title('awards', '荣誉奖项', 'Awards'),
+    contact: title('contact', '联系栏', 'Contact'),
     links: text('公开链接', 'Public links'),
     'site-text': text('网站文案', 'Website copy'),
   };
@@ -121,10 +126,10 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
     return () => observer.disconnect();
   }, []);
 
-  return <DashboardShell section={activeSection}>
+  return <DashboardShell section={activeSection} editorDraft={draft}>
     <div className="resume-editor" ref={workspace}>
       <header className="editor-heading">
-        <h1>{contactArea ? text('联系与链接', 'Contact & links') : titles[module]}</h1>
+        <h1 className={custom ? 'dashboard-custom-label' : undefined} title={custom}>{custom ?? (contactArea ? text('联系与链接', 'Contact & links') : titles[module])}</h1>
         <div className="editor-view-switch">
           <EditorModeSwitcher options={[[ 'edit', text('编辑', 'Edit') ], [ 'preview', text('预览', 'Preview') ]]}
             selected={choice} select={value => {setFocused(undefined);setMode(value === 'preview' ? 'preview' : 'edit');}}
@@ -134,6 +139,7 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
       <div className="editor-columns" data-mode={mode}>
         <FieldFeedbackContext.Provider value={fields}>
           <EditorPanel mode={mode} module={module} dirtyModules={dirtyModules} titles={titles} setFocused={setFocused}
+            hasCustomNames={dirtyModules.some(key => customSectionTitle(draft, key, locale))}
             canUndo={dirtyModules.includes(module) || !!guideOverrides[module]} cancel={undo}
             subNavigation={contactArea && <div className="editor-contact-areas">
               <EditorModeSwitcher options={[

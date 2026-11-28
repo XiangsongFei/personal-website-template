@@ -1,4 +1,4 @@
-import type {ContentLocale} from './draft';
+import type {ContentLocale, LocalDraft} from './draft';
 import type {DraftTranslations} from './records';
 
 export const previewSections = {
@@ -27,6 +27,13 @@ export const sectionTitleFields = {
 
 export function sectionTitleField(module: string) {
   return Object.hasOwn(sectionTitleFields, module) ? sectionTitleFields[module as keyof typeof sectionTitleFields] : undefined;
+}
+
+export function customSectionTitle(draft: LocalDraft | undefined, module: string, locale: ContentLocale) {
+  const field = sectionTitleField(module);
+  const value = module === 'contact' ? draft?.contact.translations[locale]?.contactLabel
+    : field ? draft?.['site-text'].translations[locale]?.[field] : undefined;
+  return value?.trim() || undefined;
 }
 
 type SiteText = Record<typeof sectionTitleFields[keyof typeof sectionTitleFields] | 'kaggleLabel' | 'portfolioLabel' | 'updatedAtLabel', string>;
