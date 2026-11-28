@@ -158,7 +158,7 @@ const loadIntroduction = async (scope: string, attempt?: SaveAttempt, reconcile 
   finally { window.clearTimeout(deadline); }
 };
 
-function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: Introduction, saved: Introduction, submitted: LocalDraft['introduction']) {
+function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: Introduction, saved: Introduction, submitted: LocalDraft['introduction'], recoveryEnabled: boolean) {
   initial=withSavedText(initial,textDrafts);
   const confirmed = introductionText(saved);
   const previousEntry = entry?.scope === scope ? entry : undefined;
@@ -177,7 +177,8 @@ function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: I
   entry = dirtyModules.length || Object.keys(overrides).length ? {
     scope, draft: next, dirtyModules, reviews: {...reviews, introduction: introductionReviews}, guideOverrides: overrides,
   } : undefined;
-  setIntroduction({scope, state: 'ready', baseline: saved, outcome: 'saved'});
+  const pending=recoveryEnabled?readMarker(scope,'introduction'):undefined;
+  setIntroduction({scope,state:'ready',baseline:saved,outcome:pending?'unknown':'saved',pending});
 }
 
 function useIntroduction(scope: string | undefined, enabled: boolean, initial: LocalDraft, recoveryEnabled: boolean) {
@@ -224,7 +225,7 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
          saved?.siteId===recovered.siteId&&[recovered.expectedRevision,recovered.expectedRevision+1].includes(saved.revision)){
         clearMarker(scope,recovered);
         return acceptSavedIntroduction(scope,initial,previous.baseline,
-          saved.revision<previous.baseline.revision?previous.baseline:saved,baseline);
+          saved.revision<previous.baseline.revision?previous.baseline:saved,baseline,recoveryEnabled);
       }
       return setIntroduction({...previous,pending:recovered,outcome:code==='BUSINESS_DENIED'?'denied':
         code==='SESSION_REFRESH_REQUIRED'?'session-expiring':'unknown'});
@@ -254,7 +255,7 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
     if (code === 'IDENTITY_REQUIRED') return reloadInvalidWorkspace();
     if (saved) {
       if(pending)clearMarker(scope,pending);
-      return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt.submitted);
+      return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt.submitted, recoveryEnabled);
     }
     const outcome = code === 'REQUEST_CONFLICT' ? 'conflict' : code === 'DRAFT_ADVANCED' ? 'advanced' :
       code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' :
@@ -340,7 +341,11 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
         {...previousEntry,draft,dirtyModules,guideOverrides,reviews:{...previousEntry.reviews,
           [section]:dirtyModules.includes(section)?previousEntry.reviews[section]:noReviews}}:undefined;
     }
-    if(pending && scope)clearMarker(scope,pending);
+    if(pending&&scope){
+      clearMarker(scope,pending);
+      const remaining=readMarker(scope,section);
+      if(remaining?.siteId===snapshot.siteId)return setTextState(section,{phase:'unknown',snapshot,pending:remaining});
+    }
     setTextState(section,nextState);
   };
 

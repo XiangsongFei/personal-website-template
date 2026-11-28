@@ -100,3 +100,14 @@ test('repeatable sections preserve ordered IDs, selected education category and 
   misplaced.entries[0].position=1;
   assert.throws(()=>validateTextContent('experience',misplaced),/INVALID_RESUME_TEXT/);
 });
+
+test('clearing one receipt never removes another tab’s pending request',()=>{
+  const local=storage();
+  const a={siteId:uuid(),section:'links',expectedRevision:2,requestId:uuid(),digest:'a'.repeat(64)};
+  const b={...a,requestId:uuid(),digest:'b'.repeat(64)};
+  assert.ok(recordPendingText(local,scope,a));
+  // Two tabs can both pass the initial check. Simulate the second tab journaling after it.
+  local.setItem('ecv:pending-text:v1:'+scope+':links:'+b.requestId,JSON.stringify(b));
+  removePendingText(local,scope,a);
+  assert.deepEqual(readPendingText(local,scope,'links'),b);
+});
