@@ -34,6 +34,7 @@ export default {
         // A later decode or dot-segment normalization must not hand a
         // different route to the static binding or the app router.
         const namespace = pagePath.toLowerCase().replace(/;[^/]*/g, '').replace(/\/{2,}/g, '/');
+        // eslint-disable-next-line no-control-regex -- Decoded route paths explicitly reject ASCII control characters.
         if (/%[\da-f]{2}/i.test(pagePath) || /[\u0000-\u001f\u007f]/.test(pagePath) ||
             /(?:^|\/)\.{1,2}(?:\/|$)/.test(namespace) ||
             [...reservedFilePaths, ...assetAliases].some(prefix => namespace === prefix || namespace.startsWith(prefix + '/')))

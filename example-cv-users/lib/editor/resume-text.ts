@@ -30,7 +30,7 @@ function keys(source: Shape, allowed: readonly string[]) {
   if (Object.keys(source).some(key => !allowed.includes(key))) invalid();
 }
 const string = (max: number, format?: (value: string) => unknown): Validator => value => {
-  if (typeof value !== 'string' || value.length > max || /[\u0000\uD800-\uDFFF]/u.test(value) ||
+  if (typeof value !== 'string' || value.length > max || value.includes('\0') || /[\uD800-\uDFFF]/u.test(value) ||
       (value !== '' && format && !format(value))) return invalid();
   return value;
 };

@@ -360,7 +360,7 @@ try {
   authChild=start(authBin,['serve'],authEnv);
   for(let i=0;i<50&&!jwks;i++){
     assert.equal(authChild.exitCode,null);
-    try {const r=await authWire('/.well-known/jwks.json');if(r.ok)jwks=await r.json();} catch {}
+    try {const r=await authWire('/.well-known/jwks.json');if(r.ok)jwks=await r.json();} catch { /* The listener may still be starting. */ }
     if(!jwks)await wait(70);
   }
   const pub=pair.publicKey.export({format:'jwk'});
@@ -645,7 +645,7 @@ try {
           ALTER ROLE ${primary.reg} NOLOGIN PASSWORD NULL;
           COMMIT;`);
       }
-    } catch(e) {cleanupFailed=true;witness.closeError='AUTHORITY_CLOSE_FAILED';}
+    } catch {cleanupFailed=true;witness.closeError='AUTHORITY_CLOSE_FAILED';}
     try {
       await mf?.dispose();
       await stop(restChild);
@@ -683,9 +683,9 @@ try {
       }
     } catch(e){cleanupFailed=true;witness.closeError??='INDEPENDENT_CLOSE_WITNESS_FAILED';
       witness.closeDiagnostic=typeof e?.stderr==='string'?e.stderr.split('\n').find(s=>s.includes('ERROR:'))?.slice(0,240):undefined;}
-    try {pg('pg_ctl',['-D',db,'-m','fast','-w','stop']); started=false;} catch(e) {cleanupFailed=true;witness.pgStopError=true;}
+    try {pg('pg_ctl',['-D',db,'-m','fast','-w','stop']); started=false;} catch {cleanupFailed=true;witness.pgStopError=true;}
   }
-  try {await mf?.dispose();await stop(restChild);await stop(authChild);} catch(e) {cleanupFailed=true;witness.childStopError=true;}
+  try {await mf?.dispose();await stop(restChild);await stop(authChild);} catch {cleanupFailed=true;witness.childStopError=true;}
   if(!started){
     const real=realpathSync(root);
     assert.ok(/^\/private\/tmp\/s47-[A-Za-z0-9]{6}$/.test(real) && lstatSync(real).uid===process.getuid());
@@ -697,7 +697,7 @@ try {
     postgrestSocketRemoved:!existsSync(restSock),authPortClosed:!portStillBound(authPort),workerPortClosed:!portStillBound(appPort),
     authExited:!authChild||authChild.exitCode!==null||authChild.signalCode!==null,
     postgrestExited:!restChild||restChild.exitCode!==null||restChild.signalCode!==null,dockerCommands:0,hostedRequests:0};
-  cleanupFailed ||= Object.entries(witness.cleanup).some(([k,v])=>typeof v==='boolean'&&!v);
+  cleanupFailed ||= Object.values(witness.cleanup).some(v=>typeof v==='boolean'&&!v);
   witness.nativeRpcCounts=nativeCounts;
   witness.outcome=cleanupFailed?'CLEANUP_UNCONFIRMED':failed?'STOPPED_AND_CLEANED':'LOCAL_PASS_CLEANED';
   report();
