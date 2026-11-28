@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {applyTextContent,emptyTextContent,repeatableTextSections,resumeTextPath,textCommand,textCommandDigest,textSections} from '../../lib/editor/resume-text.ts';
-import {introductionPath, workspaceScopeHeader} from '../../lib/editor/introduction-dto.ts';
+import {introductionPath,introductionText,workspaceScopeHeader} from '../../lib/editor/introduction-dto.ts';
 import {sectionTitleFields} from '../../lib/editor/site-text.ts';
 import {emptyDraft} from '../../lib/editor/draft.ts';
 import {skillCategory,skillPresetTitles} from '../../lib/editor/records.ts';
@@ -87,7 +87,7 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
   ensureBudget({textHTTP:74+(titlesToVerify.length-1)*4+secondaryBrowsers.length*secondaryReadHttp+revocationHttp,
     allSaveEntrances:3+(followUp?2:0),lookups:3,sqlObservation:6,passwordLogins:2,grants:2},
   'BROWSER_AND_REVOCATION');
-  const sameHost=await chromium.launch({channel:'chrome'});
+  const sameHost=await chromium.launch({channel:'chrome',timeout:10000});
   const context=await sameHost.newContext({ignoreHTTPSErrors:true});
   let browserActor;
   const attach=async session=>session.route('**/*',async route=>{
@@ -121,7 +121,7 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
       {field,locale,expected},{timeout:8000});
   };
   const login=async(page,owner)=>{
-    await page.goto(origin+'/login');
+    await page.goto(origin+'/login',{waitUntil:'domcontentloaded'});
     await page.locator('[name=email]').fill(owner.email);
     await page.locator('[name=password]').fill(owner.password);
     await page.locator('form.account-form button[type=submit]').click();
@@ -132,6 +132,7 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
   try{
     const page=await context.newPage();
     page.setDefaultTimeout(8000);
+    page.setDefaultNavigationTimeout(8000);
     page.on('dialog',dialog=>dialog.accept());
     const actor=await login(page,a);
     browserActor=actor;
@@ -183,24 +184,40 @@ async function browserChecks({origin,a,b,adoptBrowserSession,take,lostKey,mark,o
     assert.equal(duplicate.status,200,duplicate.value.code);
     assert.equal(duplicate.value.requestId,pending.requestId);
     assert.equal(duplicate.value.digest,digest);
+    assert.equal(duplicate.value.draft?.revision,committed.revision);
+    assert.deepEqual(introductionText(duplicate.value.draft),introValues);
     assert.deepEqual(inspect(),committed);
     mark('Introduction same-key real duplicate POST left transaction and audit counters unchanged',committed);
     await page.goto(origin+'/account');
     await page.getByRole('button',{name:'退出登录',exact:true}).click();
     await page.waitForURL(origin+'/login');
     assert.deepEqual(await stored(page),[]);
-    await login(page,a);
+    const renewed=await login(page,a);
+    assert.notEqual(renewed.sid,actor.sid);
+    assert.notEqual(renewed.scope,actor.scope);
+    const readAfterLogin=page.waitForResponse(response=>response.url()===origin+introductionPath &&
+      response.request().method()==='GET',{timeout:8000});
     await page.goto(origin+'/dashboard/editor#introduction');
-    await value(openField(page,'introduction','en'),introValues.en);
-    mark('Chrome real logout, password re-login and persisted bilingual Introduction');
+    const introduction=await readAfterLogin;
+    assert.equal(introduction.status(),200);
+    assert.equal(await introduction.headerValue(workspaceScopeHeader),renewed.scope);
+    const saved=await introduction.json();
+    assert.equal(saved.siteId,a.site);
+    assert.equal(saved.revision,committed.revision);
+    assert.deepEqual(introductionText(saved),introValues);
+    for(const locale of ['zh','en'])await value(openField(page,'introduction',locale),introValues[locale]);
+    mark('Chrome real logout, password re-login and persisted bilingual Introduction',
+      {newSession:true,revision:saved.revision});
     for(const section of titlesToVerify){
-      const title=labels[sectionTitleFields[section]];
+      const field=sectionTitleFields[section];
+      const title=labels[field];
       const link=page.locator('.dashboard-sidebar a[href="#'+section+'"]');
       await link.click();
       await page.waitForFunction(expected=>document.querySelector('.editor-heading h1')?.textContent===expected,title);
       assert.ok((await link.innerText()).includes(title));
       assert.ok((await page.locator('.dashboard-breadcrumb').innerText()).includes(title));
-      assert.ok((await page.locator('.editor-preview').innerText()).includes(title));
+      const previewHeading=page.locator('.editor-preview [data-site-section="'+section+'"] h2[data-preview-value="'+field+'"]');
+      assert.equal((await previewHeading.textContent())?.trim(),title);
     }
     mark('Chrome real saved title in editor heading, breadcrumb, navigation and preview',{sections:titlesToVerify});
   } finally {await sameHost.close();}

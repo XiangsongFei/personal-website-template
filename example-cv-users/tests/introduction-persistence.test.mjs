@@ -198,6 +198,14 @@ test('a reload can reconcile an original Introduction receipt without retaining 
   assert.equal(confirmed.value.draft.revision,1);
   assert.equal(confirmed.value.digest,marker.digest);
   assert.equal(writeCount(a),1);
+  const beforeReplay=structuredClone(a.sites.get(a.auth.ids.A));
+  const replay=await api(a,{body:attempt.body});
+  assert.equal(replay.status,200);
+  assert.equal(replay.value.requestId,marker.requestId);
+  assert.equal(replay.value.digest,marker.digest);
+  assert.deepEqual(replay.value.draft,confirmed.value.draft);
+  assert.equal(writeCount(a),1);
+  assert.deepEqual(a.sites.get(a.auth.ids.A),beforeReplay);
   assert.equal((await api(a,{body:{...marker,digest:'c'.repeat(64)},target})).status,409);
   const otherSession={...a,jar:new Map()};
   await login(otherSession);

@@ -64,17 +64,32 @@ async page => {
   await status('已保存草稿');
   await page.reload();
   await page.waitForFunction(()=>[...document.querySelectorAll('.record-list .record-title > span:last-child')].map(e=>e.textContent).join(',')==='A,B');
-  const headingField='[data-edit-field="experienceLabel"][data-edit-locale="zh"]';
-  await page.locator(headingField).fill('任职记录');
+  const headings = [
+    ['education','educationLabel','求学记录'],
+    ['experience','experienceLabel','任职记录'],
+    ['projects','projectHeading','项目档案'],
+    ['skills','skillsLabel','技能清单'],
+    ['awards','honorsLabel','荣誉清单'],
+  ];
   await select('contact');
   await page.locator('button[data-view-option="site-text"]').click();
+  for(const [,field,label] of headings)
+    await page.locator('[data-edit-field="'+field+'"][data-edit-locale="zh"]').fill(label);
   await save();
   await status('已保存草稿');
   const direct=await page.context().newPage();
   try {
     await direct.goto(origin+'/dashboard/editor#experience');
-    await direct.waitForFunction(selector=>document.querySelector(selector)?.value==='任职记录',headingField);
-    check(await direct.locator('.editor-heading h1').innerText()==='任职记录','saved title missing on a direct section link');
+    await direct.waitForFunction(()=>document.querySelector('.editor-heading h1')?.textContent==='任职记录');
+    for(const [section,field,label] of headings){
+      const link=direct.locator('.dashboard-sidebar a[href="#'+section+'"]');
+      await link.click();
+      await direct.waitForFunction(expected=>document.querySelector('.editor-heading h1')?.textContent===expected,label);
+      check((await link.innerText()).includes(label),section+' title missing from navigation');
+      check((await direct.locator('.dashboard-breadcrumb').innerText()).includes(label),section+' title missing from breadcrumb');
+      check((await direct.locator('.editor-preview [data-site-section="'+section+'"] h2[data-preview-value="'+field+'"]').textContent())?.trim()===label,
+        section+' title missing from preview');
+    }
   } finally {await direct.close();}
   await page.goto(origin+'/account');
   await role('退出登录').click();
@@ -84,5 +99,5 @@ async page => {
   await select('experience');
   await page.getByText('暂无工作记录。',{exact:true}).waitFor();
   check((await rowTitles()).length===0,'other owner saw saved entries');
-  return {unknownAcrossReload:true,originalKey:true,dirtyIsolation:true,recordOrder:true,delete:true,customTitle:true,accountIsolation:true};
+  return {unknownAcrossReload:true,originalKey:true,dirtyIsolation:true,recordOrder:true,delete:true,customTitles:headings.length,accountIsolation:true};
 }
