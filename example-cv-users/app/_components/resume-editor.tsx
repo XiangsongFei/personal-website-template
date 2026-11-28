@@ -102,7 +102,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields, persistence, textPersistence} = useWorkspaceDraft(initialDraft, module, introductionEnabled, resumeTextEnabled);
+  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields, siteTextReady, persistence, textPersistence} = useWorkspaceDraft(initialDraft, module, introductionEnabled, resumeTextEnabled);
   const intro = introductionEnabled && module === 'introduction' ? persistence.state : undefined;
   const readiness = intro?.state;
   const outcome = intro?.state === 'ready' ? intro.outcome : undefined;
@@ -213,11 +213,12 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
             </div>}>
             <TextEditGate disabled={usesText&&!textReady}>
             {heading && <FieldFeedbackContext.Provider value={siteTextFields}>
-              <fieldset className="editor-fields">
+              <fieldset className="editor-fields" disabled={!siteTextReady}>
                 <legend>{text('栏目标题', 'Section title')}</legend>
                 <FieldMatrix>
                   <SiteTextField draft={draft['site-text']} onChange={updateSiteText} field={heading} label={text('栏目标题', 'Section title')}/>
                 </FieldMatrix>
+                {resumeTextEnabled && <p className="editor-note">{text('在「网站文字」中保存栏目标题。','Save section titles in Site text.')}</p>}
               </fieldset>
             </FieldFeedbackContext.Provider>}
             {module === 'profile' ? <ProfileFields profile={draft.profile}

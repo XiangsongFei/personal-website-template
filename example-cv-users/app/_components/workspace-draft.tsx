@@ -1,6 +1,6 @@
 'use client';
 
-import {createContext, useContext, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
+import {createContext, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
 import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyUpcomingWorkspaceTraversal, verifyWorkspaceTraversal} from './workspace-history';
 import {bilingualFieldKey, collectEditorFields, modifiedEditorFields, reviewChanges, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
 import {cancelModule, editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
@@ -60,7 +60,7 @@ export function clearWorkspaceDraft() {
 }
 
 function forgetTextScope(scope?: string) {
-  if (scope) try {removePendingScope(window.localStorage,scope);} catch {}
+  if (scope) try {removePendingScope(window.localStorage,scope);} catch { /* Storage may be disabled. */ }
 }
 export function leaveWorkspace() {
   forgetTextScope(currentScope);
@@ -204,7 +204,8 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
       code === 'BUSINESS_DENIED' ? 'denied' : code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' : code === 'NOT_CONFIGURED' ? 'unavailable' :
       code === 'UNSUPPORTED_INTRODUCTION' ? 'unsupported' : 'read-error'});
   }
-  useEffect(() => { if (!read()) void refresh(); }, [scope, enabled]);
+  const readInitial=useEffectEvent(()=>{if(!read())void refresh();});
+  useEffect(()=>{readInitial();},[scope,enabled,recoveryEnabled]);
   async function save() {
     const previous = read();
     if (!scope || scope !== currentScope || previous?.state !== 'ready' ||
@@ -274,7 +275,7 @@ function readMarker<S extends PendingSection>(scope:string,section:S) {
   try {return readPendingText(window.localStorage,scope,section);} catch {return undefined;}
 }
 function clearMarker(scope:string,key:PendingKey) {
-  try {removePendingText(window.localStorage,scope,key);} catch {}
+  try {removePendingText(window.localStorage,scope,key);} catch { /* A later lookup can confirm it again. */ }
 }
 
 function setTextState(section: TextSection, value: TextPersistence) {
@@ -368,7 +369,8 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     setTextState(section,{phase:value?.state==='no-site'?'no-site':code==='SESSION_REFRESH_REQUIRED'?'renewal':
       code==='BUSINESS_DENIED'?'denied':'failure'});
   }
-  useEffect(()=>{if(section&&!read())void refresh();},[scope,section]);
+  const readInitial=useEffectEvent(()=>{if(section&&!read())void refresh();});
+  useEffect(()=>{readInitial();},[scope,section]);
 
   async function save() {
     const previous=read();
@@ -427,12 +429,28 @@ export function useWorkspaceSnapshot() {
   return useSyncExternalStore(subscribe, read, () => undefined);
 }
 
+function acknowledgeWorkspaceReview(scope: string | undefined, owner: EditorModule, field: FieldKey) {
+  const previous = entry;
+  if (!previous || previous.scope !== scope || scope !== currentScope) return;
+  const next = new Map(previous.reviews[owner]);
+  const key = bilingualFieldKey(field);
+  const review = next.get(key);
+  if (!review?.pending) return;
+  next.set(key, {...review, pending: false});
+  entry = {...previous, reviews: {...previous.reviews, [owner]: next}};
+  notify();
+}
+
 export function useWorkspaceDraft(initialDraft: LocalDraft, module: EditorModule, introductionEnabled = false, resumeTextEnabled = false) {
   const scope = useContext(DraftScope);
   const persistence = useIntroduction(scope, introductionEnabled, initialDraft, resumeTextEnabled);
   const saved = persistence.state?.state === 'ready' ? persistence.state.baseline : undefined;
   const introductionBaseline = useMemo(() => saved ? {...initialDraft, introduction: introductionText(saved)} : initialDraft, [initialDraft, saved]);
-  const textPersistence=useTextPersistence(scope,resumeTextEnabled&&isTextSection(module)?module:undefined,introductionBaseline);
+  const siteTextPersistence=useTextPersistence(scope,resumeTextEnabled?'site-text':undefined,introductionBaseline);
+  const activeTextPersistence=useTextPersistence(scope,resumeTextEnabled&&module!=='site-text'&&isTextSection(module)?module:undefined,
+    introductionBaseline);
+  const textPersistence=module==='site-text'?siteTextPersistence:activeTextPersistence;
+  const siteTextReady=!resumeTextEnabled||!!siteTextPersistence.state?.snapshot;
   const initial=useMemo(()=>textPersistence.savedStates?withSavedText(introductionBaseline,textPersistence.savedStates):introductionBaseline,
     [introductionBaseline,textPersistence.savedStates]);
   const read = () => scope && entry?.scope === scope ? entry : undefined;
@@ -468,17 +486,7 @@ export function useWorkspaceDraft(initialDraft: LocalDraft, module: EditorModule
     updateDraftGuards();
     notify();
   };
-  const acknowledge = (owner: EditorModule, field: FieldKey) => {
-    const previous = read();
-    if (!previous || scope !== currentScope) return;
-    const next = new Map(previous.reviews[owner]);
-    const key = bilingualFieldKey(field);
-    const review = next.get(key);
-    if (!review?.pending) return;
-    next.set(key, {...review, pending: false});
-    entry = {...previous, reviews: {...previous.reviews, [owner]: next}};
-    notify();
-  };
+  const acknowledge = (owner: EditorModule, field: FieldKey) => acknowledgeWorkspaceReview(scope,owner,field);
   const guideOverrides = snapshot?.guideOverrides ?? noGuideOverrides;
   const feedback = (owner: EditorModule, baseline: ReturnType<typeof collectEditorFields>, current: ReturnType<typeof collectEditorFields>) => ({
     baseline, current, reviews: snapshot?.reviews[owner] ?? noReviews,
@@ -489,5 +497,5 @@ export function useWorkspaceDraft(initialDraft: LocalDraft, module: EditorModule
   });
   const undo = () => update(current => cancelModule(current, module, initial), true);
   return {scope, draft, persistence, textPersistence, update, undo, guideOverrides, dirtyModules, modified, fields: feedback(module, baseline, current),
-    siteTextFields: feedback('site-text', siteBaseline, siteCurrent)};
+    siteTextFields: feedback('site-text', siteBaseline, siteCurrent),siteTextReady};
 }

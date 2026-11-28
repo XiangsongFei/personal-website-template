@@ -81,12 +81,15 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
   async function receiptRpc(request){
     const url=new URL(request.url);
     assert.equal(url.origin,'https://users.resume.example.invalid');
-    assert.equal(url.pathname,'/rpc/read_introduction_receipt');
     const actor=auth.principal(request);
     if(!actor||controls.denied.has(actor.id))return Response.json({code:'42501'},{status:403});
-    const {target,operation_id,request_digest,basis}=await request.json();
     const site=sites.get(actor.id);
+    if(url.pathname==='/rpc/get_my_site')return Response.json({schema_version:1,site:{id:site.site_id}});
+    const {target,operation_id,request_digest,basis,section_key}=await request.json();
     if(site?.site_id!==target)return Response.json({code:'42501'},{status:403});
+    if(url.pathname==='/rpc/read_resume_text' && section_key==='site-text')
+      return Response.json({siteId:target,section:section_key,revision:0,content:null});
+    assert.equal(url.pathname,'/rpc/read_introduction_receipt');
     const operation=site.operations.find(o=>o.request_id===operation_id&&o.actor_uid===actor.id&&o.actor_sid===actor.sid&&o.state==='succeeded');
     if(!operation)return Response.json({state:'unknown'});
     if(operation.payload_digest!==request_digest||operation.basis.draft_revision!==basis)
