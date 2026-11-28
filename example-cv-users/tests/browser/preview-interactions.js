@@ -126,6 +126,8 @@ async page => {
   check(await pane.locator('.public-contact-extension').isVisible(), 'contact action did not open contact details');
   const email = pane.locator('[data-preview-public-link="email"] a');
   check(await email.getAttribute('href') === 'mailto:alex%2Bcv%3F@example.invalid', 'mailto payload is incorrect');
+  check(await email.getAttribute('target') === '_blank' && await email.getAttribute('rel') === 'noopener noreferrer',
+    'a browser mail handler could replace the editor tab');
   await email.evaluate(node => node.addEventListener('click', event => {
     event.preventDefault(); window.__previewMailto = event.currentTarget.href;
   }, {once: true}));

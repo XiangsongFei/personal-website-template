@@ -462,7 +462,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
         {(email || linkedIn) && <dl className="public-contact-links">
           {email && <div><dt data-preview-value="emailLabel" data-preview-example={example('links', 'emailLabel', 'shared')}>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
             <dd data-preview-public-link="email" data-preview-value="email" data-preview-example={example('links', 'email', 'shared')}>
-              {email.href ? <a href={email.href}>{links.email} <PreviewIcon kind="external"/></a>
+              {email.href ? <PreviewAnchor href={email.href}>{links.email} <PreviewIcon kind="external"/></PreviewAnchor>
                 : <span aria-disabled="true" title={unavailable(email)}>{links.email ?? text('无效邮箱', 'Invalid email')} <PreviewIcon kind="external"/></span>}
             </dd></div>}
           {linkedIn && <div><dt data-preview-value="linkedInLabel" data-preview-example={example('links', 'linkedInLabel')}>{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
