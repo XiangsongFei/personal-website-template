@@ -3,13 +3,14 @@ import {realAuthority,TEST_KEY,TEST_ORIGIN} from '../auth-fixture.mjs';
 import {runtime} from '../runtime.mjs';
 import {emptyTextContent, textCommand, textCommandDigest,wireRecordScopes} from '../../lib/editor/resume-text.ts';
 
-export function createResumeTextRpc(auth,sites) {
+export function createResumeTextRpc(auth,sites,onRpc) {
   const states=new Map(), receipts=new Map(), records=new Map();
   const controls={lost:false, delay:0, denied:new Set()};
   let writes=0;
   const rpc=async request=>{
     const url=new URL(request.url);
     assert.equal(url.origin,'https://users.resume.example.invalid');
+    onRpc?.(url.pathname.slice('/rpc/'.length));
     const actor=auth.principal(request);
     if(!actor || controls.denied.has(actor.id)) return Response.json({code:'42501'},{status:403});
     const siteId=sites.get(actor.id);

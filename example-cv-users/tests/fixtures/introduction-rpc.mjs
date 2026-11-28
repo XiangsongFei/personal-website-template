@@ -12,7 +12,7 @@ const siteIds = ['10000000-0000-4000-8000-000000000001','10000000-0000-4000-8000
 const recordIds = ['20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002'];
 
 export async function introductionRuntime({port, enabled = true, origin = TEST_ORIGIN, receiptRecovery = false,
-  combinedText = false, passwordSession} = {}) {
+  combinedText = false, passwordSession,onRpc} = {}) {
   const auth = await realAuthority();
   const accounts = [auth.ids.A, auth.ids.B];
   const sites = new Map(await Promise.all(accounts.map(async (uid, i) => [
@@ -22,7 +22,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
     ]}}),
   ])));
   const controls = {denied: new Set(), readsFail: false, rollback: false, lost: false, corrupt: false, normalize: false, delay: 0};
-  const textFixture=combinedText?createResumeTextRpc(auth,new Map(accounts.map((uid,i)=>[uid,siteIds[i]]))):undefined;
+  const textFixture=combinedText?createResumeTextRpc(auth,new Map(accounts.map((uid,i)=>[uid,siteIds[i]])),onRpc):undefined;
   const hits = [];
   let writes = Promise.resolve();
   async function rpc(request) {
@@ -31,6 +31,7 @@ export async function introductionRuntime({port, enabled = true, origin = TEST_O
     assert.equal(request.method, 'POST');
     assert.equal(request.headers.has('Cookie'), false);
     const operation = url.pathname.replace('/rpc/', '');
+    onRpc?.(operation);
     const principal = auth.principal(request);
     if (!principal || controls.denied.has(principal.id)) return Response.json({code: '42501'}, {status:403});
     const who = {uid: principal.id, sid: principal.sid};

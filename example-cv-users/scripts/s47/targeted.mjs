@@ -46,14 +46,15 @@ function receiptState(obs,a,b){
 }
 
 export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,witness,adoptBrowserSession,ensureBudget,journal,freeze,resumeAfterProof,remainingOnly=false}){
-  ensureBudget({textHTTP:165,allSaveEntrances:16,lookups:7,sqlObservation:9,passwordLogins:2,grants:2},'C2');
+  ensureBudget({textHTTP:165,allSaveEntrances:16,lookups:7,sqlObservation:10,passwordLogins:2,grants:2},'C2');
   const {chromium,firefox,webkit}=await import(pathToFileURL(process.env.S47_PLAYWRIGHT_MODULE).href);
   const verifyPayload=(command,snapshot)=>{
     assert.equal(snapshot.siteId,command.siteId);
     assert.equal(snapshot.revision,command.expectedRevision+1);
     assert.deepEqual(textCommand({...command,content:snapshot.content}).content,command.content);
   };
-  const expected=new Map();
+  const expected=new Map(), failures=[];
+  const continuation=(group,error)=>{failures.push({group,name:error.name});witness.independentFailures=failures;};
   function observeText(){
     const rows=obs(`SELECT json_build_object(
       'rows',(SELECT json_agg(json_build_object('section',v.section,'revision',v.revision,'content',v.content,
@@ -62,11 +63,14 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
         ORDER BY v.section,v.revision)
         FROM site_private.resume_text_revisions v LEFT JOIN site_private.resume_text_receipts r
           USING(site_id,section,revision,request_id) WHERE v.site_id='${a.site}'),
+      'records',(SELECT count(*) FROM site_private.resume_text_record_ids),
+      'receipts',(SELECT count(*) FROM site_private.resume_text_receipts),
       'bob',(SELECT count(*) FROM site_private.resume_text_revisions WHERE site_id='${b.site}'),
       'outbox',(SELECT count(*) FROM site_private.publication_outbox));`);
     assert.equal(rows.bob,0);
     assert.equal(rows.outbox,0);
     assert.equal(rows.rows.length,expected.size);
+    assert.equal(rows.receipts,expected.size);
     for(const row of rows.rows){
       assert.ok(row.hasReceipt&&row.audited);
       assert.deepEqual(row.content,expected.get(row.section+':'+row.revision));
@@ -84,11 +88,11 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     expected.set(section+':1',command.content);
   };
   phase('C2-titles-fixtures');
-  if(!remainingOnly||process.env.S47_SAFARI_DRIVER)await seed('site-text');
+  if(!remainingOnly)await seed('site-text');
   if(!remainingOnly)await seed('contact');
 
   const savedPosts=[], lookups=[];
-  let activeOwner, safariOwner;
+  let activeOwner, safariOwner, safariDispatchPossible=false;
   const holdSections=new Set(), held=new Map();
   const attach=async context=>context.route('**/*',async route=>{
     const req=route.request(), url=new URL(req.url());
@@ -287,22 +291,25 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
       assert.deepEqual([conflict.status,conflict.value.code],[409,'PT409']);
       assert.deepEqual(observeText(),state);
       mark('C2.4 overlapping native commits, independent pending locators, dirty edits, and stale CAS',{staleSqlState:'PT409',pending:pending.map(p=>p.requestId)});
-      assert.deepEqual(skills.value.snapshot.content.entries.map(row=>row.id),
-        [initialSkills.content.entries[2].id,initialSkills.content.entries[0].id]);
-      assert.equal(skills.value.snapshot.content.entries[0].translations.en.items,'Edited writing');
-      const rows=await other.locator('.record-list .record-title > span:last-child').allTextContents();
-      assert.deepEqual(rows,[skillPresetTitles.tools.zh,skillPresetTitles.analytics.zh]);
-      const rowToggle=other.locator('.record-list .record-title').first();
-      if(await rowToggle.getAttribute('aria-expanded')!=='true')await rowToggle.click();
-      assert.equal(await field(other,'items','en').inputValue(),'Edited writing');
-      mark('C2.5 explicit Skills adoption, edit, delete and order with native revision and refreshed UI',
-        {revisions:[1,2],ids:skills.value.snapshot.content.entries.map(row=>row.id),guidePersisted:false});
+      try{
+        assert.deepEqual(skills.value.snapshot.content.entries.map(row=>row.id),
+          [initialSkills.content.entries[2].id,initialSkills.content.entries[0].id]);
+        assert.equal(skills.value.snapshot.content.entries[0].translations.en.items,'Edited writing');
+        const rows=await other.locator('.record-list .record-title > span:last-child').allTextContents();
+        assert.deepEqual(rows,[skillPresetTitles.tools.zh,skillPresetTitles.analytics.zh]);
+        const rowToggle=other.locator('.record-list .record-title').first();
+        if(await rowToggle.getAttribute('aria-expanded')!=='true')await rowToggle.click();
+        assert.equal(await field(other,'items','en').inputValue(),'Edited writing');
+        mark('C2.5 explicit Skills adoption, edit, delete and order with native revision and refreshed UI',
+          {revisions:[1,2],ids:skills.value.snapshot.content.entries.map(row=>row.id),guidePersisted:false});
+      } catch(error){continuation('C2.5',error);}
     } finally {
       for(const item of held.values())item.release();
       await other.close();
     }
 
     phase('C2-relogin');
+    try{
     const oldCookie=(await context.cookies(origin)).map(({name,value})=>name+'='+value).join('; ');
     await go(page,'/account');
     await button(page,'退出登录').click();
@@ -330,26 +337,28 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     safariOwner={scope:renewed.scope,cookies:await context.cookies(origin)};
     mark('C2.2 old session revoked; new GoTrue session reads original bilingual draft',
       {...sessionClosed,oldHttpStatus:old.status,revision:snapshot.revision});
+    } catch(error){continuation('C2.2',error);}
   } finally {await chrome.close();}
 
   phase('C2-browser-bob');
   const unconfirmedBrowsers=await verifyBobBrowsers();
   if(unconfirmedBrowsers.length)witness.unconfirmedBrowsers=unconfirmedBrowsers;
-  if(process.env.S47_SAFARI_DRIVER){
-    ensureBudget({textHTTP:10,allSaveEntrances:2,sqlObservation:2},'C2_SAFARI_AND_DENIALS');
+  if(process.env.S47_SAFARI_DRIVER&&safariOwner){
     try{
+      ensureBudget({textHTTP:32,allSaveEntrances:4,sqlObservation:4},'C2_SAFARI_AND_DENIALS');
       await verifyNativeSafari(process.env.S47_SAFARI_DRIVER,safariOwner);
-      mark('C2.7 native Safari actual Alice HTTP reads original Introduction and saved titles',{revision:1});
-    } catch {
-      // Keep the required qualification probes available even if the native browser is unavailable.
-      witness.nativeSafari='READ_NOT_CONFIRMED';
+    } catch(error){
+      if(safariDispatchPossible){freeze();throw error;}
+      continuation('C2.7 Safari',error);
     }
+  } else if(remainingOnly){
+    continuation('C2.7 Safari',Error('SAFARI_NOT_STARTED'));
   }
 
   phase('C2-native-denials');
-  ensureBudget({textHTTP:8,allSaveEntrances:2,sqlObservation:2},'C2_DENIALS');
+  ensureBudget({textHTTP:8,allSaveEntrances:2,sqlObservation:3},'C2_DENIALS');
   const beforeDenied=observeText();
-  for(const [owner,revision] of [[a,1],[b,0]]){
+  for(const [owner,revision] of [[a,expected.has('profile:2')?2:1],[b,0]]){
     const allowed=await rest('read_resume_text',{target:owner.site,section_key:'profile'},owner.token);
     assert.equal(allowed.status,200,allowed.value.code);
     assert.equal(allowed.value.siteId,owner.site);
@@ -358,6 +367,12 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
   sql(`UPDATE site_private.business_session_grants SET revoked_at=clock_timestamp(),reason='user_logout'
     WHERE id='${a.grant}' AND auth_user_id='${a.uid}' AND auth_session_id='${a.sid}' AND revoked_at IS NULL;
     UPDATE auth.sessions SET not_after=clock_timestamp()-interval '1 minute' WHERE id='${b.sid}' AND user_id='${b.uid}';`);
+  const separated=obs(`SELECT json_build_object(
+    'revokedGrant',EXISTS(SELECT FROM site_private.business_session_grants WHERE id='${a.grant}' AND revoked_at IS NOT NULL),
+    'revokedOwnerSessionValid',EXISTS(SELECT FROM auth.sessions WHERE id='${a.sid}' AND (not_after IS NULL OR not_after>clock_timestamp())),
+    'expiredSession',EXISTS(SELECT FROM auth.sessions WHERE id='${b.sid}' AND not_after<=clock_timestamp()),
+    'expiredOwnerGrantValid',EXISTS(SELECT FROM site_private.business_session_grants WHERE id='${b.grant}' AND revoked_at IS NULL AND expires_at>clock_timestamp()));`);
+  assert.deepEqual(separated,{revokedGrant:true,revokedOwnerSessionValid:true,expiredSession:true,expiredOwnerGrantValid:true});
   for(const owner of [a,b]){
     const read=await rest('read_resume_text',{target:owner.site,section_key:'profile'},owner.token);
     assert.deepEqual([read.status,read.value.code],[403,'42501']);
@@ -366,9 +381,9 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
   }
   assert.deepEqual(observeText(),beforeDenied);
   mark('C2.6 native read and save denied after Grant revocation or Session expiry',
-    {sqlstate:'42501',versionsAndReceiptsUnchanged:true});
+    {sqlstate:'42501',versionsAndReceiptsUnchanged:true,...separated});
 
-  if(unconfirmedBrowsers.length)throw Error('BOB_BROWSER_READ_UNCONFIRMED');
+  if(unconfirmedBrowsers.length||failures.length)throw Error('C2_INDEPENDENT_CHECKS_UNCONFIRMED');
   return {gRead:'LOCAL_PASS',gSave:'LOCAL_PASS'};
 
   async function verifyBobBrowsers(){
@@ -406,21 +421,65 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
     };
     const {sessionId}=await wire('','POST',{capabilities:{alwaysMatch:{browserName:'safari',acceptInsecureCerts:true}}});
     const session='/'+sessionId;
+    const execute=async(script,args=[])=>wire(session+'/execute/sync','POST',{script,args});
+    const waitFor=async script=>{
+      for(let i=0;i<120;i++){
+        if(await execute(script))return;
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      throw Error('SAFARI_PROFILE_NOT_READY');
+    };
+    const navigate=async path=>wire(session+'/url','POST',{url:origin+path});
+    const accountForReads=async(saved=false)=>{
+      const paths=await execute(`return performance.getEntriesByType('resource')
+        .map(r=>new URL(r.name).pathname).filter(p=>p.startsWith('/api/sites/'));`);
+      assert.ok(paths.length<=8,'SAFARI_FETCH_WINDOW');
+      assert.equal(paths.filter(path=>path===savePath).length,saved?1:0);
+      for(const path of paths)if(path!==savePath)countBrowserText(path,'GET',take);
+      await execute('performance.clearResourceTimings()');
+    };
     try{
-      await wire(session+'/url','POST',{url:origin+'/login'});
+      await navigate('/login');
       for(const {name,value} of owner.cookies)
         await wire(session+'/cookie','POST',{cookie:{name,value,path:'/',secure:true,httpOnly:true}});
-      for(const path of [introductionPath,resumeTextPath+'/site-text']){
-        take('textHTTP');
-        const response=await wire(session+'/execute/async','POST',{script:
-          'const [path,header,scope,done]=arguments; fetch(path,{headers:{[header]:scope}}).then(async r=>done({status:r.status,value:await r.json()}),()=>done(null));',
-          args:[path,workspaceScopeHeader,owner.scope]});
-        assert.equal(response?.status,200);
-        assert.equal(response.value.siteId,a.site);
-        assert.equal(response.value.revision,1);
-        if(path===introductionPath)assert.deepEqual(introductionText(response.value),intro);
-        else assert.deepEqual(response.value.content,sampleText('site-text'));
-      }
+      await navigate('/dashboard/editor#profile');
+      await waitFor(`return document.querySelector('${profileField}')?.value==='已经提交的姓名';`);
+      await accountForReads();
+      await execute(`const [selector,text]=arguments, input=document.querySelector(selector);
+        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value').set.call(input,text);
+        input.dispatchEvent(new Event('input',{bubbles:true}));`,[profileField,'Safari 真实补验']);
+      await waitFor("return [...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='保存草稿'&&!b.disabled)");
+      await execute(`window.s47Save=null;const original=window.fetch;
+        window.fetch=async function(input,init){
+          const response=await original.call(this,input,init);
+          if(init?.method==='POST'&&new URL(typeof input==='string'?input:input.url,location.href).pathname==='${savePath}'){
+            window.s47Save={status:response.status,body:init.body,result:await response.clone().json()};
+          }
+          return response;
+        };`);
+      countBrowserText(savePath,'POST',take);
+      safariDispatchPossible=true;
+      await execute("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='保存草稿'&&!b.disabled).click()");
+      await waitFor('return !!window.s47Save');
+      const {status,body,result}=await execute('return window.s47Save');
+      const command=textCommand(JSON.parse(body));
+      assert.equal(status,200);
+      assert.equal(command.section,'profile');
+      assert.equal(command.expectedRevision,1);
+      assert.equal(result.requestId,command.requestId);
+      assert.equal(result.digest,await textCommandDigest(command));
+      verifyPayload(command,result.snapshot);
+      assert.equal(result.snapshot.content.translations.zh.name,'Safari 真实补验');
+      expected.set('profile:2',result.snapshot.content);
+      observeText();
+      safariDispatchPossible=false;
+      await waitFor("return [...document.querySelectorAll('[role=status]')].some(e=>e.textContent.includes('已保存草稿'))");
+      await accountForReads(true);
+      await wire(session+'/refresh','POST',{});
+      await waitFor(`return document.querySelector('${profileField}')?.value==='Safari 真实补验';`);
+      await accountForReads();
+      mark('C2.7 native Safari profile edited, saved and refreshed against real Worker',
+        {revision:2,requestId:command.requestId,digest:result.digest});
     } finally {await wire(session,'DELETE');}
   }
 }
