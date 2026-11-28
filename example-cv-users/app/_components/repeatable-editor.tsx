@@ -54,13 +54,20 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
     if (normalized === pasted) return;
     const {selectionStart, selectionEnd} = input;
     if (selectionStart === null || selectionEnd === null) {
-      // Let the native email control replace its selection, which is unavailable to the range APIs.
-      const data = normalized.slice(0, limit);
-      if (!data || document.execCommand?.('insertText', false, data)) {
-        event.preventDefault();
-      } else {
-        foldedEmailPaste.current = !/\s/.test(normalized) && !/\s/.test(input.value);
+      const selection = document.activeElement === input ? document.getSelection() : null;
+      const selected = selection?.toString() ?? '';
+      const selectedLength = input.value.includes(selected) ? selected.length : 0;
+      const room = limit - input.value.length;
+      if (!input.value || selection?.type === 'Caret' || selectedLength > 0 || normalized.length <= room) {
+        const remaining = Math.max(0, room + selectedLength);
+        const data = normalized.slice(0, remaining);
+        if (!data || document.execCommand?.('insertText', false, data)) {
+          event.preventDefault();
+          return;
+        }
       }
+      // Native paste preserves the selection and enforces maxlength when the range is hidden.
+      foldedEmailPaste.current = !/\s/.test(normalized) && !/\s/.test(input.value);
       return;
     }
     event.preventDefault();
