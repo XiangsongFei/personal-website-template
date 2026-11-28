@@ -55,7 +55,11 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
     const {selectionStart, selectionEnd} = input;
     if (selectionStart === null || selectionEnd === null) {
       // Native email inputs support editing commands, but do not expose their selection range.
-      if (!normalized || document.execCommand?.('insertText', false, normalized)) {
+      const selected = document.activeElement === input ? document.getSelection()?.toString() ?? '' : '';
+      const selectedLength = input.value.includes(selected) ? selected.length : 0;
+      const available = Math.max(0, limit - input.value.length + selectedLength);
+      const data = normalized.slice(0, available);
+      if (!data || document.execCommand?.('insertText', false, data)) {
         event.preventDefault();
       } else {
         foldedEmailPaste.current = !/\s/.test(normalized) && !/\s/.test(input.value);
@@ -88,7 +92,7 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
         const value = event.currentTarget.value;
         const normalize = foldedEmailPaste.current && (event.nativeEvent as InputEvent).inputType === 'insertFromPaste';
         foldedEmailPaste.current = false;
-        onChange(normalize ? value.replace(/\s/g, '') : value);
+        onChange((normalize ? value.replace(/\s/g, '') : value).slice(0, limit));
       }}/> :
       <div className="editor-grow" data-value={value}>
         <textarea {...props} rows={1} aria-multiline={multiline} autoComplete="off"
