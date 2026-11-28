@@ -29,6 +29,7 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
   matrix?: boolean; compact?: boolean; sharedRow?: boolean; reviewBelow?: boolean;
 }) {
   const id = useId();
+  const foldedEmailPaste = useRef(false);
   const feedbackId = id + '-feedback';
   const feedback = useFieldFeedback(identity, language);
   const descriptions = [error || hint || count ? feedbackId : undefined, feedback.reminderId, describedBy].filter(Boolean);
@@ -44,6 +45,7 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
     <ReviewField id={feedback.reminderId} onConfirm={feedback.acknowledge}>{feedback.reminder}</ReviewField>;
 
   function pasteSingleLine(event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+    foldedEmailPaste.current = false;
     const pasted = event.clipboardData.getData('text');
     const input = event.currentTarget;
     const normalized = input instanceof HTMLInputElement
@@ -51,7 +53,15 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
       : singleLine(pasted);
     if (normalized === pasted) return;
     const {selectionStart, selectionEnd} = input;
-    if (selectionStart === null || selectionEnd === null) return;
+    if (selectionStart === null || selectionEnd === null) {
+      // Native email inputs support editing commands, but do not expose their selection range.
+      if (!normalized || document.execCommand?.('insertText', false, normalized)) {
+        event.preventDefault();
+      } else {
+        foldedEmailPaste.current = !/\s/.test(normalized) && !/\s/.test(input.value);
+      }
+      return;
+    }
     event.preventDefault();
     const remaining = limit - input.value.length + selectionEnd - selectionStart;
     const data = normalized.slice(0, Math.max(0, remaining));
@@ -73,8 +83,13 @@ export function RecordField({label, accessibleLabel, value, onChange, multiline 
       {!reviewAfterControl && review}
     </div>
     {!multiline && (compact || addressMode) ? <input {...props} type={type} autoComplete="off" autoCapitalize={addressMode ? 'none' : undefined}
-      spellCheck={addressMode ? false : undefined} onPaste={type === 'url' ? pasteSingleLine : undefined}
-      onChange={event => onChange(event.target.value)}/> :
+      spellCheck={addressMode ? false : undefined} onPaste={addressMode ? pasteSingleLine : undefined}
+      onChange={event => {
+        const value = event.currentTarget.value;
+        const normalize = foldedEmailPaste.current && (event.nativeEvent as InputEvent).inputType === 'insertFromPaste';
+        foldedEmailPaste.current = false;
+        onChange(normalize ? value.replace(/\s/g, '') : value);
+      }}/> :
       <div className="editor-grow" data-value={value}>
         <textarea {...props} rows={1} aria-multiline={multiline} autoComplete="off"
           onPaste={multiline ? undefined : pasteSingleLine}
