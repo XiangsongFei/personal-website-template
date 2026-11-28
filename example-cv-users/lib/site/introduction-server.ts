@@ -1,4 +1,4 @@
-import {createSession} from '../auth/session';
+import {createSession, type Session} from '../auth/session';
 import {configuration, digest, type UsersEnv} from '../config';
 import {accountContext, createIdentityAdapter} from '../business/identity.mjs';
 import {createIntroductionRepository} from '../business/introduction-repository.mjs';
@@ -17,10 +17,10 @@ export function introductionEnabled(env: UsersEnv) {
     typeof env.USERS_INTRODUCTION_RPC?.fetch === 'function';
 }
 
-async function authorize(request: Request, env: UsersEnv) {
+async function authorize(env: UsersEnv, session: Session) {
   const config = configuration(env);
-  const session = createSession(env, request.headers.get('cookie') ?? '');
   const {data, error} = await session.client.auth.getSession();
+  if (session.refreshRequired()) deny('SESSION_REFRESH_REQUIRED', 503);
   if (session.transient()) deny('IDENTITY_UNAVAILABLE', 503);
   if (error || !data.session?.access_token) deny('IDENTITY_REQUIRED', 401);
   const authIssuer = config.url + '/auth/v1';
@@ -38,9 +38,9 @@ async function authorize(request: Request, env: UsersEnv) {
   return {service: createIntroductionService(repository), handle, uid, scope};
 }
 
-export async function readIntroductionSite(request: Request, env: UsersEnv, uid: string, scope: string): Promise<SiteViewModel> {
+export async function readIntroductionSite(env: UsersEnv, session: Session, uid: string, scope: string): Promise<SiteViewModel> {
   try {
-    const context = await authorize(request, env);
+    const context = await authorize(env, session);
     if (context.uid !== uid || context.scope !== scope) return siteUnavailable('trusted-service', 'temporary');
     return readWithSiteAdapter(uid, {async readForCurrentAccount() {
       const base = {version: 1, accountId: uid, complete: true};
@@ -96,7 +96,8 @@ export async function introductionAPI(request: Request, env: UsersEnv) {
     if (request.headers.get('sec-fetch-site') === 'cross-site' || (!read &&
         (request.headers.get('origin') !== url.origin || request.headers.get('content-type') !== 'application/json')))
       return deny();
-    const {service, handle, scope} = await authorize(request, env);
+    const session = createSession(env, request.headers.get('cookie') ?? '', 'account', {allowRefresh: false});
+    const {service, handle, scope} = await authorize(env, session);
     if (request.headers.get(workspaceScopeHeader) !== scope) return deny('WORKSPACE_CHANGED', 409);
     headers.set(workspaceScopeHeader, scope);
     // Avoid late Set-Cookie writes overwriting a switched account.
@@ -107,6 +108,7 @@ export async function introductionAPI(request: Request, env: UsersEnv) {
   } catch (error) {
     const status = error instanceof BusinessError ? error.status : 503;
     const code = error instanceof BusinessError ? error.code : 'BUSINESS_UNAVAILABLE';
+    if (code === 'SESSION_REFRESH_REQUIRED') headers.set('X-Workspace-Session-Renewal', 'required');
     return request.method === 'HEAD' ? new Response(null, {status, headers}) : Response.json({code}, {status, headers});
   }
 }

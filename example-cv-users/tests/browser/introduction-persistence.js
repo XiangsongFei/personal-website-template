@@ -39,8 +39,9 @@ async page => {
   await sidebar('introduction').click();
   await input('zh').fill('  第一次  ');
   await input('en').fill('  First English  ');
-  await save.evaluate(button => {button.click(); button.click();});
+  await save.click();
   await state('正在核对保存回执');
+  await page.locator('button.editor-save').evaluate(button => button.click());
   await input('zh').fill('在途继续编辑');
   await state('已保存个人介绍');
   await value('zh','在途继续编辑');

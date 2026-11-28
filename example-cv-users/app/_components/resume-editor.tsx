@@ -102,17 +102,20 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
   const readiness = intro?.state;
   const outcome = intro?.state === 'ready' ? intro.outcome : undefined;
   const pending = intro?.state === 'ready' && !!intro.attempt;
+  const retryUnsent = intro?.state === 'ready' && intro.retryUnsent;
   const saveAction = intro?.state === 'ready' ? {
-    label: pending && outcome !== 'saving' ? text('核对保存结果', 'Check save status') : text('保存草稿', 'Save draft'),
+    label: pending && !retryUnsent && outcome !== 'saving' ? text('核对保存结果', 'Check save status') : text('保存草稿', 'Save draft'),
     run: () => void persistence.save(),
     enabled: outcome !== 'saving' && outcome !== 'conflict' && outcome !== 'advanced' &&
       (pending || (dirtyModules.includes('introduction') && Object.values(draft.introduction).every(validIntroduction))),
-  } : readiness === 'read-error' ? {
+  } : readiness === 'read-error' || readiness === 'session-expiring' ? {
     label: text('重新读取', 'Retry read'), run: () => void persistence.refresh(), enabled: true,
   } : undefined;
   const saveMessage = introductionEnabled && module === 'introduction' ? ({
     loading: text('正在读取个人介绍。', 'Reading your introduction.'),
     'no-site': text('此账户没有可编辑的网站。', 'This account has no editable website.'),
+    'session-expiring': text('请在另一个标签页打开工作台以续期，然后返回本页重试。',
+      'Open the dashboard in another tab to renew your session, then return here to retry.'),
     'read-error': text('暂时无法读取个人介绍。', 'Your introduction could not be read.'),
     unavailable: text('个人介绍服务尚未开放。', 'Introduction service is unavailable.'),
     denied: text('当前权限无法访问此草稿。', 'Your current permissions do not allow access to this draft.'),

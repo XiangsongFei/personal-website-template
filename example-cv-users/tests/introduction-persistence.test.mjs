@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {introductionRuntime} from './fixtures/introduction-rpc.mjs';
-import {request} from './helpers.mjs';
+import {names, request} from './helpers.mjs';
 import {TEST_ORIGIN, TEST_PASSWORD} from './auth-fixture.mjs';
 import {introductionText, mergeSavedIntroduction, prepareIntroduction, parseSaveReceipt} from '../lib/editor/introduction-dto.ts';
 
@@ -127,6 +127,7 @@ test('ownership, Session, Grant and request scope checks deny stale or foreign o
   wrongRecord.command.payload.entries[0].id = bDraft.record.id;
   assert.equal((await api(a,{body:wrongRecord})).status,400);
   assert.equal((await api(a,{body:foreign.body,headers:{Origin:'https://different.example.invalid'}})).status,403);
+  assert.equal((await api(a,{body:foreign.body,headers:{Origin:'null'}})).status,403);
   a.controls.denied.add(a.auth.ids.A);
   assert.equal((await api(a,{body:foreign.body})).status,403);
   assert.equal((await api(a)).status,403);
@@ -156,4 +157,28 @@ test('saved fields use canonical text and leave edits made in flight dirty', () 
   const submitted={zh:'待保存',en:'submitted'};
   assert.deepEqual(mergeSavedIntroduction({zh:'继续修改',en:'submitted'}, submitted, saved),{zh:'继续修改',en:'canonical'});
   assert.deepEqual(mergeSavedIntroduction({zh:'',en:'submitted'}, submitted, saved),{zh:'',en:'canonical'});
+});
+
+
+test('draft API leaves a rotating refresh token untouched and preserves the same scope after S2 renewal', async t => {
+  const c = await fixture(t);
+  await login(c);
+  const attempt = prepare(await draft(c));
+  const chunks = [...c.jar].filter(([key])=>key===names.account || key.startsWith(names.account+'.')).sort();
+  const encoded = chunks.map(([,value])=>decodeURIComponent(value)).join('');
+  const session = JSON.parse(Buffer.from(encoded.slice(7),'base64url').toString());
+  session.expires_at = 1;
+  for (const [key] of chunks) c.jar.delete(key);
+  c.jar.set(names.account,encodeURIComponent('base64-'+Buffer.from(JSON.stringify(session)).toString('base64url')));
+  const expected = {status:503,value:{code:'SESSION_REFRESH_REQUIRED'}};
+  assert.deepEqual(await api(c,{body:attempt.body}),expected);
+  assert.deepEqual(await api(c),expected);
+  assert.equal((await api(c,{method:'HEAD'})).status,503);
+  assert.equal(c.auth.events.filter(e=>e.grant==='refresh_token').length,0);
+  assert.equal(writeCount(c),0);
+  assert.equal((await request(c,'session')).status,200);
+  assert.equal(c.auth.events.filter(e=>e.grant==='refresh_token').length,1);
+  assert.equal((await api(c,{method:'HEAD'})).status,200);
+  assert.equal((await api(c,{body:attempt.body})).status,200);
+  assert.equal(writeCount(c),1);
 });

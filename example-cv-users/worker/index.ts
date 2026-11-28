@@ -81,8 +81,9 @@ export default {
         }
         // This presentation key scopes in-memory edits. It is never an authorization input.
         const workspaceDraftScope = user ? await workspaceScope(user.id, user.sessionId) : undefined;
-        const readSite = introduction && user && workspaceDraftScope && pagePath === '/dashboard/website' && request.method === 'GET'
-            ? () => readIntroductionSite(request, env, user.id, workspaceDraftScope) : undefined;
+        const siteSession = session;
+        const readSite = introduction && user && siteSession && workspaceDraftScope && pagePath === '/dashboard/website' && request.method === 'GET'
+            ? () => readIntroductionSite(env, siteSession, user.id, workspaceDraftScope) : undefined;
         const rendered = await requestContext.run({ dashboard, accountWorkspace, failure, workspaceDraftScope, introduction, readSite, workspacePath: dashboard || accountWorkspace ? pagePath : undefined,
             user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
         const response = new Response(rendered.body, {headers: rendered.headers, status: failure ? failure === 'limited' ? 429 : 503 : rendered.status});

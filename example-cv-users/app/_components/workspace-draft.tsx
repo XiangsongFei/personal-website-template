@@ -23,10 +23,10 @@ const listeners = new Set<() => void>();
 let currentScope: string | undefined;
 let entry: DraftEntry | undefined;
 type IntroductionState = {scope: string} & (
-  {state: 'loading' | 'no-site' | 'read-error' | 'unavailable' | 'denied' | 'unsupported'} |
+  {state: 'loading' | 'no-site' | 'read-error' | 'session-expiring' | 'unavailable' | 'denied' | 'unsupported'} |
   {state: 'ready'; baseline: Introduction;
-    outcome?: 'saved' | 'saving' | 'unknown' | 'conflict' | 'advanced' | 'invalid' | 'denied';
-    attempt?: SaveAttempt});
+    outcome?: 'saved' | 'saving' | 'unknown' | 'session-expiring' | 'conflict' | 'advanced' | 'invalid' | 'denied';
+    attempt?: SaveAttempt; retryUnsent?: boolean});
 let introduction: IntroductionState | undefined;
 
 function notify() {
@@ -119,18 +119,24 @@ const loadIntroduction = async (scope: string, attempt?: SaveAttempt, reconcile 
   const controller = new AbortController();
   const deadline = window.setTimeout(() => controller.abort(), 30_000);
   const headers = {[workspaceScopeHeader]: scope};
-  const options = {headers, signal: controller.signal, cache: 'no-store', redirect: 'manual', mode: 'same-origin'} as const;
+  // Match the S2 account transport so browsers send Origin on JSON POSTs
+  // even when the document's Referrer-Policy is no-referrer.
+  const options = {headers, signal: controller.signal, cache: 'no-store', redirect: 'error', credentials: 'same-origin'} as const;
   try {
     const response = await fetch(introductionPath + (reconcile ? '/operation' : ''), attempt ?
       {...options, method: 'POST', headers: {...headers, 'Content-Type': 'application/json'}, body: JSON.stringify(attempt.body)} : options);
     const value = await response.json() as {code?: string; state?: string} | null;
     if (!response.ok && (value?.code === 'WORKSPACE_CHANGED' || value?.code === 'IDENTITY_REQUIRED'))
       return {code: 'IDENTITY_REQUIRED'};
+    if (!response.ok && value?.code === 'SESSION_REFRESH_REQUIRED')
+      return {code: 'SESSION_REFRESH_REQUIRED', beforeDispatch: true};
     if (response.headers.get(workspaceScopeHeader) !== scope) return {code: 'BUSINESS_UNAVAILABLE'};
     if (!response.ok) return {code: typeof value?.code === 'string' ? value.code : 'BUSINESS_UNAVAILABLE'};
     // The original response can arrive after the account cookie has changed in another tab.
     const check = await fetch(introductionPath, {...options, method: 'HEAD'});
     if (check.status === 409 || check.status === 401) return {code: 'IDENTITY_REQUIRED'};
+    if (check.headers.get('X-Workspace-Session-Renewal') === 'required')
+      return {code: 'SESSION_REFRESH_REQUIRED'};
     if (!check.ok || check.headers.get(workspaceScopeHeader) !== scope) return {code: 'BUSINESS_UNAVAILABLE'};
     return {value};
   } catch { return {code: 'BUSINESS_UNAVAILABLE'}; }
@@ -176,7 +182,7 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
       return setIntroduction({scope, state: 'ready', baseline});
     }
     setIntroduction({scope, state: value?.state === 'no-site' ? 'no-site' :
-      code === 'BUSINESS_DENIED' ? 'denied' : code === 'NOT_CONFIGURED' ? 'unavailable' :
+      code === 'BUSINESS_DENIED' ? 'denied' : code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' : code === 'NOT_CONFIGURED' ? 'unavailable' :
       code === 'UNSUPPORTED_INTRODUCTION' ? 'unsupported' : 'read-error'});
   }
   useEffect(() => { if (!read()) void refresh(); }, [scope, enabled]);
@@ -193,16 +199,19 @@ function useIntroduction(scope: string | undefined, enabled: boolean, initial: L
 
     const operation = {...previous, attempt, outcome: 'saving'} as const;
     setIntroduction(operation);
-    const {value, code} = await loadIntroduction(scope, attempt, !!previous.attempt);
+    const lookup = !!previous.attempt && !previous.retryUnsent;
+    const {value, code, beforeDispatch} = await loadIntroduction(scope, attempt, lookup);
     const saved = await parseSaveReceipt(value, attempt).catch(() => undefined);
     if (scope !== currentScope || introduction !== operation) return;
     if (code === 'IDENTITY_REQUIRED') return reloadInvalidWorkspace();
     if (saved) return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt);
     const outcome = code === 'REQUEST_CONFLICT' ? 'conflict' : code === 'DRAFT_ADVANCED' ? 'advanced' :
-      code === 'INVALID_INPUT' && !previous.attempt ? 'invalid' :
+      code === 'SESSION_REFRESH_REQUIRED' ? 'session-expiring' :
+      code === 'INVALID_INPUT' && !lookup ? 'invalid' :
       code === 'BUSINESS_DENIED' ? 'denied' : 'unknown';
-    const unresolved = outcome === 'unknown' || outcome === 'denied';
-    setIntroduction({...previous, outcome, attempt: unresolved ? attempt : undefined});
+    const unresolved = outcome === 'unknown' || outcome === 'denied' || outcome === 'session-expiring';
+    setIntroduction({...previous, outcome, attempt: unresolved ? attempt : undefined,
+      retryUnsent: outcome === 'session-expiring' && !lookup && beforeDispatch === true});
   }
   return {state, refresh, save};
 }
