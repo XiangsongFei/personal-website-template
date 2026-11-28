@@ -2,10 +2,12 @@
 
 import {createContext, useContext, useId, type ReactNode} from 'react';
 import {bilingualFieldKey, fieldModified, type EditorFields, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
-import type {ContentLocale} from '../../lib/editor/draft';
+import type {ContentLocale, EditorModule} from '../../lib/editor/draft';
+import {guidePlaceholder} from '../../lib/editor/filling-guide';
 import {useUiLocale} from './ui-locale';
 
 type FeedbackContext = {
+  module: EditorModule;
   baseline: EditorFields;
   current: EditorFields;
   reviews: Reviews;
@@ -25,6 +27,7 @@ export function useFieldFeedback(field: FieldKey | undefined, language: ContentL
   const reminder = language === 'zh' ? (locale === 'zh' ? '请检查中文' : 'Review Chinese')
     : (locale === 'zh' ? '请检查英文' : 'Review English');
   return {modified, reminderId: pending ? id + '-review' : undefined, reminder,
+    placeholder: guidePlaceholder(state.module, field.field, language, field.item),
     acknowledge: () => state.acknowledge(field)};
 }
 

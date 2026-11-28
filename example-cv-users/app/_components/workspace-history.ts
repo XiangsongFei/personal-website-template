@@ -1,5 +1,7 @@
 'use client';
 
+import {isMountedEditorDestination, isMountedEditorEntry} from './editor-section-history.ts';
+
 type WorkspaceView = {path?: string; scope?: string};
 type Traversal = {path: string; scope: string; controller: AbortController; deadline: number; verified: boolean};
 
@@ -41,13 +43,18 @@ export function resetWorkspaceHistory() {
   clearTraversal();
 }
 
-export async function verifyWorkspaceTraversal(onInvalid: () => void, destination?: string) {
-  const url = new URL(destination ?? location.href);
+export function verifyUpcomingWorkspaceTraversal(onInvalid: () => void, url: URL) {
+  // A live editor can prove a section entry once popstate exposes its classic
+  // history state. Other traversals can be concealed before the router commits.
+  if (shown.scope && shown.path === workspacePath(url.pathname) && isMountedEditorDestination(url, shown.scope)) return;
+  void verifyWorkspaceTraversal(onInvalid, url, undefined);
+}
+
+export async function verifyWorkspaceTraversal(onInvalid: () => void, url: URL, state: unknown) {
   const path = workspacePath(url.pathname);
   const {path: previous, scope} = shown;
-  // The URL can update before the workspace using that path has committed.
-  const staysInShownPage = destination && previous === path && workspacePath(location.pathname) === path;
-  if (url.origin !== location.origin || !scope || staysInShownPage || traversal?.path === path) return;
+  if (url.origin !== location.origin || !scope || traversal?.path === path) return;
+  if (!traversal && previous === path && isMountedEditorEntry(url, state, scope)) return;
   if (!/^\/(?:dashboard(?:\/|$)|account$|change-password$)/.test(path)) {
     clearTraversal();
     return;
@@ -66,8 +73,9 @@ export async function verifyWorkspaceTraversal(onInvalid: () => void, destinatio
   const request = {path, scope, controller, deadline: window.setTimeout(reject, 12000), verified: false};
   traversal = request;
   try {
-    url.hash = '';
-    const response = await fetch(url, {method: 'HEAD', cache: 'no-store', redirect: 'manual', signal: controller.signal});
+    const verifyUrl = new URL(url);
+    verifyUrl.hash = '';
+    const response = await fetch(verifyUrl, {method: 'HEAD', cache: 'no-store', redirect: 'manual', signal: controller.signal});
     if (traversal !== request || workspacePath(location.pathname) !== path) return;
     if (response.ok && response.headers.get('X-Workspace-Draft-Scope') === scope) {
       request.verified = true;
