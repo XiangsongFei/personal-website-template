@@ -1,7 +1,7 @@
 import {educationTitle, skillCategory, type EducationDraft, type ExperienceDraft, type ProjectDraft, type SkillDraft, type AwardDraft} from './records.ts';
 import {emptyContact, type ContactDraft} from './contact.ts';
 import {emptyLinks, type LinksDraft} from './site-links.ts';
-import {emptySiteText, type SiteTextDraft} from './site-text.ts';
+import {emptySiteText, sectionTitleField, type SiteTextDraft} from './site-text.ts';
 
 export type ContentLocale = 'zh' | 'en';
 export const editorModules = {
@@ -74,6 +74,9 @@ export function validIntroduction(value: string) {
 }
 
 export function moduleIsDirty<K extends EditorModule>(draft: LocalDraft, module: K, baseline = emptyDraft) {
+  const heading = sectionTitleField(module);
+  if (heading && (['zh', 'en'] as const).some(locale =>
+    (draft['site-text'].translations[locale]?.[heading] ?? '') !== (baseline['site-text'].translations[locale]?.[heading] ?? ''))) return true;
   if (draft[module] === baseline[module]) return false;
   const snapshot = (value: LocalDraft) => {
     const data = module === 'education' ? value.education.map(row => ({...row, translations: {
@@ -97,5 +100,19 @@ export function moduleIsDirty<K extends EditorModule>(draft: LocalDraft, module:
 }
 
 export function cancelModule(draft: LocalDraft, module: EditorModule, baseline = emptyDraft): LocalDraft {
-  return {...draft, [module]: baseline[module]};
+  const next = {...draft, [module]: baseline[module]};
+  const heading = sectionTitleField(module);
+  if (!heading) return next;
+  const site = draft['site-text'];
+  const translations = {...site.translations};
+  for (const language of ['zh', 'en'] as const) {
+    const initial = baseline['site-text'].translations[language]?.[heading];
+    if (site.translations[language]?.[heading] === initial) continue;
+    const fields = {...translations[language]};
+    if (initial === undefined) delete fields[heading];
+    else fields[heading] = initial;
+    if (Object.keys(fields).length) translations[language] = fields;
+    else delete translations[language];
+  }
+  return {...next, 'site-text': {...site, translations}};
 }

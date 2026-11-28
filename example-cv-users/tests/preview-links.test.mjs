@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {platformPreviewDestination, previewDestination, publicEmailMailto} from '../lib/editor/preview-links.ts';
+import {mailPreviewDestination, platformPreviewDestination, previewDestination, publicEmailMailto} from '../lib/editor/preview-links.ts';
 
 test('real preview destinations accept HTTP(S) and reject unsafe or malformed addresses', () => {
   assert.deepEqual(previewDestination('https://example.edu/projects/my-work', false), {href: 'https://example.edu/projects/my-work'});
@@ -32,6 +32,8 @@ test('mailto encodes mailbox delimiters and cannot add recipients or headers', (
     'mailto:lin@example.invalid', 'lin@example.invalid\r\nBcc: a@example.invalid', 'lin@example.invalid\r\n']) {
     assert.equal(publicEmailMailto(value), undefined, value);
   }
-  assert.deepEqual(previewDestination('chen@example.org', true, publicEmailMailto), {status: 'example'});
-  assert.deepEqual(previewDestination('lin@example.com', false, publicEmailMailto), {href: 'mailto:lin@example.com'});
+  assert.deepEqual(mailPreviewDestination('chen@example.org', true), {href: 'mailto:chen@example.org', status: 'example'});
+  assert.deepEqual(mailPreviewDestination('other@example.org', true), {status: 'example'});
+  assert.deepEqual(mailPreviewDestination('lin@example.com', false), {href: 'mailto:lin@example.com'});
+  assert.deepEqual(mailPreviewDestination('invalid', false), {status: 'invalid'});
 });

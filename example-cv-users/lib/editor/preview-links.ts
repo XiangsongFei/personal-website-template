@@ -28,3 +28,8 @@ export function platformPreviewDestination(value: string | undefined, isExample:
   if (isExample && value === home) return {href: home, status: 'example'};
   return previewDestination(value, isExample);
 }
+
+export function mailPreviewDestination(value: string | undefined, isExample: boolean | undefined): PreviewDestination | undefined {
+  if (isExample && value === 'chen@example.org') return {href: 'mailto:chen@example.org', status: 'example'};
+  return previewDestination(value, isExample, publicEmailMailto);
+}

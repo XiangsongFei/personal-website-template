@@ -13,7 +13,7 @@ import {SkillsEditor} from './skills-editor';
 import {AwardsEditor} from './awards-editor';
 import {ContactEditor} from './contact-editor';
 import {SiteLinksEditor} from './site-links-editor';
-import {SiteTextEditor} from './site-text-editor';
+import {SiteTextEditor, SiteTextField} from './site-text-editor';
 import {RecordField} from './repeatable-editor';
 import {FieldMatrix, PairedField} from './paired-field';
 import type {EditFeedback} from '../../lib/editor/bilingual-review';
@@ -25,6 +25,7 @@ import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
 import {mountEditorSections, selectEditorSection} from './editor-section-history';
 import {buildPreview} from '../../lib/editor/preview-model';
+import {sectionTitleField, type SiteTextDraft} from '../../lib/editor/site-text';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
 
@@ -48,6 +49,13 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   const separator = locale === 'zh' ? '、' : ', ';
   const concise = names.slice(0, 3).join(separator);
   const remaining = names.length > 3 ? text('，共 ' + names.length + ' 个栏目', ' (' + names.length + ' sections)') : '';
+  const revealField = (event: {target: EventTarget}) => {
+    if (!(event.target instanceof HTMLElement)) return;
+    const {editField: field, editLocale: locale, editItem: item} = event.target.dataset;
+    if (field && (locale === 'zh' || locale === 'en' || locale === 'shared')) {
+      setFocused({module: !item && field === sectionTitleField(module) ? 'site-text' : module, field, locale, item});
+    }
+  };
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0; }, [module]);
   return <section className="editor-pane" data-mode={mode} aria-label={text('内容编辑', 'Edit content')}>
     <DraftDeletionScope key={module} actions={<>
@@ -64,10 +72,8 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
       </div>
     </>}>
       {subNavigation}
-      <div className="editor-pane-body" ref={body}><div className="editor-form-grid" onFocusCapture={event => {
-        const {editField: field, editLocale: locale, editItem: item} = event.target.dataset;
-        if (field && (locale === 'zh' || locale === 'en' || locale === 'shared')) setFocused({module, field, locale, item});
-      }} onBlurCapture={event => {
+      <div className="editor-pane-body" ref={body}><div className="editor-form-grid" onFocusCapture={revealField}
+        onClickCapture={revealField} onChange={revealField} onBlurCapture={event => {
         if (event.target.dataset.editField) setFocused();
       }}>{children}</div></div>
     </DraftDeletionScope>
@@ -85,8 +91,10 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields} = useWorkspaceDraft(initialDraft, module);
+  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields} = useWorkspaceDraft(initialDraft, module);
   const preview = useMemo(() => buildPreview(draft, guideOverrides, showExamples), [draft, guideOverrides, showExamples]);
+  const heading = sectionTitleField(module);
+  const updateSiteText = (siteText: SiteTextDraft) => setDraft(current => ({...current, 'site-text': siteText}));
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
   const activeSection = contactArea ? 'contact' : module;
   const titles: Record<EditorModule, string> = {
@@ -132,6 +140,14 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
                 ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')], ['site-text', text('网站文字', 'Site text')],
               ]} selected={module} dirty={dirtyModules} select={selectEditorSection} label={text('联系与链接区域', 'Contact and links areas')}/>
             </div>}>
+            {heading && <FieldFeedbackContext.Provider value={siteTextFields}>
+              <fieldset className="editor-fields">
+                <legend>{text('栏目标题', 'Section title')}</legend>
+                <FieldMatrix>
+                  <SiteTextField draft={draft['site-text']} onChange={updateSiteText} field={heading} label={text('栏目标题', 'Section title')}/>
+                </FieldMatrix>
+              </fieldset>
+            </FieldFeedbackContext.Provider>}
             {module === 'profile' ? <ProfileFields profile={draft.profile}
               onChange={profile => setDraft(current => ({...current, profile}))}/> : module === 'education' ?
               <EducationEditor rows={draft.education} contentLocale={locale}
@@ -155,8 +171,7 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
               <SiteLinksEditor draft={draft.links}
                 onChange={links => setDraft(current => ({...current, links}))}/> :
             module === 'site-text' ?
-              <SiteTextEditor draft={draft['site-text']}
-                onChange={siteText => setDraft(current => ({...current, 'site-text': siteText}))}/> :
+              <SiteTextEditor draft={draft['site-text']} onChange={updateSiteText}/> :
               <div className="editor-introduction">
                 <PairedField identity={{field: 'introduction'}} label={text('个人介绍', 'Introduction')} value={language => draft.introduction[language]} multiline long hideLegend ai
                   maxLength={INTRODUCTION_LIMIT}
@@ -175,7 +190,8 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
               {showExamples ? text('隐藏示例', 'Hide examples') : text('显示示例', 'Show examples')}
             </button>
           </div>
-          <FullSitePreview modified={modified} focused={focused?.module === module ? focused : undefined} preview={preview}
+          <FullSitePreview modified={modified} focused={focused?.module === module || (focused?.module === 'site-text' && focused.field === heading) ? focused : undefined}
+            preview={preview} showExamples={showExamples}
             locale={previewLocale} module={module === 'links' ? 'profile' : activeSection} onLocaleChange={setPreviewLocale}/>
         </section>
       </div>

@@ -5,7 +5,7 @@ import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationCategory, educationDisplay, projectDisplay, skillCategory, skillTitle} from '../../lib/editor/records';
 import type {EditFeedback} from '../../lib/editor/bilingual-review';
 import type {ContentLocale, EditorModule} from '../../lib/editor/draft';
-import {platformPreviewDestination, previewDestination, publicEmailMailto, type PreviewDestination} from '../../lib/editor/preview-links';
+import {mailPreviewDestination, platformPreviewDestination, previewDestination, type PreviewDestination} from '../../lib/editor/preview-links';
 import type {SitePreview} from '../../lib/editor/preview-model';
 import {publicLinksDisplay} from '../../lib/editor/site-links';
 import {editableNavigationSections, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
@@ -17,19 +17,53 @@ import './public-preview.css';
 // Match the public site's phone layout at the preview pane's actual width.
 const phoneWidth = 640;
 const splitCanvasWidth = 736;
+const navigationClearance = 8;
 
-function PreviewAnchor({href, className, children}: {href: string; className?: string; children: ReactNode}) {
-  return <a className={className} href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+function previewBounds(owner: HTMLElement, nav: HTMLElement | null) {
+  const frame = owner.getBoundingClientRect();
+  return {top: Math.max(frame.top, nav?.getBoundingClientRect().bottom ?? frame.top) + navigationClearance,
+    bottom: frame.bottom};
 }
 
-function Action({kind, children, marker, valueKey, unavailable, href, onActivate, example, exampleLabel, status}: {
+// CSS zoom can make a scroller's units differ from the rendered coordinates.
+// Measure the response of this scroller, including when it reaches its end.
+function alignPreview(owner: HTMLElement, distance: () => number) {
+  let scale = 1;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const gap = distance();
+    if (Math.abs(gap) <= 1.25) break;
+    const previous = owner.scrollTop;
+    const next = Math.max(0, previous + gap / scale);
+    const extra = Math.ceil(next - (owner.scrollHeight - owner.clientHeight));
+    if (extra > 0) {
+      const space = parseFloat(owner.style.getPropertyValue('--site-preview-end-space')) || 0;
+      owner.style.setProperty('--site-preview-end-space', space + extra + 'px');
+    }
+    owner.scrollTop = next;
+    const movement = owner.scrollTop - previous;
+    if (!movement) break;
+    const measured = (gap - distance()) / movement;
+    if (Number.isFinite(measured) && measured > 0) scale = measured;
+  }
+}
+
+function sameField(left: EditFeedback, right: EditFeedback) {
+  return left.module === right.module && left.item === right.item && left.field === right.field && left.locale === right.locale;
+}
+
+function PreviewAnchor({href, className, children}: {href: string; className?: string; children: ReactNode}) {
+  const external = !href.startsWith('mailto:');
+  return <a className={className} href={href} target={external ? '_blank' : undefined}
+    rel={external ? 'noopener noreferrer' : undefined}>{children}</a>;
+}
+
+function Action({kind, children, marker, valueKey, unavailable, href, example, exampleLabel, status}: {
   kind: 'mail' | 'file' | 'linkedin' | 'github'; children: ReactNode;
-  marker?: string; valueKey?: string; unavailable?: string; href?: string; onActivate?: () => void;
+  marker?: string; valueKey?: string; unavailable?: string; href?: string;
   example?: boolean; exampleLabel?: boolean; status?: string;
 }) {
   const contents = <><PreviewIcon kind={kind}/><span><PreviewText field={valueKey} example={exampleLabel}>{children}</PreviewText>
     {status && <small className="public-action-status">{status}</small>}</span><PreviewIcon kind="external"/></>;
-  if (onActivate) return <button type="button" className="public-action" data-preview-public-link={marker} title={unavailable} onClick={onActivate}>{contents}</button>;
   const address = marker === 'github' ? 'github' : marker === 'linkedin-action' ? 'linkedInHref' : marker === 'contact-cta' ? 'email' : undefined;
   if (href) return <span data-preview-public-link={marker} data-preview-value={address} data-preview-example-destination={example} title={unavailable}>
     <PreviewAnchor className="public-action" href={href}>{contents}</PreviewAnchor>
@@ -105,9 +139,9 @@ function fitTimelineDates(owner: HTMLElement) {
   }
 }
 
-export function FullSitePreview({preview, locale, module, onLocaleChange, modified, focused}: {
+export function FullSitePreview({preview, locale, module, onLocaleChange, modified, focused, showExamples}: {
   preview: SitePreview; locale: ContentLocale; module: PreviewSection; onLocaleChange: (locale: ContentLocale) => void;
-  modified?: readonly EditFeedback[]; focused?: EditFeedback;
+  modified?: readonly EditFeedback[]; focused?: EditFeedback; showExamples?: boolean;
 }) {
   const draft = preview.content;
   const [contactOverride, setContactOverride] = useState<{module: PreviewSection; expanded: boolean}>();
@@ -115,8 +149,10 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
   const anchoredSection = useRef<PreviewSection>(module);
+  const followSection = useRef(true);
+  const correction = useRef(0);
   const pendingSection = useRef<PreviewSection>(undefined);
-  const fieldReveal = useRef<{target: EditFeedback; handled: boolean} | null>(null);
+  const fieldReveal = useRef<{target: EditFeedback; handled: boolean; fallback: boolean; manual: boolean} | null>(null);
   const languageAnchor = useRef<{section: PreviewSection; offset: number} | null>(null);
   const labels = (key: PreviewSection) => previewSections[key][locale === 'zh' ? 0 : 1];
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
@@ -131,7 +167,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
   const shared = draft.profile.shared;
   const contact = contactDisplay(draft.contact, locale);
   const links = publicLinksDisplay(draft.links, locale);
-  const email = previewDestination(draft.links.shared.email, example('links', 'email', 'shared'), publicEmailMailto);
+  const email = mailPreviewDestination(draft.links.shared.email, example('links', 'email', 'shared'));
   const github = platformPreviewDestination(draft.links.shared.github, example('links', 'github', 'shared'), 'github');
   const linkedIn = platformPreviewDestination(draft.links.translations[locale]?.linkedInHref, example('links', 'linkedInHref'), 'linkedin');
   const siteText = draft['site-text'].translations[locale];
@@ -173,37 +209,27 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     return name.trim() || year.trim() ? [{clientId: row.clientId, name, year}] : [];
   });
 
-  function position(section: PreviewSection, addEndSpace = false, offset = 0) {
+  function align(owner: HTMLElement, target: HTMLElement, offset = 0) {
+    cancelAnimationFrame(correction.current);
+    const update = () => {
+      if (!target.isConnected || !owner.clientHeight) return;
+      alignPreview(owner, () => target.getBoundingClientRect().top - previewBounds(owner, navigation.current).top + offset);
+    };
+    update();
+    correction.current = requestAnimationFrame(update);
+  }
+
+  function position(section: PreviewSection, offset = 0) {
     const owner = viewport.current;
     const target = owner?.querySelector<HTMLElement>(`[data-site-section="${section}"]`);
     if (!owner || !owner.clientHeight || !target) return false;
-    if (addEndSpace) owner.style.removeProperty('--site-preview-end-space');
+    cancelAnimationFrame(correction.current);
+    owner.style.removeProperty('--site-preview-end-space');
+    anchoredSection.current = section;
+    followSection.current = true;
     if (section === 'profile' && offset === 0) {
       owner.scrollTop = 0;
-      anchoredSection.current = section;
-      return true;
-    }
-    const distance = () => target.getBoundingClientRect().top - owner.getBoundingClientRect().top
-      - (navigation.current?.getBoundingClientRect().height ?? 0) - (section === 'profile' ? 0 : 8) + offset;
-    const top = owner.scrollTop + distance();
-    // Short sections near the end still align under the preview navigation.
-    if (addEndSpace && section !== 'profile') {
-      const extra = Math.ceil(top - (owner.scrollHeight - owner.clientHeight));
-      if (extra > 0) owner.style.setProperty('--site-preview-end-space', extra + 'px');
-    }
-    owner.scrollTop = top;
-    // Older Safari's zoomed canvas may report offsets in different units
-    // from its scroller. Measure the response to the correction before
-    // applying the remaining distance.
-    const remaining = distance();
-    if (Math.abs(remaining) > 1) {
-      const firstScroll = owner.scrollTop;
-      owner.scrollTop += remaining;
-      const last = distance();
-      const slope = (remaining - last) / (owner.scrollTop - firstScroll);
-      if (Math.abs(last) > 1 && Number.isFinite(slope) && slope > 0) owner.scrollTop += last / slope;
-    }
-    anchoredSection.current = section;
+    } else align(owner, target, offset);
     return true;
   }
 
@@ -211,24 +237,31 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const owner = viewport.current;
     if (!owner) return;
     let measuredWidth = 0;
+    let measuredHeight = 0;
     const measure = () => {
       const style = getComputedStyle(owner);
       const width = owner.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd);
-      if (width === measuredWidth) return;
+      const height = owner.clientHeight;
+      if (width === measuredWidth && height === measuredHeight) return;
+      if (width > 0 && width !== measuredWidth) {
+        const split = style.getPropertyValue('--editor-split').trim() === '1';
+        const scaled = split && width < splitCanvasWidth;
+        owner.dataset.siteLayout = !split && width <= phoneWidth ? 'mobile' : 'desktop';
+        owner.style.setProperty('--public-canvas-width', scaled ? splitCanvasWidth + 'px' : 'min(100%, 1100px)');
+        owner.style.setProperty('--public-canvas-scale', scaled ? String(width / splitCanvasWidth) : '1');
+        fitTimelineDates(owner);
+      }
       measuredWidth = width;
-      if (!width) return;
-      const split = getComputedStyle(owner).getPropertyValue('--editor-split').trim() === '1';
-      const scaled = split && width < splitCanvasWidth;
-      owner.dataset.siteLayout = !split && width <= phoneWidth ? 'mobile' : 'desktop';
-      owner.style.setProperty('--public-canvas-width', scaled ? splitCanvasWidth + 'px' : 'min(100%, 1100px)');
-      owner.style.setProperty('--public-canvas-scale', scaled ? String(width / splitCanvasWidth) : '1');
-      fitTimelineDates(owner);
-      position(anchoredSection.current, true);
+      measuredHeight = height;
+      if (followSection.current) position(anchoredSection.current);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(owner);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(correction.current);
+    };
   }, []);
 
   useLayoutEffect(() => { setContactOverride(undefined); }, [module]);
@@ -237,9 +270,10 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const owner = viewport.current;
     if (!owner) return;
     // A hidden single-column pane has no layout. Position it once it opens.
-    if (position(module, true)) return;
+    if (fieldReveal.current) fieldReveal.current.handled = true;
+    if (position(module)) return;
     const observer = new ResizeObserver(() => {
-      if (position(module, true)) observer.disconnect();
+      if (position(module)) observer.disconnect();
     });
     observer.observe(owner);
     return () => observer.disconnect();
@@ -249,18 +283,24 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     if (!pendingSection.current) return;
     const section = pendingSection.current;
     pendingSection.current = undefined;
-    position(section, true);
+    position(section);
   }, [contactExpanded]);
 
+  useLayoutEffect(() => {
+    if (followSection.current) position(anchoredSection.current);
+  }, [showExamples]);
+
   function switchLanguage() {
-    const navBottom = navigation.current?.getBoundingClientRect().bottom ?? 0;
-    const sections = Array.from(viewport.current?.querySelectorAll<HTMLElement>('[data-site-section]') ?? []);
+    const owner = viewport.current;
+    if (!owner) return;
+    const {top} = previewBounds(owner, navigation.current);
+    const sections = Array.from(owner.querySelectorAll<HTMLElement>('[data-site-section]'));
     const profileSection = sections[0];
-    const current = sections.reverse().find(section => section.getBoundingClientRect().top <= navBottom + 1) ?? profileSection;
+    const current = sections.reverse().find(section => section.getBoundingClientRect().top <= top + 1.25) ?? profileSection;
     if (current) {
       languageAnchor.current = {
         section: current.dataset.siteSection as PreviewSection,
-        offset: Math.max(0, navBottom - current.getBoundingClientRect().top),
+        offset: Math.max(0, top - current.getBoundingClientRect().top),
       };
     }
     onLocaleChange(locale === 'zh' ? 'en' : 'zh');
@@ -270,7 +310,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     if (!languageAnchor.current) return;
     const {section, offset} = languageAnchor.current;
     languageAnchor.current = null;
-    position(section, true, offset);
+    position(section, offset);
   }, [locale]);
 
   const dateContent = JSON.stringify([
@@ -287,30 +327,58 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
       fieldReveal.current = null;
       return;
     }
-    if (fieldReveal.current?.target !== focused) fieldReveal.current = {target: focused, handled: false};
+    const previous = fieldReveal.current;
+    if (!previous || !sameField(previous.target, focused) || (previous.manual && previous.target !== focused)) {
+      fieldReveal.current = {target: focused, handled: false, fallback: false, manual: false};
+    }
     const request = fieldReveal.current;
+    if (!request) return;
+    request.target = focused;
     if (request.handled || !owner.clientHeight || (focused.locale !== 'shared' && focused.locale !== locale)) return;
     const matches = Array.from(previewFieldNodes(owner, focused));
-    if (focused.module === 'profile' && matches.some(node => node.closest('.public-contact-extension[hidden]'))) {
+    if (!contactExpanded && (matches.some(node => node.closest('.public-contact-extension[hidden]')) ||
+      (focused.module === 'contact' && focused.item))) {
       setContactOverride({module, expanded: true});
       return;
     }
+    if (focused.module === 'profile' && focused.field === 'avatarLabel') {
+      const portrait = owner.querySelector<HTMLElement>('.public-portrait');
+      if (portrait) matches.push(portrait);
+    }
+    const {top, bottom} = previewBounds(owner, navigation.current);
+    const inView = (node: HTMLElement) => {
+      if (node.closest('.site-preview-nav')) return true;
+      const bounds = node.getBoundingClientRect();
+      return bounds.top >= top - 1.25 && bounds.top + Math.min(bounds.height, bottom - top) <= bottom + 1.25;
+    };
     const visible = matches.filter(node => node.getClientRects().length && (node.textContent?.trim() || node.querySelector('svg')));
-    const target = visible.find(node => node.closest('.public-contact') && focused.module === 'links') ?? visible[0];
-    if (!target) return;
-    request.handled = true;
-    if (target.closest('.site-preview-nav')) return;
-    const frame = owner.getBoundingClientRect();
-    const nav = navigation.current?.getBoundingClientRect();
-    const y = (nav?.bottom ?? frame.top) + 8;
-    const bounds = target.getBoundingClientRect();
-    const required = Math.min(bounds.height, Math.max(0, frame.bottom - y));
-    if (bounds.top >= y - 1 && bounds.top + required <= frame.bottom + 1) return;
-    owner.scrollTop += bounds.top - y;
+    if (visible.length) {
+      request.handled = true;
+      if (visible.some(inView)) return;
+      const target = visible.find(node => focused.module === 'links' && node.closest('.public-contact')) ?? visible[0];
+      followSection.current = false;
+      align(owner, target);
+    } else if (!request.fallback) {
+      request.fallback = true;
+      const headingSection = Object.entries(sectionTitleFields).find(([, key]) => key === focused.field)?.[0] as PreviewSection | undefined;
+      const targetSection = headingSection ?? (focused.module === 'links' || focused.module === 'site-text' ? 'contact' : focused.module);
+      const section = owner.querySelector<HTMLElement>(`[data-site-section="${targetSection}"]`);
+      const row = focused.item && section?.querySelector<HTMLElement>(`[data-preview-entry="${CSS.escape(focused.item)}"]`);
+      const target = row || section;
+      if (target && !inView(target)) {
+        followSection.current = false;
+        align(owner, target);
+      }
+    }
   }, [focused, draft, locale, contactExpanded]);
 
   function preserveManualScroll() {
-    if (fieldReveal.current) fieldReveal.current.handled = true;
+    cancelAnimationFrame(correction.current);
+    followSection.current = false;
+    if (fieldReveal.current) {
+      fieldReveal.current.handled = true;
+      fieldReveal.current.manual = true;
+    }
   }
 
   useLayoutEffect(() => {
@@ -319,8 +387,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     const marked = new Set<HTMLElement>();
     for (const change of modified) {
       if (change.locale !== 'shared' && change.locale !== locale) continue;
-      const active = focused?.module === change.module && focused.item === change.item &&
-        focused.field === change.field && focused.locale === change.locale;
+      const active = focused && sameField(focused, change);
       for (const node of previewFieldNodes(owner, change)) {
         const textNodes = node.matches('[data-preview-ink]') ? [node] : node.querySelectorAll<HTMLElement>('[data-preview-ink]');
         for (const ink of textNodes) {
@@ -341,13 +408,14 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
   const contactHint = email?.status === 'invalid'
     ? text('请检查编辑区的公开邮箱地址。', 'Check the public email address in the editor.')
     : text('请在公开链接中填写邮箱地址以启用邮件。', 'Enter a public email address in Public links to enable email.');
+  const emailExampleHint = email?.status === 'example' && email.href ? text('填写示例邮箱', 'Example email address') : undefined;
   const exampleLinkedInName = example('links', 'linkedInDisplayName', 'shared');
   const useLinkedInName = links.linkedInDisplayName.trim() && !exampleLinkedInName;
   const linkedInName = useLinkedInName ? links.linkedInDisplayName : links.linkedInHref ?? 'LinkedIn';
   function goToSection(key: PreviewSection) {
     const expandContact = key === 'contact';
     if (expandContact === contactExpanded) {
-      position(key, true);
+      position(key);
     } else {
       // Position after React commits the height of the contact details.
       pendingSection.current = key;
@@ -382,8 +450,9 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
           </div>
           <div className="public-actions">
             <Action kind="mail" marker="contact-cta" valueKey="emailActionLabel" href={email?.href}
-              unavailable={email?.href ? undefined : contactHint}
-              onActivate={email?.href ? undefined : () => goToSection('contact')}>{profile.emailActionLabel.trim() ? profile.emailActionLabel : text('联系我', 'Get in touch')}</Action>
+              example={email?.status === 'example' || undefined} exampleLabel={example('profile', 'emailActionLabel')}
+              unavailable={email?.href ? emailExampleHint : contactHint}>
+              {profile.emailActionLabel.trim() ? profile.emailActionLabel : text('联系我', 'Get in touch')}</Action>
             {pdfLabel?.trim() && <span data-preview-pdf-label>
               <Action kind="file" valueKey="portfolioLabel" unavailable={pdfUnavailable} exampleLabel={example('site-text', 'portfolioLabel')}
                 status={text('未开放', 'Unavailable')}>
@@ -392,13 +461,11 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
             </span>}
             {linkedIn && <Action kind="linkedin" marker="linkedin-action" unavailable={unavailable(linkedIn)} valueKey="linkedInButtonLabel"
               href={linkedIn.href} example={linkedIn.status === 'example' || undefined}
-              exampleLabel={example('links', 'linkedInLabel', 'shared')}
-              status={linkedIn.status === 'example' ? text('平台示例', 'Example') : undefined}>
+              exampleLabel={example('links', 'linkedInLabel', 'shared')}>
               {links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
             {github && <Action kind="github" marker="github" unavailable={unavailable(github)} valueKey="githubLabel"
               href={github.href} example={github.status === 'example' || undefined}
-              exampleLabel={example('links', 'githubLabel', 'shared')}
-              status={github.status === 'example' ? text('平台示例', 'Example') : undefined}>
+              exampleLabel={example('links', 'githubLabel', 'shared')}>
               {links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
           </div>
           {(shared.graduationValue.trim() || profile.graduationLabel.trim()) && <div className="public-graduation">
@@ -481,13 +548,13 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
         {contact.availability.trim() && <h2 data-preview-value="availability" data-preview-example={example('contact', 'availability')}><PreviewText>{contact.availability}</PreviewText></h2>}
         {(email || linkedIn) && <dl className="public-contact-links">
           {email && <div><dt data-preview-value="emailLabel" data-preview-example={example('links', 'emailLabel', 'shared')}><PreviewText>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</PreviewText></dt>
-            <dd data-preview-public-link="email" data-preview-value="email" data-preview-example={example('links', 'email', 'shared')}>
+            <dd data-preview-public-link="email" data-preview-value="email" data-preview-example={example('links', 'email', 'shared')}
+              title={emailExampleHint}>
               {email.href ? <PreviewAnchor href={email.href}><PreviewText>{links.email}</PreviewText> <PreviewIcon kind="external"/></PreviewAnchor>
                 : <span aria-disabled="true" title={unavailable(email)}>{links.email ?? text('无效邮箱', 'Invalid email')} <PreviewIcon kind="external"/></span>}
             </dd></div>}
           {linkedIn && <div><dt data-preview-value="linkedInLabel">
             <PreviewText example={example('links', 'linkedInLabel')}>{links.linkedInContactLabel.trim() || 'LinkedIn'}</PreviewText>
-            {linkedIn.status === 'example' && <small className="public-action-status">{text('平台示例', 'Example')}</small>}
           </dt>
             <dd data-preview-public-link="linkedin" data-preview-value="linkedInDisplayName" data-preview-example-destination={linkedIn.status === 'example' || undefined}>
               <ContactPreviewLink href={linkedIn.href} unavailable={unavailable(linkedIn)}>

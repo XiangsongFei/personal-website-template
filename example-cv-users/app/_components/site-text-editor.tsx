@@ -10,14 +10,21 @@ import {useUiLocale} from './ui-locale';
 
 type SiteTextKey = keyof NonNullable<SiteTextDraft['translations'][ContentLocale]>;
 
+export function SiteTextField({draft, onChange, field, label}: {
+  draft: SiteTextDraft; onChange: (next: SiteTextDraft) => void; field: SiteTextKey; label: string;
+}) {
+  return <PairedField identity={{field}} label={label} value={language => draft.translations[language]?.[field] ?? ''}
+    onChange={(language, value) => onChange({...draft, translations: editTranslation(draft.translations, language, {[field]: value})})}/>;
+}
+
 export function SiteTextEditor({draft, onChange}: {
   draft: SiteTextDraft; onChange: (next: SiteTextDraft) => void;
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const sectionLabel = (section: keyof typeof previewSections) => previewSections[section][locale === 'zh' ? 0 : 1];
-  const field = (key: SiteTextKey, label: string) => <PairedField key={key} identity={{field: key}} label={label} value={language => draft.translations[language]?.[key] ?? ''}
-    onChange={(language, value) => onChange({...draft, translations: editTranslation(draft.translations, language, {[key]: value})})}/>;
+  const field = (key: SiteTextKey, label: string) =>
+    <SiteTextField key={key} draft={draft} onChange={onChange} field={key} label={label}/>;
 
   return <div className="editor-contact">
     <section aria-labelledby="editor-site-navigation">
