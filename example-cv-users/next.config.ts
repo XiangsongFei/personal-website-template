@@ -1,1 +1,1 @@
-export default { basePath: '', assetPrefix: '', poweredByHeader: false };
+export default { basePath: '', assetPrefix: '', poweredByHeader: false, experimental: {staleTimes: {dynamic: 0}} };

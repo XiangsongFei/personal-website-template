@@ -19,16 +19,28 @@ test('anonymous account and password pages cannot render private account informa
   }finally{await c.mf.dispose();}
 });
 
-test('verified account uses the existing identity, controlled identifier and real S2 navigation',async()=>{
+test('verified account and password pages share the Dashboard and select the nested password page',async()=>{
   const c=await setup();try {
     await login(c);const r=await page(c,'/account');privatePage(r);const html=await r.text();
-    assert.match(html,/<h1>账户与安全<\/h1>/);assert.match(html,/user-a@example\.invalid/);assert.match(html,/邮箱已确认/);
-    assert.match(html,/<details class="identity-details">/);assert.match(html,new RegExp(c.auth.ids.A));
-    assert.ok(html.indexOf('user-a@example.invalid')<html.indexOf('<details class="identity-details">'));
+    assert.match(html,/<h1[^>]*>账户与安全<\/h1>/);assert.match(html,/user-a@example\.invalid/);assert.match(html,/邮箱已确认/);
+    assert.doesNotMatch(html,/账户标识|Account identifier|identity-details|auth-screen/);
+    assert.ok(!html.includes(c.auth.ids.A));
+    assert.match(html,/class="dashboard-header"/);
+    assert.match(html,/<a(?=[^>]*dashboard-nav-current")(?=[^>]*href="\/account")(?=[^>]*aria-current="page")/);
     for(const href of ['/dashboard','/change-password'])assert.ok(html.includes('href="'+href+'"'));
     for(const label of ['当前会话','刷新账户状态','退出登录'])assert.ok(html.includes(label));
     assert.doesNotMatch(html,/最近登录|Last signed in|全部设备|All devices/);
     const p=await page(c,'/change-password');privatePage(p);const form=await p.text();
+    assert.match(form,/class="dashboard-header"/);
+    assert.match(form,/<a(?=[^>]*dashboard-nav-parent")(?=[^>]*href="\/account")/);
+    assert.match(form,/<a(?=[^>]*dashboard-nav-current")(?=[^>]*href="\/change-password")(?=[^>]*aria-current="page")/);
+    assert.match(form,/dashboard-breadcrumb[^<]*>[\s\S]*?<a[^>]*href="\/account"[^>]*>账户与安全<\/a>[\s\S]*?修改密码/);
+    assert.doesNotMatch(html,/返回工作台|account-workspace-back/);
+    assert.doesNotMatch(html,/account-password-panel/);
+    assert.match(form,/class="account-overview".+?user-a@example\.invalid.+?邮箱已确认/);
+    assert.match(form,/class="account-password-panel".+?关闭修改密码/);
+    assert.match(form,/class="account-password-actions"[\s\S]*?href="\/account"[\s\S]*?取消/);
+    assert.doesNotMatch(form,/auth-screen/);
     for(const name of ['currentPassword','newPassword','confirmNewPassword'])assert.ok(form.includes('name="'+name+'"'));
     assert.match(form,/action="\/change-password"/);assert.match(form,/href="\/account"/);assert.match(form,/href="\/dashboard"/);
   }finally{await c.mf.dispose();}

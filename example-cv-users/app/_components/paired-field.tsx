@@ -1,75 +1,51 @@
 'use client';
 
-import {useId, useLayoutEffect, useRef, useState} from 'react';
+import {createContext, useContext, type ReactNode} from 'react';
+import {editorLocales, type FieldKey} from '../../lib/editor/bilingual-review';
 import type {ContentLocale} from '../../lib/editor/draft';
-import {stackPairedControls} from '../../lib/editor/paired-fit';
 import {EditorAiActions, RecordField} from './repeatable-editor';
-import {useUiLocale} from './ui-locale';
 
-export const editorLocales = ['zh', 'en'] as const;
 const localeNames = {zh: '中文', en: 'English'} as const;
 const controlLanguage = {zh: 'zh-CN', en: 'en'} as const;
-let canvasContext: CanvasRenderingContext2D | null | undefined;
+const MatrixContext = createContext(false);
 
-function requiredWidth(input: HTMLInputElement) {
-  canvasContext ??= document.createElement('canvas').getContext('2d');
-  if (!canvasContext) return NaN;
-  const style = getComputedStyle(input);
-  canvasContext.font = [style.fontStyle, style.fontVariant, style.fontWeight, style.fontSize, style.fontFamily].join(' ');
-  canvasContext.letterSpacing = style.letterSpacing === 'normal' ? '0px' : style.letterSpacing;
-  const chrome = [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth]
-    .reduce((sum, dimension) => sum + (Number.parseFloat(dimension) || 0), 0);
-  return canvasContext.measureText(input.value).width + chrome;
+export function FieldMatrix({children}: {children: ReactNode}) {
+  return <MatrixContext.Provider value={true}>
+    <div className="editor-field-matrix">
+      <div className="editor-matrix-headings" aria-hidden="true">
+        <span lang="zh-CN">中文</span><span lang="en">English</span>
+      </div>
+      {children}
+    </div>
+  </MatrixContext.Provider>;
 }
 
-export function PairedField({label, value, onChange, multiline = false, ai = false, type, maxLength, error, hint}: {
-  label: string; value: (locale: ContentLocale) => string; onChange: (locale: ContentLocale, value: string) => void;
-  multiline?: boolean; ai?: boolean; type?: 'text' | 'url'; maxLength?: number;
-  error?: (value: string) => string | undefined; hint?: (value: string) => string;
+export function PairedField({label, identity, value, onChange, multiline = false, long = false, hideLegend = false, compact = false, ai = false, type, maxLength, error, count}: {
+  label: string; identity: FieldKey; value: (locale: ContentLocale) => string; onChange: (locale: ContentLocale, value: string) => void;
+  multiline?: boolean; long?: boolean; hideLegend?: boolean; compact?: boolean; ai?: boolean; type?: 'text' | 'url'; maxLength?: number;
+  error?: (value: string) => string | undefined; count?: (value: string) => string;
 }) {
-  const {locale} = useUiLocale();
-  const reasonId = useId();
-  const area = useRef<HTMLDivElement>(null);
-  const lastLayout = useRef(false);
-  const [stacked, setStacked] = useState(false);
-  const zh = value('zh');
-  const en = value('en');
+  const matrix = useContext(MatrixContext) && !multiline && type !== 'url';
+  const layout = matrix ? 'matrix' : multiline || type === 'url' ? 'stacked' : 'paired';
+  const controls = <div className="editor-pair-values" data-pair-layout={layout}>
+    {editorLocales.map(language => {
+      const current = value(language);
+      return <RecordField key={language} label={localeNames[language]} accessibleLabel={label + ' · ' + localeNames[language]}
+        lang={controlLanguage[language]} value={current} identity={identity} language={language}
+        onChange={next => onChange(language, next)} multiline={multiline} long={long} compact={compact} type={type} maxLength={maxLength}
+        error={error?.(current)} count={count?.(current)} matrix={matrix}/>;
+    })}
+  </div>;
 
-  useLayoutEffect(() => {
-    const pair = area.current;
-    if (!pair || multiline) return;
-    const controls = Array.from(pair.querySelectorAll('input'));
-    const measure = () => {
-      if (!pair.clientWidth || controls.length !== 2) return;
-      const gap = Number.parseFloat(getComputedStyle(pair).columnGap);
-      const next = stackPairedControls(pair.clientWidth, gap, controls.map(requiredWidth), lastLayout.current);
-      if (next !== lastLayout.current) {
-        lastLayout.current = next;
-        setStacked(next);
-      }
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(pair, {box: 'border-box'});
-    document.fonts?.addEventListener('loadingdone', measure);
-    return () => {
-      observer.disconnect();
-      document.fonts?.removeEventListener('loadingdone', measure);
-    };
-  }, [zh, en, multiline]);
-
-  return <fieldset className="editor-pair">
-    <legend>{label}</legend>
-    {ai && <EditorAiActions reasonId={reasonId}/>}
-    <div className="editor-pair-values" ref={area} data-pair-layout={stacked || multiline ? 'stacked' : 'paired'}>
-      {editorLocales.map((language, index) => {
-        const current = index ? en : zh;
-        return <RecordField key={language} label={localeNames[language]} accessibleLabel={label + ' · ' + localeNames[language]}
-          lang={controlLanguage[language]} value={current}
-          onChange={next => onChange(language, next)} multiline={multiline} type={type} maxLength={maxLength}
-          error={error?.(current)} hint={hint?.(current)}/>;
-      })}
-    </div>
-    {ai && <p id={reasonId} className="editor-note">{locale === 'zh' ? 'AI 优化与生成尚未开放。' : 'AI refinement and generation are unavailable.'}</p>}
+  if (matrix) {
+    return <div className="editor-pair editor-matrix-row" data-field={identity.field}>
+      <span className="editor-matrix-label" aria-hidden="true">{label}</span>
+      {controls}
+    </div>;
+  }
+  return <fieldset className="editor-pair" data-field={identity.field}>
+    <legend className={hideLegend ? 'dashboard-visually-hidden' : undefined}>{label}</legend>
+    {controls}
+    {ai && <EditorAiActions/>}
   </fieldset>;
 }

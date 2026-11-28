@@ -9,7 +9,7 @@ const page = (c, path='/dashboard', options={}) => c.mf.dispatchFetch(TEST_ORIGI
 });
 const login = async (c, email=EMAIL) => {
   const r=await request(c,'login',{email,password:TEST_PASSWORD});
-  assert.equal(r.status,200);assert.equal(r.body.next,'/account'); // S2 destination stays intact.
+  assert.equal(r.status,200);assert.equal(r.body.next,'/account'); // The login form maps the existing S2 receipt to Overview.
 };
 function privateResponse(r,status=200) {
   assert.equal(r.status,status);
@@ -35,7 +35,7 @@ test('verified S2 identity renders only foundation status and account links, wit
   try {
     await login(c);
     const r=await page(c);privateResponse(r);const html=await r.text();
-    for(const expected of ['我的工作台','账户与安全','网站功能尚未开放','界面语言','教育经历','文件与媒体','求职与隐私']) assert.ok(html.includes(expected),expected);
+    for(const expected of ['我的工作台','账户与安全','站点服务尚未接入','界面语言','教育经历','文件与媒体','求职与隐私']) assert.ok(html.includes(expected),expected);
     assert.match(html,/href="\/account"/);
     assert.doesNotMatch(html,/user-a@example\.invalid|__Host-ecv-users|access_token|已保存到服务器|发布成功/);
     privateResponse(await page(c,'/dashboard',{method:'HEAD'}));
@@ -44,6 +44,27 @@ test('verified S2 identity renders only foundation status and account links, wit
     privateResponse(await page(c,'/dashboard?_rsc',{headers:{RSC:'1'}}));
     const account=await page(c,'/account');privateResponse(account);
     const accountHtml=await account.text();assert.match(accountHtml,/href="\/dashboard"/);assert.match(accountHtml,/href="\/change-password"/);
+  } finally {await c.mf.dispose();}
+});
+
+test('workspace HEAD handoff only reports a presentation scope after server session validation',async()=>{
+  const c=await setup();
+  try {
+    const guest=await page(c,'/account',{method:'HEAD'});
+    assert.equal(guest.status,303);
+    assert.equal(guest.headers.get('x-workspace-draft-scope'),null);
+    await login(c);
+    const account=await page(c,'/account',{method:'HEAD'});
+    privateResponse(account);
+    const scope=account.headers.get('x-workspace-draft-scope');
+    assert.match(scope ?? '',/^[a-f0-9]{64}$/);
+    const editor=await page(c,'/dashboard/editor',{method:'HEAD'});
+    privateResponse(editor);
+    assert.equal(editor.headers.get('x-workspace-draft-scope'),scope);
+    await login(c,'user-b@example.invalid');
+    const userB=await page(c,'/dashboard/editor',{method:'HEAD'});
+    privateResponse(userB);
+    assert.notEqual(userB.headers.get('x-workspace-draft-scope'),scope);
   } finally {await c.mf.dispose();}
 });
 
@@ -100,8 +121,14 @@ test('Design V1 exposes Overview, local editor, website UI and S2 account links,
     const destinations=[...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map(m=>m[1]);
     assert.ok(destinations.length>0);
     assert.ok(destinations.every(href=>['/dashboard','/dashboard/website','/dashboard/editor#profile','/dashboard/editor#introduction','/dashboard/editor#education','/dashboard/editor#experience','/dashboard/editor#projects','/dashboard/editor#skills','/dashboard/editor#awards','/dashboard/editor#contact','/account','#overview','#dashboard-main'].includes(href)),destinations.join(','));
-    assert.ok(destinations.includes('/dashboard/editor#contact'));
+    assert.match(html, /href="\/dashboard\/editor#profile"[^>]*>编辑简历/);
+    const shortcuts = html.match(/<ul class="dashboard-shortcuts">(.+?)<\/ul>/)?.[1];
+    assert.ok(shortcuts);
+    assert.deepEqual([...shortcuts.matchAll(/href="\/dashboard\/editor#([^"]+)"/g)].map(match=>match[1]),
+      ['profile','introduction','education','experience','projects','skills','awards','contact']);
+    assert.doesNotMatch(html, /打开示例工作区|打开空白工作区|sample=1/);
     assert.match(html,/aria-disabled="true"/);
-    assert.doesNotMatch(html,/Last updated|最近更新|发布成功|保存成功/);
+    assert.doesNotMatch(html,/Last updated|最近更新|发布成功|保存成功|可使用概览、我的网站、账户安全及本地编辑|界面语言与简历内容语言独立/);
+    assert.match(html, /<a(?=[^>]*class="dashboard-brand")(?=[^>]*href="\/dashboard")/);
   } finally {await c.mf.dispose();}
 });

@@ -19,3 +19,26 @@ test('locked vinext build uses root routes in actual workerd', async () => {
     assert.equal((await req('/login')).status,200);
   } finally { await mf.dispose(); }
 });
+
+test('production file namespaces and image aliases remain closed before routing or asset dispatch', async () => {
+  const mf = runtime();
+  try {
+    const paths = [
+      '/api/assets', '/api/files', '/public/assets', '/private/s35', '/storage/v1',
+      '/_next/image', '/_vinext/image', '/_next//image', '/_NEXT/image',
+      '/_next/image;param=1', '/_next/static/%66ile.js',
+    ];
+    for (const path of paths) {
+      for (const method of ['GET', 'HEAD', 'POST']) {
+        const res = await mf.dispatchFetch('http://localhost:8795' + path, {method, redirect: 'manual'});
+        assert.equal(res.status, 404, `${method} ${path}`);
+        assert.equal(res.headers.get('cache-control'), 'private, no-store');
+        assert.equal(res.headers.get('cdn-cache-control'), 'no-store');
+        assert.equal(res.headers.get('cloudflare-cdn-cache-control'), 'no-store');
+        assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+      }
+    }
+  } finally {
+    await mf.dispose();
+  }
+});

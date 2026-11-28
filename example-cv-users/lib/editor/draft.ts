@@ -1,4 +1,4 @@
-import type {EducationDraft, ExperienceDraft, ProjectDraft, SkillDraft, AwardDraft} from './records';
+import {educationTitle, skillCategory, type EducationDraft, type ExperienceDraft, type ProjectDraft, type SkillDraft, type AwardDraft} from './records.ts';
 import {emptyContact, type ContactDraft} from './contact.ts';
 import {emptyLinks, type LinksDraft} from './site-links.ts';
 import {emptySiteText, type SiteTextDraft} from './site-text.ts';
@@ -73,10 +73,29 @@ export function validIntroduction(value: string) {
   return value.length <= INTRODUCTION_LIMIT && !/[\u0000\uD800-\uDFFF]/u.test(value);
 }
 
-export function moduleIsDirty<K extends EditorModule>(draft: LocalDraft, module: K) {
-  return JSON.stringify(draft[module]) !== JSON.stringify(emptyDraft[module]);
+export function moduleIsDirty<K extends EditorModule>(draft: LocalDraft, module: K, baseline = emptyDraft) {
+  if (draft[module] === baseline[module]) return false;
+  const snapshot = (value: LocalDraft) => {
+    const data = module === 'education' ? value.education.map(row => ({...row, translations: {
+      zh: {...row.translations.zh, title: educationTitle(row, 'zh')},
+      en: {...row.translations.en, title: educationTitle(row, 'en')},
+    }})) : module === 'skills' ? value.skills.map(row => ({...row, category: skillCategory(row)})) : value[module];
+    return JSON.stringify(data, (key, node) => {
+      // An untouched optional text field and a cleared one display the same value.
+      if (key !== 'translations' && key !== 'navigation') {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) return node;
+        return Object.fromEntries(Object.keys(node).sort().map(field => [field, node[field]]));
+      }
+      return Object.fromEntries((['zh', 'en'] as const).flatMap(locale => {
+        const fields = Object.entries(node[locale] ?? {}).filter(([, field]) => field != null && field !== '')
+          .sort(([left], [right]) => left.localeCompare(right));
+        return fields.length ? [[locale, Object.fromEntries(fields)]] : [];
+      }));
+    });
+  };
+  return snapshot(draft) !== snapshot(baseline);
 }
 
-export function cancelModule(draft: LocalDraft, module: EditorModule): LocalDraft {
-  return {...draft, [module]: emptyDraft[module]};
+export function cancelModule(draft: LocalDraft, module: EditorModule, baseline = emptyDraft): LocalDraft {
+  return {...draft, [module]: baseline[module]};
 }

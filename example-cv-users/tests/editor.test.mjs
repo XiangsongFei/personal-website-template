@@ -29,6 +29,14 @@ test('both bilingual drafts are independent and cancel affects just the selected
   assert.equal(moduleFromHash('#dashboard-main'), undefined);
 });
 
+test('a supplied editor baseline stays clean and discarding restores its original section', () => {
+  const baseline = {...emptyDraft, introduction: {zh: '示例', en: 'Example'}};
+  const edited = {...baseline, introduction: {...baseline.introduction, en: 'Revised'}};
+  assert.equal(moduleIsDirty(baseline, 'introduction', baseline), false);
+  assert.equal(moduleIsDirty(edited, 'introduction', baseline), true);
+  assert.deepEqual(cancelModule(edited, 'introduction', baseline), baseline);
+});
+
 test('Introduction applies the candidate UTF-16 limit and rejects malformed scalar text', () => {
   assert.equal(validIntroduction('🌿'.repeat(INTRODUCTION_LIMIT / 2)), true);
   assert.equal(validIntroduction('🌿'.repeat(INTRODUCTION_LIMIT / 2) + 'x'), false);
@@ -64,8 +72,13 @@ test('only a current server session can render the editor, including HEAD and RS
     const publicPage = html.split('class="site-preview-page public-canvas"')[1]?.split('class="public-preview-scroll-space"')[0];
     assert.ok(publicPage);
     assert.doesNotMatch(publicPage, /<a\b|<iframe\b|<img\b|<time\b/);
-    assert.match(html, /disabled="" aria-describedby="editor-save-reason"/);
+    assert.match(html, /class="editor-save [^"]*" disabled=""/);
+    assert.doesNotMatch(html, /保存服务尚未开放|Saving is unavailable|editor-language|editor-preview-heading|本地预览 · 未保存、未发布/);
+    assert.equal([...html.matchAll(/class="public-nav-language"/g)].length, 1);
     assert.doesNotMatch(html, /user-a@example\.invalid|已保存成功|已发布成功/);
+    const sampleQuery = await page(ctx, editorPath + '?sample=1');
+    assert.equal(sampleQuery.status, 200);
+    assert.doesNotMatch(await sampleQuery.text(), /Lin Example|合成研究学院/);
     const stale = new Map(ctx.jar);
     assert.equal((await request(ctx, 'logout', {})).status, 200);
     assert.equal((await page({...ctx, jar: stale})).status, 303);

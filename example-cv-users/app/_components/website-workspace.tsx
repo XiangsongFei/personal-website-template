@@ -1,7 +1,8 @@
 'use client';
+import {WorkspaceLink} from './workspace-link';
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {useUiLocale} from './ui-locale';
-import {validSiteSlug, type SiteCreationIntent, type SiteViewModel} from '../../lib/site/model';
+import {siteStatusTitle, validSiteSlug, type SiteCreationIntent, type SiteViewModel} from '../../lib/site/model';
 
 export function WebsiteWorkspace({model}: {model: SiteViewModel}) {
   const {locale} = useUiLocale();
@@ -9,19 +10,10 @@ export function WebsiteWorkspace({model}: {model: SiteViewModel}) {
   const [guide, setGuide] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const guideAvailable = ['empty', 'unavailable'].includes(model.state);
-  const titles = {
-    loading: text('正在读取站点状态', 'Reading website status'),
-    empty: text('已确认没有网站', 'No website found'),
-    ready: text('我的网站', 'Your website'),
-    denied: text('暂无站点访问权限', 'Website access denied'),
-    revoked: text('建站资格已撤销', 'Website eligibility revoked'),
-    unavailable: text(model.state === 'unavailable' && model.reason === 'not-connected' ? '站点服务尚未接入' : '暂时无法读取站点状态', model.state === 'unavailable' && model.reason === 'not-connected' ? 'Website service is not connected' : 'Website status is unavailable'),
-  };
   return <div className="website-workspace">
     <section className="dashboard-intro"><h1>{text('我的网站', 'My website')}</h1><p>{text('查看站点状态，了解首次建站步骤。', 'Review your website status and plan your first website.')}</p></section>
-    {model.source === 'synthetic' && <p className="website-fixture-note" role="note">{text('合成数据 · 仅供离线界面验收，不代表真实账户或网站。', 'Synthetic data · Offline UI review only. These are not real websites or account facts.')}</p>}
     <section className="website-status" aria-labelledby="website-status-title" aria-busy={model.state === 'loading'}>
-      <div className="website-status-heading"><h2 id="website-status-title">{titles[model.state]}</h2><span className="website-state-label">{text('站点状态', 'Website status')}</span></div>
+      <div className="website-status-heading"><h2 id="website-status-title">{siteStatusTitle(model, locale)}</h2><span className="website-state-label">{text('站点状态', 'Website status')}</span></div>
       <div role={['denied','revoked','unavailable'].includes(model.state) ? 'alert' : 'status'}>
         {model.state === 'loading' && <p>{text('正在确认你的网站信息，请稍候。', 'Checking your website information. Please wait.')}</p>}
         {model.state === 'empty' && <p>{text('当前账户还没有网站。你可以查看建站引导，真实创建尚未开放。', 'This account has no website yet. Explore the setup guide; real creation is not available.')}</p>}
@@ -35,11 +27,11 @@ export function WebsiteWorkspace({model}: {model: SiteViewModel}) {
         <details><summary>{text('站点标识', 'Website identifier')}</summary><code>{site.siteId}</code></details>
         <p>{text('第一版每个账户仅支持一个网站。编辑、保存与发布尚未开放。', 'The first version supports one website per account. Editing, saving and publishing are not open.')}</p>
       </div>)}
-      {guideAvailable && !guide && <button ref={trigger} type="button" className="website-primary" onClick={()=>setGuide(true)}>{text('查看首次建站引导', 'Explore the setup guide')}</button>}
-      {model.state === 'unavailable' && !guide && <button type="button" className="website-text-button" onClick={()=>location.reload()}>{text('重新读取状态', 'Reload status')}</button>}
+      {guideAvailable && !guide && <button ref={trigger} type="button" className="dashboard-action dashboard-action-primary" onClick={()=>setGuide(true)}>{text('查看首次建站引导', 'Explore the setup guide')}</button>}
+      {model.state === 'unavailable' && !guide && <button type="button" className="dashboard-action dashboard-action-text" onClick={()=>location.reload()}>{text('重新读取状态', 'Reload status')}</button>}
     </section>
     {guide && guideAvailable && <WebsiteGuide onClose={()=>{setGuide(false);requestAnimationFrame(()=>trigger.current?.focus());}}/>}
-    <section className="website-boundary"><h2>{text('当前可用范围', 'What is available')}</h2><p>{text('本页仅提供状态展示与建站引导。不会创建、保存或发布网站，不预留 Slug，也不生成正式公开网址。', 'This page provides status information and a setup guide. It does not create, save or publish websites, reserve slugs or generate public URLs.')}</p><a href="/account">{text('账户与安全', 'Account & security')} →</a></section>
+    <section className="website-boundary"><h2>{text('当前可用范围', 'What is available')}</h2><p>{text('本页仅提供状态展示与建站引导。不会创建、保存或发布网站，不预留 Slug，也不生成正式公开网址。', 'This page provides status information and a setup guide. It does not create, save or publish websites, reserve slugs or generate public URLs.')}</p><WorkspaceLink href="/account">{text('账户与安全', 'Account & security')} →</WorkspaceLink></section>
   </div>;
 }
 
@@ -62,8 +54,7 @@ function WebsiteGuide({onClose}: {onClose: () => void}) {
     setStep(Math.min(step+1,2));
   }
   return <section className="website-guide" aria-labelledby="website-guide-title">
-    <div className="website-guide-heading"><h2 id="website-guide-title" tabIndex={-1} ref={heading}>{text('首次建站引导', 'First website guide')}</h2><button className="website-text-button" type="button" onClick={onClose}>{text('关闭引导', 'Close guide')}</button></div>
-    <p className="website-local-note">{text('输入仅保留在当前页面；关闭、刷新或离开即清空。这里不会执行创建，也不会检查 Slug 是否可用。', 'Your input stays on this page only and is cleared when you close, reload or leave. This guide does not create a website or check slug availability.')}</p>
+    <div className="website-guide-heading"><h2 id="website-guide-title" tabIndex={-1} ref={heading}>{text('首次建站引导', 'First website guide')}</h2><button className="dashboard-action dashboard-action-text" type="button" onClick={onClose}>{text('关闭引导', 'Close guide')}</button></div>
     <ol className="website-steps" aria-label={text('建站步骤', 'Setup steps')}>{names.map((name,i)=><li key={i} aria-current={i===step?'step':undefined}><span>{i+1}</span>{name}</li>)}</ol>
     <form className="website-guide-form" onSubmit={next} method="post" action="/dashboard/website" noValidate>
       <h3>{names[step]}</h3>
@@ -80,7 +71,7 @@ function WebsiteGuide({onClose}: {onClose: () => void}) {
         <aside className="website-privacy"><h3>{text('隐私与公开范围', 'Privacy & visibility')}</h3><p>{text('当前没有数据写入或公开分享。未来建站应先生成私有草稿，只有经明确发布操作后才可公开；该流程仍待服务验收。请勿在此填写身份证号等敏感资料。', 'Nothing is written or shared publicly here. Future setup should start as a private draft and become public only after an explicit publish action; that workflow still needs service acceptance. Avoid entering sensitive personal data.')}</p></aside>
         <p className="website-create-note" id="website-create-note">{text('真实建站服务尚未开放。以下按钮不可用；当前选择未保存，网站未创建。', 'Real website creation is not available. The button below is disabled; your choices are not saved and no website has been created.')}</p>
       </>}
-      <div className="website-guide-actions">{step>0 && <button className="website-secondary" type="button" onClick={()=>setStep(step-1)}>{text('上一步', 'Back')}</button>}{step<2 ? <button className="website-primary" type="submit">{text('下一步', 'Next')}</button> : <button className="website-primary" type="button" disabled aria-describedby="website-create-note">{text('创建网站 · 尚未开放', 'Create website · Not available')}</button>}</div>
+      <div className="website-guide-actions">{step>0 && <button className="dashboard-action dashboard-action-secondary" type="button" onClick={()=>setStep(step-1)}>{text('上一步', 'Back')}</button>}{step<2 ? <button className="dashboard-action dashboard-action-primary" type="submit">{text('下一步', 'Next')}</button> : <button className="dashboard-action dashboard-action-primary" type="button" disabled aria-describedby="website-create-note">{text('创建网站 · 尚未开放', 'Create website · Not available')}</button>}</div>
     </form>
   </section>;
 }

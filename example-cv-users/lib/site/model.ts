@@ -9,6 +9,20 @@ export type SiteViewModel = Common & (
   {state: 'unavailable'; reason: 'not-connected' | 'temporary' | 'invalid-receipt'}
 );
 
+export function siteStatusTitle(model: SiteViewModel, locale: 'zh' | 'en') {
+  const labels = {
+    loading: {zh: '正在读取站点状态', en: 'Reading website status'},
+    empty: {zh: '已确认没有网站', en: 'No website found'},
+    ready: {zh: '我的网站', en: 'Your website'},
+    denied: {zh: '暂无站点访问权限', en: 'Website access denied'},
+    revoked: {zh: '建站资格已撤销', en: 'Website eligibility revoked'},
+    unavailable: model.state === 'unavailable' && model.reason === 'not-connected'
+      ? {zh: '站点服务尚未接入', en: 'Website service is not connected'}
+      : {zh: '暂时无法读取站点状态', en: 'Website status is unavailable'},
+  };
+  return labels[model.state][locale];
+}
+
 // Proposed application port, not the S3 wire schema and not an enabled API.
 export type SiteReadReceipt = {
   version: 1; accountId: string; complete: true;

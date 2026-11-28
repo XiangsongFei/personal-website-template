@@ -3,7 +3,7 @@ import { useState, type InputHTMLAttributes } from 'react';
 import { useUiLocale } from './ui-locale';
 
 
-export function PasswordField({ label, hint, ...props }: InputHTMLAttributes<HTMLInputElement> & { id: string; label: string; hint?: string }) {
+export function PasswordField({ label, hint, toggleClassName, ...props }: InputHTMLAttributes<HTMLInputElement> & { id: string; label: string; hint?: string; toggleClassName?: string }) {
   const { t } = useUiLocale();
   const [visible, setVisible] = useState(false);
   const hintId = hint ? `${props.id}-hint` : undefined;
@@ -11,7 +11,7 @@ export function PasswordField({ label, hint, ...props }: InputHTMLAttributes<HTM
     <label htmlFor={props.id}>{t(label)}</label>
     <div className="password-control">
       <input {...props} type={visible ? 'text' : 'password'} aria-describedby={hintId ?? props['aria-describedby']} />
-      <button className="password-toggle" type="button" aria-label={`${t(visible ? '隐藏密码' : '显示密码')} · ${t(label)}`}
+      <button className={toggleClassName ? `password-toggle ${toggleClassName}` : 'password-toggle'} type="button" aria-label={`${t(visible ? '隐藏密码' : '显示密码')} · ${t(label)}`}
         aria-controls={props.id} aria-pressed={visible} onClick={() => setVisible(value => !value)}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
           <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />

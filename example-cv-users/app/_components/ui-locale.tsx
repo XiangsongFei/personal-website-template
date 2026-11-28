@@ -1,5 +1,6 @@
 'use client';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
+import {leaveWorkspace} from './workspace-draft';
 import { translate, type UiLocale } from '../../lib/account/messages';
 export const UI_LOCALE_KEY = 'example-cv-users:locale';
 const LocaleContext = createContext({ locale: 'zh' as UiLocale, setLocale: (_: UiLocale) => {}, t: (text: string) => text });
@@ -30,8 +31,9 @@ export function PageIntro({ title, description }: { title: string; description?:
   return <><h1>{t(title)}</h1>{description && <p className="account-description">{t(description)}</p>}</>;
 }
 
-export function AccountShell({ children }: { children: ReactNode }) {
+export function AccountShell({children, clearDraftOnEntry = true}: {children: ReactNode; clearDraftOnEntry?: boolean}) {
   const { locale, setLocale, t } = useUiLocale();
+  useLayoutEffect(() => { if (clearDraftOnEntry) leaveWorkspace(); }, [clearDraftOnEntry]);
   return <main className="auth-screen"><section className="auth-content">
     <header className="auth-header">
       <a className="auth-brand" href="/"><span>EXAMPLE_CV</span><span>{t('账户中心')}</span></a>
