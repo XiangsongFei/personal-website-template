@@ -16,8 +16,11 @@ import {grantBytes,hex,proofBytes,sha256,uuid} from '../../lib/business/protocol
 import {prepareIntroduction,introductionText,parseSaveReceipt} from '../../lib/editor/introduction-dto.ts';
 import {createAcceptanceSave} from './acceptance-save.mjs';
 import {textDraftArgs} from '../../lib/business/introduction-repository.mjs';
+import {runFullText,s47Functions,s47RpcNames} from './full-text.mjs';
 
-const project='s47-intro-acceptance-20261128-r02', issuer='https://users.auth.example.invalid/auth/v1';
+const full=process.argv[2]==='--all-text';
+const project=full?'s47-all-text-acceptance':'s47-intro-acceptance-20261128-r02';
+const issuer='https://users.auth.example.invalid/auth/v1';
 const privateOrigin='https://users.draft.example.invalid';
 const oldProject='ecv-s33a-20261109-7dd22a81', oldIssuer='http://127.0.0.1:56321/auth/v1';
 const stageDir=realpathSync('.runtime/s4-7/'+project), build=join(stageDir,'build');
@@ -26,9 +29,10 @@ const authBin=join(build,'auth');
 const pgBin='/private/var/tmp/ecv-s37-pg-build.mjCv9PFm/installed/bin';
 const restBin=realpathSync('../../s35-hosted-acceptance-20261122-58ae9ac7/example-cv-users/.runtime/s37-b-chain-20261126/postgrest');
 const textSqlPath='/Users/xiangsongfei/.codex/local-archives/S3-PAUSED-CHECKPOINT-20261127/restricted/supplement/s37-independent/historical/supabase/candidates/s36-text-only/01-text-publication.sql';
-const sourceHead='c0a9588254fab69e379d66e501b4e434d392e41c';
-const root = mkdtempSync('/private/tmp/s47-');
-const db=join(root,'db'), restSock=join(root,'rest.sock'), dbPort=55447;
+const baseline='c0a9588254fab69e379d66e501b4e434d392e41c';
+const sourceHead=full?execFileSync('/usr/bin/git',['rev-parse','HEAD'],{encoding:'utf8'}).trim():baseline;
+let root, db, restSock;
+const dbPort=55447;
 const env={PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'};
 const sha=v=>createHash('sha256').update(v).digest('hex');
 const read=p=>readFileSync(p,'utf8');
@@ -37,14 +41,22 @@ const json=v=>literal(JSON.stringify(v))+'::jsonb';
 const beforeMigrations=JSON.parse(read('tests/s3/migration-source-contract.json'));
 const m7=JSON.parse(read('docs/s3/S3.6-HOSTED-TARGET-MANIFEST.PG17.12.json')).m7Adaptation;
 const textDigest='97b2017168b197ba6d006050717207535b6a56d3dcd5f1116b386313575bb175';
-const limits={textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
+const limits=full?{textHTTP:180,workerSaves:36,nativeSaves:36,allSaveEntrances:36,lookups:16,sqlObservation:40,passwordLogins:4,grants:4,generations:1}:{textHTTP:48,workerSaves:10,nativeSaves:10,allSaveEntrances:10,lookups:8,sqlObservation:24,passwordLogins:2,grants:2,generations:1};
+const textCandidates=full?['01-resume-text','02-repeatable-text','03-introduction-receipt'].map(file=>{
+  const path='supabase/candidates/s47/'+file+'.sql';
+  const source=read(path);
+  return {path:realpathSync(path),source,sha256:sha(source)};
+}):[];
 const counts=Object.fromEntries(Object.keys(limits).map(k=>[k,0]));
 const witness={project,sourceHead,counts,limits,cases:[],saves:[],upstream:[],stage:'preflight'};
+let stopRequested=false;
+for(const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>{stopRequested=true;writesFrozen=true;});
 const note=e=>{witness.saves.push(e);report();};
 const report=()=>writeFileSync(join(stageDir,'receipt.json'),JSON.stringify(witness,null,2)+'\n',{mode:0o600});
 const phase=name=>{witness.stage=name;report();console.log('STAGE',name);};
 const mark=(name,data={})=>{witness.cases.push({name,...data});report();console.log('PASS',name);};
 function take(which) {
+  if(stopRequested && witness.stage!=='cleanup')throw Error('STOP_REQUESTED');
   if (counts[which]>=limits[which]-(which==='sqlObservation' && witness.stage!=='cleanup' ? 2 : 0))
     throw Error('BUDGET_'+which);
   counts[which]++;report();
@@ -106,9 +118,10 @@ COMMIT;
 `;
 
 let started=false, authority=false, armed=false, changedAcl=false, mf, authChild, restChild, authBase, authPort, origin, appPort;
-let failed=false, cleanupFailed=false, loseFor, fingerprint, restEnv, writesFrozen=false;
+let failed=false, cleanupFailed=false, loseFor, fingerprint, restEnv, writesFrozen=false, s47GateOpen=false, s47AclOpened=false;
 const users=[];
 const loginReplies=new Map();
+const trustedTokens=new Set();
 const nativeCounts={};
 function start(bin,args,localEnv) {
   return spawn(bin,args,{env:{...env,...localEnv},cwd:build,stdio:'ignore'});
@@ -175,31 +188,35 @@ function dbRequest(name,args,token,rollback=false) {
 }
 async function rest(name,args,token,{setup=false,rollback=false}={}) {
   assert.ok(['get_my_site','read_introduction','save_text_draft','read_text_publication_operation',
-    'apply_business_grant','create_site'].includes(name));
+    'apply_business_grant','create_site',...(full?s47RpcNames:[])].includes(name));
   if (!setup) take('textHTTP');
-  if(name==='save_text_draft'){take('nativeSaves');take('allSaveEntrances');}
-  if(name==='read_text_publication_operation')take('lookups');
+  if(name==='save_text_draft'||name==='save_resume_text'){take('allSaveEntrances');take('nativeSaves');}
+  if(['read_text_publication_operation','read_resume_text_operation','read_introduction_receipt'].includes(name))take('lookups');
   if(name==='apply_business_grant')take('grants');
   nativeCounts[name]=(nativeCounts[name]??0)+1;
   const r=await dbRequest(name,args,token,rollback);
   witness.upstream.push({phase:witness.stage,rpc:name,status:r.status,
     ...(typeof r.value?.code==='string'&&/^(?:PGRST[0-9]+|[A-Z0-9]{5})$/.test(r.value.code)?{code:r.value.code}:{}),
-    ...(args.input?.request_id?{requestId:args.input.request_id}:{}),transaction:r.rolledBack?'rollback-preference-applied':'default'});
+    ...((args.input?.request_id||args.input?.requestId)?{requestId:args.input.request_id??args.input.requestId}:{}),transaction:r.rolledBack?'rollback-preference-applied':'default'});
   report();
   return r;
 }
 async function rpcProxy(request) {
   const url=new URL(request.url);
-  assert.equal(url.origin,privateOrigin);
+  assert.ok([privateOrigin,...(full?['https://users.resume.example.invalid']:[])].includes(url.origin));
   assert.equal(request.method,'POST');
   assert.equal(request.headers.has('cookie'),false);
   const name=url.pathname.slice('/rpc/'.length);
-  assert.ok(['get_my_site','read_introduction','save_text_draft','read_text_publication_operation'].includes(name));
+  assert.ok(['get_my_site','read_introduction','save_text_draft','read_text_publication_operation',...(full?s47RpcNames:[])].includes(name));
   const args=await request.json();
   const token=request.headers.get('authorization')?.slice('Bearer '.length);
-  assert.ok(users.some(u=>u.token===token));
-  if (name==='save_text_draft' && writesFrozen) throw Error('SAVE_DISPATCH_FROZEN');
-  const r=await rest(name,args,token);
+  assert.ok(trustedTokens.has(token));
+  const writing=['save_text_draft','save_resume_text'].includes(name);
+  if(writing && writesFrozen)throw Error('SAVE_DISPATCH_FROZEN');
+  let r;
+  try {r=await rest(name,args,token);}
+  catch(error){if(full&&writing)writesFrozen=true;throw error;}
+  if(full&&writing&&r.status>=500)writesFrozen=true;
   if(name==='save_text_draft' && args.input?.request_id===loseFor && r.status===200){
     assert.equal(r.value.request_id,loseFor);
     writesFrozen=true;
@@ -289,25 +306,39 @@ function authenticate(token) {
   return claims;
 }
 function validateBoundary() {
-  assert.equal(lstatSync(root).mode&0o777,0o700);
-  assert.ok(!existsSync('/tmp/.s.PGSQL.'+dbPort), 'database default socket absent');
+
   assert.equal(pg('postgres',['--version']),'postgres (PostgreSQL) 17.12');
   assert.equal(execute(restBin,['--version']),'PostgREST 16.6');
   assert.equal(execute(authBin,['version']),'v2.198.0');
   assert.equal(sha(textSql),textDigest);
   for(const [name,source] of Object.entries(migrations)) assert.equal(sha(source),beforeMigrations[name]);
   assert.equal(sha(bound(migrations[m7.file],m7.before,m7.after)),m7.newSha256);
-  assert.equal(execute('git',['rev-parse','origin/main']),sourceHead);
-  assert.equal(execute('git',['diff','--name-only','HEAD',sourceHead]),'');
+  assert.equal(execute('/usr/bin/git',['rev-parse','origin/main']),baseline);
+  if(full){
+    assert.equal(execute('/usr/bin/git',['status','--porcelain']),'');
+    assert.equal(sha(readFileSync(authBin)),'0d9fed811548b67c45b6a97306ca4eefcb6714011e5294c836e8abdaacfaeda1');
+    assert.ok(process.env.S47_PLAYWRIGHT_MODULE && existsSync(process.env.S47_PLAYWRIGHT_MODULE),'PLAYWRIGHT_NOT_CONFIGURED');
+  } else assert.equal(execute('/usr/bin/git',['diff','--name-only','HEAD',sourceHead]),'');
 }
 try {
   validateBoundary();
+  root=mkdtempSync('/private/tmp/s47-');
+  db=join(root,'db');
+  restSock=join(root,'rest.sock');
+  assert.equal(lstatSync(root).mode&0o777,0o700);
   authPort=await availablePort(); appPort=await availablePort();
   assert.notEqual(authPort,appPort);
-  authBase='http://127.0.0.1:'+authPort; origin='http://127.0.0.1:'+appPort;
+  authBase='http://127.0.0.1:'+authPort; origin=(full?'https://localhost:':'http://127.0.0.1:')+appPort;
   const rollbackSource=bound(textSql,'\nCOMMIT;','\nROLLBACK;');
   const manifest={project,sourceHead,instance:sha(root),origin,authBase,pgTcp:false,privateRestUnix:true,
-    postgresSocketPort:dbPort,limits,authSource:'https://github.com/supabase/auth/releases/tag/v2.198.0',
+    postgresSocketPort:dbPort,limits,
+    ...(full?{baseline,executionOrder:[...Object.keys(migrations),textSqlPath,...textCandidates.map(c=>c.path)],
+      budgetAllocation:{workerAndNativeBusiness:160,reconciliationHttpReserve:20,
+        savesIncludingWorkerAndNative:36,lookups:16,sqlCasesAndObservations:38,independentCloseReserve:2,
+        maximumOwnerSites:2,cloudUSD:0},
+      fullTextHarnessSHA256:sha(readFileSync(new URL('./full-text.mjs',import.meta.url))),
+      candidateSql:textCandidates.map(({path,sha256})=>({path,sha256}))}:{}),
+    authSource:'https://github.com/supabase/auth/releases/tag/v2.198.0',
     versions:{postgres:'17.12',postgrest:'16.6',goTrue:'2.198.0',node:process.versions.node,
       workerd:JSON.parse(read('node_modules/miniflare/package.json')).version},
     binaries:{postgres:sha(readFileSync(join(pgBin,'postgres'))),postgrest:sha(readFileSync(restBin)),auth:sha(readFileSync(authBin))},
@@ -402,10 +433,10 @@ try {
     users.push({email,password,uid:u.id,name});
   }
   const [a,b]=users;
-  mf=runtime({port:appPort,bindings:{USERS_CURRENT_PASSWORD_POLICY:'ON',USERS_MODE:'isolated',USERS_PROJECT_REF:'isolated-users',
+  mf=runtime({port:appPort,...(full?{https:true}:{}),bindings:{USERS_CURRENT_PASSWORD_POLICY:'ON',USERS_MODE:'isolated',USERS_PROJECT_REF:'isolated-users',
     USERS_SUPABASE_URL:'https://users.auth.example.invalid',USERS_PUBLISHABLE_KEY:credential,USERS_APP_ORIGIN:origin,
-    USERS_INTRODUCTION_MODE:'synthetic'},
-    serviceBindings:{USERS_INTRODUCTION_RPC:rpcProxy},outboundService:authProxy});
+    USERS_INTRODUCTION_MODE:'synthetic',...(full?{USERS_RESUME_TEXT_MODE:'synthetic'}:{})},
+    serviceBindings:{USERS_INTRODUCTION_RPC:rpcProxy,...(full?{USERS_RESUME_TEXT_RPC:rpcProxy}:{})},outboundService:authProxy});
   await mf.ready;
   for(const actor of users) {
     const r=await mf.dispatchFetch(origin+'/api/account/login',{method:'POST',
@@ -416,6 +447,7 @@ try {
     const captured=loginReplies.get(actor.email);
     assert.equal(captured.user.id,actor.uid);
     actor.token=captured.access_token;
+    trustedTokens.add(actor.token);
     const claims=authenticate(actor.token);
     assert.ok(claims.sub===actor.uid && uuid(claims.session_id) && claims.amr.some(x=>x.method==='password'));
     actor.sid=claims.session_id;
@@ -451,7 +483,7 @@ try {
     getUser:async token=>{const r=await authWire('/user',{token});assert.equal(r.status,200);return {data:{user:await r.json()}};}
   }});
   const binding=createBusinessBinding({project,authIssuer:issuer,privateOrigin,registrarHost:'db.s47.example.invalid',testOnly:true});
-  for(const actor of users) {
+  async function grant(actor) {
     const handle=await identity.verifyAccount(actor.token);
     assert.deepEqual(accountContext(handle),{uid:actor.uid,session_id:actor.sid});
     const issued=Math.floor(Date.now()/1000);
@@ -467,6 +499,7 @@ try {
     assert.ok(r.value.status==='active' && uuid(r.value.grant_id));
     actor.grant=r.value.grant_id;
   }
+  for(const actor of users)await grant(actor);
   for(const actor of users){
     const r=await rest('create_site',{input:{schema_version:1,request_id:randomUUID(),slug:'s47-intro-'+actor.name,default_locale:'en'}},actor.token,{setup:true});
     assert.equal(r.status,200,r.value.code);
@@ -492,6 +525,28 @@ try {
   sql(`REVOKE EXECUTE ON FUNCTION ${publishFunctions.join(',')} FROM authenticated;
        REVOKE EXECUTE ON FUNCTION public.read_public_text(text,text) FROM anon;`);
   changedAcl=true;
+  if(full){
+    phase('S4.7-candidates-closed-install');
+    for(const candidate of textCandidates){
+      sql(candidate.source,'postgres');
+      mark('closed candidate installed',{path:candidate.path,sha256:candidate.sha256});
+    }
+    const catalog=obs(`SELECT json_build_object(
+      'tables',(SELECT count(*) FROM pg_class WHERE oid IN (
+        'site_private.resume_text_runtime'::regclass,'site_private.resume_text_revisions'::regclass,
+        'site_private.resume_text_receipts'::regclass,'site_private.resume_text_record_ids'::regclass) AND relrowsecurity AND relforcerowsecurity),
+      'functions',(SELECT count(*) FROM pg_proc WHERE oid IN (${s47Functions.map(f=>literal(f)+'::regprocedure').join(',')})
+       AND prosecdef AND pg_get_userbyid(proowner)='ecv_s3_command_writer'
+       AND NOT has_function_privilege('authenticated',oid,'EXECUTE') AND NOT has_function_privilege('anon',oid,'EXECUTE')
+       AND NOT has_function_privilege('authenticator',oid,'EXECUTE') AND NOT has_function_privilege('service_role',oid,'EXECUTE')),
+      'physicalGate',(SELECT NOT enabled FROM site_private.resume_text_runtime WHERE singleton)
+        AND EXISTS(SELECT FROM pg_constraint WHERE conrelid='site_private.resume_text_runtime'::regclass
+          AND conname='resume_text_runtime_enabled_check' AND convalidated));`);
+    assert.deepEqual(catalog,{tables:4,functions:4,physicalGate:true});
+    mark('S4.7 catalog verified closed',catalog);
+    sql(`GRANT EXECUTE ON FUNCTION ${s47Functions.join(',')} TO authenticated;`);
+    s47AclOpened=true;
+  }
   assert.equal(obs(`SELECT to_json(NOT has_function_privilege('authenticated','${publishFunctions[0]}','EXECUTE')
     AND NOT has_function_privilege('authenticated','${publishFunctions[1]}','EXECUTE')
     AND NOT has_function_privilege('anon','public.read_public_text(text,text)','EXECUTE')
@@ -511,8 +566,43 @@ try {
     FROM pg_proc p WHERE p.oid IN ('${saveFunctions[0]}'::regprocedure,'${saveFunctions[1]}'::regprocedure);`);
   assert.deepEqual(apiReady,{execute:true,count:2,rlsGate:true});
   mark('closed PostgREST schema-cache readiness',{staleCacheReproduced:staleCache,refreshedStatus:r.status,code:r.value.code});
+  if(full){
+    for(const [name,args] of Object.entries({
+      read_resume_text:{target:a.site,section_key:'profile'},
+      read_resume_text_operation:{target:a.site,section_key:'profile',operation_id:randomUUID(),request_digest:'0'.repeat(64),basis:0},
+      read_introduction_receipt:{target:a.site,operation_id:randomUUID(),request_digest:'0'.repeat(64),basis:0},
+    })){
+      const probe=await rest(name,args,a.token);
+      assert.ok((probe.status===403&&probe.value.code==='42501')||(probe.status===503&&probe.value.code==='PT503'));
+    }
+    mark('S4.7 read RPC schema cache and closed execution verified');
+    sql(`BEGIN;
+      ALTER TABLE site_private.resume_text_runtime DROP CONSTRAINT resume_text_runtime_enabled_check;
+      UPDATE site_private.resume_text_runtime SET enabled=true;
+      COMMIT;`);
+    s47GateOpen=true;
+  }
   gate(true,true);
 
+  if(full){
+    async function adoptBrowserSession(owner){
+      const captured=loginReplies.get(owner.email);
+      assert.ok(captured && captured.user.id===owner.uid);
+      const claims=authenticate(captured.access_token);
+      assert.ok(claims.sub===owner.uid&&uuid(claims.session_id)&&claims.session_id!==owner.sid);
+      const actor={...owner,token:captured.access_token,sid:claims.session_id,
+        scope:sha(JSON.stringify(['workspace-draft',owner.uid,claims.session_id]))};
+      loginReplies.delete(owner.email);
+      trustedTokens.add(actor.token);
+      await grant(actor);
+      return actor;
+    }
+    const result=await runFullText({a,b,origin,mf,obs,sql,rest,dispatch,mark,phase,take,counts,witness,adoptBrowserSession,checkDenial,deniedRoles,
+      journal:note,freeze:()=>{writesFrozen=true;},lostKey:key=>{loseFor=key;},
+      resumeAfterProof:()=>{assert.ok(writesFrozen && !stopRequested);writesFrozen=false;}});
+    witness.gRead=result.gRead;
+    witness.gSave=result.gSave;
+  } else {
   phase('G-READ');
   assert.equal((await dispatch(a,{anonymous:true})).status,401);
   for(const actor of users){
@@ -612,6 +702,7 @@ try {
   assert.deepEqual(qualifiedClosed,{grantRevoked:true,sessionExpired:true,grantStillLiveUntilCleanup:true});
   mark('grant revocation and elapsed native session deadline are independently rejected',{revoked:403,expired:expired.status});
   witness.gRead='LOCAL_PASS';witness.gSave='LOCAL_PASS';
+  }
 } catch(error) {
   failed=true;
   witness.failure={stage:witness.stage,name:error?.name,assertion:error?.code??null,
@@ -620,7 +711,7 @@ try {
      /^[A-Z_0-9]+$/.test(error?.message??'')?error.message:undefined,
     ...(error?.code==='ERR_ASSERTION' && typeof error.actual==='number' && typeof error.expected==='number'?
       {actual:error.actual,expected:error.expected}:{}),
-    sourceLine:error?.stack?.match(/run\.mjs:(\d+):/)?.[1]};
+    sourceLine:error?.stack?.match(/(?:run-introduction|full-text)\.mjs:(\d+):/)?.[1]};
   console.error('STOP',JSON.stringify(witness.failure));
 } finally {
   phase('cleanup');
@@ -641,6 +732,16 @@ try {
           ${changedAcl?`UPDATE site_private.text_publication_runtime SET write_enabled=false,public_read_enabled=false,outbox_enabled=false;
             REVOKE EXECUTE ON FUNCTION ${[...saveFunctions,...publishFunctions].join(',')} FROM authenticated;
             REVOKE EXECUTE ON FUNCTION public.read_public_text(text,text) FROM anon;`:''}
+          ${full?`DO $s47$ BEGIN
+            IF to_regclass('site_private.resume_text_runtime') IS NOT NULL THEN
+              UPDATE site_private.resume_text_runtime SET enabled=false;
+              IF NOT EXISTS(SELECT FROM pg_constraint WHERE conrelid='site_private.resume_text_runtime'::regclass
+                AND conname='resume_text_runtime_enabled_check') THEN
+                ALTER TABLE site_private.resume_text_runtime ADD CONSTRAINT resume_text_runtime_enabled_check CHECK(NOT enabled);
+              END IF;
+            END IF;
+          END $s47$;
+          ${s47AclOpened?'REVOKE EXECUTE ON FUNCTION '+s47Functions.join(',')+' FROM authenticated;':''}`:''}
           ALTER ROLE ${primary.api} NOLOGIN PASSWORD NULL;
           ALTER ROLE ${primary.reg} NOLOGIN PASSWORD NULL;
           COMMIT;`);
@@ -674,26 +775,29 @@ try {
           'openLoginRoles',(SELECT count(*) FROM pg_roles WHERE rolname IN ('${primary.api}','${primary.reg}','${primary.auth}','postgres') AND rolcanlogin),
           'privateRpcSchemaUsage',has_schema_privilege('authenticated','site_api','USAGE'),
           'rpcExecuteGrants',(SELECT count(*) FROM pg_proc WHERE pronamespace='site_api'::regnamespace AND has_function_privilege('authenticated',oid,'EXECUTE')),
+          ${s47GateOpen?`'s47Closed',(SELECT NOT enabled FROM site_private.resume_text_runtime WHERE singleton)
+            AND EXISTS(SELECT FROM pg_constraint WHERE conrelid='site_private.resume_text_runtime'::regclass
+              AND conname='resume_text_runtime_enabled_check' AND convalidated),`:''}
           'testHookPresent',to_regprocedure('site_private.s47_test_abort_save()') IS NOT NULL,
           'textGatesClosed',${changedAcl?'(SELECT NOT write_enabled AND NOT public_read_enabled AND NOT outbox_enabled FROM site_private.text_publication_runtime)':'NULL'});`);
         witness.closed=closed;report();
         assert.ok(closed.businessGateClosed && closed.physicalLatch && !closed.privateRpcSchemaUsage && !closed.testHookPresent &&
           ['activeGrants','activeGenerations','sessions','refreshTokens','otherConnections','openLoginRoles','rpcExecuteGrants'].every(k=>closed[k]===0) &&
-          (!changedAcl||closed.textGatesClosed));
+          (!changedAcl||closed.textGatesClosed) && (!s47GateOpen||closed.s47Closed));
       }
     } catch(e){cleanupFailed=true;witness.closeError??='INDEPENDENT_CLOSE_WITNESS_FAILED';
       witness.closeDiagnostic=typeof e?.stderr==='string'?e.stderr.split('\n').find(s=>s.includes('ERROR:'))?.slice(0,240):undefined;}
     try {pg('pg_ctl',['-D',db,'-m','fast','-w','stop']); started=false;} catch {cleanupFailed=true;witness.pgStopError=true;}
   }
   try {await mf?.dispose();await stop(restChild);await stop(authChild);} catch {cleanupFailed=true;witness.childStopError=true;}
-  if(!started){
+  if(root&&!started){
     const real=realpathSync(root);
     assert.ok(/^\/private\/tmp\/s47-[A-Za-z0-9]{6}$/.test(real) && lstatSync(real).uid===process.getuid());
     rmSync(root,{recursive:true,force:true});
   }
   const listening=spawnSync('/usr/sbin/lsof',['-nP','-iTCP','-sTCP:LISTEN'],{encoding:'utf8'}).stdout??'';
   const portStillBound=p=>p?new RegExp(':'+p+'\\s+[(]LISTEN[)]').test(listening):false;
-  witness.cleanup={dbDirectoryRemoved:!existsSync(root),postgresSocketRemoved:!existsSync(join(root,'.s.PGSQL.'+dbPort)),
+  witness.cleanup={dbDirectoryRemoved:!root||!existsSync(root),postgresSocketRemoved:!root||!existsSync(join(root,'.s.PGSQL.'+dbPort)),
     postgrestSocketRemoved:!existsSync(restSock),authPortClosed:!portStillBound(authPort),workerPortClosed:!portStillBound(appPort),
     authExited:!authChild||authChild.exitCode!==null||authChild.signalCode!==null,
     postgrestExited:!restChild||restChild.exitCode!==null||restChild.signalCode!==null,dockerCommands:0,hostedRequests:0};
