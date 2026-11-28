@@ -25,7 +25,7 @@ import {isTextSection} from '../../lib/editor/resume-text';
 import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
 import {mountEditorSections, selectEditorSection} from './editor-section-history';
-import {buildPreview} from '../../lib/editor/preview-model';
+import {resumePreviewSource} from '../../lib/editor/resume-preview-source';
 import {customSectionTitle, sectionTitleField, type SiteTextDraft} from '../../lib/editor/site-text';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
@@ -158,7 +158,8 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
     saved:text('已保存草稿。','Draft saved.'),
     ready:undefined,
   }[textState?.phase??'loading']) : undefined;
-  const preview = useMemo(() => buildPreview(draft, guideOverrides, showExamples), [draft, guideOverrides, showExamples]);
+  const preview=useMemo(()=>resumePreviewSource({kind:'local',draft,guides:guideOverrides,showExamples},previewLocale)!.preview,
+    [draft,guideOverrides,showExamples,previewLocale]);
   const heading = sectionTitleField(module);
   const updateSiteText = (siteText: SiteTextDraft) => setDraft(current => ({...current, 'site-text': siteText}));
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
