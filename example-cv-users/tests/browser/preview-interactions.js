@@ -43,6 +43,17 @@ async page => {
   await shot('01-empty');
   const timeOrigin = await page.evaluate(() => performance.timeOrigin);
 
+  await pane.locator('[data-preview-nav="contact"]').click();
+  await pane.locator('.public-contact-extension').waitFor();
+  await section('awards');
+  await page.waitForFunction(() => {
+    const contact = document.querySelector('.public-contact-extension');
+    const navBottom = document.querySelector('.site-preview-nav').getBoundingClientRect().bottom;
+    const awardsTop = document.querySelector('[data-site-section="awards"]').getBoundingClientRect().top;
+    return contact.hidden && Math.abs(awardsTop - navBottom) < 20;
+  }, null, {timeout: 3000});
+  await section('profile');
+
   await field('name', 'zh').fill('林禾');
   check(await name.textContent() === '林禾' && !await name.getAttribute('data-preview-example'), 'real display name did not replace its example');
   check(await name.evaluate(node => getComputedStyle(node).color) !== sampleInk, 'example and real content use the same color');
@@ -146,5 +157,5 @@ async page => {
   check(await exampleNodes.count() === 0, 'changing modules reset the example toggle');
   check(await page.evaluate(() => performance.timeOrigin) === timeOrigin, 'preview interaction replaced the document');
   check(urls.length === 5, 'a destination was requested without an explicit click');
-  return {browser: prefix, scenarios: 14, clickedDestinations: urls, mailtoIntentChecked: true};
+  return {browser: prefix, scenarios: 15, clickedDestinations: urls, mailtoIntentChecked: true};
 }

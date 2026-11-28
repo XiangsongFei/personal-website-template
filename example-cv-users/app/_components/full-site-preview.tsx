@@ -109,8 +109,8 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
   modified?: readonly EditFeedback[]; focused?: EditFeedback;
 }) {
   const draft = preview.content;
-  const [contactOverride, setContactOverride] = useState<boolean | null>(null);
-  const contactExpanded = contactOverride ?? module === 'contact';
+  const [contactOverride, setContactOverride] = useState<{module: PreviewSection; expanded: boolean}>();
+  const contactExpanded = contactOverride?.module === module ? contactOverride.expanded : module === 'contact';
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
   const anchoredSection = useRef<PreviewSection>(module);
@@ -227,7 +227,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     return () => observer.disconnect();
   }, []);
 
-  useLayoutEffect(() => { setContactOverride(null); }, [module]);
+  useLayoutEffect(() => { setContactOverride(undefined); }, [module]);
 
   useLayoutEffect(() => {
     const owner = viewport.current;
@@ -288,7 +288,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     if (request.handled || !owner.clientHeight || (focused.locale !== 'shared' && focused.locale !== locale)) return;
     const matches = Array.from(previewFieldNodes(owner, focused));
     if (focused.module === 'profile' && matches.some(node => node.closest('.public-contact-extension[hidden]'))) {
-      setContactOverride(true);
+      setContactOverride({module, expanded: true});
       return;
     }
     const visible = matches.filter(node => node.getClientRects().length && (node.textContent?.trim() || node.querySelector('svg')));
@@ -340,7 +340,7 @@ export function FullSitePreview({preview, locale, module, onLocaleChange, modifi
     } else {
       // Position after React commits the height of the contact details.
       pendingSection.current = key;
-      setContactOverride(expandContact);
+      setContactOverride({module, expanded: expandContact});
     }
   }
   const navButton = (key: PreviewSection, className?: string) => <button type="button" className={className} key={key}
