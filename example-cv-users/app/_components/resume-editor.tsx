@@ -87,6 +87,10 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   </section>;
 }
 
+function TextEditGate({disabled,children}: {disabled:boolean;children:ReactNode}) {
+  return disabled ? <fieldset disabled style={{display:'contents'}}>{children}</fieldset> : <>{children}</>;
+}
+
 export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = false, resumeTextEnabled = false}: {initialDraft?: LocalDraft; introductionEnabled?: boolean; resumeTextEnabled?: boolean}) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
@@ -138,7 +142,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
       textReady ? text('保存草稿','Save draft') : text('重新读取','Retry read'),
     run:()=>void (textReady?textPersistence.save():textPersistence.refresh()),
     enabled:textReady ? textState?.phase!=='saving' && textState?.phase!=='conflict' &&
-      (!!textState?.pending||dirtyModules.includes(module)) :
+      (!!textState?.pending||textPersistence.dirty) :
       ['failure','renewal'].includes(textState?.phase??'loading'),
   } : undefined;
   const textMessage=usesText ? ({
@@ -206,7 +210,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
                 ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')], ['site-text', text('网站文字', 'Site text')],
               ]} selected={module} dirty={dirtyModules} select={selectEditorSection} label={text('联系与链接区域', 'Contact and links areas')}/>
             </div>}>
-            <fieldset disabled={usesText&&!textReady} style={{display:'contents'}}>
+            <TextEditGate disabled={usesText&&!textReady}>
             {heading && <FieldFeedbackContext.Provider value={siteTextFields}>
               <fieldset className="editor-fields">
                 <legend>{text('栏目标题', 'Section title')}</legend>
@@ -247,7 +251,7 @@ export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = f
                   error={value => validIntroduction(value) ? undefined : text('内容含无效字符或超过长度上限。',
                     'The introduction contains invalid characters or exceeds the length limit.')}/>
               </div>}
-            </fieldset>
+            </TextEditGate>
           </EditorPanel>
         </FieldFeedbackContext.Provider>
         <section className="editor-preview" data-mode={mode} data-preview-source={showExamples ? 'mixed' : 'draft'} aria-label={text('网站预览', 'Website preview')}>

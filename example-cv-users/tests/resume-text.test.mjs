@@ -61,3 +61,42 @@ test('operation marker survives document lifecycle and permits original lookup o
   removePendingScope(local,scope);
   assert.equal(readPendingText(local,scope,'links'),undefined);
 });
+
+test('repeatable sections preserve ordered IDs, selected education category and scoped project methods',async()=>{
+  const {
+    newEducation,newExperience,newProject,newSkill,newAward,moveRecord,removeRecord,changeEducationCategory,skillCategory,
+  }=await import('../lib/editor/records.ts');
+  const draft=structuredClone(emptyDraft);
+  const a=changeEducationCategory(newEducation('local-'+uuid(),0),'summerSchool');
+  draft.education=[{...a,translations:{en:{title:'',courseDescription:'course'},zh:{program:'课程'}}}];
+  const experience=(title,position)=>({...newExperience('local-'+uuid(),position),translations:{en:{title}}});
+  draft.experience=[experience('A',0),experience('B',1),experience('C',2)];
+  draft.experience=removeRecord(moveRecord(draft.experience,draft.experience[2].clientId,-1),draft.experience[0].clientId);
+  const project=newProject('local-'+uuid(),0);
+  draft.projects=[{...project,translations:{zh:{title:'项目'},en:{href:'https://example.invalid/project'}},
+    methods:{zh:[{clientId:'local-'+uuid(),position:0,value:'方法'}],en:[{clientId:'local-'+uuid(),position:0,value:''}]}}];
+  draft.skills=[{...newSkill('local-'+uuid(),0),category:'analytics',translations:{en:{items:'SQL'}}}];
+  draft.awards=[{...newAward('local-'+uuid(),0),translations:{zh:{name:'奖项',year:'2026'},en:{name:'Award',year:''}}}];
+
+  const restored=draft;
+  let baseline=emptyDraft;
+  for(const section of ['education','experience','projects','skills','awards']) {
+    const wire=textContent(section,draft);
+    baseline=applyTextContent(baseline,section,wire);
+    assert.deepEqual(textContent(section,baseline),wire);
+    assert.throws(()=>textContent(section,fillingGuide),/INVALID_RESUME_TEXT/);
+  }
+  assert.equal(baseline.education[0].persistedCategory,'summerSchool');
+  assert.equal(baseline.education[0].translations.en.title,'');
+  assert.deepEqual(baseline.experience.map(row=>row.translations.en.title),['C','B']);
+  assert.deepEqual(baseline.projects,restored.projects);
+  assert.equal(skillCategory(baseline.skills[0]),'analytics');
+  assert.deepEqual(baseline.awards,restored.awards);
+
+  const bad=structuredClone(textContent('projects',draft));
+  bad.entries[0].methods.en[0].id=bad.entries[0].methods.zh[0].id;
+  assert.throws(()=>validateTextContent('projects',bad),/INVALID_RESUME_TEXT/);
+  const misplaced=structuredClone(textContent('experience',draft));
+  misplaced.entries[0].position=1;
+  assert.throws(()=>validateTextContent('experience',misplaced),/INVALID_RESUME_TEXT/);
+});

@@ -368,7 +368,12 @@ function useTextPersistence(scope: string | undefined, section: TextSection | un
     }
     setTextState(section,{phase:code==='BUSINESS_DENIED'?'denied':code==='SESSION_REFRESH_REQUIRED'?'renewal':'unknown',snapshot,pending});
   }
-  return {state,savedStates,save,refresh};
+  let dirty=false;
+  if(section && state?.snapshot && entry?.scope===scope && entry) {
+    try {dirty=JSON.stringify(textContent(section,entry.draft))!==JSON.stringify(state.snapshot.content);}
+    catch {dirty=moduleIsDirty(entry.draft,section,initial);}
+  }
+  return {state,savedStates,save,refresh,dirty};
 }
 
 export function useWorkspaceSnapshot() {

@@ -58,3 +58,22 @@ test('ordinary worker instance leaves the new business route closed',async t=>{
   const a=await login(rt);
   assert.equal((await http(a,'profile')).status,404);
 });
+
+test('repeatable Worker persistence keeps per-site row identity, positions, order, and deletion atomic',async t=>{
+  const rt=await resumeTextRuntime();t.after(()=>rt.mf.dispose());
+  const a=await login(rt),b=await login(rt,'b');
+  const first=(await http(a,'experience')).value;
+  const second=(await http(b,'experience')).value;
+  const body=(site,revision,entries)=>({siteId:site,section:'experience',expectedRevision:revision,requestId:crypto.randomUUID(),content:{entries}});
+  const rows=['A','B','C'].map((title,position)=>({id:crypto.randomUUID(),position,translations:{zh:{title},en:{title}}}));
+  const saved=await http(a,'save',body(first.siteId,0,rows));
+  assert.equal(saved.status,200);
+  assert.equal((await http(b,'save',body(second.siteId,0,[rows[0]]))).status,403);
+  const reordered=[{...rows[2],position:0},{...rows[0],position:1}];
+  const newer=await http(a,'save',body(first.siteId,1,reordered));
+  assert.equal(newer.status,200);
+  assert.deepEqual((await http(a,'experience')).value.content.entries,reordered);
+  assert.deepEqual((await http(b,'experience')).value.content.entries,[]);
+  assert.equal((await http(a,'save',body(first.siteId,1,rows))).status,409);
+  assert.equal(rt.writes,2);
+});

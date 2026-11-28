@@ -3,12 +3,16 @@ import {emptyDraft, profileLocalized, profileShared, type LocalDraft} from './dr
 import {contactStatusLabels} from './contact.ts';
 import {editableNavigationSections, sectionTitleFields} from './site-text.ts';
 import {safePublicEmail} from './site-links.ts';
-import {safeHttpUrl} from './records.ts';
+import {educationCategories, educationCategory, safeHttpUrl, skillTitle,
+  type AwardDraft, type EducationDraft, type ExperienceDraft, type ProjectDraft, type ProjectMethodDraft,
+  type SkillDraft} from './records.ts';
 
 export const singletonTextSections = ['profile', 'contact', 'links', 'site-text'] as const;
 export type SingletonTextSection = typeof singletonTextSections[number];
-export type TextSection = SingletonTextSection;
-export const textSections: readonly TextSection[] = singletonTextSections;
+export const repeatableTextSections = ['education','experience','projects','skills','awards'] as const;
+export type RepeatableTextSection = typeof repeatableTextSections[number];
+export type TextSection = SingletonTextSection | RepeatableTextSection;
+export const textSections: readonly TextSection[] = [...singletonTextSections,...repeatableTextSections];
 export const resumeTextPath='/api/sites/resume-text';
 const limit = 160_000;
 type Shape = Record<string, unknown>;
@@ -58,6 +62,10 @@ function recordList(value: unknown, fields: Record<string, Validator>) {
   });
 }
 
+const nullable = (validate: Validator): Validator => value => value===null ? null : validate(value);
+const projectMethod=(value:unknown)=>recordList(value,{value:string(20_000)});
+const entries = (fields: Record<string,Validator>) => shaped({entries:value=>recordList(value,fields)},true);
+type EntryList<T> = {entries:T[]};
 const contactItem = {translations: translated(strings(['title','detail'], 20_000))};
 const validators: Record<TextSection, Validator> = {
   profile: shaped({
@@ -74,6 +82,19 @@ const validators: Record<TextSection, Validator> = {
       email: string(254,safePublicEmail), github: string(2048,safeHttpUrl)},true),
     translations: translated({linkedInLabel:string(200),linkedInHref:string(2048,safeHttpUrl)}),
   }, true),
+  education:entries({
+    category:oneOf([...educationCategories,null]),
+    translations:translated({...strings(['title','program','period','grade'],20_000),
+      courseTitle:nullable(string(20_000)),courseDescription:nullable(string(20_000)),customCategoryLabel:nullable(string(20_000))}),
+  }),
+  experience:entries({translations:translated({
+    ...strings(['organization','title','period','description'],20_000),location:nullable(string(20_000)),
+  })}),
+  projects:entries({translations:translated({
+    ...strings(['title','subtitle','period','description'],20_000),href:string(2048,safeHttpUrl),
+  }),methods:shaped({zh:projectMethod,en:projectMethod},true)}),
+  skills:entries({translations:translated(strings(['title','items'],20_000))}),
+  awards:entries({translations:translated(strings(['name','year'],20_000))}),
   'site-text': shaped({
     navigation: translated(strings(editableNavigationSections,200)),
     translations: translated(strings([...Object.values(sectionTitleFields),'kaggleLabel','portfolioLabel','updatedAtLabel'],200)),
@@ -93,6 +114,13 @@ export function wireRecordScopes(section: TextSection, validated: unknown): Arra
     const row=validated as Record<'focus'|'status',{id:string}[]>;
     return (['focus','status'] as const).flatMap(scope=>row[scope].map(({id})=>({id,scope})));
   }
+  if(section==='projects'){
+    const {entries:rows}=validated as EntryList<{id:string;methods:Record<'zh'|'en',{id:string}[]>}>;
+    return rows.flatMap(row=>[{id:row.id,scope:'row'},...(['zh','en'] as const).flatMap(language=>
+      row.methods[language].map(({id})=>({id,scope:'method:'+row.id+':'+language})))]);
+  }
+  const rows=(validated as Partial<EntryList<{id:string}>>).entries;
+  if (rows) return rows.map(({id})=>({id,scope:'row'}));
   return [];
 }
 export function validateTextContent(section: TextSection, value: unknown): unknown {
@@ -103,6 +131,21 @@ export function validateTextContent(section: TextSection, value: unknown): unkno
   return result;
 }
 export function textContent(section: TextSection, draft: LocalDraft): unknown {
+  if (section==='education') {
+    return validateTextContent(section,{entries:draft.education.map(row=>recordToWire({clientId:row.clientId,
+      position:row.position,category:educationCategory(row),translations:row.translations}))});
+  }
+  if (section==='skills') {
+    return validateTextContent(section,{entries:draft.skills.map(row=>recordToWire({clientId:row.clientId,position:row.position,
+      translations:{zh:{...row.translations.zh,title:skillTitle(row,'zh')},
+        en:{...row.translations.en,title:skillTitle(row,'en')}}}))});
+  }
+  if (section==='projects') {
+    return validateTextContent(section,{entries:draft.projects.map(row=>recordToWire({...row,
+      methods:{zh:row.methods.zh.map(recordToWire),en:row.methods.en.map(recordToWire)}}))});
+  }
+  if (section==='experience'||section==='awards')
+    return validateTextContent(section,{entries:draft[section].map(recordToWire)});
   if (section === 'contact') {
     const {focus,status,translations}=draft.contact;
     return validateTextContent(section,{translations,focus:focus.map(recordToWire),status:status.map(recordToWire)});
@@ -111,6 +154,19 @@ export function textContent(section: TextSection, draft: LocalDraft): unknown {
 }
 export function applyTextContent(draft: LocalDraft, section: TextSection, value: unknown): LocalDraft {
   const content = validateTextContent(section,value);
+  if (section==='education'){
+    const {entries:rows}=content as EntryList<Omit<WireRecord<EducationDraft>,'entryType'|'persistedCategory'>>;
+    return {...draft,education:rows.map(row=>recordToEditor({...row,persistedCategory:row.category,
+      entryType:row.category==='summerSchool'?'summerSchool' as const:'standard' as const}))};
+  }
+  if (section==='projects'){
+    const {entries:rows}=content as EntryList<Omit<WireRecord<ProjectDraft>,'methods'> & {methods:Record<'zh'|'en',WireRecord<ProjectMethodDraft>[]>}>;
+    return {...draft,projects:rows.map(row=>recordToEditor({...row,
+      methods:{zh:row.methods.zh.map(recordToEditor),en:row.methods.en.map(recordToEditor)}}))};
+  }
+  if (section==='experience') return {...draft,experience:(content as EntryList<WireRecord<ExperienceDraft>>).entries.map(recordToEditor)};
+  if (section==='skills') return {...draft,skills:(content as EntryList<WireRecord<SkillDraft>>).entries.map(recordToEditor)};
+  if (section==='awards') return {...draft,awards:(content as EntryList<WireRecord<AwardDraft>>).entries.map(recordToEditor)};
   if (section === 'contact') {
     const {focus,status,translations}=content as {focus:WireRecord<LocalDraft['contact']['focus'][number]>[];status:WireRecord<LocalDraft['contact']['status'][number]>[];translations:LocalDraft['contact']['translations']};
     return {...draft,contact:{translations,focus:focus.map(recordToEditor),status:status.map(recordToEditor)}};

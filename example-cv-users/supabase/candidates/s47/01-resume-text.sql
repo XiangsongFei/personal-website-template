@@ -26,7 +26,7 @@ INSERT INTO site_private.resume_text_runtime VALUES (true,false);
 
 CREATE TABLE site_private.resume_text_revisions (
   site_id uuid NOT NULL REFERENCES site_data.sites(id) ON DELETE RESTRICT,
-  section text NOT NULL CHECK (section IN ('profile','contact','links','site-text')),
+  section text NOT NULL CONSTRAINT resume_text_known_section CHECK (section IN ('profile','contact','links','site-text')),
   revision bigint NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
   content jsonb NOT NULL CHECK (jsonb_typeof(content)='object' AND octet_length(content::text)<=400000),
   actor_uid uuid NOT NULL,
