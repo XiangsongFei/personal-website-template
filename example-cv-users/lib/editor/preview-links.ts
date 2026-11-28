@@ -1,19 +1,23 @@
 import {safeHttpUrl} from './records.ts';
 import {safePublicEmail} from './site-links.ts';
 
-// Only illustrative destinations used in the isolated local workspace.
-const demonstrationHosts = new Set(['example.com', 'example.net', 'example.org', 'github.com', 'www.linkedin.com']);
-
-export function demoPreviewUrl(value: string | undefined) {
-  const href = safeHttpUrl(value);
-  if (!href) return;
-  const url = new URL(href);
-  if (!url.port && demonstrationHosts.has(url.hostname)) return href;
-}
-
-export function demoPreviewMailto(value: string | undefined) {
+export function publicEmailMailto(value: string | undefined) {
   const email = safePublicEmail(value ?? '');
   if (!email) return;
   const [mailbox, domain] = email.split('@');
-  if (domain.toLowerCase() === 'example.invalid') return `mailto:${encodeURIComponent(mailbox)}@${domain}`;
+  const encoded = encodeURIComponent(mailbox).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+  return `mailto:${encoded}@${domain}`;
+}
+
+export type PreviewDestination = {href?: string; status?: 'example' | 'invalid'};
+
+export function previewDestination(
+  value: string | undefined, isExample: boolean | undefined, validate = safeHttpUrl,
+): PreviewDestination | undefined {
+  if (!value?.trim()) return;
+  // The filling guide's reserved addresses illustrate what to type. Its
+  // fictional project and contact details have no usable destination.
+  if (isExample) return {status: 'example'};
+  const href = validate(value);
+  return href ? {href} : {status: 'invalid'};
 }

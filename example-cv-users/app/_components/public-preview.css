@@ -2,6 +2,7 @@
 .public-preview {
   --public-edge: clamp(24px, 5cqi, 55px);
   --public-content-width: 980px;
+  --public-example-ink: #686868;
   container: public-site / inline-size;
   --public-rule: #dedede;
   color: #202020;
@@ -9,6 +10,13 @@
   font: 16px/1.65 Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   overflow-x: hidden;
   overflow-anchor: none;
+}
+
+.public-preview .public-canvas [data-preview-example],
+.public-preview .public-nav button[data-preview-example],
+.public-preview .public-intro[data-preview-example] p,
+.public-preview [data-preview-example-record] :is([data-preview-value]:not([data-preview-value="kaggleLabel"]), [data-preview-method]) {
+  color: var(--public-example-ink);
 }
 .public-preview .public-canvas { width: var(--public-canvas-width, min(100%, 1100px)); zoom: var(--public-canvas-scale, 1); margin-inline: auto; }
 .public-preview :is(h1, h2, h3, p, dl, dd) { margin: 0; }

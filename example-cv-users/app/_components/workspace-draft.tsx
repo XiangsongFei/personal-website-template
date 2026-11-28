@@ -3,15 +3,18 @@
 import {createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
 import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyUpcomingWorkspaceTraversal, verifyWorkspaceTraversal} from './workspace-history';
 import {bilingualFieldKey, collectEditorFields, modifiedEditorFields, reviewChanges, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
-import {editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
+import {cancelModule, editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
+import {updateGuideOverrides, type GuideOverrides} from '../../lib/editor/preview-model';
 
 type DraftEntry = {
   scope: string;
   draft: LocalDraft;
   reviews: Partial<Record<EditorModule, Reviews>>;
   dirtyModules: readonly EditorModule[];
+  guideOverrides: GuideOverrides;
 };
 const noReviews: Reviews = new Map();
+const noGuideOverrides: GuideOverrides = {};
 const DraftScope = createContext<string | undefined>(undefined);
 const listeners = new Set<() => void>();
 let currentScope: string | undefined;
@@ -109,22 +112,24 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
   const baseline = useMemo(() => collectEditorFields(initial, module), [initial, module]);
   const current = useMemo(() => collectEditorFields(draft, module), [draft, module]);
   const reviews = snapshot?.reviews[module] ?? noReviews;
-  const update = (change: (previous: LocalDraft) => LocalDraft) => {
+  const update = (change: (previous: LocalDraft) => LocalDraft, undo = false) => {
     if (!scope || scope !== currentScope) return;
     const previous = read();
-    const next = change(previous?.draft ?? initial);
+    const before = previous?.draft ?? initial;
+    const next = change(before);
     const nextDirty = modules.filter(module => moduleIsDirty(next, module, initial));
-    if (!nextDirty.length) {
+    const guideOverrides = updateGuideOverrides(previous?.guideOverrides ?? noGuideOverrides, before, next, module, undo);
+    if (!nextDirty.length && !Object.keys(guideOverrides).length) {
       clearWorkspaceDraft();
       return;
     }
-    if (!entry) {
-      window.addEventListener('beforeunload', warnBeforeLeaving);
-      window.addEventListener('pagehide', clearWorkspaceDraft);
-    }
-    const reviewResult = reviewChanges(collectEditorFields(previous?.draft ?? initial, module),
-      collectEditorFields(next, module), baseline, previous?.reviews[module] ?? noReviews);
-    entry = {scope, draft: next, dirtyModules: nextDirty, reviews: {...previous?.reviews, [module]: reviewResult.reviews}};
+    if (!entry) window.addEventListener('pagehide', clearWorkspaceDraft);
+    if (nextDirty.length) window.addEventListener('beforeunload', warnBeforeLeaving);
+    else window.removeEventListener('beforeunload', warnBeforeLeaving);
+    const reviews = nextDirty.includes(module) ? reviewChanges(collectEditorFields(before, module),
+      collectEditorFields(next, module), baseline, previous?.reviews[module] ?? noReviews).reviews : noReviews;
+    entry = {scope, draft: nextDirty.length ? next : initial, dirtyModules: nextDirty, guideOverrides,
+      reviews: {...previous?.reviews, [module]: reviews}};
     notify();
   };
   const acknowledge = (field: FieldKey) => {
@@ -138,5 +143,7 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
     entry = {...previous, reviews: {...previous.reviews, [module]: next}};
     notify();
   };
-  return {scope, draft, update, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, module}};
+  const guideOverrides = snapshot?.guideOverrides ?? noGuideOverrides;
+  const undo = () => update(current => cancelModule(current, module, initial), true);
+  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, module}};
 }

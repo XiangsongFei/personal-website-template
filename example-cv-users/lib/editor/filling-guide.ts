@@ -123,12 +123,3 @@ export function guidePlaceholder(module: EditorModule, field: string, locale: Co
   ));
   return example && (example.editValues ?? example.values)[locale];
 }
-
-export function hasPreviewContent(draft: LocalDraft) {
-  return modules.some(module => [...collectEditorFields(draft, module).values()].some(entry => {
-    // The aggregate methods field includes IDs, and category defaults can appear on an empty row.
-    if (entry.field === 'methods' || (entry.field === 'shared:category' && entry.values.shared === 'custom') ||
-      (entry.field === 'shared:statusType' && entry.values.shared === 'open')) return false;
-    return Object.values(entry.editValues ?? entry.values).some(value => !!value?.trim());
-  }));
-}

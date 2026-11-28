@@ -4,8 +4,9 @@ import {useLayoutEffect, useRef, useState, type ReactNode} from 'react';
 import {contactDisplay, contactStatusLabels} from '../../lib/editor/contact';
 import {educationCategory, educationDisplay, projectDisplay, skillCategory, skillTitle} from '../../lib/editor/records';
 import type {EditFeedback} from '../../lib/editor/bilingual-review';
-import type {ContentLocale, LocalDraft} from '../../lib/editor/draft';
-import {demoPreviewMailto, demoPreviewUrl} from '../../lib/editor/preview-links';
+import type {ContentLocale, EditorModule} from '../../lib/editor/draft';
+import {previewDestination, publicEmailMailto, type PreviewDestination} from '../../lib/editor/preview-links';
+import type {SitePreview} from '../../lib/editor/preview-model';
 import {publicLinksDisplay} from '../../lib/editor/site-links';
 import {editableNavigationSections, previewSections, sectionTitleFields, siteNavigationLabel, type PreviewSection} from '../../lib/editor/site-text';
 
@@ -21,31 +22,33 @@ function PreviewAnchor({href, className, children}: {href: string; className?: s
   return <a className={className} href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
 }
 
-function Action({kind, children, marker, valueKey, reference, href, onActivate}: {
+function Action({kind, children, marker, valueKey, unavailable, href, onActivate, example, exampleLabel}: {
   kind: 'mail' | 'file' | 'linkedin' | 'github'; children: ReactNode;
-  marker?: string; valueKey?: string; reference?: string; href?: string; onActivate?: () => void;
+  marker?: string; valueKey?: string; unavailable?: string; href?: string; onActivate?: () => void;
+  example?: boolean; exampleLabel?: boolean;
 }) {
-  const contents = <><PreviewIcon kind={kind}/><span data-preview-value={valueKey}>{children}</span><PreviewIcon kind="external"/></>;
+  const contents = <><PreviewIcon kind={kind}/><span data-preview-value={valueKey} data-preview-example={exampleLabel}>{children}</span><PreviewIcon kind="external"/></>;
   if (onActivate) return <button type="button" className="public-action" data-preview-public-link={marker} onClick={onActivate}>{contents}</button>;
   const address = marker === 'github' ? 'github' : marker === 'linkedin-action' ? 'linkedInHref' : undefined;
   if (href) return <span data-preview-public-link={marker} data-preview-value={address}>
     <PreviewAnchor className="public-action" href={href}>{contents}</PreviewAnchor>
   </span>;
-  return <span className="public-action" data-preview-public-link={marker} data-preview-value={address} aria-disabled="true" title={reference}>{contents}</span>;
+  return <span className="public-action" data-preview-public-link={marker} data-preview-value={address}
+    data-preview-example={example} aria-disabled="true" title={unavailable}>{contents}</span>;
 }
 
-function ProjectPreviewLink({href, reference, children}: {href?: string; reference: string; children: ReactNode}) {
+function ProjectPreviewLink({href, unavailable, children}: {href?: string; unavailable?: string; children: ReactNode}) {
   return href ? <div data-preview-project-url data-preview-value="href"><PreviewAnchor className="public-project-link" href={href}>{children}</PreviewAnchor></div>
-    : <span className="public-project-link" data-preview-project-url data-preview-value="href" aria-disabled="true" title={reference}>{children}</span>;
+    : <span className="public-project-link" data-preview-project-url data-preview-value="href" aria-disabled="true" title={unavailable}>{children}</span>;
 }
 
-function ContactPreviewLink({href, children}: {href?: string; children: ReactNode}) {
+function ContactPreviewLink({href, unavailable, children}: {href?: string; unavailable?: string; children: ReactNode}) {
   const contents = <>{children} <PreviewIcon kind="external"/></>;
-  return href ? <PreviewAnchor href={href}>{contents}</PreviewAnchor> : contents;
+  return href ? <PreviewAnchor href={href}>{contents}</PreviewAnchor> : <span aria-disabled="true" title={unavailable}>{contents}</span>;
 }
 
-function PreviewText({field, children}: {field: string; children: ReactNode}) {
-  return <span data-preview-value={field}>{children}</span>;
+function PreviewText({field, example, children}: {field: string; example?: boolean; children: ReactNode}) {
+  return <span data-preview-value={field} data-preview-example={example}>{children}</span>;
 }
 
 function Bullets({value, locale}: {value?: string; locale: ContentLocale}) {
@@ -101,22 +104,33 @@ function fitTimelineDates(owner: HTMLElement) {
   }
 }
 
-export function FullSitePreview({draft, locale, module, onLocaleChange, interactiveLinks = false, modified, focused}: {
-  draft: LocalDraft; locale: ContentLocale; module: PreviewSection; onLocaleChange: (locale: ContentLocale) => void; interactiveLinks?: boolean; modified?: readonly EditFeedback[]; focused?: EditFeedback;
+export function FullSitePreview({preview, locale, module, onLocaleChange, modified, focused}: {
+  preview: SitePreview; locale: ContentLocale; module: PreviewSection; onLocaleChange: (locale: ContentLocale) => void;
+  modified?: readonly EditFeedback[]; focused?: EditFeedback;
 }) {
+  const draft = preview.content;
   const [contactOverride, setContactOverride] = useState<boolean | null>(null);
   const contactExpanded = contactOverride ?? module === 'contact';
   const viewport = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
   const anchoredSection = useRef<PreviewSection>(module);
+  const pendingSection = useRef<PreviewSection>(undefined);
   const fieldReveal = useRef<{target: EditFeedback; handled: boolean} | null>(null);
   const languageAnchor = useRef<{section: PreviewSection; offset: number} | null>(null);
   const labels = (key: PreviewSection) => previewSections[key][locale === 'zh' ? 0 : 1];
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
+  const example = (module: EditorModule, field: string, language: ContentLocale | 'shared' = locale) =>
+    preview.exampleField(module, field, language);
+  const unavailable = (destination: PreviewDestination) => destination.status === 'example'
+    ? text('填写示例，无可访问地址', 'Filling example · no destination')
+    : destination.status === 'invalid' ? text('地址无效，请在编辑区检查', 'Invalid address · check the editor') : undefined;
   const profile = draft.profile.translations[locale];
   const shared = draft.profile.shared;
   const contact = contactDisplay(draft.contact, locale);
   const links = publicLinksDisplay(draft.links, locale);
+  const email = previewDestination(draft.links.shared.email, example('links', 'email', 'shared'), publicEmailMailto);
+  const github = previewDestination(draft.links.shared.github, example('links', 'github', 'shared'));
+  const linkedIn = previewDestination(draft.links.translations[locale]?.linkedInHref, example('links', 'linkedInHref'));
   const siteText = draft['site-text'].translations[locale];
   const navLabel = (section: PreviewSection) => {
     const value = section === 'profile' ? profile.navAboutLabel : siteNavigationLabel(draft['site-text'], locale, section);
@@ -139,8 +153,9 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
 
   const projects = draft.projects.flatMap(row => {
     const values = projectDisplay(row, locale);
+    const destination = previewDestination(row.translations[locale]?.href, preview.exampleCollection('projects', 'projects'));
     const hasContent = [values.title, values.subtitle, values.period, values.description].some(value => value.trim());
-    return hasContent || values.href || values.methods.length ? [{...values, clientId: row.clientId}] : [];
+    return hasContent || destination || values.methods.length ? [{...values, destination, clientId: row.clientId}] : [];
   });
 
   const skills = draft.skills.flatMap(row => {
@@ -207,7 +222,14 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
     });
     observer.observe(owner);
     return () => observer.disconnect();
-  }, [module, contactExpanded]);
+  }, [module]);
+
+  useLayoutEffect(() => {
+    if (!pendingSection.current) return;
+    const section = pendingSection.current;
+    pendingSection.current = undefined;
+    position(section, true);
+  }, [contactExpanded]);
 
   function switchLanguage() {
     const navBottom = navigation.current?.getBoundingClientRect().bottom ?? 0;
@@ -279,25 +301,34 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
       const active = focused?.module === change.module && focused.item === change.item &&
         focused.field === change.field && focused.locale === change.locale;
       for (const node of previewFieldNodes(owner, change)) {
+        if (node.closest('[data-preview-example]') ||
+          (change.module !== 'site-text' && node.closest('[data-preview-example-record]'))) continue;
         if (active || !marked.has(node)) node.dataset.previewEditFeedback = active ? 'active' : 'modified';
         marked.add(node);
       }
     }
     return () => {for (const node of marked) delete node.dataset.previewEditFeedback;};
-  }, [draft, focused, locale, modified, contactExpanded]);
+  }, [preview, focused, locale, modified, contactExpanded]);
 
   const emptyContent = <p className="public-placeholder">{text('暂无本地内容', 'No local content')}</p>;
   const introduction = draft.introduction[locale].split(/\r?\n/).filter(line => line.trim());
   const pdfLabel = siteText?.portfolioLabel;
-  const linkedInName = links.linkedInDisplayName.trim() ? links.linkedInDisplayName : links.linkedInHref;
-  const externalHref = (value: string | undefined) => interactiveLinks ? demoPreviewUrl(value) : undefined;
-  const mailto = interactiveLinks ? demoPreviewMailto(links.email) : undefined;
+  const exampleLinkedInName = example('links', 'linkedInDisplayName', 'shared');
+  const useLinkedInName = links.linkedInDisplayName.trim() && (linkedIn?.status === 'example' || !exampleLinkedInName);
+  const linkedInName = useLinkedInName ? links.linkedInDisplayName : links.linkedInHref ?? 'LinkedIn';
   function goToSection(key: PreviewSection) {
-    setContactOverride(key === 'contact');
-    requestAnimationFrame(() => position(key, true));
+    const expandContact = key === 'contact';
+    if (expandContact === contactExpanded) {
+      position(key, true);
+    } else {
+      // Position after React commits the height of the contact details.
+      pendingSection.current = key;
+      setContactOverride(expandContact);
+    }
   }
   const navButton = (key: PreviewSection, className?: string) => <button type="button" className={className} key={key}
     data-preview-nav={key} data-preview-value={key === 'profile' ? 'navAboutLabel' : undefined} aria-expanded={key === 'contact' ? contactExpanded : undefined}
+    data-preview-example={key === 'profile' ? example('profile', 'navAboutLabel') : example('site-text', 'nav:' + key)}
     onClick={() => goToSection(key)}>{navLabel(key)}</button>;
 
   return <div className="site-preview-viewport public-preview" ref={viewport} tabIndex={0}
@@ -317,31 +348,38 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
     <article className="site-preview-page public-canvas">
       <header className="public-hero" data-site-section="profile" aria-labelledby="site-preview-name">
         <div className="public-hero-copy">
-          <h1 id="site-preview-name"><PreviewText field="name">{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</PreviewText></h1>
-          <div className="public-intro" data-site-section="introduction">
+          <h1 id="site-preview-name"><PreviewText field="name" example={example('profile', 'name')}>{profile.name.trim() ? profile.name : text('你的名字', 'Your name')}</PreviewText></h1>
+          <div className="public-intro" data-site-section="introduction" data-preview-example={example('introduction', 'introduction')}>
             {introduction.length ? introduction.map((line, index) => <p key={index}><PreviewText field="introduction">{line}</PreviewText></p>) : emptyContent}
           </div>
           <div className="public-actions">
-            {(links.email || profile.emailActionLabel.trim()) && <Action kind="mail" marker="contact-cta" valueKey="emailActionLabel" onActivate={interactiveLinks ? () => goToSection('contact') : undefined}>{profile.emailActionLabel.trim() ? profile.emailActionLabel : text('邮箱', 'Email')}</Action>}
+            <Action kind="mail" marker="contact-cta" valueKey="emailActionLabel" exampleLabel={example('profile', 'emailActionLabel')}
+              onActivate={() => goToSection('contact')}>{profile.emailActionLabel.trim() ? profile.emailActionLabel : text('联系我', 'Get in touch')}</Action>
             {pdfLabel?.trim() && <span data-preview-pdf-label title={text('PDF 尚未开放', 'PDF unavailable')}>
-              <Action kind="file" valueKey="portfolioLabel">{pdfLabel}</Action></span>}
-            {links.linkedInHref && <Action kind="linkedin" marker="linkedin-action" reference={links.linkedInHref} valueKey="linkedInButtonLabel" href={externalHref(links.linkedInHref)}>{links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
-            {links.github && <Action kind="github" marker="github" reference={links.github} valueKey="githubLabel" href={externalHref(links.github)}>{links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
+              <Action kind="file" valueKey="portfolioLabel" exampleLabel={example('site-text', 'portfolioLabel')}>{pdfLabel}</Action></span>}
+            {linkedIn && <Action kind="linkedin" marker="linkedin-action" unavailable={unavailable(linkedIn)} valueKey="linkedInButtonLabel"
+              href={linkedIn.href} example={linkedIn.status === 'example' || undefined} exampleLabel={example('links', 'linkedInLabel', 'shared')}>
+              {links.linkedInActionLabel.trim() ? links.linkedInActionLabel : 'LinkedIn'}</Action>}
+            {github && <Action kind="github" marker="github" unavailable={unavailable(github)} valueKey="githubLabel"
+              href={github.href} example={github.status === 'example' || undefined} exampleLabel={example('links', 'githubLabel', 'shared')}>
+              {links.githubLabel.trim() ? links.githubLabel : 'GitHub'}</Action>}
           </div>
           {(shared.graduationValue.trim() || profile.graduationLabel.trim()) && <div className="public-graduation">
-            <span data-preview-value="graduationLabel">{profile.graduationLabel.trim() ? profile.graduationLabel : text('毕业时间', 'Graduation')}</span>
-            {shared.graduationValue.trim() && <b data-preview-value="graduationValue">{shared.graduationValue}</b>}
+            <PreviewText field="graduationLabel" example={example('profile', 'graduationLabel')}>{profile.graduationLabel.trim() ? profile.graduationLabel : text('毕业时间', 'Graduation')}</PreviewText>
+            {shared.graduationValue.trim() && <b data-preview-value="graduationValue" data-preview-example={example('profile', 'graduationValue', 'shared')}>{shared.graduationValue}</b>}
           </div>}
         </div>
-        <div className="public-portrait" data-preview-value="avatarInitials" role="img" aria-label={profile.avatarLabel.trim() || text('头像占位，上传尚未开放', 'Portrait placeholder, upload unavailable')}>
+        <div className="public-portrait" data-preview-value="avatarInitials" data-preview-example={example('profile', 'avatarInitials', 'shared')}
+          role="img" aria-label={profile.avatarLabel.trim() || text('头像占位，上传尚未开放', 'Portrait placeholder, upload unavailable')}>
           {shared.avatarInitials.trim() || '—'}
         </div>
       </header>
 
       <section className="public-section public-education public-timeline" data-site-section="education" data-empty={!education.length}>
-        <h2 data-preview-value={sectionTitleFields.education}>{sectionTitle('education')}</h2>
+        <h2 data-preview-value={sectionTitleFields.education} data-preview-example={example('site-text', sectionTitleFields.education)}>{sectionTitle('education')}</h2>
         {education.map(({clientId, title, categoryTitle, program, period, grade, courseTitle, courseDescription, summerSchool, custom}) =>
-          <article key={clientId} className={summerSchool ? 'public-summer-school' : undefined} data-preview-entry={clientId}>
+          <article key={clientId} className={summerSchool ? 'public-summer-school' : undefined} data-preview-entry={clientId}
+            data-preview-example-record={preview.exampleCollection('education', 'education')}>
             <div>
               {title.trim() && <h3 data-preview-value="title">{title}</h3>}
               {categoryTitle.trim() && categoryTitle !== title && <p className="public-secondary" data-preview-value={custom ? "customCategoryLabel" : "category"}>{categoryTitle}</p>}
@@ -355,9 +393,9 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
           </article>)}
       </section>
       <section className="public-section public-work public-timeline" data-site-section="experience" data-empty={!experience.length}>
-        <h2 data-preview-value={sectionTitleFields.experience}>{sectionTitle('experience')}</h2>
+        <h2 data-preview-value={sectionTitleFields.experience} data-preview-example={example('site-text', sectionTitleFields.experience)}>{sectionTitle('experience')}</h2>
         {experience.map(({clientId, title, organization, period, location, description}) =>
-          <article key={clientId} data-preview-entry={clientId}>
+          <article key={clientId} data-preview-entry={clientId} data-preview-example-record={preview.exampleCollection('experience', 'experience')}>
             <div className="public-entry-copy">
               {(organization?.trim() || title?.trim()) && <h3 data-preview-value={organization?.trim() ? "organization" : "title"}>{organization?.trim() ? organization : title}</h3>}
               {period?.trim() && <b className="public-mobile-date" data-preview-value="period">{period}</b>}
@@ -369,9 +407,9 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
           </article>)}
       </section>
       <section className="public-section public-work public-projects public-timeline" data-site-section="projects" data-empty={!projects.length}>
-        <h2 data-preview-value={sectionTitleFields.projects}>{sectionTitle('projects')}</h2>
-        {projects.map(({clientId, title, subtitle, period, description, href, methods}) =>
-          <article key={clientId} data-preview-entry={clientId}>
+        <h2 data-preview-value={sectionTitleFields.projects} data-preview-example={example('site-text', sectionTitleFields.projects)}>{sectionTitle('projects')}</h2>
+        {projects.map(({clientId, title, subtitle, period, description, destination, methods}) =>
+          <article key={clientId} data-preview-entry={clientId} data-preview-example-record={preview.exampleCollection('projects', 'projects')}>
             <div className="public-entry-copy">
               {title.trim() && <h3 data-preview-value="title">{title}</h3>}
               {period.trim() && <b className="public-mobile-date" data-preview-value="period">{period}</b>}
@@ -379,62 +417,67 @@ export function FullSitePreview({draft, locale, module, onLocaleChange, interact
               {!!methods.length && <p className="public-methods" data-preview-value="methods">{methods.map((method, index) =>
                 <span key={method.clientId}>{index > 0 && ' · '}<span data-preview-method={method.clientId}>{method.value}</span></span>)}</p>}
               <Bullets value={description} locale={locale}/>
-              {href && <ProjectPreviewLink href={externalHref(href)} reference={href}>
-                <span data-preview-value="kaggleLabel">{siteText?.kaggleLabel?.trim() ? siteText.kaggleLabel : text('项目链接', 'Project URL')}</span> <PreviewIcon kind="external"/>
+              {destination && <ProjectPreviewLink href={destination.href} unavailable={unavailable(destination)}>
+                <PreviewText field="kaggleLabel" example={example('site-text', 'kaggleLabel')}>{siteText?.kaggleLabel?.trim() ? siteText.kaggleLabel : text('项目链接', 'Project URL')}</PreviewText> <PreviewIcon kind="external"/>
               </ProjectPreviewLink>}
             </div>
             <div className="public-date">{period.trim() && <b data-preview-value="period">{period}</b>}</div>
           </article>)}
       </section>
       <section className="public-section public-skills" data-site-section="skills" data-empty={!skills.length}>
-        <h2 data-preview-value={sectionTitleFields.skills}>{sectionTitle('skills')}</h2>
+        <h2 data-preview-value={sectionTitleFields.skills} data-preview-example={example('site-text', sectionTitleFields.skills)}>{sectionTitle('skills')}</h2>
         <div className="public-skill-grid">{skills.map(({clientId, title, items, custom}) =>
-          <div key={clientId} data-preview-entry={clientId}>
+          <div key={clientId} data-preview-entry={clientId} data-preview-example-record={preview.exampleCollection('skills', 'skills')}>
             {title.trim() && <h3 data-preview-value={custom ? "title" : "category"}>{title}</h3>}{items.trim() && <p data-preview-value="items">{items}</p>}
           </div>)}</div>
       </section>
       <section className="public-section public-awards public-timeline" data-site-section="awards" data-empty={!awards.length}>
-        <h2 data-preview-value={sectionTitleFields.awards}>{sectionTitle('awards')}</h2>
+        <h2 data-preview-value={sectionTitleFields.awards} data-preview-example={example('site-text', sectionTitleFields.awards)}>{sectionTitle('awards')}</h2>
         {awards.map(({clientId, name, year}) =>
-          <article key={clientId} data-preview-entry={clientId}>
+          <article key={clientId} data-preview-entry={clientId} data-preview-example-record={preview.exampleCollection('awards', 'awards')}>
             {name.trim() ? <h3 data-preview-value="name">{name}</h3> : <span/>}
             <div className="public-date">{year.trim() && <b data-preview-value="year">{year}</b>}</div>
           </article>)}
       </section>
       <footer className="public-contact" data-site-section="contact">
-        <p className="public-contact-label" data-preview-value="contactLabel">{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</p>
-        {contact.availability.trim() && <h2 data-preview-value="availability">{contact.availability}</h2>}
-        {(links.email || links.linkedInHref) && <dl className="public-contact-links">
-          {links.email && <div><dt data-preview-value="emailLabel">{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
-            <dd data-preview-public-link="email" data-preview-value="email">{mailto ? <PreviewAnchor href={mailto}>{links.email} <PreviewIcon kind="external"/></PreviewAnchor>
-              : <>{links.email} <PreviewIcon kind="external"/></>}</dd></div>}
-          {links.linkedInHref && <div><dt data-preview-value="linkedInLabel">{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
-            <dd data-preview-public-link="linkedin" data-preview-value="linkedInDisplayName" title={links.linkedInHref}>
-              <ContactPreviewLink href={externalHref(links.linkedInHref)}>{linkedInName}</ContactPreviewLink>
+        <p className="public-contact-label" data-preview-value="contactLabel" data-preview-example={example('contact', 'contactLabel')}>{contact.contactLabel.trim() ? contact.contactLabel : labels('contact')}</p>
+        {contact.availability.trim() && <h2 data-preview-value="availability" data-preview-example={example('contact', 'availability')}>{contact.availability}</h2>}
+        {(email || linkedIn) && <dl className="public-contact-links">
+          {email && <div><dt data-preview-value="emailLabel" data-preview-example={example('links', 'emailLabel', 'shared')}>{links.emailLabel.trim() ? links.emailLabel : text('邮箱', 'Email')}</dt>
+            <dd data-preview-public-link="email" data-preview-value="email" data-preview-example={example('links', 'email', 'shared')}>
+              {email.href ? <a href={email.href}>{links.email} <PreviewIcon kind="external"/></a>
+                : <span aria-disabled="true" title={unavailable(email)}>{links.email ?? text('无效邮箱', 'Invalid email')} <PreviewIcon kind="external"/></span>}
+            </dd></div>}
+          {linkedIn && <div><dt data-preview-value="linkedInLabel" data-preview-example={example('links', 'linkedInLabel')}>{links.linkedInContactLabel.trim() ? links.linkedInContactLabel : 'LinkedIn'}</dt>
+            <dd data-preview-public-link="linkedin" data-preview-value="linkedInDisplayName" data-preview-example={linkedIn.status === 'example' || undefined}>
+              <ContactPreviewLink href={linkedIn.href} unavailable={unavailable(linkedIn)}>
+                <span data-preview-example={useLinkedInName ? exampleLinkedInName : undefined}>{linkedInName}</span>
+              </ContactPreviewLink>
             </dd></div>}
         </dl>}
         <div className="public-footer-meta">
-          <span data-preview-value="footerName">{shared.footerName}</span>
-          <span data-preview-value="updatedAtLabel" data-preview-updated-label={siteText?.updatedAtLabel?.trim() ? '' : undefined}>
+          <PreviewText field="footerName" example={example('profile', 'footerName', 'shared')}>{shared.footerName}</PreviewText>
+          <span data-preview-value="updatedAtLabel" data-preview-example={example('site-text', 'updatedAtLabel')} data-preview-updated-label={siteText?.updatedAtLabel?.trim() ? '' : undefined}>
             {siteText?.updatedAtLabel?.trim() && <>{siteText.updatedAtLabel} · —</>}
           </span>
-          <span data-preview-value="copyright">{shared.copyright}</span>
+          <PreviewText field="copyright" example={example('profile', 'copyright', 'shared')}>{shared.copyright}</PreviewText>
         </div>
         {(profile.contactFocusHeading.trim() || contact.focus.length > 0 || profile.contactStatusHeading.trim() || contact.status.length > 0) &&
           <div className="public-contact-extension" hidden={!contactExpanded}>
             <div>
               {(profile.contactFocusHeading.trim() || contact.focus.length > 0) &&
-                <h3 data-preview-value="contactFocusHeading">{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h3>}
+                <h3 data-preview-value="contactFocusHeading" data-preview-example={example('profile', 'contactFocusHeading')}>{profile.contactFocusHeading.trim() ? profile.contactFocusHeading : text('职业关注方向', 'Career interests')}</h3>}
               <div className="public-focus-list">{contact.focus.map(({row, title, detail}) =>
-                <div key={row.clientId} data-preview-focus={row.clientId}>
+                <div key={row.clientId} data-preview-focus={row.clientId} data-preview-example-record={preview.exampleCollection('contact', 'focus')}>
                   {title.trim() && <p data-preview-value="title">{title}</p>}{detail.trim() && <span data-preview-value="detail">{detail}</span>}
                 </div>)}</div>
             </div>
             <div>
               {(profile.contactStatusHeading.trim() || contact.status.length > 0) &&
-                <h3 data-preview-value="contactStatusHeading">{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h3>}
+                <h3 data-preview-value="contactStatusHeading" data-preview-example={example('profile', 'contactStatusHeading')}>{profile.contactStatusHeading.trim() ? profile.contactStatusHeading : text('当前状态', 'Current status')}</h3>}
               <div className="public-status-list">{contact.status.map(({row, title, detail}) =>
-                <div key={row.clientId} className="public-status" data-preview-status={row.clientId} data-status-type={row.statusType}>
+                <div key={row.clientId} className="public-status" data-preview-status={row.clientId} data-status-type={row.statusType}
+                  data-preview-example-record={preview.exampleCollection('contact', 'status')}>
                   <span data-preview-value="statusType" role="img" aria-label={contactStatusLabels[row.statusType][locale]} title={contactStatusLabels[row.statusType][locale]}>
                     <PreviewIcon kind={row.statusType}/>
                   </span>

@@ -2,7 +2,7 @@
 
 import {useLayoutEffect, useMemo, useRef, useState, type ReactNode} from 'react';
 import {
-  cancelModule, emptyDraft, INTRODUCTION_LIMIT,
+  emptyDraft, INTRODUCTION_LIMIT,
   profileLocalized, profileShared, validIntroduction, type ContentLocale,
   type EditorModule, type LocalDraft,
 } from '../../lib/editor/draft';
@@ -24,7 +24,7 @@ import {FieldFeedbackContext} from './field-feedback';
 import {useWorkspaceDraft} from './workspace-draft';
 import {DraftDeletionScope} from './confirm-draft-deletion';
 import {mountEditorSections, selectEditorSection} from './editor-section-history';
-import {fillingGuide, hasPreviewContent} from '../../lib/editor/filling-guide';
+import {buildPreview} from '../../lib/editor/preview-model';
 
 type WorkspaceMode = 'split' | 'edit' | 'preview';
 
@@ -37,14 +37,13 @@ function EditorModeSwitcher<Choice extends string>({options, selected, select, l
   </div>;
 }
 
-function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, cancel, setFocused}: {
+function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, canUndo, cancel, setFocused}: {
   children: ReactNode; subNavigation?: ReactNode; mode: WorkspaceMode; module: EditorModule; dirtyModules: readonly EditorModule[];
-  titles: Record<EditorModule, string>; cancel: () => void; setFocused: (field?: EditFeedback) => void;
+  titles: Record<EditorModule, string>; canUndo: boolean; cancel: () => void; setFocused: (field?: EditFeedback) => void;
 }) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const body = useRef<HTMLDivElement>(null);
-  const dirty = dirtyModules.includes(module);
   const names = dirtyModules.map(key => titles[key]);
   const separator = locale === 'zh' ? '、' : ', ';
   const concise = names.slice(0, 3).join(separator);
@@ -60,7 +59,7 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
         </details>}
       </div>
       <div className="editor-action-buttons">
-        <button className="dashboard-action dashboard-action-text" type="button" onClick={cancel} disabled={!dirty}>{text('撤销修改', 'Undo changes')}</button>
+        <button className="dashboard-action dashboard-action-text" type="button" onClick={cancel} disabled={!canUndo}>{text('撤销修改', 'Undo changes')}</button>
         <button type="button" className="editor-save dashboard-action dashboard-action-secondary" disabled>{text('保存草稿', 'Save draft')}</button>
       </div>
     </>}>
@@ -75,24 +74,19 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   </section>;
 }
 
-export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {initialDraft?: LocalDraft; interactivePreview?: boolean}) {
+export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalDraft}) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const [module, setModule] = useState<EditorModule>('profile');
   const [previewLocale, setPreviewLocale] = useState<ContentLocale>('zh');
-  const [previewChoice, setPreviewChoice] = useState<'guide' | 'draft'>();
+  const [showExamples, setShowExamples] = useState(true);
   const [choice, setMode] = useState<Exclude<WorkspaceMode, 'split'>>('edit');
   const [wide, setWide] = useState(false);
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {scope, draft, update, dirtyModules, modified, fields} = useWorkspaceDraft(initialDraft, module);
-  const hasContent = useMemo(() => hasPreviewContent(draft), [draft]);
-  const showingGuide = previewChoice === undefined ? !hasContent : previewChoice === 'guide';
-  const setDraft: typeof update = change => {
-    setPreviewChoice(undefined);
-    update(change);
-  };
+  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields} = useWorkspaceDraft(initialDraft, module);
+  const preview = useMemo(() => buildPreview(draft, guideOverrides, showExamples), [draft, guideOverrides, showExamples]);
   const contactArea = module === 'contact' || module === 'links' || module === 'site-text';
   const activeSection = contactArea ? 'contact' : module;
   const titles: Record<EditorModule, string> = {
@@ -131,7 +125,8 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
       </header>
       <div className="editor-columns" data-mode={mode}>
         <FieldFeedbackContext.Provider value={fields}>
-          <EditorPanel mode={mode} module={module} dirtyModules={dirtyModules} titles={titles} setFocused={setFocused} cancel={() => setDraft(current => cancelModule(current, module, initialDraft))}
+          <EditorPanel mode={mode} module={module} dirtyModules={dirtyModules} titles={titles} setFocused={setFocused}
+            canUndo={dirtyModules.includes(module) || !!guideOverrides[module]} cancel={undo}
             subNavigation={contactArea && <div className="editor-contact-areas">
               <EditorModeSwitcher options={[
                 ['contact', text('联系栏', 'Contact')], ['links', text('公开链接', 'Public links')], ['site-text', text('网站文字', 'Site text')],
@@ -172,17 +167,15 @@ export function ResumeEditor({initialDraft = emptyDraft, interactivePreview}: {i
               </div>}
           </EditorPanel>
         </FieldFeedbackContext.Provider>
-        <section className="editor-preview" data-mode={mode} data-preview-source={showingGuide ? 'guide' : 'draft'} aria-label={text('网站预览', 'Website preview')}>
+        <section className="editor-preview" data-mode={mode} data-preview-source={showExamples ? 'mixed' : 'draft'} aria-label={text('网站预览', 'Website preview')}>
           <div className="editor-preview-guide">
-            {showingGuide && <span>{text('填写示例 · 虚构资料', 'Filling example · Fictional details')}</span>}
+            {showExamples && <span>{text('灰色为填写示例，不会保存', 'Gray text is an example and won’t be saved')}</span>}
             <button type="button" className="dashboard-action dashboard-action-text"
-              onClick={() => setPreviewChoice(showingGuide ? 'draft' : 'guide')}>
-              {showingGuide ? text('查看我的草稿', 'View my draft') : text('查看填写示例', 'View filling example')}
+              onClick={() => setShowExamples(show => !show)}>
+              {showExamples ? text('隐藏示例', 'Hide examples') : text('显示示例', 'Show examples')}
             </button>
           </div>
-          <FullSitePreview key={showingGuide ? 'guide' : 'draft'} modified={showingGuide ? undefined : modified}
-            focused={!showingGuide && focused?.module === module ? focused : undefined}
-            interactiveLinks={!showingGuide && interactivePreview} draft={showingGuide ? fillingGuide : draft}
+          <FullSitePreview modified={modified} focused={focused?.module === module ? focused : undefined} preview={preview}
             locale={previewLocale} module={module === 'links' ? 'profile' : activeSection} onLocaleChange={setPreviewLocale}/>
         </section>
       </div>
