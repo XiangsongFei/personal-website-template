@@ -15,6 +15,8 @@ export interface UsersEnv {
     USERS_CONTROLLED_APPROVAL?: string;
     USERS_CONTROLLED_EXPIRES_AT?: string;
     USERS_CONTROLLED_EGRESS?: Fetcher;
+    USERS_INTRODUCTION_MODE?: string;
+    USERS_INTRODUCTION_RPC?: Fetcher;
     USERS_RECOVERY_STATE: DurableObjectNamespace<RecoveryState>;
     ASSETS: Fetcher;
 }

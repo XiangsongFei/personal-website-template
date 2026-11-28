@@ -28,19 +28,26 @@ export function readCookies(raw: string) {
     return [...map].map(([name, value]) => ({ name, value }));
 }
 export const cookieLine = (name: string, value: string, age = GRANT_SECONDS) => `${name}=${encodeURIComponent(value)}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${value ? age : 0}`;
-export function createSession(env: UsersEnv, raw = '', scope: 'account' | 'recovery' = 'account') {
+export function createSession(env: UsersEnv, raw = '', scope: 'account' | 'recovery' = 'account', {allowRefresh = true} = {}) {
     const config = configuration(env), name = COOKIE[scope];
     const owned = (n: string) => n === name || n.startsWith(name + '.') || n.startsWith(name + '-');
     const jar = new Map(readCookies(raw).filter(c => owned(c.name)).map(c => [c.name, c.value]));
     const writes = new Map<string, string>(), seen = new Set<string>();
     let transient: 'network' | 'limited' | undefined;
     let refreshUnconfirmed = false;
+    let refreshRequired = false;
     const transport: typeof fetch = async (input, init) => {
         const request = new Request(input, init), url = new URL(request.url), start = Date.now();
         const route = request.method + ' ' + url.pathname + url.search;
         const allowed = ['POST /auth/v1/signup', 'POST /auth/v1/resend', 'POST /auth/v1/recover', 'POST /auth/v1/verify', 'POST /auth/v1/token?grant_type=password', 'POST /auth/v1/token?grant_type=refresh_token', 'POST /auth/v1/logout?scope=local', 'GET /auth/v1/user', 'PUT /auth/v1/user', 'GET /auth/v1/.well-known/jwks.json'];
         if (url.origin !== config.url || !allowed.includes(route) || request.headers.get('apikey') !== config.key || request.headers.has('cookie'))
             throw Error('auth_target_denied');
+        // Read-only workspace checks must not consume a rotating refresh token
+        // when their response deliberately does not apply cookie writes.
+        if (!allowRefresh && route === 'POST /auth/v1/token?grant_type=refresh_token') {
+            refreshRequired = true;
+            return Response.json({code: 'session_refresh_required', message: 'Session renewal required'}, {status: 400});
+        }
         // SDK refresh retries must never produce a second upstream mutation in a request.
         if (request.method !== 'GET') {
             if (seen.has(route))
@@ -150,7 +157,7 @@ export function createSession(env: UsersEnv, raw = '', scope: 'account' | 'recov
             }
         }
     }
-    return { client, identity, logout, clear, retirePriorChunks, transient: () => transient, apply(response: Response) {
+    return { client, identity, logout, clear, retirePriorChunks, refreshRequired: () => refreshRequired, transient: () => transient, apply(response: Response) {
         // An inconclusive refresh is not evidence that the original cookie expired.
         if (!refreshUnconfirmed) {
             for (const line of writes.values()) response.headers.append('Set-Cookie', line);
