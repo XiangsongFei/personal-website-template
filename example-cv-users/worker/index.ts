@@ -3,6 +3,7 @@ import { accountAPI } from '../lib/account/api';
 import { configuration, type UsersEnv } from '../lib/config';
 import { createSession } from '../lib/auth/session';
 import {introductionAPI, introductionEnabled, introductionPath, readIntroductionSite, workspaceScope} from '../lib/site/introduction-server';
+import {resumeTextAPI, resumeTextEnabled, resumeTextPath} from '../lib/site/resume-text-server';
 import { requestContext } from '../lib/context';
 export { RecoveryState } from './recovery-state';
 
@@ -56,6 +57,9 @@ export default {
         const introduction = introductionEnabled(env);
         if (introduction && (url.pathname === introductionPath || url.pathname === introductionPath + '/operation'))
             return introductionAPI(request, env);
+        const resumeText = resumeTextEnabled(env);
+        if (resumeText && url.pathname.startsWith(resumeTextPath+'/'))
+            return resumeTextAPI(request, env);
         if (url.pathname.startsWith('/api/'))
             return Response.json({ ok: false, message: '接口不可用。' }, { status: 404, headers: { 'Cache-Control': 'private, no-store' } });
         if (['/reset-password', '/auth/callback'].includes(url.pathname) && url.search)
@@ -84,7 +88,7 @@ export default {
         const siteSession = session;
         const readSite = introduction && user && siteSession && workspaceDraftScope && pagePath === '/dashboard/website' && request.method === 'GET'
             ? () => readIntroductionSite(env, siteSession, user.id, workspaceDraftScope) : undefined;
-        const rendered = await requestContext.run({ dashboard, accountWorkspace, failure, workspaceDraftScope, introduction, readSite, workspacePath: dashboard || accountWorkspace ? pagePath : undefined,
+        const rendered = await requestContext.run({ dashboard, accountWorkspace, failure, workspaceDraftScope, introduction, resumeText, readSite, workspacePath: dashboard || accountWorkspace ? pagePath : undefined,
             user: user ? { id: user.id, email: user.email } : undefined }, () => handler.fetch(request, env, ctx));
         const response = new Response(rendered.body, {headers: rendered.headers, status: failure ? failure === 'limited' ? 429 : 503 : rendered.status});
         response.headers.set('Cache-Control', 'private, no-store');

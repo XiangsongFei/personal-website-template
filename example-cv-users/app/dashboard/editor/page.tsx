@@ -11,5 +11,5 @@ export default function EditorPage() {
       <h1>Example CV</h1><AccountUnavailable failure={ctx?.failure}/>
     </section></VerifiedWorkspace>;
   }
-  return <VerifiedWorkspace><ResumeEditor introductionEnabled={ctx.introduction}/></VerifiedWorkspace>;
+  return <VerifiedWorkspace><ResumeEditor introductionEnabled={ctx.introduction} resumeTextEnabled={ctx.resumeText}/></VerifiedWorkspace>;
 }
