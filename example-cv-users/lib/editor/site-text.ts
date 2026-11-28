@@ -25,6 +25,10 @@ export const sectionTitleFields = {
   awards: 'honorsLabel',
 } as const;
 
+export function sectionTitleField(module: string) {
+  return Object.hasOwn(sectionTitleFields, module) ? sectionTitleFields[module as keyof typeof sectionTitleFields] : undefined;
+}
+
 type SiteText = Record<typeof sectionTitleFields[keyof typeof sectionTitleFields] | 'kaggleLabel' | 'portfolioLabel' | 'updatedAtLabel', string>;
 export type SiteTextDraft = {
   navigation: DraftTranslations<Record<NavigationSection, string>>;

@@ -112,7 +112,8 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
   const modified = useMemo(() => modifiedEditorFields(draft, initial, dirtyModules), [draft, initial, dirtyModules]);
   const baseline = useMemo(() => collectEditorFields(initial, module), [initial, module]);
   const current = useMemo(() => collectEditorFields(draft, module), [draft, module]);
-  const reviews = snapshot?.reviews[module] ?? noReviews;
+  const siteBaseline = useMemo(() => collectEditorFields(initial, 'site-text'), [initial]);
+  const siteCurrent = useMemo(() => collectEditorFields(draft, 'site-text'), [draft]);
   const update = (change: (previous: LocalDraft) => LocalDraft, undo = false) => {
     if (!scope || scope !== currentScope) return;
     const previous = read();
@@ -127,27 +128,36 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
     if (!entry) window.addEventListener('pagehide', clearWorkspaceDraft);
     if (nextDirty.length) window.addEventListener('beforeunload', warnBeforeLeaving);
     else window.removeEventListener('beforeunload', warnBeforeLeaving);
-    const reviews = nextDirty.includes(module) ? reviewChanges(collectEditorFields(before, module),
-      collectEditorFields(next, module), baseline, previous?.reviews[module] ?? noReviews).reviews : noReviews;
-    entry = {scope, draft: nextDirty.length ? next : initial, dirtyModules: nextDirty, guideOverrides,
-      reviews: {...previous?.reviews, [module]: reviews}};
+    const reviews = {...previous?.reviews};
+    const affected: EditorModule[] = [module];
+    if (module !== 'site-text' && before['site-text'] !== next['site-text']) affected.push('site-text');
+    for (const owner of affected) {
+      reviews[owner] = nextDirty.includes(owner) ? reviewChanges(collectEditorFields(before, owner),
+        collectEditorFields(next, owner), owner === 'site-text' ? siteBaseline : baseline, reviews[owner] ?? noReviews).reviews : noReviews;
+    }
+    entry = {scope, draft: nextDirty.length ? next : initial, dirtyModules: nextDirty, guideOverrides, reviews};
     notify();
   };
-  const acknowledge = (field: FieldKey) => {
+  const acknowledge = (owner: EditorModule, field: FieldKey) => {
     const previous = read();
     if (!previous || scope !== currentScope) return;
-    const next = new Map(previous.reviews[module]);
+    const next = new Map(previous.reviews[owner]);
     const key = bilingualFieldKey(field);
     const review = next.get(key);
     if (!review?.pending) return;
     next.set(key, {...review, pending: false});
-    entry = {...previous, reviews: {...previous.reviews, [module]: next}};
+    entry = {...previous, reviews: {...previous.reviews, [owner]: next}};
     notify();
   };
   const guideOverrides = snapshot?.guideOverrides ?? noGuideOverrides;
-  const placeholder = (field: FieldKey, language: 'zh' | 'en' | 'shared') =>
-    guideFieldCleared(guideOverrides, module, field.field, language, field.item) ? undefined
-      : guidePlaceholder(module, field.field, language, field.item, draft);
+  const feedback = (owner: EditorModule, baseline: ReturnType<typeof collectEditorFields>, current: ReturnType<typeof collectEditorFields>) => ({
+    baseline, current, reviews: snapshot?.reviews[owner] ?? noReviews,
+    acknowledge: (field: FieldKey) => acknowledge(owner, field),
+    placeholder: (field: FieldKey, language: 'zh' | 'en' | 'shared') =>
+      guideFieldCleared(guideOverrides, owner, field.field, language, field.item) ? undefined
+        : guidePlaceholder(owner, field.field, language, field.item, draft),
+  });
   const undo = () => update(current => cancelModule(current, module, initial), true);
-  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: {baseline, current, reviews, acknowledge, placeholder}};
+  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: feedback(module, baseline, current),
+    siteTextFields: feedback('site-text', siteBaseline, siteCurrent)};
 }

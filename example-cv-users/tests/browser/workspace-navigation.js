@@ -70,7 +70,8 @@ async page => {
   check(await profile.inputValue() === '' && !!await profile.getAttribute('placeholder'), 'guidance was written into the field');
   check(await preview.getAttribute('data-preview-source') === 'mixed', 'an empty draft did not show examples');
   check(await preview.getByText('周晨', {exact: true}).count() > 0, 'Chinese example missing');
-  check(await preview.locator('a[href^="https://example.org"], a[href^="mailto:"]').count() === 0, 'example contact links are active');
+  check(await preview.locator('a[href^="https://example.org"], a[href^="mailto:"]:not([href="mailto:chen@example.org"])').count() === 0 &&
+    await preview.locator('a[href="mailto:chen@example.org"]').count() === 2, 'unexpected example destinations');
   await preview.locator('.public-nav-language').click();
   check(await preview.getByText('Chen Zhou', {exact: true}).count() > 0, 'English example missing');
 

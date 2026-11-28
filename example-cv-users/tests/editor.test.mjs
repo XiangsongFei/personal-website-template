@@ -74,8 +74,11 @@ test('only a current server session can render the editor, including HEAD and RS
     assert.doesNotMatch(publicPage, /<iframe\b|<img\b|<time\b/);
     const previewLinks = [...publicPage.matchAll(/<a\b[^>]*>/g)].map(match => match[0]);
     assert.deepEqual([...new Set(previewLinks.map(link => link.match(/href="([^"]+)"/)?.[1]))].sort(),
-      ['https://github.com/', 'https://www.linkedin.com/']);
-    for (const link of previewLinks) assert.match(link, /target="_blank" rel="noopener noreferrer"/);
+      ['https://github.com/', 'https://www.linkedin.com/', 'mailto:chen@example.org']);
+    for (const link of previewLinks) {
+      if (link.includes('mailto:')) assert.doesNotMatch(link, /\btarget=|\brel=/);
+      else assert.match(link, /target="_blank" rel="noopener noreferrer"/);
+    }
     assert.match(html, /class="editor-save [^"]*" disabled=""/);
     assert.doesNotMatch(html, /保存服务尚未开放|Saving is unavailable|editor-language|editor-preview-heading|本地预览 · 未保存、未发布/);
     assert.equal([...html.matchAll(/class="public-nav-language"/g)].length, 1);

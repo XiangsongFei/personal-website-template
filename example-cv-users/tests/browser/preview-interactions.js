@@ -5,7 +5,7 @@ async page => {
   const check = (condition, message) => { if (!condition) throw Error(message); };
   const prefix = await page.evaluate(() => /Firefox/.test(navigator.userAgent) ? 'firefox' :
     /Chrome/.test(navigator.userAgent) ? 'chrome' : 'webkit');
-  const shot = name => page.screenshot({path: '.runtime/hotfix02/final-supplement/' + prefix + '-' + name + '.png'});
+  const shot = name => page.screenshot({path: '.runtime/hotfix03/' + prefix + '-' + name + '.png'});
   const urls = [];
   const platforms = [];
   await page.context().route(/^https:\/\/(github\.com|www\.linkedin\.com)\/$/, route => {
@@ -43,7 +43,9 @@ async page => {
   await field('name', 'zh').waitFor();
   check(await field('name', 'zh').inputValue() === '' && await unchanged(), 'opening the guide dirtied the draft');
   check(await name.textContent() === '周晨' && await name.getAttribute('data-preview-example') === 'true', 'empty draft guide missing');
-  check(await pane.locator('a[href^="mailto:"], [data-preview-project-url] a').count() === 0, 'fictional destinations are actionable');
+  check(await pane.locator('a[href^="mailto:"]:not([href="mailto:chen@example.org"]), [data-preview-project-url] a').count() === 0,
+    'unexpected fictional destinations are actionable');
+  check(!/平台示例|\bExample\b/.test(await pane.innerText()), 'visible platform badge remains');
   check(await name.textContent() === await field('name', 'zh').getAttribute('placeholder'), 'left and right Chinese name examples differ');
   check(platforms.length === 0, 'guide preloaded a platform');
   await follow('[data-preview-public-link="github"]', 'https://github.com/');
@@ -54,9 +56,10 @@ async page => {
   await shot('01-empty');
   const timeOrigin = await page.evaluate(() => performance.timeOrigin);
 
-  await pane.locator('button[data-preview-public-link="contact-cta"]').click();
-  check(await pane.getByText('请在公开链接中填写邮箱地址以启用邮件。').isVisible(), 'fictional email did not show a contact hint');
+  await exerciseMailto(pane.locator('[data-preview-public-link="contact-cta"] a'), 'mailto:chen@example.org');
+  await pane.locator('[data-preview-nav="contact"]').click();
   await pane.locator('.public-contact-extension').waitFor();
+  await exerciseMailto(pane.locator('[data-preview-public-link="email"] a'), 'mailto:chen@example.org');
   await section('awards');
   await page.waitForFunction(() => {
     const contact = document.querySelector('.public-contact-extension');
@@ -83,15 +86,16 @@ async page => {
   await language();
   check(await name.textContent() === '林禾', 'English edit overwrote Chinese');
   await field('name', 'zh').fill('');
-  check(await name.textContent() === '你的名字' && !await field('name', 'zh').getAttribute('placeholder'), 'active clear restored the fictional name');
+  check(await name.textContent() === '周晨' && await field('name', 'zh').getAttribute('placeholder') === '周晨', 'cleared name did not restore guidance');
+  await shot('03b-cleared-name');
   await section('introduction');
   await section('profile');
-  check(await name.textContent() === '你的名字' && !await field('name', 'zh').getAttribute('placeholder'), 'changing modules lost the explicit name clear');
+  check(await name.textContent() === '周晨' && await field('name', 'zh').inputValue() === '', 'changing modules wrote an example into the draft');
   await sidebar.locator('.dashboard-brand').click();
   await page.waitForURL(base + '/dashboard');
   await sidebar.locator('a[href="/dashboard/editor#profile"]').click();
   await page.waitForURL(base + '/dashboard/editor#profile');
-  check(await name.textContent() === '你的名字' && !await field('name', 'zh').getAttribute('placeholder'), 're-entering the editor lost the explicit name clear');
+  check(await name.textContent() === '周晨' && await field('name', 'zh').inputValue() === '', 're-entering the editor wrote an example into the draft');
   await undo();
   check(await name.textContent() === '周晨' && await unchanged(), 'profile undo did not restore the original guidance');
 
@@ -117,7 +121,8 @@ async page => {
   }), 'multiline intro highlight fills the block');
   await shot('08-amber-intro');
   await field('introduction', 'zh').fill('');
-  check(await pane.locator('[data-preview-value="introduction"]').count() === 0 && await unchanged(), 'cleared introduction returned or was marked dirty');
+  check(await pane.locator('[data-site-section="introduction"][data-preview-example]').count() === 1 && await unchanged(),
+    'cleared introduction did not restore guidance or was marked dirty');
   await section('education');
   await shot('04a-education-before');
   await editor.locator('.record-add').click();
@@ -137,15 +142,18 @@ async page => {
   check(await education.locator('[data-preview-example-record]').count() === 0, 'other locale restored the fictional collection');
   await language();
   await field('title', 'zh').fill('');
-  check(!(await field('title', 'zh').getAttribute('placeholder')) && await education.locator('[data-preview-value="title"]').count() === 0, 'cleared row field regained an example');
+  check(await education.locator('[data-preview-value="title"] [data-preview-example]').textContent() === await field('title', 'zh').getAttribute('placeholder'),
+    'cleared row text did not regain its guidance');
   await editor.locator('.record-delete').click();
   await editor.getByRole('button', {name: '确认删除'}).click();
   check(await education.locator('[data-preview-entry]').count() === 0 && await unchanged(), 'deleting the last real record restored the example');
   await shot('04c-education-deleted');
   await section('introduction');
-  check(await pane.locator('[data-preview-value="introduction"]').count() === 0, 'switching modules lost the explicit clear');
+  check(await pane.locator('[data-site-section="introduction"][data-preview-example]').count() === 1 &&
+    await field('introduction', 'zh').inputValue() === '', 'switching modules wrote a guide paragraph into the draft');
+  await section('education');
   await undo();
-  check(await pane.locator('[data-site-section="introduction"][data-preview-example]').count() === 1, 'undo did not restore the cleared example');
+  await verifyHeadingsAndReveal();
 
   for (const [module, value] of [['experience', 'organization'], ['skills', 'items'], ['awards', 'name']]) {
     await section(module);
@@ -233,10 +241,9 @@ async page => {
     return Math.abs(contactTop - bottom) < 20;
   });
   check(await pane.locator('.public-contact-extension').isVisible(), 'contact action did not open contact details');
-  async function exerciseMailto(link) {
-    check(await link.getAttribute('href') === 'mailto:alex%2Bcv%3F@example.invalid', 'mailto payload is incorrect');
-    check(await link.getAttribute('target') === '_blank' && await link.getAttribute('rel') === 'noopener noreferrer',
-      'a browser mail handler could replace the editor tab');
+  async function exerciseMailto(link, address = 'mailto:alex%2Bcv%3F@example.invalid') {
+    check(await link.getAttribute('href') === address, 'mailto payload is incorrect');
+    check(await link.getAttribute('target') === null && await link.getAttribute('rel') === null, 'mailto does not use native navigation');
     await link.evaluate(node => node.addEventListener('click', event => {
       event.preventDefault(); window.__previewMailto = event.currentTarget.href;
     }, {once: true}));
@@ -245,7 +252,7 @@ async page => {
       const intent = window.__previewMailto;
       delete window.__previewMailto;
       return intent;
-    }) === 'mailto:alex%2Bcv%3F@example.invalid', 'mailto handler did not receive the encoded address');
+    }) === address, 'mailto handler did not receive the encoded address');
   }
   await exerciseMailto(pane.locator('[data-preview-public-link="email"] a'));
   await shot('05-contact-links');
@@ -257,8 +264,10 @@ async page => {
   await field('github', 'shared').fill('');
   check(await pane.locator('[data-preview-public-link="github"] a').count() === 0, 'cleared URL regained the platform example');
   await field('email', 'shared').fill('invalid');
-  await pane.locator('button[data-preview-public-link="contact-cta"]').click();
-  check(await pane.getByText('请检查编辑区的公开邮箱地址。').isVisible(), 'invalid email did not show its check hint');
+  check(await pane.locator('[data-preview-public-link="contact-cta"][aria-disabled="true"]').getAttribute('title') === '请检查编辑区的公开邮箱地址。',
+    'invalid email did not disable the hero action');
+  await field('email', 'shared').fill('');
+  check(await pane.locator('a[href^="mailto:"]').count() === 0, 'clearing a real email reactivated the guidance address');
   check(urls.length === 3, 'invalid or example link loaded unexpectedly');
 
   await section('projects');
@@ -288,5 +297,67 @@ async page => {
   check(await exampleNodes.count() === 0, 'changing modules reset the example toggle');
   check(await page.evaluate(() => performance.timeOrigin) === timeOrigin, 'preview interaction replaced the document');
   check(urls.length === 5, 'a destination was requested without an explicit click');
+  async function verifyHeadingsAndReveal() {
+    const headings = {
+      education: 'educationLabel', experience: 'experienceLabel', projects: 'projectHeading', skills: 'skillsLabel', awards: 'honorsLabel',
+    };
+    const aligned = (section, key) => page.waitForFunction(({section, key}) => {
+      const nav = document.querySelector('.site-preview-nav').getBoundingClientRect();
+      const frame = document.querySelector('.site-preview-viewport').getBoundingClientRect();
+      const target = document.querySelector('[data-site-section="' + section + '"] [data-preview-value="' + key + '"]')?.getBoundingClientRect();
+      return target && target.top >= nav.bottom + 4 && target.bottom <= frame.bottom + 1;
+    }, {section, key}, {timeout: 3000});
+    for (const [module, heading] of Object.entries(headings)) {
+      await section(module);
+      const title = pane.locator('h2[data-preview-value="' + heading + '"]');
+      check(await field(heading, 'zh').getAttribute('placeholder') === await title.textContent(), module + ' title is missing guidance');
+      await field(heading, 'zh').fill('测试栏目 ' + module);
+      check(await title.textContent() === '测试栏目 ' + module && await title.locator('[data-preview-edit-feedback]').count() === 1,
+        module + ' custom title or highlight did not update');
+      check(await editor.getByRole('status').filter({hasText: '请检查英文'}).isVisible(), module + ' is missing the English review reminder');
+      await aligned(module, heading);
+      await field(heading, 'en').fill('Custom heading: ' + module);
+      await language();
+      check(await title.textContent() === 'Custom heading: ' + module, module + ' English heading is out of sync');
+      await language();
+    }
+    await section('site-text', '#contact');
+    check(await field('educationLabel', 'zh').inputValue() === '测试栏目 education', 'centralized title editor is out of sync');
+    await field('educationLabel', 'en').fill('Education and training');
+    await field('updatedAtLabel', 'zh').fill('更新于');
+    await section('education');
+    check(await field('educationLabel', 'en').inputValue() === 'Education and training', 'title change did not sync back to the module');
+    await shot('04d-section-title');
+    await page.setViewportSize({width: 1250, height: 530});
+    await editor.locator('.record-add').click();
+    const school = field('title', 'zh');
+    await school.fill('用于检测定位的学校名称'.repeat(3));
+    await school.blur();
+    await pane.evaluate(node => { node.scrollTop = 0; });
+    await school.focus();
+    await aligned('education', 'title');
+    const currentTop = () => pane.evaluate(node => node.scrollTop);
+    const initialTop = await currentTop();
+    await school.press('End');
+    await school.pressSequentially('（第一校区）');
+    check(Math.abs(await currentTop() - initialTop) < 2, 'continuing to type scrolled the preview');
+    await pane.evaluate(node => {
+      node.dispatchEvent(new WheelEvent('wheel', {bubbles: true}));
+      node.scrollTop = 0;
+    });
+    await school.press('End');
+    await school.pressSequentially('校');
+    await aligned('education', 'title');
+    await shot('04e-field-reveal');
+    await undo();
+    check(await field('educationLabel', 'zh').inputValue() === '' && await education.locator('[data-preview-example-record]').count() > 0,
+      'module undo failed to restore both heading and records');
+    await page.setViewportSize({width: 1440, height: 900});
+    await section('site-text', '#contact');
+    check(await field('updatedAtLabel', 'zh').inputValue() === '更新于' &&
+      await field('projectHeading', 'zh').inputValue() === '测试栏目 projects', 'module undo reset another heading or website copy');
+    await undo();
+    check(await unchanged(), 'centralized text undo left phantom dirty sections');
+  }
   return {browser: prefix, clickedDestinations: urls, platformHomepages: platforms, mailtoIntentChecked: true};
 }

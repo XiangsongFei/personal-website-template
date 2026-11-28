@@ -38,18 +38,18 @@ export function updateGuideOverrides(overrides: GuideOverrides, before: LocalDra
       deleted('status', before.contact.status, after.contact.status);
     }
   }
-  const updatedFields = collectEditorFields(after, module);
-  for (const [key, field] of collectEditorFields(before, module)) {
-    const updated = updatedFields.get(key);
-    // A deleted record or method is already excluded by its stable ID.
-    if (field.item && !updated) continue;
-    if (field.field === 'methods') continue;
-    for (const language of [...editorLocales, 'shared'] as const) {
-      const beforeValue = (field.editValues ?? field.values)[language];
-      const afterValue = updated && (updated.editValues ?? updated.values)[language];
-      if ((beforeValue?.trim() || (field.editValues && field.values[language]?.trim())) && !afterValue?.trim() &&
-        (afterValue !== undefined || !field.item)) {
-        next.add(fieldKey(field.field, language, field.item));
+  // Blank text can show its writing hint again. An explicitly cleared
+  // destination must stay inactive, even with examples enabled.
+  if (module === 'links' || module === 'projects') {
+    const updatedFields = collectEditorFields(after, module);
+    for (const [key, field] of collectEditorFields(before, module)) {
+      if (!(module === 'links' ? ['shared:email', 'shared:github', 'linkedInHref'].includes(field.field) : field.field === 'href')) continue;
+      const updated = updatedFields.get(key);
+      if (field.item && !updated) continue;
+      for (const language of [...editorLocales, 'shared'] as const) {
+        if (field.values[language]?.trim() && !updated?.values[language]?.trim()) {
+          next.add(fieldKey(field.field, language, field.item));
+        }
       }
     }
   }

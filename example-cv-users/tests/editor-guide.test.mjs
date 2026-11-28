@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {emptyDraft, moduleIsDirty} from '../lib/editor/draft.ts';
+import {cancelModule, emptyDraft, moduleIsDirty} from '../lib/editor/draft.ts';
+import {modifiedEditorFields} from '../lib/editor/bilingual-review.ts';
+import {sectionTitleFields} from '../lib/editor/site-text.ts';
 import {fillingGuide, guidePlaceholder} from '../lib/editor/filling-guide.ts';
 import {buildPreview, guideFieldCleared, updateGuideOverrides} from '../lib/editor/preview-model.ts';
 import {changeEducationCategory, newEducation, newExperience, newProject, newSkill, newAward} from '../lib/editor/records.ts';
@@ -84,7 +86,7 @@ test('real rows use per-field examples and a deleted collection stays empty unti
   assert.equal(buildPreview(emptyDraft, contactOverrides, true).content.contact.status, fillingGuide.contact.status);
 });
 
-test('explicit field clears survive empty draft, hidden examples and unrelated edits', () => {
+test('clearing ordinary text restores guide text without putting it in the draft', () => {
   const profile = value => ({...emptyDraft, profile: {...emptyDraft.profile,
     shared: {...emptyDraft.profile.shared, footerName: value},
     translations: {...emptyDraft.profile.translations, en: {...emptyDraft.profile.translations.en, name: value}}}});
@@ -93,9 +95,9 @@ test('explicit field clears survive empty draft, hidden examples and unrelated e
   assert.equal(moduleIsDirty(emptyDraft, 'profile'), false);
   assert.equal(buildPreview(emptyDraft, cleared, false).content, emptyDraft);
   const preview = buildPreview(emptyDraft, cleared, true);
-  assert.equal(preview.content.profile.shared.footerName, '');
-  assert.equal(preview.content.profile.translations.en.name, '');
-  assert.equal(guideFieldCleared(cleared, 'profile', 'name', 'en'), true);
+  assert.equal(preview.content.profile.shared.footerName, fillingGuide.profile.shared.footerName);
+  assert.equal(preview.content.profile.translations.en.name, 'Chen Zhou');
+  assert.equal(guideFieldCleared(cleared, 'profile', 'name', 'en'), undefined);
   assert.equal(preview.content.profile.translations.zh.name, '周晨');
   assert.equal(buildPreview(real, cleared, true).content.profile.shared.footerName, 'My name');
   const undone = updateGuideOverrides(cleared, emptyDraft, emptyDraft, 'profile', true);
@@ -123,17 +125,42 @@ test('record type, stable identity and language decide which hints are displayed
   assert.deepEqual(preview.content.projects[0].methods.en, []);
 });
 
-test('clearing a row field or method suppresses only that stable field and language', () => {
-  const project = (title, method) => ({...newProject('project', 0), translations: {zh: {title}},
+test('clearing a row restores ordinary text and methods without restoring its URL', () => {
+  const project = (title, method, href) => ({...newProject('project', 0), translations: {zh: {title, href}},
     methods: {zh: [{clientId: 'method', position: 0, value: method}], en: []}});
   const other = newProject('other', 1);
-  const before = {...emptyDraft, projects: [project('我的项目', '访谈'), other]};
-  const after = {...emptyDraft, projects: [other, project('', '')]};
+  const before = {...emptyDraft, projects: [project('我的项目', '访谈', 'https://example.net'), other]};
+  const after = {...emptyDraft, projects: [other, project('', '', '')]};
   const overrides = updateGuideOverrides({}, before, after, 'projects', false);
   const preview = buildPreview(after, overrides, true);
-  assert.equal(guideFieldCleared(overrides, 'projects', 'title', 'zh', 'project'), true);
-  assert.equal(preview.content.projects[1].translations.zh.title, '');
-  assert.equal(preview.content.projects[1].methods.zh[0].value, '');
+  assert.equal(guideFieldCleared(overrides, 'projects', 'href', 'zh', 'project'), true);
+  assert.equal(preview.content.projects[1].translations.zh.href, '');
+  assert.ok(preview.content.projects[1].translations.zh.title);
+  assert.ok(preview.content.projects[1].methods.zh[0].value);
   assert.ok(preview.content.projects[1].translations.en.title);
   assert.ok(preview.content.projects[0].translations.zh.title);
+});
+
+test('shared section headings make their section dirty and undo only restores its own heading and records', () => {
+  const titles = Object.fromEntries(Object.values(sectionTitleFields).map(key => [key, '新的标题']));
+  const baseline = {...emptyDraft, 'site-text': {navigation: {}, translations: {en: {educationLabel: 'Education baseline'}}}};
+  const draft = {...baseline, education: [newEducation('local', 0)], 'site-text': {
+    navigation: {en: {projects: 'My navigation'}},
+    translations: {zh: {...titles, updatedAtLabel: '我的更新时间'}, en: {educationLabel: 'Another heading'}},
+  }};
+  for (const module of Object.keys(sectionTitleFields)) assert.equal(moduleIsDirty(draft, module, baseline), true, module);
+  const marks = modifiedEditorFields(draft, baseline, ['education', 'site-text']);
+  assert.deepEqual(marks.filter(mark => mark.field === 'educationLabel').map(mark => [mark.module, mark.locale]),
+    [['site-text', 'zh'], ['site-text', 'en']]);
+  const sectionUndo = cancelModule(draft, 'education', baseline);
+  assert.equal(moduleIsDirty(sectionUndo, 'education', baseline), false);
+  assert.equal(sectionUndo.education, baseline.education);
+  assert.equal(sectionUndo['site-text'].translations.zh.educationLabel, undefined);
+  assert.equal(sectionUndo['site-text'].translations.en.educationLabel, 'Education baseline');
+  assert.equal(sectionUndo['site-text'].translations.zh.projectHeading, '新的标题');
+  assert.equal(sectionUndo['site-text'].translations.zh.updatedAtLabel, '我的更新时间');
+  assert.equal(sectionUndo['site-text'].navigation, draft['site-text'].navigation);
+  const siteUndo = cancelModule(draft, 'site-text', baseline);
+  assert.equal(siteUndo['site-text'], baseline['site-text']);
+  assert.equal(siteUndo.education, draft.education);
 });
