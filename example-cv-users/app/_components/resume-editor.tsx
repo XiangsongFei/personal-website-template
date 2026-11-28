@@ -38,9 +38,10 @@ function EditorModeSwitcher<Choice extends string>({options, selected, select, l
   </div>;
 }
 
-function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, hasCustomNames, canUndo, cancel, setFocused}: {
+function EditorPanel({children, subNavigation, mode, module, dirtyModules, titles, hasCustomNames, canUndo, cancel, setFocused, saveAction, saveMessage}: {
   children: ReactNode; subNavigation?: ReactNode; mode: WorkspaceMode; module: EditorModule; dirtyModules: readonly EditorModule[];
   titles: Record<EditorModule, string>; hasCustomNames: boolean;
+  saveAction?: {label: string; run: () => void; enabled: boolean}; saveMessage?: string;
   canUndo: boolean; cancel: () => void; setFocused: (field?: EditFeedback) => void;
 }) {
   const {locale} = useUiLocale();
@@ -64,6 +65,7 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
       <div className="editor-change-summary">
         <p role="status" data-dirty={!!names.length} className={hasCustomNames ? 'dashboard-custom-label' : undefined}
           title={hasCustomNames ? names.join(separator) : undefined}>{summary}</p>
+        {saveMessage && <p role="status">{saveMessage}</p>}
         {remaining && <details className="editor-change-details" key={module}>
           <summary>{text('查看全部', 'Show all')}</summary>
           <ul>{dirtyModules.map(key => <li key={key}>{titles[key]}</li>)}</ul>
@@ -71,7 +73,8 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
       </div>
       <div className="editor-action-buttons">
         <button className="dashboard-action dashboard-action-text" type="button" onClick={cancel} disabled={!canUndo}>{text('撤销修改', 'Undo changes')}</button>
-        <button type="button" className="editor-save dashboard-action dashboard-action-secondary" disabled>{text('保存草稿', 'Save draft')}</button>
+        <button type="button" className="editor-save dashboard-action dashboard-action-secondary"
+          disabled={!saveAction?.enabled} onClick={saveAction?.run}>{saveAction?.label ?? text('保存草稿', 'Save draft')}</button>
       </div>
     </>}>
       {subNavigation}
@@ -83,7 +86,7 @@ function EditorPanel({children, subNavigation, mode, module, dirtyModules, title
   </section>;
 }
 
-export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalDraft}) {
+export function ResumeEditor({initialDraft = emptyDraft, introductionEnabled = false}: {initialDraft?: LocalDraft; introductionEnabled?: boolean}) {
   const {locale} = useUiLocale();
   const text = (zh: string, en: string) => locale === 'zh' ? zh : en;
   const [module, setModule] = useState<EditorModule>('profile');
@@ -94,7 +97,35 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
   const workspace = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<EditFeedback>();
   const mode = wide ? 'split' : choice;
-  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields} = useWorkspaceDraft(initialDraft, module);
+  const {scope, draft, update: setDraft, undo, guideOverrides, dirtyModules, modified, fields, siteTextFields, persistence} = useWorkspaceDraft(initialDraft, module, introductionEnabled);
+  const intro = introductionEnabled && module === 'introduction' ? persistence.state : undefined;
+  const readiness = intro?.state;
+  const outcome = intro?.state === 'ready' ? intro.outcome : undefined;
+  const pending = intro?.state === 'ready' && !!intro.attempt;
+  const saveAction = intro?.state === 'ready' ? {
+    label: pending && outcome !== 'saving' ? text('核对保存结果', 'Check save status') : text('保存草稿', 'Save draft'),
+    run: () => void persistence.save(),
+    enabled: outcome !== 'saving' && outcome !== 'conflict' && outcome !== 'advanced' &&
+      (pending || (dirtyModules.includes('introduction') && Object.values(draft.introduction).every(validIntroduction))),
+  } : readiness === 'read-error' ? {
+    label: text('重新读取', 'Retry read'), run: () => void persistence.refresh(), enabled: true,
+  } : undefined;
+  const saveMessage = introductionEnabled && module === 'introduction' ? ({
+    loading: text('正在读取个人介绍。', 'Reading your introduction.'),
+    'no-site': text('此账户没有可编辑的网站。', 'This account has no editable website.'),
+    'read-error': text('暂时无法读取个人介绍。', 'Your introduction could not be read.'),
+    unavailable: text('个人介绍服务尚未开放。', 'Introduction service is unavailable.'),
+    denied: text('当前权限无法访问此草稿。', 'Your current permissions do not allow access to this draft.'),
+    unsupported: text('此介绍含多条记录，当前编辑器无法加载。', 'This introduction contains multiple records that this editor cannot load.'),
+    saving: text('正在核对保存回执。', 'Confirming the save receipt.'),
+    unknown: text('保存结果待核对，修改仍保留。', 'The save is unconfirmed. Your edits are still here.'),
+    conflict: text('另一个会话已更新草稿。请保留当前修改，再读取最新版本。', 'Another session updated the draft. Keep a copy of your edits before reloading.'),
+    advanced: text('原保存有回执，另一个会话已提交更新版本。请保留当前修改，再读取最新版本。',
+      'The save has a receipt and a newer version exists. Keep a copy of your edits before reloading.'),
+    invalid: text('提交内容无效或超过双语总长度限制。', 'The submission is invalid or exceeds the combined text size limit.'),
+    saved: text('已保存个人介绍。', 'Introduction saved.'),
+    ready: undefined,
+  }[outcome ?? readiness ?? 'loading']) : undefined;
   const preview = useMemo(() => buildPreview(draft, guideOverrides, showExamples), [draft, guideOverrides, showExamples]);
   const heading = sectionTitleField(module);
   const updateSiteText = (siteText: SiteTextDraft) => setDraft(current => ({...current, 'site-text': siteText}));
@@ -139,6 +170,7 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
       <div className="editor-columns" data-mode={mode}>
         <FieldFeedbackContext.Provider value={fields}>
           <EditorPanel mode={mode} module={module} dirtyModules={dirtyModules} titles={titles} setFocused={setFocused}
+            saveAction={saveAction} saveMessage={saveMessage}
             hasCustomNames={dirtyModules.some(key => customSectionTitle(draft, key, locale))}
             canUndo={dirtyModules.includes(module) || !!guideOverrides[module]} cancel={undo}
             subNavigation={contactArea && <div className="editor-contact-areas">
@@ -180,7 +212,7 @@ export function ResumeEditor({initialDraft = emptyDraft}: {initialDraft?: LocalD
               <SiteTextEditor draft={draft['site-text']} onChange={updateSiteText}/> :
               <div className="editor-introduction">
                 <PairedField identity={{field: 'introduction'}} label={text('个人介绍', 'Introduction')} value={language => draft.introduction[language]} multiline long hideLegend ai
-                  maxLength={INTRODUCTION_LIMIT}
+                  maxLength={INTRODUCTION_LIMIT} disabled={introductionEnabled && readiness !== 'ready'}
                   onChange={(language, value) => setDraft(current => ({...current, introduction: {...current.introduction, [language]: value}}))}
                   count={value => value.length + ' / 20,000'}
                   error={value => validIntroduction(value) ? undefined : text('内容含无效字符或超过长度上限。',

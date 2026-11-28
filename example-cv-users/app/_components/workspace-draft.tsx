@@ -1,11 +1,13 @@
 'use client';
 
-import {createContext, useContext, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
+import {createContext, useContext, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode} from 'react';
 import {rejectWorkspaceHistory, resetWorkspaceHistory, setWorkspaceHistoryView, verifyUpcomingWorkspaceTraversal, verifyWorkspaceTraversal} from './workspace-history';
 import {bilingualFieldKey, collectEditorFields, modifiedEditorFields, reviewChanges, type FieldKey, type Reviews} from '../../lib/editor/bilingual-review';
 import {cancelModule, editorModules, moduleIsDirty, type EditorModule, type LocalDraft} from '../../lib/editor/draft';
 import {guideFieldCleared, updateGuideOverrides, type GuideOverrides} from '../../lib/editor/preview-model';
 import {guidePlaceholder} from '../../lib/editor/filling-guide';
+import {introductionPath, introductionText, mergeSavedIntroduction, parseIntroduction, parseSaveReceipt,
+  prepareIntroduction, workspaceScopeHeader, type Introduction, type SaveAttempt} from '../../lib/editor/introduction-dto';
 
 type DraftEntry = {
   scope: string;
@@ -20,6 +22,12 @@ const DraftScope = createContext<string | undefined>(undefined);
 const listeners = new Set<() => void>();
 let currentScope: string | undefined;
 let entry: DraftEntry | undefined;
+type IntroductionState = {scope: string} & (
+  {state: 'loading' | 'no-site' | 'read-error' | 'unavailable' | 'denied' | 'unsupported'} |
+  {state: 'ready'; baseline: Introduction;
+    outcome?: 'saved' | 'saving' | 'unknown' | 'conflict' | 'advanced' | 'invalid' | 'denied';
+    attempt?: SaveAttempt});
+let introduction: IntroductionState | undefined;
 
 function notify() {
   for (const listener of listeners) listener();
@@ -33,8 +41,9 @@ function warnBeforeLeaving(event: BeforeUnloadEvent) {
   event.returnValue = true;
 }
 export function clearWorkspaceDraft() {
-  if (!entry) return;
+  if (!entry && !introduction) return;
   entry = undefined;
+  introduction = undefined;
   window.removeEventListener('beforeunload', warnBeforeLeaving);
   window.removeEventListener('pagehide', clearWorkspaceDraft);
   notify();
@@ -93,14 +102,122 @@ export function WorkspaceDraftScope({scope, path, unavailable, children}: {
 const modules = Object.keys(editorModules) as EditorModule[];
 const noDirtyModules: readonly EditorModule[] = [];
 
+function updateDraftGuards() {
+  if (entry || introduction) window.addEventListener('pagehide', clearWorkspaceDraft);
+  if (entry?.dirtyModules.length || (introduction?.state === 'ready' && introduction.attempt))
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+  else window.removeEventListener('beforeunload', warnBeforeLeaving);
+}
+
+function setIntroduction(value: IntroductionState) {
+  introduction = value;
+  updateDraftGuards();
+  notify();
+}
+
+const loadIntroduction = async (scope: string, attempt?: SaveAttempt, reconcile = false) => {
+  const controller = new AbortController();
+  const deadline = window.setTimeout(() => controller.abort(), 30_000);
+  const headers = {[workspaceScopeHeader]: scope};
+  const options = {headers, signal: controller.signal, cache: 'no-store', redirect: 'manual', mode: 'same-origin'} as const;
+  try {
+    const response = await fetch(introductionPath + (reconcile ? '/operation' : ''), attempt ?
+      {...options, method: 'POST', headers: {...headers, 'Content-Type': 'application/json'}, body: JSON.stringify(attempt.body)} : options);
+    const value = await response.json() as {code?: string; state?: string} | null;
+    if (!response.ok && (value?.code === 'WORKSPACE_CHANGED' || value?.code === 'IDENTITY_REQUIRED'))
+      return {code: 'IDENTITY_REQUIRED'};
+    if (response.headers.get(workspaceScopeHeader) !== scope) return {code: 'BUSINESS_UNAVAILABLE'};
+    if (!response.ok) return {code: typeof value?.code === 'string' ? value.code : 'BUSINESS_UNAVAILABLE'};
+    // The original response can arrive after the account cookie has changed in another tab.
+    const check = await fetch(introductionPath, {...options, method: 'HEAD'});
+    if (check.status === 409 || check.status === 401) return {code: 'IDENTITY_REQUIRED'};
+    if (!check.ok || check.headers.get(workspaceScopeHeader) !== scope) return {code: 'BUSINESS_UNAVAILABLE'};
+    return {value};
+  } catch { return {code: 'BUSINESS_UNAVAILABLE'}; }
+  finally { window.clearTimeout(deadline); }
+};
+
+function acceptSavedIntroduction(scope: string, initial: LocalDraft, previous: Introduction, saved: Introduction, attempt: SaveAttempt) {
+  const confirmed = introductionText(saved);
+  const previousEntry = entry?.scope === scope ? entry : undefined;
+  const {draft, reviews, guideOverrides} = previousEntry ?? {
+    draft: {...initial, introduction: introductionText(previous)}, reviews: {}, guideOverrides: noGuideOverrides,
+  };
+  const baseline = {...initial, introduction: confirmed};
+  const next = {...draft, introduction: mergeSavedIntroduction(draft.introduction, attempt.submitted, confirmed)};
+  const dirtyModules = modules.filter(owner => moduleIsDirty(next, owner, baseline));
+  const introductionReviews = reviewChanges(collectEditorFields(draft, 'introduction'),
+    collectEditorFields(next, 'introduction'), collectEditorFields(baseline, 'introduction'),
+    reviews.introduction ?? noReviews).reviews;
+  // A cleared, now-saved field can show the gray guide again.
+  const overrides = {...guideOverrides};
+  if (!dirtyModules.includes('introduction')) delete overrides.introduction;
+  entry = dirtyModules.length || Object.keys(overrides).length ? {
+    scope, draft: next, dirtyModules, reviews: {...reviews, introduction: introductionReviews}, guideOverrides: overrides,
+  } : undefined;
+  setIntroduction({scope, state: 'ready', baseline: saved, outcome: 'saved'});
+}
+
+function useIntroduction(scope: string | undefined, enabled: boolean, initial: LocalDraft) {
+  const read = () => enabled && scope && introduction?.scope === scope ? introduction : undefined;
+  const state = useSyncExternalStore(subscribe, read, () => undefined);
+  async function refresh() {
+    if (!enabled || !scope || scope !== currentScope || read()?.state === 'loading' || read()?.state === 'ready') return;
+    const operation = {scope, state: 'loading'} as const;
+    setIntroduction(operation);
+    const {value, code} = await loadIntroduction(scope);
+    if (scope !== currentScope || introduction !== operation) return;
+    if (code === 'IDENTITY_REQUIRED') return reloadInvalidWorkspace();
+    const baseline = parseIntroduction(value);
+    if (baseline) {
+      // Other modules may have been edited while Introduction was loading.
+      if (entry?.scope === scope)
+        entry = {...entry, draft: {...entry.draft, introduction: introductionText(baseline)}};
+      return setIntroduction({scope, state: 'ready', baseline});
+    }
+    setIntroduction({scope, state: value?.state === 'no-site' ? 'no-site' :
+      code === 'BUSINESS_DENIED' ? 'denied' : code === 'NOT_CONFIGURED' ? 'unavailable' :
+      code === 'UNSUPPORTED_INTRODUCTION' ? 'unsupported' : 'read-error'});
+  }
+  useEffect(() => { if (!read()) void refresh(); }, [scope, enabled]);
+  async function save() {
+    const previous = read();
+    if (!scope || scope !== currentScope || previous?.state !== 'ready' ||
+        previous.outcome === 'saving' || previous.outcome === 'conflict' || previous.outcome === 'advanced') return;
+    const baseline = introductionText(previous.baseline);
+    const text = entry?.scope === scope ? entry.draft.introduction : baseline;
+    if (!previous.attempt && baseline.zh === text.zh && baseline.en === text.en) return;
+    let attempt;
+    try { attempt = previous.attempt ?? prepareIntroduction(previous.baseline, text, crypto.randomUUID()); }
+    catch { return setIntroduction({...previous, outcome: 'invalid'}); }
+
+    const operation = {...previous, attempt, outcome: 'saving'} as const;
+    setIntroduction(operation);
+    const {value, code} = await loadIntroduction(scope, attempt, !!previous.attempt);
+    const saved = await parseSaveReceipt(value, attempt).catch(() => undefined);
+    if (scope !== currentScope || introduction !== operation) return;
+    if (code === 'IDENTITY_REQUIRED') return reloadInvalidWorkspace();
+    if (saved) return acceptSavedIntroduction(scope, initial, previous.baseline, saved, attempt);
+    const outcome = code === 'REQUEST_CONFLICT' ? 'conflict' : code === 'DRAFT_ADVANCED' ? 'advanced' :
+      code === 'INVALID_INPUT' && !previous.attempt ? 'invalid' :
+      code === 'BUSINESS_DENIED' ? 'denied' : 'unknown';
+    const unresolved = outcome === 'unknown' || outcome === 'denied';
+    setIntroduction({...previous, outcome, attempt: unresolved ? attempt : undefined});
+  }
+  return {state, refresh, save};
+}
+
 export function useWorkspaceSnapshot() {
   const scope = useContext(DraftScope);
   const read = () => scope && entry?.scope === scope ? entry : undefined;
   return useSyncExternalStore(subscribe, read, () => undefined);
 }
 
-export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
+export function useWorkspaceDraft(initialDraft: LocalDraft, module: EditorModule, introductionEnabled = false) {
   const scope = useContext(DraftScope);
+  const persistence = useIntroduction(scope, introductionEnabled, initialDraft);
+  const saved = persistence.state?.state === 'ready' ? persistence.state.baseline : undefined;
+  const initial = useMemo(() => saved ? {...initialDraft, introduction: introductionText(saved)} : initialDraft, [initialDraft, saved]);
   const read = () => scope && entry?.scope === scope ? entry : undefined;
   const snapshot = useWorkspaceSnapshot();
   const draft = snapshot?.draft ?? initial;
@@ -118,12 +235,11 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
     const nextDirty = modules.filter(module => moduleIsDirty(next, module, initial));
     const guideOverrides = updateGuideOverrides(previous?.guideOverrides ?? noGuideOverrides, before, next, module, undo);
     if (!nextDirty.length && !Object.keys(guideOverrides).length) {
-      clearWorkspaceDraft();
+      entry = undefined;
+      updateDraftGuards();
+      notify();
       return;
     }
-    if (!entry) window.addEventListener('pagehide', clearWorkspaceDraft);
-    if (nextDirty.length) window.addEventListener('beforeunload', warnBeforeLeaving);
-    else window.removeEventListener('beforeunload', warnBeforeLeaving);
     const reviews = {...previous?.reviews};
     const affected: EditorModule[] = [module];
     if (module !== 'site-text' && before['site-text'] !== next['site-text']) affected.push('site-text');
@@ -132,6 +248,7 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
         collectEditorFields(next, owner), owner === 'site-text' ? siteBaseline : baseline, reviews[owner] ?? noReviews).reviews : noReviews;
     }
     entry = {scope, draft: nextDirty.length ? next : initial, dirtyModules: nextDirty, guideOverrides, reviews};
+    updateDraftGuards();
     notify();
   };
   const acknowledge = (owner: EditorModule, field: FieldKey) => {
@@ -154,6 +271,6 @@ export function useWorkspaceDraft(initial: LocalDraft, module: EditorModule) {
         : guidePlaceholder(owner, field.field, language, field.item, draft),
   });
   const undo = () => update(current => cancelModule(current, module, initial), true);
-  return {scope, draft, update, undo, guideOverrides, dirtyModules, modified, fields: feedback(module, baseline, current),
+  return {scope, draft, persistence, update, undo, guideOverrides, dirtyModules, modified, fields: feedback(module, baseline, current),
     siteTextFields: feedback('site-text', siteBaseline, siteCurrent)};
 }

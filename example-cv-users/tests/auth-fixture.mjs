@@ -19,12 +19,12 @@ export async function realAuthority({now=()=>Date.now(),url=USERS_URL,issuer=url
   const recoveryOtps=new Map();
   const controls={update:'ok', logout:'ok', user:'ok', login:'ok', refresh:'ok'};let recoveryCode=TEST_OTP;
   const user=id=>{const u=users.get(id);return {id,email:u.email,email_confirmed_at:u.confirmed?'2026-10-29T00:00:00Z':null,
-    aud:'authenticated',role:'authenticated',created_at:'2026-10-29T00:00:00Z',app_metadata:{provider:'email'},user_metadata:{padding:'x'.repeat(padding)},identities:[{id}]};};
+    aud:'authenticated',role:'authenticated',is_anonymous:false,created_at:'2026-10-29T00:00:00Z',app_metadata:{provider:'email'},user_metadata:{padding:'x'.repeat(padding)},identities:[{id}]};};
   const add=(email,confirmed=true,password=TEST_PASSWORD)=>{const id=crypto.randomUUID();users.set(id,{email,confirmed,password,confirmationExpires:now()+120000});return id;};
   const A=add('user-a@example.invalid'),B=add('user-b@example.invalid');
   const find=email=>[...users].find(([,u])=>u.email===email)?.[0];
   async function session(id,recovery=false,sid=crypto.randomUUID(),method=recovery?'recovery':'password') {
-    const claims={iss:issuer,sub:id,aud:'authenticated',role:'authenticated',iat:Math.floor(now()/1000),exp:Math.floor(now()/1000)+3600,session_id:sid,...(method?{amr:[{method,timestamp:Math.floor(now()/1000)}]}:{})};
+    const claims={iss:issuer,sub:id,aud:'authenticated',role:'authenticated',is_anonymous:false,iat:Math.floor(now()/1000),exp:Math.floor(now()/1000)+3600,session_id:sid,...(method?{amr:[{method,timestamp:Math.floor(now()/1000)}]}:{})};
     const plain=encode({alg:algorithm,typ:'JWT',kid:jwk.kid})+'.'+encode(claims);
     const signature=await crypto.subtle.sign(symmetric?{name:'HMAC'}:{name:'ECDSA',hash:'SHA-256'},symmetric?keys:keys.privateKey,encoder.encode(plain));
     const access=plain+'.'+Buffer.from(signature).toString('base64url'),renew=crypto.randomUUID();
@@ -107,5 +107,5 @@ export async function realAuthority({now=()=>Date.now(),url=USERS_URL,issuer=url
     }
     throw Error('fixture_route_denied');
   };
-  return {fetch,events,controls,rotateCode:()=>{recoveryCode='654321';},expireCodes:()=>{for(const r of recoveryOtps.values())r.expires=0;},passwordMatches:(id,candidate)=>users.get(id)?.password===candidate,ids:{A,B},setPadding:value=>{padding=value;}};
+  return {fetch,events,controls,principal: request=>state(request),rotateCode:()=>{recoveryCode='654321';},expireCodes:()=>{for(const r of recoveryOtps.values())r.expires=0;},passwordMatches:(id,candidate)=>users.get(id)?.password===candidate,ids:{A,B},setPadding:value=>{padding=value;}};
 }

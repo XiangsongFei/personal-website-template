@@ -9,6 +9,6 @@ import '../../website.css';
 export default async function WebsitePage() {
   const ctx = requestContext.getStore();
   if (!ctx?.user) return <VerifiedWorkspace><section className="dashboard-unavailable"><h1>Example CV</h1><AccountUnavailable failure={ctx?.failure}/></section></VerifiedWorkspace>;
-  const model = await readCurrentSiteStatus(ctx.user.id);
+  const model = await (ctx.readSite?.() ?? readCurrentSiteStatus(ctx.user.id));
   return <VerifiedWorkspace><DashboardShell section="website"><WebsiteWorkspace model={model}/></DashboardShell></VerifiedWorkspace>;
 }

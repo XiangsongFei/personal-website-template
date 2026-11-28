@@ -20,9 +20,9 @@ export function FieldMatrix({children}: {children: ReactNode}) {
   </MatrixContext.Provider>;
 }
 
-export function PairedField({label, identity, value, onChange, multiline = false, long = false, hideLegend = false, compact = false, ai = false, type, maxLength, error, count}: {
+export function PairedField({label, identity, value, onChange, multiline = false, long = false, hideLegend = false, compact = false, ai = false, type, maxLength, error, count, disabled}: {
   label: string; identity: FieldKey; value: (locale: ContentLocale) => string; onChange: (locale: ContentLocale, value: string) => void;
-  multiline?: boolean; long?: boolean; hideLegend?: boolean; compact?: boolean; ai?: boolean; type?: 'text' | 'url'; maxLength?: number;
+  multiline?: boolean; disabled?: boolean; long?: boolean; hideLegend?: boolean; compact?: boolean; ai?: boolean; type?: 'text' | 'url'; maxLength?: number;
   error?: (value: string) => string | undefined; count?: (value: string) => string;
 }) {
   const matrix = useContext(MatrixContext) && !multiline && type !== 'url';
@@ -43,7 +43,7 @@ export function PairedField({label, identity, value, onChange, multiline = false
       {controls}
     </div>;
   }
-  return <fieldset className="editor-pair" data-field={identity.field}>
+  return <fieldset className="editor-pair" data-field={identity.field} disabled={disabled}>
     <legend className={hideLegend ? 'dashboard-visually-hidden' : undefined}>{label}</legend>
     {controls}
     {ai && <EditorAiActions/>}
