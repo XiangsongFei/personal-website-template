@@ -21,6 +21,19 @@ const field=(page,key,locale)=>page.locator('[data-edit-field="'+key+'"][data-ed
 const markers=page=>page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('ecv:pending-text:'))
   .map(k=>JSON.parse(localStorage.getItem(k))));
 
+export async function editTargetedSkills(page){
+  const skillRows=page.locator('.record-list li');
+  const row=label=>skillRows.filter({has:page.getByRole('button',{name:label,exact:true})});
+  const tools=row(skillPresetTitles.tools.zh);
+  await tools.getByRole('button',{name:'上移',exact:true}).click();
+  await tools.getByRole('button',{name:'上移',exact:true}).click();
+  await row(skillPresetTitles.programming.zh).locator('button.record-delete').click();
+  await button(page,'确认删除').click();
+  const toggle=tools.locator('.record-title');
+  if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+  await field(page,'items','en').fill('Edited writing');
+}
+
 function receiptState(obs,a,b){
   return obs(`SELECT json_build_object(
     'sites',(SELECT json_object_agg(id::text,draft_revision) FROM site_data.sites WHERE id IN ('${a.site}','${b.site}')),
@@ -222,12 +235,7 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
         ['analytics','programming','tools'].map(key=>skillPresetTitles[key].zh));
       expected.set('skills:1',initialSkills.content);
       await status(other,'已保存草稿');
-      await button(other,'上移').nth(2).click();
-      await other.locator('button.record-delete').nth(2).click();
-      await button(other,'确认删除').click();
-      const firstRow=other.locator('.record-list .record-title').first();
-      if(await firstRow.getAttribute('aria-expanded')!=='true')await firstRow.click();
-      await field(other,'items','en').fill('Edited writing');
+      await editTargetedSkills(other);
       await select(page,'profile');
       await page.locator(profileField).fill('已经提交的姓名');
       holdSections.add('profile');
@@ -236,12 +244,12 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
       const [profile,skills]=await Promise.all([waitHeld('profile'),waitHeld('skills')]);
       for(const saved of [profile,skills]){
         assert.equal(saved.status,200,saved.value.code);
+        assert.equal(saved.value.requestId,saved.pending.requestId);
+        assert.equal(saved.value.digest,saved.pending.digest);
         verifyPayload(saved.command,saved.value.snapshot);
         expected.set(saved.command.section+':'+saved.value.snapshot.revision,saved.value.snapshot.content);
+        journal({...saved.pending,uid:activeOwner.uid,sid:activeOwner.sid,outcome:'confirmed_reply_held'});
       }
-      assert.deepEqual(skills.value.snapshot.content.entries.map(row=>row.id),
-        [initialSkills.content.entries[2].id,initialSkills.content.entries[0].id]);
-      assert.equal(skills.value.snapshot.content.entries[0].translations.en.items,'Edited writing');
       freeze();
       await page.locator(profileField).fill('继续输入仍未保存');
       await select(page,'contact');
@@ -276,6 +284,9 @@ export async function runTargeted({a,b,origin,mf,obs,sql,rest,phase,mark,take,wi
       assert.deepEqual([conflict.status,conflict.value.code],[409,'PT409']);
       assert.deepEqual(observeText(),state);
       mark('C2.4 overlapping native commits, independent pending locators, dirty edits, and stale CAS',{staleSqlState:'PT409',pending:pending.map(p=>p.requestId)});
+      assert.deepEqual(skills.value.snapshot.content.entries.map(row=>row.id),
+        [initialSkills.content.entries[2].id,initialSkills.content.entries[0].id]);
+      assert.equal(skills.value.snapshot.content.entries[0].translations.en.items,'Edited writing');
       const rows=await other.locator('.record-list .record-title > span:last-child').allTextContents();
       assert.deepEqual(rows,[skillPresetTitles.tools.zh,skillPresetTitles.analytics.zh]);
       const rowToggle=other.locator('.record-list .record-title').first();
